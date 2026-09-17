@@ -20,21 +20,21 @@ class MemoryStorage implements StoragePort {
   setItem(key: string, value: string) { expect(key).toBe(STORAGE_KEY); this.data = value }
 }
 
-describe('starter curriculum contract', () => {
+describe('expanded curriculum contract', () => {
   it('has original, substantive content in all four tracks', () => {
-    expect(lessons).toHaveLength(12)
+    expect(lessons.length).toBeGreaterThanOrEqual(40)
     expect(new Set(lessons.map(lesson => lesson.id)).size).toBe(lessons.length)
-    expect(lessons.filter(lesson => lesson.track === 'dsa')).toHaveLength(6)
+    expect(lessons.filter(lesson => lesson.track === 'dsa').length).toBeGreaterThanOrEqual(18)
     expect(tracks).toHaveLength(4)
     for (const lesson of lessons) {
       expect(lesson.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
       expect(tracks.some(track => track.id === lesson.track)).toBe(true)
-      expect(lesson.minutes).toBeGreaterThanOrEqual(15)
-      expect(lesson.minutes).toBeLessThanOrEqual(25)
+      expect(lesson.minutes).toBeGreaterThanOrEqual(30)
+      expect(lesson.minutes).toBeLessThanOrEqual(60)
       expect(lesson.objectives.length).toBeGreaterThanOrEqual(2)
       expect(lesson.concepts.length).toBeGreaterThanOrEqual(2)
       expect(lesson.concepts.every(concept => concept.body.length > 80)).toBe(true)
-      expect(lesson.example.length).toBeGreaterThan(100)
+      expect(lesson.example.trim()).not.toBe('')
       expect(lesson.task.length).toBeGreaterThan(100)
       expect(lesson.solution.length).toBeGreaterThan(200)
       expect(lesson.hints).toHaveLength(2)

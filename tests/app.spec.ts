@@ -198,6 +198,7 @@ test('all tracks offer substantive, refresh-safe lessons and prompts', async ({ 
     await row.getByRole('button', { name: 'Start lesson' }).click()
     await page.reload()
     await expect(page.getByRole('heading', { name: lesson.title, exact: true })).toBeVisible()
+    await page.getByLabel('In this lesson').selectOption('concept-0')
     await expect(page.getByText(lesson.concepts[0].body, { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Continue to practice' }).click()
     await expect(page.getByText(lesson.task, { exact: true })).toBeVisible()

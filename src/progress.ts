@@ -1,4 +1,5 @@
 import { lessons } from './curriculum'
+import { lessonSections } from './lesson-sections'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -15,6 +16,7 @@ export interface StudySession {
   solutionRevealed: boolean
   checks: boolean[]
   startedAt: string
+  readingSection?: string
 }
 export interface LessonProgress {
   attempts: number
@@ -49,10 +51,10 @@ function invalid(message: string): never {
   throw new Error(`Invalid backup: ${message}`)
 }
 
-function object(value: unknown, keys?: string[]): Record<string, unknown> {
+function object(value: unknown, keys?: string[], optionalKeys: string[] = []): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) invalid('expected an object.')
   const result = value as Record<string, unknown>
-  if (keys && (Object.keys(result).length !== keys.length || keys.some(key => !Object.hasOwn(result, key)))) {
+  if (keys && (Object.keys(result).some(key => !keys.includes(key) && !optionalKeys.includes(key)) || keys.some(key => !Object.hasOwn(result, key)))) {
     invalid('unexpected or missing fields.')
   }
   return result
@@ -114,11 +116,15 @@ export function parseBackup(text: string): Progress {
   }
   let session: StudySession | null = null
   if (root.session !== null) {
-    const raw = object(root.session, ['lessonId', 'mode', 'phase', 'draft', 'hintsRevealed', 'solutionRevealed', 'checks', 'startedAt'])
+    const raw = object(root.session, ['lessonId', 'mode', 'phase', 'draft', 'hintsRevealed', 'solutionRevealed', 'checks', 'startedAt'], ['readingSection'])
     const lesson = lessonFor(raw.lessonId)
     if (raw.phase !== 'lesson' && raw.phase !== 'practice' && raw.phase !== 'assess') invalid('unknown study step.')
     if (typeof raw.draft !== 'string' || raw.draft.length > MAX_DRAFT_LENGTH) invalid('answer too long.')
     if (raw.phase === 'assess' && !raw.draft.trim()) invalid('reflection requires a written attempt.')
+    if (Object.hasOwn(raw, 'readingSection') &&
+      (typeof raw.readingSection !== 'string' || !lessonSections(lesson).some(section => section.id === raw.readingSection))) {
+      invalid('unknown reading section.')
+    }
     if (typeof raw.solutionRevealed !== 'boolean') invalid('invalid solution state.')
     if (!Array.isArray(raw.checks) || raw.checks.length !== lesson.checklist.length || raw.checks.some(value => typeof value !== 'boolean')) {
       invalid('invalid self-assessment checklist.')
@@ -130,6 +136,7 @@ export function parseBackup(text: string): Progress {
       hintsRevealed: integer(raw.hintsRevealed, 0, lesson.hints.length),
       solutionRevealed: raw.solutionRevealed, checks: raw.checks as boolean[],
       startedAt: timestamp(raw.startedAt),
+      ...(typeof raw.readingSection === 'string' ? { readingSection: raw.readingSection } : {}),
     }
   }
   if (!Array.isArray(root.activity) || root.activity.length > 5_000) invalid('invalid activity history.')
@@ -150,7 +157,7 @@ export function beginSession(progress: Progress, lessonId: string, sessionMode: 
     session: {
       lessonId, mode: sessionMode, phase: sessionMode === 'review' ? 'practice' : 'lesson',
       draft: '', hintsRevealed: 0, solutionRevealed: false,
-      checks: lesson.checklist.map(() => false), startedAt: now.toISOString(),
+      checks: lesson.checklist.map(() => false), startedAt: now.toISOString(), readingSection: 'overview',
     },
   }
 }
