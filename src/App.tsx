@@ -4,6 +4,8 @@ import type { Lesson, Track } from './curriculum'
 import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, MAX_DRAFT_LENGTH, parseBackup, serializeBackup, STORAGE_KEY } from './progress'
 import type { Mode, Phase, Rating, StudySession } from './progress'
 import { useProgress } from './useProgress'
+import LessonReader from './LessonReader'
+import ExtraPractice from './ExtraPractice'
 
 type Route = 'today' | 'roadmap' | 'review' | 'progress' | 'study'
 const navigation = [
@@ -199,11 +201,11 @@ export default function App() {
                       <h2>{activeLesson?.title ?? nextLesson?.title ?? 'You’ve built a strong foundation.'}</h2>
                       <p>{activeLesson?.summary ?? nextLesson?.summary ?? 'Revisit the ideas you have learned. Explaining them again is where confidence grows.'}</p>
                       <button className="primary" onClick={() => progress.session ? navigate('study') : nextLesson ? start(nextLesson) : navigate('review')}>{progress.session ? 'Resume session' : nextLesson ? learnedToday ? 'Study another lesson' : 'Start today’s lesson' : 'Open your reviews'}<Icon name="arrow" size={18} /></button>
-                      <span className="hero-footnote">{progress.session ? `${phaseLabels[progress.session.phase]} step · Your draft is waiting` : 'Short lesson · Real practice · Honest reflection'}</span>
+                      <span className="hero-footnote">{progress.session ? `${phaseLabels[progress.session.phase]} step · Your draft is waiting` : 'Work in focused blocks · Pause whenever you need'}</span>
                     </div>
                   </section>
                   <section className="card daily-plan"><div className="section-heading"><h2>Today’s plan</h2><span className="muted">A sustainable pace</span></div>
-                    <div className="plan-row"><span className={`step-number ${learnedToday ? 'complete' : ''}`}>{learnedToday ? <Icon name="check" size={18} /> : '1'}</span><div><h3>{learnedToday ? 'New idea, explored' : 'Learn one new idea'}</h3><p>{learnedToday ? 'Your lesson is complete. More is optional.' : nextLesson ? nextLesson.title : 'All starter lessons completed. Revisit any topic.'}</p></div><span className="plan-meta">{learnedToday ? 'Done' : `${nextLesson?.minutes ?? 0} min`}</span></div>
+                    <div className="plan-row"><span className={`step-number ${learnedToday ? 'complete' : ''}`}>{learnedToday ? <Icon name="check" size={18} /> : '1'}</span><div><h3>{learnedToday ? 'New idea, explored' : 'One lesson, at your pace'}</h3><p>{learnedToday ? 'Your lesson is complete. More is optional.' : nextLesson ? nextLesson.title : 'All lessons completed. Revisit any topic.'}</p></div><span className="plan-meta">{learnedToday ? 'Done' : `${nextLesson?.minutes ?? 0} min`}</span></div>
                     <div className="plan-row"><span className={`step-number ${reviewedToday ? 'complete' : ''}`}>{reviewedToday ? <Icon name="check" size={18} /> : '2'}</span><div><h3>{reviewedToday ? 'Recall, reinforced' : 'Bring one idea back'}</h3><p>{reviewedToday ? 'You made time to practice remembering.' : due.length ? `${due.length} ${due.length === 1 ? 'lesson is' : 'lessons are'} ready for another look.` : 'Nothing due. Reviews appear after your first lesson.'}</p></div>{due.length > 0 ? <button className="text-button" onClick={() => start(due[0], 'review')}>Review <Icon name="arrow" size={16} /></button> : <span className="plan-meta">{reviewedToday ? 'Done' : 'All clear'}</span>}</div>
                   </section>
                 </div>
@@ -217,7 +219,7 @@ export default function App() {
             </>}
 
             {route === 'roadmap' && <>
-              <div className="page-heading"><div><div className="eyebrow">BUILD YOUR FOUNDATION</div><h1 ref={heading} tabIndex={-1}>Your learning roadmap</h1><p>Follow the order, or choose what you need. Every lesson is open.</p></div></div>
+              <div className="page-heading"><div><div className="eyebrow">BUILD YOUR FOUNDATION</div><h1 ref={heading} tabIndex={-1}>Your learning roadmap</h1><p>Follow each track’s prerequisite order, or choose what you need. Every lesson is open.</p><p className="helper">Times estimate a full study session, including practice. Split longer lessons across focused blocks; your reading position and notebook are saved.</p></div></div>
               <div className="filter-row" aria-label="Filter by track"><button aria-pressed={track === 'all'} onClick={() => setTrack('all')}>All tracks</button>{tracks.map(item => <button key={item.id} aria-pressed={track === item.id} onClick={() => setTrack(item.id)}>{item.title}</button>)}</div>
               {tracks.filter(item => track === 'all' || item.id === track).map(item => <section className="roadmap-track" key={item.id}><div className="section-heading"><div><h2>{item.title}</h2><p>{item.description}</p></div><span className="pill">{lessons.filter(lesson => lesson.track === item.id && progress.records[lesson.id]).length} / {lessons.filter(lesson => lesson.track === item.id).length} complete</span></div><div className="lesson-list">{lessons.filter(lesson => lesson.track === item.id).map((lesson, index) => <article className="lesson-row" key={lesson.id}><span className={`step-number ${progress.records[lesson.id] ? 'complete' : ''}`}>{progress.records[lesson.id] ? <Icon name="check" size={20} /> : String(index + 1).padStart(2, '0')}</span><div className="lesson-row-copy"><h3>{lesson.title}</h3><p>{lesson.summary}</p><span className="muted">{lesson.minutes} min · {progress.session?.lessonId === lesson.id ? 'In progress' : progress.records[lesson.id] ? `Next review ${displayDate(progress.records[lesson.id].due)}` : index === 0 ? 'Start here' : 'Next in this track'}</span></div><button onClick={() => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')}>{progress.session?.lessonId === lesson.id ? 'Resume' : progress.records[lesson.id] ? 'Practice again' : 'Start lesson'}<Icon name="arrow" size={16} /></button></article>)}</div></section>)}
             </>}
@@ -231,7 +233,7 @@ export default function App() {
             </>}
 
             {route === 'progress' && <>
-              <div className="page-heading"><div><div className="eyebrow">LOOK HOW FAR YOU’VE COME</div><h1 ref={heading} tabIndex={-1}>Progress, not perfection.</h1><p>These are practice milestones, not an interview readiness score.</p></div></div>
+              <div className="page-heading"><div><div className="eyebrow">LOOK HOW FAR YOU’VE COME</div><h1 ref={heading} tabIndex={-1}>Progress, not perfection.</h1><p>These are practice milestones, not an interview readiness score.</p><p className="helper">New lessons grow the roadmap, not erase your work. Previously completed lessons and scheduled reviews stay complete; the overall percentage uses the expanded total.</p></div></div>
               <div className="summary-grid"><section className="card"><span className="eyebrow">LESSONS EXPLORED</span><div className="big-number">{completed}<span> / {lessons.length}</span></div></section><section className="card"><span className="eyebrow">TOTAL SESSIONS</span><div className="big-number">{Object.values(progress.records).reduce((sum, record) => sum + record.attempts, 0)}</div></section><section className="card"><span className="eyebrow">REVIEWS DUE</span><div className="big-number">{due.length}</div></section></div>
               <section className="card"><h2>Your tracks</h2><div className="track-progress-list">{tracks.map(item => {
                 const subset = lessons.filter(lesson => lesson.track === item.id)
@@ -242,7 +244,7 @@ export default function App() {
               <section className="card"><h2>Recent practice</h2>{progress.activity.length ? <ol className="activity-list">{progress.activity.slice(-10).reverse().map((item, index) => <li key={`${item.at}-${index}`}><span className="activity-check"><Icon name="check" size={16} /></span><div><strong>{lessons.find(lesson => lesson.id === item.lessonId)?.title}</strong><p>{item.mode === 'review' ? 'Review' : 'Lesson'} · {ratingLabels[item.rating]}</p></div><time dateTime={item.at}>{new Date(item.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></li>)}</ol> : <p className="muted">Your first completed session will appear here. Start small.</p>}</section>
             </>}
 
-            {route === 'study' && (progress.session && activeLesson ? <Study lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('today')}>Go to Today</button></section>)}
+            {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('today')}>Go to Today</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('today')}>Back to Today</button></section>}
           </>}
       </main>
@@ -260,39 +262,40 @@ export default function App() {
   </div>
 }
 
-function Study({ lesson, session, edit, finish, heading }: {
+function Study({ lesson, session, edit, finish, heading, openLesson }: {
   lesson: Lesson
   session: StudySession
   edit: (patch: Partial<StudySession>) => void
   finish: (rating: Rating) => void
   heading: React.RefObject<HTMLHeadingElement | null>
+  openLesson: (lesson: Lesson) => void
 }) {
   const stepHeading = useRef<HTMLHeadingElement>(null)
+  const [practiceStage, setPracticeStage] = useState<'warmup' | 'core' | 'stretch'>('core')
   useEffect(() => { stepHeading.current?.focus() }, [session.phase])
   function advance(phase: Phase) {
     edit({ phase, ...(phase === 'assess' ? { solutionRevealed: true } : {}) })
   }
   return <div className={`study-page phase-${session.phase}`}>
-    <div className="page-heading"><div><div className="eyebrow">{session.mode === 'review' ? 'RETRIEVAL PRACTICE' : tracks.find(track => track.id === lesson.track)?.title} · {lesson.minutes} MIN</div><h1 ref={heading} tabIndex={-1}>{lesson.title}</h1><p>{session.mode === 'review' ? 'Try it from memory. Revisit the lesson whenever you need to.' : lesson.summary}</p></div><a className="button" href="#today">Pause session</a></div>
+    <div className="page-heading"><div><div className="eyebrow">{session.mode === 'review' ? 'RETRIEVAL PRACTICE' : tracks.find(track => track.id === lesson.track)?.title} · ABOUT {lesson.minutes} MIN</div><h1 ref={heading} tabIndex={-1}>{lesson.title}</h1><p>{session.mode === 'review' ? 'Try it from memory. Revisit the lesson whenever you need to.' : lesson.summary}</p><p className="helper">Full-session estimate. Pause between sections; warm-up and stretch practice are optional.</p></div><a className="button" href="#today">Pause session</a></div>
     <nav className="study-steps" aria-label="Study steps">{(['lesson', 'practice', 'assess'] as const).map((phase, index) => <button key={phase} aria-current={session.phase === phase ? 'step' : undefined} disabled={phase === 'assess' && !session.draft.trim()} onClick={() => advance(phase)}><span>{index + 1}</span>{phaseLabels[phase]}</button>)}</nav>
     <div className="study-columns">
       <article className="card lesson-content">
-        <div className="eyebrow">THE SHORT LESSON</div><h2 ref={session.phase === 'lesson' ? stepHeading : undefined} tabIndex={-1}>The idea behind the approach</h2>
-        <ul className="objectives">{lesson.objectives.map(item => <li key={item}>{item}</li>)}</ul>
-        {lesson.concepts.map(concept => <section key={concept.title}><h3>{concept.title}</h3><p className="preserve-lines">{concept.body}</p></section>)}
-        <section><h3>A worked example</h3><pre className="example-block">{lesson.example}</pre></section>
-        <section><h3>Watch out for</h3><ul>{lesson.pitfalls.map(item => <li key={item}>{item}</li>)}</ul></section>
+        <div className="eyebrow">UNDERSTAND THE REASONING</div><h2 ref={session.phase === 'lesson' ? stepHeading : undefined} tabIndex={-1} className="sr-only">Read the lesson</h2>
+        <LessonReader lesson={lesson} sectionId={session.readingSection} select={readingSection => edit({ readingSection })} openLesson={openLesson} />
         {session.phase === 'lesson' && <button className="primary" onClick={() => advance('practice')}>Continue to practice <Icon name="arrow" size={18} /></button>}
       </article>
       <section className="card practice-content">
         {session.phase === 'lesson' ? <><div className="eyebrow">UP NEXT</div><span className="practice-icon"><Icon name="code" size={28} /></span><h2>Turn the idea into a skill.</h2><p className="preserve-lines">{lesson.task}</p><div className="callout">Read the lesson, then try the task in your own words. This is a thinking space, not a code runner.</div></> : session.phase === 'practice' ? <>
-          <div className="eyebrow">YOUR TURN</div><h2 ref={stepHeading} tabIndex={-1}>Work through the problem</h2><p className="preserve-lines">{lesson.task}</p>
-          {lesson.starter && <details><summary>Suggested starting point</summary><pre>{lesson.starter}</pre></details>}
-          <label className="answer-label" htmlFor="practice-answer">Your approach & answer</label><p className="helper" id="answer-help">Write pseudocode, a design sketch, or talking points. Explain why your approach works. Nothing is executed or automatically graded.</p>
+          <div className="eyebrow">YOUR TURN</div><h2 ref={stepHeading} tabIndex={-1}>Work through the problem</h2>
+          <div className="practice-levels" role="group" aria-label="Practice difficulty">{(['warmup', 'core', 'stretch'] as const).map(stage => <button key={stage} aria-pressed={practiceStage === stage} onClick={() => setPracticeStage(stage)}>{stage === 'warmup' ? 'Warm-up' : stage === 'core' ? 'Core task' : 'Stretch'}</button>)}</div>
+          {practiceStage === 'core' ? <><p className="preserve-lines">{lesson.task}</p>
+          {lesson.starter && <details><summary>Suggested starting point</summary><pre><code>{lesson.starter}</code></pre></details>}</> : <ExtraPractice key={practiceStage} exercise={lesson.extraPractice.find(exercise => exercise.id === practiceStage)!} />}
+          <label className="answer-label" htmlFor="practice-answer">Your approach & answer</label><p className="helper" id="answer-help">Write pseudocode, a design sketch, or talking points. Explain why your approach works. Nothing is executed or automatically graded. This notebook is shared across all three difficulties; label any optional work. Reflection assesses the core task.</p>
           <textarea id="practice-answer" aria-describedby="answer-help answer-count" value={session.draft} maxLength={MAX_DRAFT_LENGTH} placeholder="Start with what you know. What would you try, and why?" onChange={event => edit({ draft: event.target.value })} spellCheck={false} />
           <div id="answer-count" className="answer-count">{session.draft.length.toLocaleString()} / {MAX_DRAFT_LENGTH.toLocaleString()} characters</div>
-          <div className="hint-area">{session.hintsRevealed < lesson.hints.length && <button onClick={() => edit({ hintsRevealed: session.hintsRevealed + 1 })}>Need a hint? ({session.hintsRevealed}/{lesson.hints.length})</button>}{lesson.hints.slice(0, session.hintsRevealed).map((hint, index) => <div className="callout" key={hint}><strong>Hint {index + 1}</strong><p>{hint}</p></div>)}</div>
-          {session.solutionRevealed ? <details open><summary>Worked solution</summary><pre>{lesson.solution}</pre></details> : <button className="text-button" onClick={() => edit({ solutionRevealed: true })}>Reveal worked solution</button>}
+          {practiceStage === 'core' && <><div className="hint-area">{session.hintsRevealed < lesson.hints.length && <button onClick={() => edit({ hintsRevealed: session.hintsRevealed + 1 })}>Need a hint? ({session.hintsRevealed}/{lesson.hints.length})</button>}{lesson.hints.slice(0, session.hintsRevealed).map((hint, index) => <div className="callout" key={hint}><strong>Hint {index + 1}</strong><p>{hint}</p></div>)}</div>
+          {session.solutionRevealed ? <details open><summary>Worked solution</summary><pre>{lesson.solution}</pre></details> : <button className="text-button" onClick={() => edit({ solutionRevealed: true })}>Reveal worked solution</button>}</>}
           <div className="study-action"><p className="helper">{session.draft.trim() ? 'Ready? Compare your approach and reflect.' : 'Write an attempt before moving to reflection. Getting stuck counts: explain where and why.'}</p><button className="primary" disabled={!session.draft.trim()} onClick={() => advance('assess')}>Compare & reflect <Icon name="arrow" size={18} /></button></div>
         </> : <>
           <div className="eyebrow">CLOSE THE LOOP</div><h2 ref={stepHeading} tabIndex={-1}>Explain it. Then be honest.</h2><p>Compare the reasoning, not just the final answer. This is self-assessment, not automated grading.</p>
@@ -300,6 +303,7 @@ function Study({ lesson, session, edit, finish, heading }: {
           <details open><summary>Worked solution & explanation</summary><pre>{lesson.solution}</pre></details>
           <fieldset className="checklist"><legend>What can you explain without looking?</legend>{lesson.checklist.map((item, index) => <label key={item}><input type="checkbox" checked={session.checks[index]} onChange={event => edit({ checks: session.checks.map((checked, i) => i === index ? event.target.checked : checked) })} /><span>{item}</span></label>)}</fieldset>
           <p className="helper">No need to check every box. Use the gaps to choose your next review.</p>
+          <section className="interview-followups"><h3>Interview follow-ups</h3><p>Answer aloud before opening the discussion. These are practice prompts, not scripts to memorize.</p>{lesson.followUps.map(item => <details key={item.question}><summary>{item.question}</summary><p className="preserve-lines">{item.answer}</p></details>)}</section>
           <fieldset className="rating-options"><legend>How did this feel?</legend><button onClick={() => finish('again')}><strong>Needs practice</strong><span>Review tomorrow</span></button><button onClick={() => finish('okay')}><strong>Getting there</strong><span>Review in a few days</span></button><button className="primary" onClick={() => finish('confident')}><strong>Confident</strong><span>Review after a longer gap</span></button></fieldset>
           <p className="helper">Choosing a confidence level completes this session. First reviews are in 1, 3, or 7 days. Later intervals adapt, up to 60 days. Completion and confidence are kept; your answer and checklist are cleared for fresh recall. Export from Progress before finishing if you want to keep your draft.</p><button className="text-button" onClick={() => advance('practice')}>Back to my answer</button>
         </>}

@@ -4,18 +4,31 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 
 ## The study loop
 
-**Today → short lesson → practice → explanation & self-assessment → scheduled review.**
+**Today → chunked lesson → practice → explanation & self-assessment → scheduled review.**
 
-- An open, guided roadmap with **12 original lessons**: six DSA, two system design, two ML fundamentals, and two behavioral/interview preparation.
-- A daily plan suggesting one new lesson and one due review. Additional practice is optional; nothing is locked.
-- Concrete examples, practice tasks, two progressive hints, worked solutions, pitfalls, and reflection checklists.
-- Resumable sessions: current step, answer, revealed hints, solution visibility, and checklist are saved as you work.
+- **46 original, in-depth lessons** across all four tracks: **19 DSA, 10 system design, 9 ML, and 8 behavioral/interview lessons**, ordered by recommended prerequisites. All 12 original lessons are substantially deepened. See the coverage map below.
+- A daily plan suggesting one new lesson and one due review. Full-session estimates include learning and practice; longer lessons can be split across days. Additional practice is optional; nothing is locked.
+- Chunked reading: objectives/prerequisites, individual concepts, worked examples and walkthroughs, pitfalls, and takeaways. Use the section selector or Previous/Next controls instead of scrolling through a wall of text.
+- Progressively challenging **warm-up → core → stretch** practice with progressive hints, worked answers, and rubrics. One session notebook is shared across the three difficulties; label optional work. Only the core task drives completion and review scheduling.
+- Interview follow-ups with discussion points to practice reasoning aloud, not memorize scripts.
+- Resumable sessions: current step, reading section, answer, core-task hints, core solution visibility, and checklist are saved as you work. Optional exercise disclosures reset when leaving that exercise, but notebook text stays.
 - Calendar-based spaced reviews driven by your own confidence. First reviews: **1 day** for Needs practice, **3 days** for Getting there, **7 days** for Confident. Subsequent reviews reset to 1, multiply the previous interval by 1.5 (rounded up), or double it respectively, capped at 60 days. Early practice also reschedules from its completion date.
 - Progress by track and recent session history. These are practice milestones, not readiness scores.
 - Desktop sidebar and lesson/practice split view; focused single-step study on smaller screens and bottom navigation on mobile. Keyboard navigation, visible focus, labeled controls, and reduced-motion support.
 - Clawpilot light/dark theme. `?scoutTheme=light` or `?scoutTheme=dark` explicitly overrides the system preference. The theme button updates that URL parameter.
 
-System design and behavioral work is assessed with prompts and checklists, **not automated grading**. There is no code execution, AI coaching, full mock interview system, backend, account, payment, or notification service.
+System design and behavioral work is assessed with prompts and checklists, **not automated grading**. DSA examples retain language-neutral pseudocode rather than introducing an arbitrary execution language. Behavioral illustrations are models for organizing genuine experience, never instructions to invent accomplishments. There is no code execution, AI coaching, full mock interview system, backend, account, payment, or notification service.
+
+## Curriculum coverage
+
+| Track | Learning progression |
+| --- | --- |
+| Data structures & algorithms | Arrays and hash maps; two pointers and sliding windows; stacks, queues, and linked lists; binary search and sorting; recursion, trees/BSTs, and heaps; graph BFS/DFS and topological ordering; backtracking, greedy reasoning, and dynamic programming |
+| System design | Requirements and capacity; APIs/data modeling and databases/indexes; caching; replication/partitioning and consistency; queues/events and rate limiting; reliability/observability; worked end-to-end designs |
+| Machine learning | Data preparation/leakage and splitting/evaluation; regression/classification; optimization/regularization and bias/variance; trees/ensembles; clustering; imbalance/thresholds; deployment, monitoring, and practical design tradeoffs |
+| Behavioral/interview preparation | Truthful structured stories; ownership/impact; conflict; failure/learning; ambiguity/prioritization; collaboration/leadership; project deep dives; communication during technical interviews |
+
+Prerequisite links are advisory and remain within each track. Opening one asks before replacing an unfinished session. Warm-ups reduce problem size or focus on one idea; stretch tasks change assumptions or add constraints. Completing a lesson records your self-assessment, not mastery of every optional challenge.
 
 ## Run locally
 
@@ -53,6 +66,16 @@ Progress lives under `devprep.progress.v1` in this browser’s local storage. It
 - Other-tab changes are detected through storage events and a pre-write snapshot check. Export this tab’s work before reloading the saved version. Use one editing tab at a time: local storage has no cross-tab transactional locking.
 - Backups can contain personal notes. Keep them private and avoid sensitive employer or interview information.
 
+### Compatibility with the original curriculum
+
+All 12 published lesson IDs and their core practice contracts remain unchanged: tasks, hint order/count, checklist wording/order/count, starter pseudocode, examples, and core solutions. Existing answers and checked boxes therefore retain their meaning even as new teaching material is added.
+
+The storage key and backup schema version remain **v1**. A validated optional `session.readingSection` bookmark extends the session shape; original exports without it still load unchanged, beginning at the overview when returning to the Learn step. No destructive migration or automatic reset is performed. Old app versions may reject the new optional field; use the updated app when importing a new export.
+
+Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded order.
+
+`tests/fixtures/v1-progress.json` is a real export captured through the original MVP browser UI before the expansion: one completed hash-map lesson and an unfinished two-pointer reflection with draft, both hints revealed, solution visibility, and checked items. Tests load/import/resume/finish it and compare the previous record and review date. Separate fixed fingerprints protect all 12 original core contracts.
+
 Review dates use the device’s local calendar, including daylight-saving changes. They do not send reminders. The app refreshes the current date once per minute while open.
 
 ## GitHub Pages deployment
@@ -73,13 +96,17 @@ All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so re
 
 | File | Responsibility |
 | --- | --- |
-| `src/curriculum.ts` | Original lesson content and stable track/lesson IDs |
+| `src/curriculum-types.ts` | Teaching sections, staged exercises, and lesson schema |
+| `src/curriculum.ts` | Track metadata and prerequisite-ordered curriculum assembly |
+| `src/content/` | Four expanded tracks, preserved published starter contracts, and worked-example tests |
+| `src/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
+| `src/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
 | `src/App.tsx` | Today, roadmap, study, review, progress, and backup flows |
 | `src/styles.css` | Clawpilot tokens and responsive layouts |
-| `src/progress.test.ts` | Curriculum contract, state transitions, invalid inputs, storage failures |
-| `tests/app.spec.ts` | Production-browser workflows, keyboard behavior, viewport checks, visual captures |
+| `src/progress.test.ts`, `src/curriculum.test.ts` | State transitions, content graph/integrity, published contract preservation, invalid inputs, storage failures |
+| `tests/app.spec.ts`, `tests/expanded.spec.ts` | Production-browser workflows, legacy resume, staged exercises, keyboard behavior, per-track viewport checks, visual captures |
 | `.github/workflows/deploy.yml` | PR validation and gated `main` deployment |
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.
