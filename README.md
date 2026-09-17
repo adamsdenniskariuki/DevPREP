@@ -58,8 +58,8 @@ These are **interview-preparation guides, not certification, level assessments, 
 
 Use the visibly labeled **Accent** selector beside the light/dark button. Each option has a color name, the native selector identifies the selected option, and the adjacent swatch previews it. The control supports keyboard selection and touch-sized targets.
 
-- **Red (rose)** remains the default. Existing users do not need to select or migrate anything.
-- **Blue**, **Forest green**, and **Purple** are opt-in accent variants, each with deliberately paired light/dark values.
+- **Purple** is the default only when no accent was saved. Existing explicit **Red (rose)**, **Blue**, **Forest green**, and **Purple** selections are retained.
+- All four accent variants have deliberately paired light/dark values; switching does not reset study data.
 - Accent changes affect action buttons, active navigation, progress fills, selected states, tinted accents, and focus outlines. Neutral backgrounds, typography, layout, and success/warning/danger/link tokens are not palette overrides.
 - Light/dark behavior is unchanged: an explicit `scoutTheme` URL value wins over the system preference. Without a valid override, the system preference is read at page load. The accent selector does not change that URL or theme choice.
 
@@ -67,13 +67,15 @@ Use the visibly labeled **Accent** selector beside the light/dark button. Each o
 
 The separate local-storage key **`devprep.accent.v1`** contains one of `red`, `blue`, `forest`, or `purple`. It is an appearance preference, **not part of study-progress JSON exports/imports**. Restoring an old or new progress backup therefore does not change the current accent or require a backup schema change. Like other browser-local data, the preference is specific to the origin and browser profile; changing domains or clearing site data can restore the default.
 
-The small head script applies a valid saved accent before the React application starts. Missing preferences default to red without writing anything. Invalid or unreadable preferences display red and surface a visible warning once the UI loads; the stored value is not silently deleted or replaced. Choosing an accent or **Save current accent** changes only the accent key.
+The small head script applies a valid saved accent before the React application starts. Missing preferences default to purple without writing anything. Invalid or unreadable preferences display purple and surface a visible warning once the UI loads; the stored value is not silently deleted or replaced. Choosing an accent or **Save current accent** changes only the accent key.
 
 If saving fails, the selected accent still applies in the current tab, a warning explains that it is not saved, and **Save current accent** retries. The previous saved value and all study data remain intact. Other tabs pick up the most recently saved accent when reloaded; this preference does not trigger study-progress conflict handling.
 
 ### Palette and contrast checks
 
-`src/accents.css` centralizes the three opt-in palettes and contextual `--cp-accent-on-soft` text colors. The original red fill, hover, soft/highlight, and foreground tokens remain unchanged. Stronger text ink on tinted dark surfaces, and neutral text on nested badges, avoid low-contrast combinations without recoloring semantic feedback.
+`src/accents.css` centralizes the purple fallback, four selectable palettes, and contextual `--cp-accent-on-soft` text colors. The explicit red option retains its original fill, hover, soft/highlight, and foreground values. Stronger text ink on tinted dark surfaces, and neutral text on nested badges, avoid low-contrast combinations without recoloring semantic feedback.
+
+Keyboard focus uses a thinner **2px accent outline with a 2px offset**, not a blanket outline removal. Navigation, app menu summaries, and study/filter buttons suppress the browser's default rectangular tap highlight while retaining theme-consistent pressed/selected feedback. Native selects and inputs keep their browser interaction behavior. Chromium touch emulation exposed the default blue tap-highlight property; the transient overlay was not reliably captured in a screenshot, and physical iOS/WebKit behavior has not been verified.
 
 Browser tests exercise all **4 accents × 2 theme modes**, measuring actual CSS colors and alpha-composited surfaces. Targets are **at least 4.5:1** for tested accent text/primary/hover/selected combinations and **3:1** for tested focus/progress combinations. They also inspect rendered states, startup initialization, persistence/errors, keyboard/touch behavior, and domain-root navigation. These are targeted accent checks, not a claim that every aspect of the app has received a full accessibility audit.
 

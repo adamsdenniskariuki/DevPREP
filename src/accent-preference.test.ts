@@ -33,7 +33,7 @@ describe('accent preference', () => {
   it('provides exactly the four approved, visibly named colors', () => {
     expect(accents.map(accent => accent.id)).toEqual(['red', 'blue', 'forest', 'purple'])
     expect(accents.map(accent => accent.label)).toEqual(['Red (rose)', 'Blue', 'Forest green', 'Purple'])
-    expect(parseAccent(null)).toBe('red')
+    expect(parseAccent(null)).toBe('purple')
   })
 
   it.each(accents)('validates and writes only the $id preference key', ({ id }) => {
@@ -71,8 +71,8 @@ describe('pre-paint appearance initialization', () => {
     })
   })
 
-  it('defaults missing users to the original red without writing a preference', () => {
-    expect(initialize(null)).toEqual({ theme: 'light', accent: 'red' })
+  it('defaults missing users to purple without writing a preference', () => {
+    expect(initialize(null)).toEqual({ theme: 'light', accent: 'purple' })
   })
 
   it('keeps system detection independent of the saved accent and ignores invalid theme overrides', () => {
@@ -81,7 +81,7 @@ describe('pre-paint appearance initialization', () => {
   })
 
   it('records invalid/unreadable preferences for a visible React error rather than silently deleting them', () => {
-    expect(initialize('amber')).toEqual({ theme: 'light', accent: 'red', accentError: 'invalid' })
-    expect(initialize(null, '?scoutTheme=light', true, true)).toEqual({ theme: 'light', accent: 'red', accentError: 'unavailable' })
+    expect(initialize('amber')).toEqual({ theme: 'light', accent: 'purple', accentError: 'invalid' })
+    expect(initialize(null, '?scoutTheme=light', true, true)).toEqual({ theme: 'light', accent: 'purple', accentError: 'unavailable' })
   })
 })

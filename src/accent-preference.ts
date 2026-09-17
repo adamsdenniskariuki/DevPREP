@@ -10,7 +10,7 @@ export const accents = [
 export type Accent = typeof accents[number]['id']
 
 export function parseAccent(value: string | null): Accent {
-  if (value === null) return 'red'
+  if (value === null) return 'purple'
   if (value === 'red' || value === 'blue' || value === 'forest' || value === 'purple') return value
   throw new Error('The saved accent preference is not recognized.')
 }

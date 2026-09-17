@@ -5,9 +5,9 @@ import type { Accent } from './accent-preference'
 function initialAccent() {
   const root = document.documentElement
   const error = root.dataset.accentError === 'invalid'
-    ? 'The saved accent preference is invalid. Red (rose) is shown; choose an accent or save the current one to replace only this preference.'
+    ? 'The saved accent preference is invalid. Purple is shown; choose an accent or save the current one to replace only this preference.'
     : root.dataset.accentError
-      ? 'The accent preference could not be read from browser storage. Red (rose) is shown; you can try saving an accent.'
+      ? 'The accent preference could not be read from browser storage. Purple is shown; you can try saving an accent.'
       : ''
   return { accent: parseAccent(root.dataset.accent ?? null), error }
 }
