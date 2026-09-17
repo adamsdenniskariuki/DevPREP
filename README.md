@@ -101,12 +101,13 @@ All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so re
 | `src/content/` | Four expanded tracks, preserved published starter contracts, and worked-example tests |
 | `src/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
 | `src/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
+| `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
 | `src/App.tsx` | Today, roadmap, study, review, progress, and backup flows |
 | `src/styles.css` | Clawpilot tokens and responsive layouts |
-| `src/progress.test.ts`, `src/curriculum.test.ts` | State transitions, content graph/integrity, published contract preservation, invalid inputs, storage failures |
-| `tests/app.spec.ts`, `tests/expanded.spec.ts` | Production-browser workflows, legacy resume, staged exercises, keyboard behavior, per-track viewport checks, visual captures |
+| `src/progress.test.ts` | Curriculum contract, state transitions, invalid inputs, storage failures |
+| `tests/app.spec.ts` | Production-browser workflows, keyboard behavior, viewport checks, visual captures |
 | `.github/workflows/deploy.yml` | PR validation and gated `main` deployment |
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.
