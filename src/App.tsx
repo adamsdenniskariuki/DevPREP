@@ -13,6 +13,8 @@ import PathPicker from './PathPicker'
 import PathRoadmap from './PathRoadmap'
 import PathPrompt from './PathPrompt'
 import LessonList from './LessonList'
+import AccentPicker from './AccentPicker'
+import { useAccent } from './useAccent'
 
 type Route = 'today' | 'roadmap' | 'review' | 'progress' | 'study'
 const navigation = [
@@ -54,6 +56,7 @@ function download(text: string, name: string) {
 
 export default function App() {
   const store = useProgress()
+  const accent = useAccent()
   const { progress } = store
   const [route, setRoute] = useState(routeFromHash)
   const [track, setTrack] = useState<Track | 'all'>('all')
@@ -170,6 +173,7 @@ export default function App() {
     {!store.recovery && <button onClick={exportBackup}>Export backup <span aria-hidden="true">↓</span></button>}
     <button onClick={() => importInput.current?.click()}>Import backup <span aria-hidden="true">↑</span></button>
   </div>
+  const accentProblem = <div className="accent-problem"><strong>Accent preference needs attention.</strong><p>{accent.error} Study progress is separate and has not been changed by the accent preference.</p><button onClick={accent.retry}>Save current accent</button></div>
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
@@ -193,7 +197,7 @@ export default function App() {
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><a className="mobile-brand" href="#today">Dev<span>PREP</span></a><span className="breadcrumb">Your interview journey <span>/</span> {route === 'study' ? 'Study session' : navigation.find(item => item.id === route)?.label ?? 'Page not found'}</span><div className="topbar-right"><span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Saved on this browser'}</span><button className="theme-button" aria-label="Toggle color theme" onClick={() => {
+      <header className="topbar"><a className="mobile-brand" href="#today">Dev<span>PREP</span></a><span className="breadcrumb">Your interview journey <span>/</span> {route === 'study' ? 'Study session' : navigation.find(item => item.id === route)?.label ?? 'Page not found'}</span><div className="topbar-right"><span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Study progress saved on this browser'}</span><AccentPicker accent={accent.accent} onChange={accent.choose} /><button className="theme-button" aria-label="Toggle color theme" onClick={() => {
         const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
         document.documentElement.dataset.theme = theme
         const url = new URL(window.location.href)
@@ -205,7 +209,8 @@ export default function App() {
           {!store.recovery && !store.conflict && <button onClick={store.retry}>Retry saving</button>}
           {!store.recovery && <button onClick={exportBackup}>Export current work</button>}
           <button onClick={() => { if (!store.unsaved || window.confirm('Reload and discard unsaved changes? Export a backup first to keep them.')) window.location.reload() }}>Reload saved version</button>
-        </div></div>}
+        </div>{accent.error && accentProblem}</div>}
+        {!store.error && accent.error && <div className="alert" role="alert">{accentProblem}</div>}
         {notice && <div className="notice" role="status">{notice}<button className="text-button" aria-label="Dismiss notification" onClick={() => setNotice('')}>Dismiss</button></div>}
         {backupError && <div className="alert" role="alert">{backupError}</div>}
 

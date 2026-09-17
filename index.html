@@ -9,6 +9,17 @@
           ? param
           : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
         document.documentElement.setAttribute("data-theme", theme);
+        let accent = "red";
+        try {
+          const saved = window.localStorage.getItem("devprep.accent.v1");
+          if (saved !== null) {
+            if (["red", "blue", "forest", "purple"].includes(saved)) accent = saved;
+            else document.documentElement.dataset.accentError = "invalid";
+          }
+        } catch {
+          document.documentElement.dataset.accentError = "unavailable";
+        }
+        document.documentElement.dataset.accent = accent;
       })();
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
