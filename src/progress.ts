@@ -1,5 +1,7 @@
 import { lessons } from './curriculum'
 import { lessonSections } from './lesson-sections'
+import { isPathId } from './learning-paths'
+import type { PathId } from './learning-paths'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -37,6 +39,7 @@ export interface Progress {
   records: Record<string, LessonProgress>
   session: StudySession | null
   activity: Activity[]
+  selectedPath?: PathId
 }
 
 export function emptyProgress(now = new Date()): Progress {
@@ -98,8 +101,9 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath'])
   if (root.version !== 1) invalid('unsupported version.')
+  if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
   const rawRecords = object(root.records)
   const records: Record<string, LessonProgress> = {}
@@ -146,7 +150,7 @@ export function parseBackup(text: string): Progress {
     if (!Object.hasOwn(records, lesson.id)) invalid('activity has no completed lesson.')
     return { lessonId: lesson.id, at: timestamp(raw.at), mode: mode(raw.mode), rating: rating(raw.rating) }
   })
-  return { version: 1, updatedAt, records, session, activity }
+  return { version: 1, updatedAt, records, session, activity, ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}) }
 }
 
 export function beginSession(progress: Progress, lessonId: string, sessionMode: Mode, now = new Date()): Progress {
