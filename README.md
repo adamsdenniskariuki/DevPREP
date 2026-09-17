@@ -8,6 +8,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 
 - **46 original, in-depth lessons** across all four tracks: **19 DSA, 10 system design, 9 ML, and 8 behavioral/interview lessons**, ordered by recommended prerequisites. All 12 original lessons are substantially deepened. See the coverage map below.
 - A daily plan suggesting one new lesson and one due review. Full-session estimates include learning and practice; longer lessons can be split across days. Additional practice is optional; nothing is locked.
+- Optional **Software Engineer** and **Senior Software Engineer** learning paths curate the existing lessons into different prerequisite-respecting sequences. Switch at any time without losing your work.
 - Chunked reading: objectives/prerequisites, individual concepts, worked examples and walkthroughs, pitfalls, and takeaways. Use the section selector or Previous/Next controls instead of scrolling through a wall of text.
 - Progressively challenging **warm-up → core → stretch** practice with progressive hints, worked answers, and rubrics. One session notebook is shared across the three difficulties; label optional work. Only the core task drives completion and review scheduling.
 - Interview follow-ups with discussion points to practice reasoning aloud, not memorize scripts.
@@ -29,6 +30,28 @@ System design and behavioral work is assessed with prompts and checklists, **not
 | Behavioral/interview preparation | Truthful structured stories; ownership/impact; conflict; failure/learning; ambiguity/prioritization; collaboration/leadership; project deep dives; communication during technical interviews |
 
 Prerequisite links are advisory and remain within each track. Opening one asks before replacing an unfinished session. Warm-ups reduce problem size or focus on one idea; stretch tasks change assumptions or add constraints. Completing a lesson records your self-assessment, not mastery of every optional challenge.
+
+## SWE and Senior SWE learning paths
+
+Choose a path with the **Learning path** selector, available on Today, Roadmap, Review, Progress, and Study. **Compare paths & outcomes** explains the audience and learning goals. No path is selected automatically: new users and old backups without a choice keep the existing curriculum order and all-track roadmap.
+
+| Path | Curated lessons | Emphasis and sequence |
+| --- | --- | --- |
+| Software Engineer | **29**: 17 DSA, 4 system design, 8 interview | Programming foundations → evidence of contribution → structures/search → algorithm choices → a small service → communication and reflection |
+| Senior Software Engineer | **30**: 12 DSA, 10 system design, 8 interview | Requirements/ownership/ambiguity → selected coding refresh → distributed-system tradeoffs → operational ownership and leadership → end-to-end synthesis |
+
+Both paths include every selected lesson's prerequisites earlier in the sequence, rather than assuming prior knowledge is a completed lesson. Shared lessons retain one completion record and count in **both** paths. Their overlap is intentional: communication and leadership lessons form a prerequisite chain, while the Senior path adds broader design work, different sequencing, and three focused discussion extensions.
+
+Senior extensions cover negotiating ambiguous scope, owning an index migration/rollback, and influencing across teams without inventing authority. They appear during practice and reflection on the relevant lessons, with prompts, reasoning rubrics, and a defensible discussion. They are optional: notes share the session notebook, and they do **not** create extra completions, alter the core exercise, or add review dates.
+
+- **Today:** the first unfinished lesson in the selected path is the next recommendation. An unfinished session takes priority, even if it is outside the path. A daily completed lesson from any track still counts as study for that day.
+- **Roadmap:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 46 lessons remain open; ML and omitted coding/design topics are optional supplemental study.
+- **Progress:** the selected path has its own denominator (29 or 30); overall progress remains out of 46. Both path totals are shown separately. Supplemental work contributes to overall completion, not to a path that omits it.
+- **Review:** the queue always includes every due completed lesson, including supplemental ML and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
+- **Switching or clearing:** changing the selector updates only the path choice. Drafts, reading bookmarks, hints, checklist selections, completion records, and review dates stay intact. Choosing **All curriculum (no path selected)** restores the original recommendation behavior.
+- **Path completion:** Today says the path is explored and offers reviews or all-curriculum browsing; it does not silently enroll you in another path or supplemental track.
+
+These are **interview-preparation guides, not certification, level assessments, or readiness guarantees**. The Senior path is focused interview practice, not a complete senior-engineer training program. Adapt behavioral examples truthfully to your own experience; label hypothetical reasoning as hypothetical.
 
 ## Run locally
 
@@ -58,7 +81,7 @@ The build includes TypeScript checking. The browser tests start an isolated stat
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Progress → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), and the latest 5,000 activity events.
+- **Progress → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, and the latest 5,000 activity events.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -72,7 +95,9 @@ All 12 published lesson IDs and their core practice contracts remain unchanged: 
 
 The storage key and backup schema version remain **v1**. A validated optional `session.readingSection` bookmark extends the session shape; original exports without it still load unchanged, beginning at the overview when returning to the Learn step. No destructive migration or automatic reset is performed. Old app versions may reject the new optional field; use the updated app when importing a new export.
 
-Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded order.
+The optional root field `selectedPath` accepts only `"swe"` or `"senior"`. An absent field means no selected path; clearing the choice removes the field. Unknown values (including `null`) are rejected before import can replace data. Import confirmation states which path the backup will restore. Importing an old backup with no path clears the current choice, as part of the explicitly confirmed replacement, without assigning a level. Old payloads round-trip without newly inserted fields.
+
+Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
 `tests/fixtures/v1-progress.json` is a real export captured through the original MVP browser UI before the expansion: one completed hash-map lesson and an unfinished two-pointer reflection with draft, both hints revealed, solution visibility, and checked items. Tests load/import/resume/finish it and compare the previous record and review date. Separate fixed fingerprints protect all 12 original core contracts.
 
@@ -124,6 +149,10 @@ The target has **no scheme or path**: do not include `https://` or `/DevPREP/`.
 | `src/content/` | Four expanded tracks, preserved published starter contracts, and worked-example tests |
 | `src/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
 | `src/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
+| `src/learning-paths.ts`, `src/learning-paths.test.ts` | Curated path phases, senior extensions, selection/progress helpers, prerequisite and preservation tests |
+| `src/PathPicker.tsx`, `src/PathRoadmap.tsx`, `src/PathPrompt.tsx` | Opt-in path selection, ordered roadmap, and senior discussion surfaces |
+| `src/LessonList.tsx`, `src/format.ts` | Shared lesson rows and review-date formatting for path and all-track views |
+| `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
