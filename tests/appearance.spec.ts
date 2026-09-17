@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { ACCENT_KEY, accents } from '../src/accent-preference'
-import { color, contrast } from './contrast'
+import { color, contrast, textContrast } from './contrast'
 
 test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } })
 
@@ -46,6 +46,8 @@ for (const theme of ['light', 'dark']) {
       await answer.focus()
       await expect(answer).toHaveCSS('outline-width', '2px')
       await expect(answer).toHaveCSS('box-shadow', 'none')
+      await page.locator('.pwa-panel > summary').tap()
+      expect(await textContrast(page.locator('.pwa-panel p').first())).toBeGreaterThanOrEqual(4.5)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     })
   }
