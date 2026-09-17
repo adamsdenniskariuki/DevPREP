@@ -17,6 +17,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 - Progress by track and recent session history. These are practice milestones, not readiness scores.
 - Desktop sidebar and lesson/practice split view; focused single-step study on smaller screens and bottom navigation on mobile. Keyboard navigation, visible focus, labeled controls, and reduced-motion support.
 - Clawpilot light/dark theme. `?scoutTheme=light` or `?scoutTheme=dark` explicitly overrides the system preference. The theme button updates that URL parameter.
+- Four optional accent colors: the original **Red (rose)**, **Blue**, **Forest green**, and **Purple**, independent of the light/dark theme.
 
 System design and behavioral work is assessed with prompts and checklists, **not automated grading**. DSA examples retain language-neutral pseudocode rather than introducing an arbitrary execution language. Behavioral illustrations are models for organizing genuine experience, never instructions to invent accomplishments. There is no code execution, AI coaching, full mock interview system, backend, account, payment, or notification service.
 
@@ -52,6 +53,31 @@ Senior extensions cover negotiating ambiguous scope, owning an index migration/r
 - **Path completion:** Today says the path is explored and offers reviews or all-curriculum browsing; it does not silently enroll you in another path or supplemental track.
 
 These are **interview-preparation guides, not certification, level assessments, or readiness guarantees**. The Senior path is focused interview practice, not a complete senior-engineer training program. Adapt behavioral examples truthfully to your own experience; label hypothetical reasoning as hypothetical.
+
+## Appearance
+
+Use the visibly labeled **Accent** selector beside the light/dark button. Each option has a color name, the native selector identifies the selected option, and the adjacent swatch previews it. The control supports keyboard selection and touch-sized targets.
+
+- **Red (rose)** remains the default. Existing users do not need to select or migrate anything.
+- **Blue**, **Forest green**, and **Purple** are opt-in accent variants, each with deliberately paired light/dark values.
+- Accent changes affect action buttons, active navigation, progress fills, selected states, tinted accents, and focus outlines. Neutral backgrounds, typography, layout, and success/warning/danger/link tokens are not palette overrides.
+- Light/dark behavior is unchanged: an explicit `scoutTheme` URL value wins over the system preference. Without a valid override, the system preference is read at page load. The accent selector does not change that URL or theme choice.
+
+### Accent persistence and recovery
+
+The separate local-storage key **`devprep.accent.v1`** contains one of `red`, `blue`, `forest`, or `purple`. It is an appearance preference, **not part of study-progress JSON exports/imports**. Restoring an old or new progress backup therefore does not change the current accent or require a backup schema change. Like other browser-local data, the preference is specific to the origin and browser profile; changing domains or clearing site data can restore the default.
+
+The small head script applies a valid saved accent before the React application starts. Missing preferences default to red without writing anything. Invalid or unreadable preferences display red and surface a visible warning once the UI loads; the stored value is not silently deleted or replaced. Choosing an accent or **Save current accent** changes only the accent key.
+
+If saving fails, the selected accent still applies in the current tab, a warning explains that it is not saved, and **Save current accent** retries. The previous saved value and all study data remain intact. Other tabs pick up the most recently saved accent when reloaded; this preference does not trigger study-progress conflict handling.
+
+### Palette and contrast checks
+
+`src/accents.css` centralizes the three opt-in palettes and contextual `--cp-accent-on-soft` text colors. The original red fill, hover, soft/highlight, and foreground tokens remain unchanged. Stronger text ink on tinted dark surfaces, and neutral text on nested badges, avoid low-contrast combinations without recoloring semantic feedback.
+
+Browser tests exercise all **4 accents × 2 theme modes**, measuring actual CSS colors and alpha-composited surfaces. Targets are **at least 4.5:1** for tested accent text/primary/hover/selected combinations and **3:1** for tested focus/progress combinations. They also inspect rendered states, startup initialization, persistence/errors, keyboard/touch behavior, and domain-root navigation. These are targeted accent checks, not a claim that every aspect of the app has received a full accessibility audit.
+
+Run the focused browser coverage with `npm run test:e2e -- accents.spec.ts` after a production build.
 
 ## Run locally
 
@@ -152,6 +178,8 @@ The target has **no scheme or path**: do not include `https://` or `/DevPREP/`.
 | `src/learning-paths.ts`, `src/learning-paths.test.ts` | Curated path phases, senior extensions, selection/progress helpers, prerequisite and preservation tests |
 | `src/PathPicker.tsx`, `src/PathRoadmap.tsx`, `src/PathPrompt.tsx` | Opt-in path selection, ordered roadmap, and senior discussion surfaces |
 | `src/LessonList.tsx`, `src/format.ts` | Shared lesson rows and review-date formatting for path and all-track views |
+| `src/accents.css`, `src/AccentPicker.tsx`, `src/useAccent.ts` | Central accent palettes, appearance selection, and visible preference recovery |
+| `src/accent-preference.ts`, `src/accent-preference.test.ts`, `tests/accents.spec.ts` | Separate preference contract, startup/error checks, real palette contrast and browser coverage |
 | `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
