@@ -26,7 +26,7 @@ npm ci
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173/DevPREP/**. The `/DevPREP/` base is intentional and used locally and on GitHub Pages.
+Open **http://127.0.0.1:5173/**. Vite uses the relative base `./`, so the same production artifact supports both the existing `/DevPREP/` project mount and a custom-domain root.
 
 ```powershell
 npm test
@@ -36,7 +36,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-The build includes TypeScript checking. The browser tests start a production preview server on **127.0.0.1:4173**, so run `npm run build` first and keep that port free. Tests cover desktop Chromium and mobile-sized Chromium; the mobile project does not claim native Safari validation. On a fresh Linux machine, install browser system dependencies with `npx playwright install --with-deps chromium`.
+The build includes TypeScript checking. The browser tests start an isolated static server on **127.0.0.1:4273**, so run `npm run build` first and keep that port free (or set `$env:PLAYWRIGHT_PORT = '4274'` in PowerShell). Tests never reuse an existing server. The same `dist` bytes are served at `/` and `/DevPREP/`, without an SPA fallback that could conceal missing assets. Tests cover desktop Chromium and mobile-sized Chromium; the mobile project does not claim native Safari validation. On a fresh Linux machine, install browser system dependencies with `npx playwright install --with-deps chromium`.
 
 `npm run preview` serves the built `dist` directory. No environment variables or secrets are required.
 
@@ -69,6 +69,29 @@ Pull requests run the same validation but **cannot deploy**. The workflow uses t
 
 All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so refreshing or sharing a route does not need a server rewrite or a custom 404 page. `#study` resumes this browser’s active session; it is not a shared lesson URL.
 
+### Custom domain: staged activation only
+
+The approved hostname is **devprep.madebyfavor.com**. `public/CNAME` contains that hostname and Vite copies it to `dist/CNAME`. With an **Actions-based Pages deployment**, GitHub ignores this file for domain configuration; an administrator must set the repository's remote custom domain separately. See [GitHub's custom-domain documentation](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site). This compatibility change does not alter DNS, Pages settings, or HTTPS settings.
+
+Required DNS record at the provider for `madebyfavor.com`:
+
+| Type | Host/name | Target/value |
+| --- | --- | --- |
+| CNAME | `devprep` | `adamsdenniskariuki.github.io` |
+
+The target has **no scheme or path**: do not include `https://` or `/DevPREP/`.
+
+**Activation sequence (do not skip the backup or approval gates):**
+
+1. Before any redirect/domain activation, open **https://adamsdenniskariuki.github.io/DevPREP/#progress** in each browser/profile with progress and choose **Export backup**. Keep the downloaded JSON safe; export again if you continue studying before activation.
+2. Review and merge the compatibility PR, then let the normal `main` workflow deploy the compatible artifact to the **existing URL first**. Do not manually deploy or activate the domain as part of PR preparation.
+3. Verify the existing URL still loads scripts/styles, navigates and refreshes hash routes, resumes drafts, and exports backups. Local regression checks: `npm run build` followed by `npm run test:e2e -- tests/domain.spec.ts` verifies both mounts using one artifact.
+4. Confirm DNS readiness: provider access, the exact intended record, and whether any existing record resolves correctly. Do not publish a new unclaimed Pages CNAME in advance: GitHub warns of domain-takeover risk and recommends domain verification and setting the Pages domain before publishing DNS. Creating/changing DNS requires separate approval; the approved hostname is not authorization to change DNS.
+5. **Only after separate activation approval**, an administrator sets **Settings > Pages > Custom domain** to `devprep.madebyfavor.com`, coordinates any separately approved DNS update, verifies resolution (for example, `Resolve-DnsName devprep.madebyfavor.com -Type CNAME`), waits for GitHub's DNS check and certificate provisioning, and enables **Enforce HTTPS** when available. The GitHub Pages URL may then redirect to the custom domain, so old-origin backups must already be downloaded.
+6. Verify **https://devprep.madebyfavor.com/** and refresh `/#roadmap`, `/#study`, and `/#progress`. Use **Progress > Import backup**, select the exported JSON, and confirm **Replace progress**. Confirm due dates and unfinished drafts before discarding any backup.
+
+**Local storage is origin-scoped.** `https://devprep.madebyfavor.com` cannot read progress from `https://adamsdenniskariuki.github.io`. A redirect does not transfer storage; there is **no automatic migration**. Import replaces, rather than merges, any progress already created at the new origin. The domain tests exercise an explicit export/import between different local hostnames in the same browser context.
+
 ## Code map
 
 | File | Responsibility |
@@ -80,6 +103,9 @@ All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so re
 | `src/styles.css` | Clawpilot tokens and responsive layouts |
 | `src/progress.test.ts` | Curriculum contract, state transitions, invalid inputs, storage failures |
 | `tests/app.spec.ts` | Production-browser workflows, keyboard behavior, viewport checks, visual captures |
+| `tests/domain.spec.ts` | Same-artifact root/project assets, hash refresh, and explicit cross-origin backup transfer |
+| `tests/serve-dist.mjs` | Strict dual-mount static server for isolated browser tests |
+| `public/CNAME` | Custom hostname copied to the Pages artifact; not remote activation |
 | `.github/workflows/deploy.yml` | PR validation and gated `main` deployment |
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.

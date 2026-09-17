@@ -277,7 +277,7 @@ test('GitHub Pages base and unknown hashes stay on the app shell', async ({ page
   await page.reload()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('A little better, every day.')
   expect(errors).toEqual([])
-  expect(await page.locator('script[src]').getAttribute('src')).toMatch(/^\/DevPREP\/assets\//)
+  expect(await page.locator('script[src]').getAttribute('src')).toMatch(/^\.\/assets\//)
 })
 
 test('capture key screens for visual inspection', async ({ page }, testInfo) => {
