@@ -15,6 +15,7 @@ import PathPrompt from './PathPrompt'
 import LessonList from './LessonList'
 import AccentPicker from './AccentPicker'
 import { useAccent } from './useAccent'
+import PwaPanel from './PwaPanel'
 
 type Route = 'today' | 'roadmap' | 'review' | 'progress' | 'study'
 const navigation = [
@@ -218,6 +219,10 @@ export default function App() {
           if (window.confirm('Permanently replace unreadable browser data with a fresh start? Download the original data first.')) store.replace(emptyProgress())
         }}>Replace with a fresh start</button></section>
           : <>
+            <PwaPanel reloadBlocked={!!(store.error || store.unsaved || store.conflict || accent.error)} beforeReload={() => {
+              if (store.recovery || store.error || store.unsaved || store.conflict || accent.error) return false
+              return store.retry()
+            }} />
             <PathPicker selected={progress.selectedPath} onChange={changePath} />
             {route === 'today' && <>
               <div className="page-heading"><div><div className="eyebrow">{clock.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1 ref={heading} tabIndex={-1}>A little better, every day.</h1><p>No cramming. Just focused practice that adds up.</p></div><span className="pill"><Icon name="sun" size={16} /> Your daily practice</span></div>
