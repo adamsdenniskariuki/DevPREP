@@ -58,8 +58,8 @@ These are **interview-preparation guides, not certification, level assessments, 
 
 Use the visibly labeled **Accent** selector beside the light/dark button. Each option has a color name, the native selector identifies the selected option, and the adjacent swatch previews it. The control supports keyboard selection and touch-sized targets.
 
-- **Red (rose)** remains the default. Existing users do not need to select or migrate anything.
-- **Blue**, **Forest green**, and **Purple** are opt-in accent variants, each with deliberately paired light/dark values.
+- **Purple** is the default only when no accent was saved. Existing explicit **Red (rose)**, **Blue**, **Forest green**, and **Purple** selections are retained.
+- All four accent variants have deliberately paired light/dark values; switching does not reset study data.
 - Accent changes affect action buttons, active navigation, progress fills, selected states, tinted accents, and focus outlines. Neutral backgrounds, typography, layout, and success/warning/danger/link tokens are not palette overrides.
 - Light/dark behavior is unchanged: an explicit `scoutTheme` URL value wins over the system preference. Without a valid override, the system preference is read at page load. The accent selector does not change that URL or theme choice.
 
@@ -67,17 +67,51 @@ Use the visibly labeled **Accent** selector beside the light/dark button. Each o
 
 The separate local-storage key **`devprep.accent.v1`** contains one of `red`, `blue`, `forest`, or `purple`. It is an appearance preference, **not part of study-progress JSON exports/imports**. Restoring an old or new progress backup therefore does not change the current accent or require a backup schema change. Like other browser-local data, the preference is specific to the origin and browser profile; changing domains or clearing site data can restore the default.
 
-The small head script applies a valid saved accent before the React application starts. Missing preferences default to red without writing anything. Invalid or unreadable preferences display red and surface a visible warning once the UI loads; the stored value is not silently deleted or replaced. Choosing an accent or **Save current accent** changes only the accent key.
+The small head script applies a valid saved accent before the React application starts. Missing preferences default to purple without writing anything. Invalid or unreadable preferences display purple and surface a visible warning once the UI loads; the stored value is not silently deleted or replaced. Choosing an accent or **Save current accent** changes only the accent key.
 
 If saving fails, the selected accent still applies in the current tab, a warning explains that it is not saved, and **Save current accent** retries. The previous saved value and all study data remain intact. Other tabs pick up the most recently saved accent when reloaded; this preference does not trigger study-progress conflict handling.
 
 ### Palette and contrast checks
 
-`src/accents.css` centralizes the three opt-in palettes and contextual `--cp-accent-on-soft` text colors. The original red fill, hover, soft/highlight, and foreground tokens remain unchanged. Stronger text ink on tinted dark surfaces, and neutral text on nested badges, avoid low-contrast combinations without recoloring semantic feedback.
+`src/accents.css` centralizes the purple fallback, four selectable palettes, and contextual `--cp-accent-on-soft` text colors. The explicit red option retains its original fill, hover, soft/highlight, and foreground values. Stronger text ink on tinted dark surfaces, and neutral text on nested badges, avoid low-contrast combinations without recoloring semantic feedback.
+
+Keyboard focus uses a thinner **2px accent outline with a 2px offset**, not a blanket outline removal. Navigation, app menu summaries, and study/filter buttons suppress the browser's default rectangular tap highlight while retaining theme-consistent pressed/selected feedback. Native selects and inputs keep their browser interaction behavior. Chromium touch emulation exposed the default blue tap-highlight property; the transient overlay was not reliably captured in a screenshot, and physical iOS/WebKit behavior has not been verified.
 
 Browser tests exercise all **4 accents × 2 theme modes**, measuring actual CSS colors and alpha-composited surfaces. Targets are **at least 4.5:1** for tested accent text/primary/hover/selected combinations and **3:1** for tested focus/progress combinations. They also inspect rendered states, startup initialization, persistence/errors, keyboard/touch behavior, and domain-root navigation. These are targeted accent checks, not a claim that every aspect of the app has received a full accessibility audit.
 
 Run the focused browser coverage with `npm run test:e2e -- accents.spec.ts` after a production build.
+
+## Install DevPREP and use it offline
+
+Open **App & offline** to see the actual preparation state and installation options. The first successful preparation requires internet; wait for **Offline lessons ready** before relying on offline access. Installing the app and preparing its offline files are separate browser operations.
+
+- **Desktop Chrome/Edge and supported Android browsers:** use **Install DevPREP** when the browser offers that prompt, or use the browser's install icon/menu. A dismissed prompt does not mean installed. An accepted prompt means installation was requested; completion is only reported after the browser's installation event or when running in standalone mode.
+- **iPhone/iPad:** open the site in Safari, use **Share → Add to Home Screen**, and follow the OS instructions. Availability varies by browser/OS. If the option is absent, the website remains usable.
+- **Other/unsupported browsers:** use a bookmark or the online site. DevPREP cannot force browser installation, and this is not a native app-store package.
+
+After preparation, **all 46 bundled lessons**, their examples/solutions, scripts/styles, and required local assets are cached, including the split curriculum bundle. A cold offline reload can open previously unvisited lessons in any track. Local drafts, reading bookmarks, paths, reviews, and accents continue to work. JSON export/import can also work offline where the browser supports the relevant file actions; it does not add cloud synchronization.
+
+Preparation checks every required file's SHA-256 before caching it and never treats failed/redirected/mismatched downloads as success. If preparation fails or cached files are missing, the panel shows a warning and **Retry offline preparation**. An interrupted or failed update does not discard the prior version's cache. Browser quota limits, private modes, eviction, or cleared site data can make offline data unavailable; offline readiness is checked, not assumed from registration alone.
+
+### Updates after successful deployment
+
+No reinstallation is needed. A successful `main` Pages deployment publishes a new worker and versioned assets; merely merging a PR is not sufficient if its build/deployment fails.
+
+- Online launch checks for updates. Reconnection checks again; returning to a visible app checks with a one-minute throttle; a visible open app also checks about every five minutes.
+- A new version's files download and verify automatically. Existing windows keep running without an unsolicited reload.
+- **Update ready → Update & reload** is the user-controlled restart. The current notebook is saved/rechecked before activation and again before reload. Storage/conflict/unsaved-preference warnings block this action; resolve them or export work before any manual restart.
+- If another window activates an update, this window offers a restart rather than automatically reloading. When all old windows close, the browser can naturally activate the prepared version for the next launch.
+- Browsers control service-worker scheduling. A closed or offline app cannot be promised background update delivery. A failed download leaves the working version available.
+
+Each worker serves its version's cached HTML, preventing an old shell from unexpectedly referencing new chunks. Earlier verified build caches are deliberately retained so still-open windows and in-flight old documents can request their original hashed assets even after activation. This conservative policy uses additional storage across releases; browser eviction/quota still applies. The app does not globally clear caches or study storage. Export backups before manually clearing site data, which can remove both offline files and progress.
+
+The web manifest has a stable relative `id`, `start_url`, and `scope`, standalone display, original PNG install/maskable/Apple icons, and neutral launch colors. The worker, manifest, icons, and asset URLs resolve under either the custom-domain root or `/DevPREP/`; caches are namespaced by exact origin/mount and build content. The worker does not cache cross-origin requests or intercept unrelated navigation paths.
+
+### Browser versus installed storage
+
+An installed app may share browser storage, but do not rely on that across browser profiles, platforms, or iOS installation paths. If installed progress is missing, export from the browser that has it and explicitly import into the installed app. Backups include written answers; keep them private. There are no accounts, automatic backups, background notifications, or cross-device sync.
+
+The production-browser tests exercise service-worker installation, complete preparation/failure recovery, offline cold starts, and genuinely different old/new build artifacts. Install-prompt/display-mode tests are browser simulations, **not a claim of native Android/iOS/desktop installation testing**.
 
 ## Run locally
 
@@ -96,11 +130,16 @@ npm run typecheck
 npm run build
 npx playwright install chromium
 npm run test:e2e
+npm run test:pwa
 ```
 
 The build includes TypeScript checking. The browser tests start an isolated static server on **127.0.0.1:4273**, so run `npm run build` first and keep that port free (or set `$env:PLAYWRIGHT_PORT = '4274'` in PowerShell). Tests never reuse an existing server. The same `dist` bytes are served at `/` and `/DevPREP/`, without an SPA fallback that could conceal missing assets. Tests cover desktop Chromium and mobile-sized Chromium; the mobile project does not claim native Safari validation. On a fresh Linux machine, install browser system dependencies with `npx playwright install --with-deps chromium`.
 
 `npm run preview` serves the built `dist` directory. No environment variables or secrets are required.
+
+Offline service workers are enabled only for production builds, not Vite's development server. `test:pwa` uses a separate loopback server and builds a second release in ignored `dist-pwa-tests` output without overwriting `dist`. `DEVPREP_RELEASE` can label a release; otherwise the UI uses the CI commit identifier or `local`. It contains no user/device identifier.
+
+Install icons are checked in. To reproduce them after editing their original SVG, use `node scripts/generate-pwa-icons.mjs` with the declared Playwright Chromium browser installed.
 
 ## Local data and backups
 
@@ -181,6 +220,10 @@ The target has **no scheme or path**: do not include `https://` or `/DevPREP/`.
 | `src/accents.css`, `src/AccentPicker.tsx`, `src/useAccent.ts` | Central accent palettes, appearance selection, and visible preference recovery |
 | `src/accent-preference.ts`, `src/accent-preference.test.ts`, `tests/accents.spec.ts` | Separate preference contract, startup/error checks, real palette contrast and browser coverage |
 | `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
+| `src/sw.ts`, `src/pwa-cache.ts` | Integrity-checked, mount-scoped offline caches and safe version routing |
+| `src/usePwa.ts`, `src/PwaPanel.tsx`, `src/pwa-client.ts` | Install guidance, actual readiness, update discovery and guarded user restart |
+| `public/icons/`, `scripts/generate-pwa-icons.mjs` | Original install icons and reproducible PNG generation |
+| `playwright.pwa.config.ts`, `tests/pwa*` | Dedicated production offline/failure/two-release lifecycle tests |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |

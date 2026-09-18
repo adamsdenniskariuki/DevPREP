@@ -62,7 +62,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.keyboard.press('Tab')
       await page.keyboard.press('Shift+Tab')
       await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-color', css(tokens.accent))
-      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-width', '3px')
+      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-width', '2px')
       await expect(page.locator('.local-dot')).toHaveCSS('background-color', css(tokens.success))
       await page.screenshot({ path: testInfo.outputPath(`${accent.id}-${theme}.png`) })
       await page.getByRole('link', { name: 'Roadmap', exact: true }).click()
@@ -124,9 +124,9 @@ test('selection reloads independently of light/dark/system and leaves study back
   await expect(page.getByRole('checkbox').first()).toBeChecked()
 })
 
-test('missing and invalid accents default to red without silently rewriting storage', async ({ page }) => {
+test('missing and invalid accents default to purple without silently rewriting storage', async ({ page }) => {
   await page.goto('./')
-  await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('red')
+  await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('purple')
   expect(await page.evaluate(key => localStorage.getItem(key), ACCENT_KEY)).toBeNull()
   await page.evaluate(key => localStorage.setItem(key, 'amber'), ACCENT_KEY)
   await page.reload()
@@ -134,7 +134,7 @@ test('missing and invalid accents default to red without silently rewriting stor
   expect(await page.evaluate(key => localStorage.getItem(key), ACCENT_KEY)).toBe('amber')
   await page.getByRole('button', { name: 'Save current accent' }).click()
   await expect(page.getByRole('alert')).toHaveCount(0)
-  expect(await page.evaluate(key => localStorage.getItem(key), ACCENT_KEY)).toBe('red')
+  expect(await page.evaluate(key => localStorage.getItem(key), ACCENT_KEY)).toBe('purple')
 })
 
 test('accent read failure is visible without blocking or resetting study data', async ({ page }) => {
@@ -149,7 +149,7 @@ test('accent read failure is visible without blocking or resetting study data', 
   }, { accentKey: ACCENT_KEY, progressKey: STORAGE_KEY, backup: legacyBackup })
   await page.goto('./')
   await expect(page.getByRole('alert')).toContainText('accent preference could not be read')
-  await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('red')
+  await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('purple')
   await page.getByRole('button', { name: 'Resume session' }).click()
   await expect(page.getByText(legacyBackup.session.draft, { exact: true })).toBeVisible()
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), STORAGE_KEY)).toEqual(legacyBackup)
