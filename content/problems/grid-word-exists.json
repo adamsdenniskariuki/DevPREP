@@ -1,0 +1,158 @@
+{
+  "id": "grid-word-exists",
+  "title": "Trace a word on a letter board",
+  "pattern": "Backtracking",
+  "level": "se",
+  "difficulty": "stretch",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "Return true if word can be spelled on board, a grid of lowercase letters, by starting on any cell and stepping up, down, left or right without using a cell twice.\n\n- board is a list of equal-length lowercase strings with 1 to 12 rows and 1 to 12 columns.\n- 1 <= word.length <= 15, lowercase.\n- Return a boolean.",
+  "function": {
+    "js": "canTrace",
+    "py": "can_trace"
+  },
+  "starter": {
+    "js": "function canTrace(board, word) {\n  // Your code here\n}\n",
+    "py": "def can_trace(board, word):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "car",
+          "xog",
+          "dot"
+        ],
+        "cargo"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        [
+          "ab",
+          "cd"
+        ],
+        "abdca"
+      ],
+      "expected": false
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "a"
+        ],
+        "a"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        [
+          "a"
+        ],
+        "aa"
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        [
+          "aa",
+          "aa"
+        ],
+        "aaaa"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        [
+          "abc"
+        ],
+        "cba"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        [
+          "ab",
+          "ba"
+        ],
+        "abab"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        [
+          "zzz"
+        ],
+        "q"
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        [
+          "dbdadbadbbcb",
+          "bbdabacbbcac",
+          "dbbccbccdadb",
+          "bbacdaddccda",
+          "bdddbbcaadac",
+          "accdccbbbbcc",
+          "addcbcaacaca",
+          "addaddcacdbd",
+          "abcdcbbaccbd",
+          "adcddaccbacc",
+          "dddaccabddad",
+          "bacbcbacdaaa"
+        ],
+        "cdabaabab"
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        [
+          "abccabddbccd",
+          "ccbbddbbabcc",
+          "dcaaabbcadac",
+          "cdddcbcabcad",
+          "cdbbbaabaadb",
+          "caadaadbabcd",
+          "ddbdacdcadbb",
+          "ccbcabadbbdd",
+          "abcbabbbcddb",
+          "dcaaaccdbacd",
+          "bcccddcbbdda",
+          "bbdaadcabdca"
+        ],
+        "dcbadab"
+      ],
+      "expected": true
+    }
+  ],
+  "hints": [
+    "Try every cell as a starting point for word[0], then extend the path one neighbour at a time.",
+    "Use depth-first search with backtracking: mark a cell as in use before exploring from it and unmark it when you return.",
+    "Abandon a branch as soon as the next letter does not match. A quick precheck that the board has enough copies of each letter in word rules out many impossible words immediately."
+  ],
+  "solution": {
+    "js": "function canTrace(board, word) {\n  const rows = board.length\n  const cols = board[0].length\n  const cells = board.map(row => row.split(''))\n  const have = {}\n  for (const row of board) for (const ch of row) have[ch] = (have[ch] || 0) + 1\n  for (const ch of word) {\n    if (!have[ch]) return false\n    have[ch]--\n  }\n  const search = (r, c, i) => {\n    if (r < 0 || c < 0 || r >= rows || c >= cols || cells[r][c] !== word[i]) return false\n    if (i === word.length - 1) return true\n    cells[r][c] = '#'\n    const found = search(r + 1, c, i + 1) || search(r - 1, c, i + 1) || search(r, c + 1, i + 1) || search(r, c - 1, i + 1)\n    cells[r][c] = word[i]\n    return found\n  }\n  for (let r = 0; r < rows; r++) {\n    for (let c = 0; c < cols; c++) {\n      if (search(r, c, 0)) return true\n    }\n  }\n  return false\n}\n",
+    "py": "from collections import Counter\n\n\ndef can_trace(board, word):\n    rows, cols = len(board), len(board[0])\n    if Counter(word) - Counter(''.join(board)):\n        return False\n    cells = [list(row) for row in board]\n\n    def search(r, c, i):\n        if r < 0 or c < 0 or r >= rows or c >= cols or cells[r][c] != word[i]:\n            return False\n        if i == len(word) - 1:\n            return True\n        cells[r][c] = '#'\n        found = (search(r + 1, c, i + 1) or search(r - 1, c, i + 1)\n                 or search(r, c + 1, i + 1) or search(r, c - 1, i + 1))\n        cells[r][c] = word[i]\n        return found\n\n    return any(search(r, c, 0) for r in range(rows) for c in range(cols))\n",
+    "explanation": "Depth-first search from each cell follows only neighbours matching the next letter. Temporarily overwriting the current cell with \"#\" marks it as used on this path, and restoring it on return lets other paths use it. The letter-count precheck rejects words the board cannot possibly contain before any search starts."
+  },
+  "complexity": {
+    "time": "O(R · C · 3^L)",
+    "space": "O(R · C + L)",
+    "notes": "L is the word length. After the first step each cell has at most 3 unused neighbours to try. Space covers the mutable board copy and recursion depth L."
+  },
+  "followUps": [
+    "You must check thousands of words against the same board. How would a trie of the words help?"
+  ]
+}

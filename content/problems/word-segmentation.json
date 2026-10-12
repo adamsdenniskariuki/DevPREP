@@ -1,0 +1,175 @@
+{
+  "id": "word-segmentation",
+  "title": "Splitting a run-together hashtag",
+  "pattern": "Dynamic programming",
+  "level": "se",
+  "difficulty": "core",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "prompt": "Return true if the spaceless hashtag text can be cut into pieces that each appear in the list of allowed words, else false.\n\n- text has 0 to 400 lowercase letters; words has 1 to 500 distinct non-empty lowercase words, each at most 20 letters.\n- A word may be reused any number of times.\n- An empty text counts as splittable (zero pieces).\n- Return a boolean.",
+  "function": {
+    "js": "canSegment",
+    "py": "can_segment"
+  },
+  "starter": {
+    "js": "function canSegment(text, words) {\n  // Your code here\n}\n",
+    "py": "def can_segment(text, words):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "fishcake",
+        [
+          "fish",
+          "cake"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "sunflowerpot",
+        [
+          "sun",
+          "flower",
+          "pot",
+          "sunflower"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "catsandog",
+        [
+          "cats",
+          "dog",
+          "sand",
+          "and",
+          "cat"
+        ]
+      ],
+      "expected": false
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        "",
+        [
+          "a"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "a",
+        [
+          "b"
+        ]
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        "aaaa",
+        [
+          "aa"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "aaa",
+        [
+          "aa"
+        ]
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        "penpineapplepen",
+        [
+          "apple",
+          "pen",
+          "pine",
+          "pineapple"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+        [
+          "a",
+          "aa",
+          "aaa",
+          "aaaa",
+          "aaaaa"
+        ]
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        "teameatmeeatmatetameteammatetametamemeattamemematameeattameattamemateammateteamteaeattametameteamamemamateaeatmateateateamteamateamteammeteammateteammateatteateatameteameatmateaatteammateatteameatmememeateatmememaeateatteatameeatteammameatmemeteammateteammateateammatememeatteammeeatmaeatmatameteamameeatmeteameatteammateteamteaateat",
+        [
+          "tea",
+          "team",
+          "mate",
+          "teammate",
+          "at",
+          "eat",
+          "me",
+          "ma",
+          "meat",
+          "tame"
+        ]
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "teameatmeeatmatetameteammatetametamemeattamemematameeattameattamemateammateteamteaeattametameteamamemamateaeatmateateateamteamateamteammeteammateteammxateatteateatameteameatmateaatteammateatteameatmememeateatmememaeateatteatameeatteammameatmemeteammateteammateateammatememeatteammeeatmaeatmatameteamameeatmeteameatteammateteamteaateat",
+        [
+          "tea",
+          "team",
+          "mate",
+          "teammate",
+          "at",
+          "eat",
+          "me",
+          "ma",
+          "meat",
+          "tame"
+        ]
+      ],
+      "expected": false
+    }
+  ],
+  "hints": [
+    "Trying every split point recursively explodes on inputs like \"aaaa...ab\". Which question keeps being asked again?",
+    "Let ok[i] mean \"the first i letters can be split\". ok[0] is true.",
+    "ok[end] is true if some allowed word w ends at position end and ok[end - len(w)] is true. Only the word lengths that occur in the list need trying, and a set gives fast lookups."
+  ],
+  "solution": {
+    "js": "function canSegment(text, words) {\n  const vocab = new Set(words)\n  const lengths = [...new Set(words.map(w => w.length))].sort((a, b) => a - b)\n  const ok = new Array(text.length + 1).fill(false)\n  ok[0] = true\n  for (let end = 1; end <= text.length; end++) {\n    for (const size of lengths) {\n      if (size > end) break\n      if (ok[end - size] && vocab.has(text.slice(end - size, end))) {\n        ok[end] = true\n        break\n      }\n    }\n  }\n  return ok[text.length]\n}\n",
+    "py": "def can_segment(text, words):\n    vocab = set(words)\n    lengths = sorted({len(w) for w in vocab})\n    ok = [False] * (len(text) + 1)\n    ok[0] = True\n    for end in range(1, len(text) + 1):\n        for size in lengths:\n            if size > end:\n                break\n            if ok[end - size] and text[end - size:end] in vocab:\n                ok[end] = True\n                break\n    return ok[len(text)]\n",
+    "explanation": "ok[i] records whether the prefix of length i splits into allowed words. Each prefix is decided once, by checking whether it ends with an allowed word whose remaining prefix is already known to split. Restricting the check to the distinct word lengths keeps the inner loop short."
+  },
+  "complexity": {
+    "time": "O(n · k · L)",
+    "space": "O(n + W)",
+    "notes": "n is len(text), k is the number of distinct word lengths (at most 20), L is the cost of slicing and hashing a candidate of up to 20 letters, and W is the total size of the word set. A trie over the words avoids repeated slicing."
+  },
+  "followUps": [
+    "Return every possible split as a list of sentences. Why can that output be exponential in size?",
+    "How would you find the split that uses the fewest words?"
+  ]
+}

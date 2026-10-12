@@ -1,0 +1,90 @@
+{
+  "id": "stair-ways",
+  "title": "Ways up the stairwell",
+  "pattern": "Dynamic programming",
+  "level": "se",
+  "difficulty": "warm-up",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "Return how many different sequences of 1-step and 2-step strides take a courier from the bottom to exactly the top of an n-step stairwell.\n\n- 0 <= n <= 77. For n = 0 there is one way: take no strides.\n- Order matters: 1 then 2 is different from 2 then 1.\n- Every answer in this range is at most 2^53 - 1, so it fits exactly in a JavaScript number.\n- Return a single integer.",
+  "function": {
+    "js": "climbWays",
+    "py": "climb_ways"
+  },
+  "starter": {
+    "js": "function climbWays(n) {\n  // Your code here\n}\n",
+    "py": "def climb_ways(n):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        1
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        2
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        4
+      ],
+      "expected": 5
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        0
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        3
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        10
+      ],
+      "expected": 89
+    },
+    {
+      "args": [
+        45
+      ],
+      "expected": 1836311903
+    },
+    {
+      "args": [
+        77
+      ],
+      "expected": 8944394323791464
+    }
+  ],
+  "hints": [
+    "Think about the very last stride. It is either 1 step or 2 steps long.",
+    "If ways(k) counts sequences reaching step k, then ways(k) = ways(k - 1) + ways(k - 2), with ways(0) = ways(1) = 1.",
+    "You only ever need the previous two values, so keep two variables and slide them forward instead of storing a whole table."
+  ],
+  "solution": {
+    "js": "function climbWays(n) {\n  let prev = 1\n  let cur = 1\n  for (let i = 1; i < n; i++) {\n    const next = prev + cur\n    prev = cur\n    cur = next\n  }\n  return cur\n}\n",
+    "py": "def climb_ways(n):\n    prev, cur = 1, 1\n    for _ in range(n - 1):\n        prev, cur = cur, prev + cur\n    return cur\n",
+    "explanation": "Every sequence that reaches step k ends with a 1-stride from step k - 1 or a 2-stride from step k - 2, and those two groups never overlap. So ways(k) = ways(k - 1) + ways(k - 2), the Fibonacci recurrence shifted by one. Rolling two variables gives the answer in linear time and constant space."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "Plain recursion without memoization re-solves the same steps and takes exponential time. Matrix exponentiation reaches O(log n) arithmetic operations."
+  },
+  "followUps": [
+    "What changes if the allowed stride lengths are given as a list, such as [1, 3, 5]?",
+    "How would you return the count modulo 1,000,000,007 for n up to 10^6?"
+  ]
+}
