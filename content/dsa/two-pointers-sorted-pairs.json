@@ -1,0 +1,113 @@
+{
+  "id": "two-pointers-sorted-pairs",
+  "track": "dsa",
+  "title": "Two pointers: use sorted order",
+  "minutes": 45,
+  "summary": "Use an ordering argument to eliminate many impossible pairs with one pointer move.",
+  "objectives": [
+    "Explain why the sum determines which pointer moves.",
+    "Find a pair in a sorted array with constant extra space.",
+    "Distinguish sorted-input assumptions from the hash-map approach."
+  ],
+  "concepts": [
+    {
+      "title": "Start at opposite ends",
+      "body": "In a nondecreasing array, the leftmost candidate is the smallest and the rightmost candidate is the largest. Compare their sum with the target. A match is an answer; otherwise order tells you which endpoint cannot participate in any remaining match."
+    },
+    {
+      "title": "Justify each discarded endpoint",
+      "body": "If the sum is too small, pairing the left value with any smaller right value is also too small. Discard the left endpoint. If the sum is too large, pairing the right value with any larger left value is also too large. Discard the right endpoint. This argument works with negative values and duplicates."
+    },
+    {
+      "title": "Respect the input contract",
+      "body": "Stop when left is no longer smaller than right so that an element is never paired with itself. Each step shrinks the candidate interval, giving O(n) time and O(1) extra space. Sorting an unsorted array first adds work and changes index meanings, so do not silently apply this method to an unsorted-index task."
+    },
+    {
+      "title": "Elimination is stronger than intuition",
+      "body": "A failed endpoint comparison alone proves little. Sorted order makes it eliminate every pair using one endpoint: an entire row or column of candidate pairs. The search shrinks because whole families of answers are impossible, not because a value merely looks unhelpful."
+    },
+    {
+      "title": "Choose pointers by the relation you need",
+      "body": "Opposite-end pointers suit sorted sums; read/write pointers suit compaction; fast/slow pointers suit linked structures. Their names supply no proofs. Identify the classified region and preserved relation first. Here the remaining interval contains every pair not yet ruled out by ordering."
+    }
+  ],
+  "example": "Input: values = [-5, -1, 3, 7, 11], target = 10.\nThe endpoints sum to 6, so move left from -5 to -1.\nNow -1 + 11 = 10. Return [1, 4].\nDiscarding -5 was safe: no remaining value exceeds 11, so no partner could make its sum reach 10.",
+  "task": "Write sortedPair(values, target). The input array is already sorted in nondecreasing order. Return any distinct zero-based indices [i, j] with i < j whose values sum to target, or [] if none exists. Do not sort or modify the input.\nConstraints: length 0 through 100000; integer values and target between -1000000 and 1000000.\nRequired examples: sortedPair([-4, 0, 2, 5, 9], 7) returns [2, 3]; sortedPair([2, 2], 4) returns [0, 1]; sortedPair([2], 4) returns [].\nUse O(n) time and O(1) extra space.",
+  "starter": "function sortedPair(values, target):\n    left = 0\n    right = length(values) - 1\n    while left < right:\n        sum = values[left] + values[right]\n        // Match, discard left, or discard right.\n    return []",
+  "hints": [
+    "If the current sum is too small, can moving the right pointer inward ever increase it?",
+    "A too-small sum eliminates the current left endpoint entirely. A too-large sum eliminates the current right endpoint entirely."
+  ],
+  "solution": "function sortedPair(values, target):\n    left = 0\n    right = length(values) - 1\n    while left < right:\n        sum = values[left] + values[right]\n        if sum == target:\n            return [left, right]\n        if sum < target:\n            left = left + 1\n        else:\n            right = right - 1\n    return []\n\nFor [-4, 0, 2, 5, 9] and target 7, sums are 5, 9, 5, and 7. The pointer pairs are [0, 4], [1, 4], [1, 3], and [2, 3], so return [2, 3].\nEvery discarded endpoint is ruled out with all remaining partners by sorted order. At most n minus 1 moves occur, giving O(n) time. Only pointers and a sum are stored, giving O(1) extra space. Unlike a hash map, this memory advantage depends on the sorted-input guarantee.",
+  "checklist": [
+    "I can justify both pointer directions using sorted order.",
+    "I stop before the pointers refer to the same element.",
+    "I can trace a negative-value example and a duplicate-value example.",
+    "I can explain why sorting is not a free preprocessing step for index-based answers."
+  ],
+  "pitfalls": [
+    "Moving left when the sum is too large removes useful small candidates.",
+    "Using left <= right can pair one element with itself.",
+    "Applying the method to unsorted input invalidates the elimination argument."
+  ],
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "hash-map-complements"
+  ],
+  "prerequisiteNotes": "Know zero-based indices and pair contracts. Nondecreasing order permits equal neighboring values.",
+  "walkthrough": [
+    {
+      "title": "Use a minimal duplicate trace",
+      "body": "For [2,2] and target 4, pointers name different positions despite equal values, so comparison succeeds. A singleton never enters the loop. Empty input starts right at -1 and also skips it. The strict comparison prevents self-use without special cases."
+    },
+    {
+      "title": "Explain the cost without relying on lucky matches",
+      "body": "Each failed comparison decreases interval width, so fewer than n moves occur even without a match. Only pointers and a sum are stored. Sorting is excluded by the input guarantee; adding it requires reporting its time, space, mutation, and original-index effects."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Two end values only",
+      "prompt": "Given a sorted array of at least two values, compare its first-plus-last sum with a target and identify a safe endpoint to discard, or report a match. Use [-3,2,8] and target 7.",
+      "hints": [
+        "The endpoint sum is 5.",
+        "Can any smaller partner make -3 reach 7?"
+      ],
+      "solution": "Discard the first endpoint -3 because even its largest available partner 8 gives only 5. Any other partner is no larger, so none can produce 7 with -3. One decision takes O(1) time and space. This exercise makes only one elimination, not a claim that the remaining array necessarily contains a match.",
+      "checklist": [
+        "I eliminate the endpoint with every possible partner.",
+        "I avoid claiming a solution exists after one move."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Count pairs below a threshold",
+      "prompt": "Count sorted-array pairs i < j with values[i] + values[j] < target. For [1,2,3,4], target 6, return 4.",
+      "hints": [
+        "When the endpoint sum is below target, how many right partners work for left?",
+        "Count those partners together, then remove only that left endpoint."
+      ],
+      "solution": "Start at opposite ends. Below target, add right - left and increment left; otherwise decrement right. Value 1 contributes three pairs; value 2 contributes one. Distinct left endpoints prevent double counting. Time O(n), auxiliary space O(1); use a wide count and strict inequality.",
+      "checklist": [
+        "I count every proven partner.",
+        "I exclude equality."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Does this work with negatives?",
+      "answer": "Yes. The proof uses order, not sign. Moving right inward cannot increase its value even if both endpoints are negative."
+    },
+    {
+      "question": "Can we validate sortedness?",
+      "answer": "An O(n)-time, O(1)-space adjacent-pair scan can reject invalid input. The core contract already guarantees order, so this is optional API validation."
+    }
+  ],
+  "takeaways": [
+    "State why every discarded candidate is impossible.",
+    "Equal values can still represent distinct indices.",
+    "Report the cost of establishing prerequisites as well as using them."
+  ]
+}

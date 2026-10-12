@@ -1,0 +1,101 @@
+{
+  "id": "arrays-prefix-foundations",
+  "track": "dsa",
+  "title": "Arrays: indices, scans, and prefix sums",
+  "minutes": 40,
+  "summary": "Turn repeated interval totals into boundary subtraction while practicing precise array contracts.",
+  "prerequisites": [],
+  "prerequisiteNotes": "Know variables, integer arithmetic, comparisons, loops, and function returns. Indices are zero-based; no earlier algorithm lesson is required.",
+  "objectives": [
+    "Describe a half-open interval and its length without special cases.",
+    "Build a prefix array whose entries summarize completed work.",
+    "Separate preprocessing, per-query cost, and result storage."
+  ],
+  "concepts": [
+    {
+      "title": "An index is a position, not a value",
+      "body": "An array gives constant-time indexed access under the usual random-access model. Adjacent positions need not contain adjacent numbers. A loop over n positions costs O(n), while inserting at the front of a packed array may shift n values. Start by writing the legal index range. For an array of length n, element indices run from 0 to n minus 1; the boundary n is legal in an interval but is not an element to read."
+    },
+    {
+      "title": "Half-open intervals compose",
+      "body": "The interval [left, right) includes left and excludes right. Its length is right minus left, so [2, 2) is empty. Adjacent intervals [a, b) and [b, c) join without double-counting b. This convention lets a query ending at n include the final element, and gives empty arrays a natural representation. Decide interval conventions before coding rather than adjusting endpoints until examples happen to pass."
+    },
+    {
+      "title": "Store one more boundary than elements",
+      "body": "Define prefix[k] as the sum of the first k elements, not the sum through index k. Thus prefix[0] = 0 and prefix[k + 1] = prefix[k] + values[k]. Subtracting prefix[left] from prefix[right] removes exactly the earlier elements and leaves the requested interval. Negative values do not invalidate subtraction. Choose a numeric representation wide enough for accumulated sums even when individual inputs fit a smaller type."
+    }
+  ],
+  "example": "rangeTotals([3, -2, 5, 1], [[0,4],[1,3],[2,2]]) returns [7,3,0]. The prefix array is [0,3,1,6,7].",
+  "task": "Write rangeTotals(values, ranges). Each range is [left, right), with 0 <= left <= right <= n. Return one sum per range in input order without modifying values or ranges. Arrays may be empty; n and the number q of queries are at most 100000, with values between -1000000 and 1000000. Use O(n + q) time. For rangeTotals([], [[0,0]]), return [0].",
+  "starter": "function rangeTotals(values, ranges):\n    prefix = array of length length(values) + 1 filled with 0\n    // Build the total at every boundary.\n    totals = empty list\n    // Answer each interval using two boundaries.\n    return totals",
+  "hints": [
+    "What total should prefix[0] represent before reading any elements?",
+    "The first right elements include the first left elements. Subtract their summaries."
+  ],
+  "solution": "function rangeTotals(values, ranges):\n    prefix = array of length length(values) + 1 filled with 0\n    for i from 0 to length(values) - 1:\n        prefix[i + 1] = prefix[i] + values[i]\n    totals = empty list\n    for [left, right] in ranges:\n        append prefix[right] - prefix[left] to totals\n    return totals\n\nFor [3, -2, 5, 1], successive totals are 0, 3, 1, 6, 7. Query [1,3) is 6 minus 3 = 3, which equals -2 + 5. The empty query subtracts a boundary from itself. Induction on i proves each prefix entry summarizes exactly the elements before its boundary; subtraction then proves every answer. Preprocessing takes O(n) time and O(n) auxiliary space. Each query costs O(1) time; total time is O(n + q), auxiliary space O(n), and returned output O(q).",
+  "checklist": [
+    "I define prefix[k] in words before using it.",
+    "I handle empty intervals and the boundary n without reading values[n].",
+    "I distinguish auxiliary storage from the returned answers."
+  ],
+  "pitfalls": [
+    "Treating right as inclusive adds an unwanted element.",
+    "Allocating only n prefix entries loses the final boundary.",
+    "Using a narrow accumulator can overflow even when each value fits."
+  ],
+  "walkthrough": [
+    {
+      "title": "Begin with the direct method",
+      "body": "For each query, scan from left to right minus one and add values. That baseline is easy to validate, uses constant working space, and may be the right choice for one tiny query. But q full-length queries revisit n elements each, for O(nq) time. Prefix sums change the question from “which elements should I visit again?” to “which already computed totals bracket this interval?” This is a time-for-space tradeoff, not a universally free optimization."
+    },
+    {
+      "title": "Audit boundaries before large inputs",
+      "body": "Trace [0,n), [0,0), [n,n), and a single-element interval [i,i+1). The corresponding subtraction should produce the entire sum, zero, zero, and values[i]. Then include a negative element to expose accidental assumptions about increasing totals. Unlike sorted search, prefix sums need not be monotone. The stored summaries describe the original array: changing one element invalidates later prefixes, so this solution explicitly assumes a static array during the batch."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A running total",
+      "prompt": "Return the sum after each element of [2,-1,4]. Generalize to an arbitrary array, returning [] for empty input.",
+      "hints": [
+        "Keep one accumulator initially zero.",
+        "Append after adding the current value, not before."
+      ],
+      "solution": "Maintain total = 0; for each value, add it and append total. The result is [2,1,5]. The accumulator is the sum of the processed prefix, so each emitted value is correct. Time O(n), auxiliary space O(1), and output space O(n); no extra leading zero belongs in this output contract.",
+      "checklist": [
+        "I return one result per element.",
+        "I explain why a negative input can decrease a running total."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Exactly one update before queries",
+      "prompt": "The same immutable array receives many range queries, then one value changes, then another batch arrives. Explain a correct rebuild strategy and its costs; identify why silently reusing the original prefix array fails.",
+      "hints": [
+        "Which prefix boundaries include the changed position?",
+        "A full rebuild can be reasonable when updates are rare."
+      ],
+      "solution": "Keep the updated values and rebuild the n + 1 boundaries before the second batch. An update at index k affects every prefix boundary greater than k. For q total queries and one rebuild, construction plus reconstruction plus queries is O(n + q), with O(n) auxiliary space. Frequent alternating updates and queries would motivate a different data structure; constant-time queries alone do not guarantee a cheap dynamic workload.",
+      "checklist": [
+        "I name precisely which summaries become stale.",
+        "I include rebuilding in the total work."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can the same subtraction trick answer interval minimum?",
+      "answer": "Not from prefix minima alone. A prefix minimum discards information: if the earlier prefix contains the smallest value, removing that prefix does not reveal the next smallest. Sums work because subtraction reverses addition."
+    },
+    {
+      "question": "Must every query be stored before answering?",
+      "answer": "No. Once prefixes exist, independent queries can be processed as a stream. Retaining answers is required here by the return contract, not by the prefix-sum algorithm itself."
+    }
+  ],
+  "takeaways": [
+    "Specify element positions separately from interval boundaries.",
+    "A useful invariant gives every stored entry one exact meaning.",
+    "Precomputation is valuable when many operations reuse unchanged input."
+  ]
+}

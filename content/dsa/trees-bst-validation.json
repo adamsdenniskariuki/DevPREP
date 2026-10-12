@@ -1,0 +1,105 @@
+{
+  "id": "trees-bst-validation",
+  "track": "dsa",
+  "title": "Trees and BSTs: propagate global constraints",
+  "minutes": 50,
+  "summary": "Validate a strict binary search tree by carrying ancestor bounds, not merely comparing parent and child.",
+  "prerequisites": [
+    "linked-lists-reversal",
+    "recursion-fast-power",
+    "stack-balanced-delimiters"
+  ],
+  "prerequisiteNotes": "Know node references and recursive contracts. A binary tree is finite and acyclic; each node has at most a left child and a right child.",
+  "objectives": [
+    "Describe preorder, inorder, and postorder traversal roles.",
+    "Distinguish local child comparisons from ancestor constraints.",
+    "Analyze recursive tree work by node count and stack depth by height."
+  ],
+  "concepts": [
+    {
+      "title": "Structure is not ordering",
+      "body": "A binary tree only limits the number of children. A strict binary search tree additionally requires every value in a node’s left subtree to be smaller and every value in its right subtree to be larger. Those requirements apply to all descendants, not just immediate children. This lesson rejects duplicate keys; other BST designs can allow duplicates with a different documented side rule. The representation alone does not establish any ordering guarantee."
+    },
+    {
+      "title": "Carry the allowed interval",
+      "body": "Each recursive frame receives optional exclusive lower and upper bounds inherited from ancestors. A left child inherits the lower bound and receives the parent value as upper bound. A right child receives the parent value as lower bound and inherits the upper bound. An absent bound means unrestricted, not a magic integer sentinel. Real minimum or maximum integer keys must remain valid when there is no constraint on that side."
+    },
+    {
+      "title": "Traversal order serves the question",
+      "body": "Preorder processes a node before descendants, useful for rejecting an invalid key immediately. Inorder visits left, node, right; on a strict BST it produces a strictly increasing sequence. Postorder visits descendants before the node, useful when computing height or subtree totals. Each full traversal visits n nodes in O(n) time, but recursive storage follows height h. A chain has h = n; only balanced trees guarantee logarithmic height."
+    }
+  ],
+  "example": "isStrictBST(8 with left 3 and right 10 whose left child is 6) returns false: 6 violates the inherited lower bound 8. isStrictBST(8 with left 3 and right 10) returns true.",
+  "task": "Write isStrictBST(root), returning whether a supplied finite binary tree obeys strict BST order. Values are integers and duplicates are invalid. Nodes have value, left, and right; null is an empty tree and returns true. n is at most 10000; report stack depth and discuss an explicit-stack alternative for deep inputs. Do not mutate nodes.",
+  "starter": "function isStrictBST(root):\n    return validate(root, absent, absent)\n\nfunction validate(node, lower, upper):\n    // Check inherited exclusive bounds, then refine them for children.",
+  "hints": [
+    "A right-subtree descendant must exceed every relevant ancestor, not just its parent.",
+    "Passing an absent bound avoids excluding an extreme integer key."
+  ],
+  "solution": "function isStrictBST(root):\n    return validate(root, absent, absent)\n\nfunction validate(node, lower, upper):\n    if node == null:\n        return true\n    if lower is present and node.value <= lower:\n        return false\n    if upper is present and node.value >= upper:\n        return false\n    return validate(node.left, lower, node.value)\n           and validate(node.right, node.value, upper)\n\nAt root 8, the right child 10 receives lower = 8. Its left child 6 receives interval (8,10), so validation fails despite 6 being smaller than its parent. Each frame verifies its root and delegates strictly refined constraints, covering every ancestor requirement. Empty subtrees satisfy the condition vacuously. Worst-case time O(n); auxiliary stack O(h), up to O(n) for a chain. An explicit stack of (node, lower, upper) frames avoids runtime recursion limits while retaining the same worst-case bounds.",
+  "checklist": [
+    "I enforce inherited bounds at every node.",
+    "I reject duplicates and accept an empty tree.",
+    "I do not assume a supplied tree is balanced."
+  ],
+  "pitfalls": [
+    "Checking only immediate children misses deep ancestor violations.",
+    "Using inclusive comparisons accidentally accepts duplicates.",
+    "Using numeric sentinels can reject legitimate extreme keys."
+  ],
+  "walkthrough": [
+    {
+      "title": "Draw the hidden violation",
+      "body": "The invalid example passes every immediate parent check: 3 is below 8, 10 above 8, and 6 below 10. Yet an inorder traversal yields 3,8,6,10, which is not increasing. Bound propagation identifies the precise failed obligation, 6 > 8, without materializing that sequence. This is the tree analogue of retaining unresolved context: the recursive path carries constraints that a local view would forget."
+    },
+    {
+      "title": "Separate validation from search",
+      "body": "A search in an already-valid BST can follow one child per comparison. Validation cannot generally do that because a violation may hide anywhere, so worst-case work visits every node. Furthermore, even valid BST search is O(h), not automatically O(log n). Inserting sorted keys into an unbalanced structure can produce a chain. Treat shape guarantees and ordering guarantees as separate assumptions when discussing performance."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Count tree nodes",
+      "prompt": "Return the node count of a binary tree. A root with two leaf children has count 3; null has count 0.",
+      "hints": [
+        "Empty subtrees contribute zero.",
+        "Combine the current node with both child counts."
+      ],
+      "solution": "Return 0 for null; otherwise return 1 + count(left) + count(right). Each node belongs to exactly one child subtree or is the current root, so no node is counted twice. Time O(n), stack O(h). Ordering is irrelevant: this works on any finite binary tree, not just a BST.",
+      "checklist": [
+        "I include both children.",
+        "I return zero for an absent subtree."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Return the kth smallest key",
+      "prompt": "Given a valid strict BST and positive k, return the kth smallest key or absent if fewer than k nodes exist. In the valid 8/3/10 example, k = 2 returns 8.",
+      "hints": [
+        "Inorder traversal emits sorted keys.",
+        "An explicit stack can pause traversal after k visits."
+      ],
+      "solution": "Push the left spine, pop the next node and increment a visit count, then continue from its right child. Return when the count reaches k; return absent if traversal ends first. The inorder invariant makes the kth visit the kth smallest. Time O(h + k) when k exists, O(n) otherwise; stack O(h). Do not confuse key value with rank, and do not sort all values unnecessarily.",
+      "checklist": [
+        "I count visits rather than compare keys to k.",
+        "I define the out-of-range result."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can repeated references be treated as a tree?",
+      "answer": "Not under this contract. Shared children or cycles form a more general graph and can cause double counting or nontermination. Validating that representation requires separate visited-identity checks."
+    },
+    {
+      "question": "Would inorder validation also work?",
+      "answer": "Yes. Compare each visited key with the previous key using strict increase, without storing the whole traversal. It has O(n) time and O(h) stack, but still needs a safe “no previous value” state."
+    }
+  ],
+  "takeaways": [
+    "Global tree properties need ancestor context or an equivalent traversal invariant.",
+    "Node count determines full-traversal work; height determines recursive depth.",
+    "Ordering does not imply balance."
+  ]
+}

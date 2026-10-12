@@ -1,0 +1,105 @@
+{
+  "id": "heaps-top-k",
+  "track": "dsa",
+  "title": "Heaps: keep the best k candidates",
+  "minutes": 50,
+  "summary": "Maintain a small min-heap whose root is the weakest retained candidate.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "trees-bst-validation",
+    "sorting-stable-merge"
+  ],
+  "prerequisiteNotes": "Know binary-tree shape and array indexing. A heap gives partial order, not a completely sorted sequence.",
+  "objectives": [
+    "Map a complete binary tree to array parent and child indices.",
+    "Repair a heap after insertion and root replacement.",
+    "Prove that a size-k heap retains the k largest values seen."
+  ],
+  "concepts": [
+    {
+      "title": "Only the root is globally extremal",
+      "body": "In a min-heap every parent is no greater than either child. Therefore the root is a minimum, but siblings and distant subtrees need not be ordered. A complete tree packs levels from left to right, enabling array storage: children of index i are 2i + 1 and 2i + 2, and a nonroot parent is floor((i - 1)/2). Its height is logarithmic in size regardless of the input arrival order."
+    },
+    {
+      "title": "Repair along one path",
+      "body": "Appending a value preserves shape but may violate the relation with its parent; sift it upward while smaller. Replacing the root preserves every relation except possibly along a downward path. Compare both existing children, swap with the smaller when necessary, and continue. Choosing the smaller child is essential: swapping with a larger child can leave the other child smaller than its new parent. Each repair crosses at most the tree height."
+    },
+    {
+      "title": "The root defines the retention threshold",
+      "body": "To retain the largest k values, use a min-heap of those candidates. Its minimum is the easiest retained value to evict. Once full, an incoming value no larger than the root cannot improve the collection; a larger one replaces the root. This is deliberately the opposite heap orientation from “retrieve the largest next.” Duplicates count as separate occurrences, so the kth largest is a rank among positions, not distinct values."
+    }
+  ],
+  "example": "kthLargest([5,1,5,3,8], 3) returns 5. The retained multiset ends as {5,5,8}; its minimum is the third largest.",
+  "task": "Write kthLargest(values, k) using a min-heap containing at most k values. Count duplicates separately. Return absent when k < 1 or k > n, including empty input. n is at most 100000. Do not modify values or sort the entire input. Describe push and root-replacement repair, not just an unexplained priority-queue call.",
+  "starter": "function kthLargest(values, k):\n    if k < 1 or k > length(values):\n        return absent\n    heap = empty min-heap\n    // Fill k slots, then improve the minimum retained value.\n    return heap[0]",
+  "hints": [
+    "The heap should expose the smallest retained candidate.",
+    "After replacing its root, only a downward repair is needed."
+  ],
+  "solution": "function kthLargest(values, k):\n    if k < 1 or k > length(values):\n        return absent\n    heap = empty list\n    for value in values:\n        if length(heap) < k:\n            append value to heap\n            i = length(heap) - 1\n            while i > 0:\n                parent = floor((i - 1) / 2)\n                if heap[parent] <= heap[i]:\n                    break\n                exchange heap[parent] and heap[i]\n                i = parent\n        else if value > heap[0]:\n            heap[0] = value\n            i = 0\n            while 2 * i + 1 < length(heap):\n                child = 2 * i + 1\n                if child + 1 < length(heap) and heap[child + 1] < heap[child]:\n                    child = child + 1\n                if heap[i] <= heap[child]:\n                    break\n                exchange heap[i] and heap[child]\n                i = child\n    return heap[0]\n\nThe first three sample values fill {1,5,5}. Value 3 evicts 1; value 8 evicts 3, leaving {5,5,8}. After each input, the heap retains the largest min(k, processed count) values: a rejected value is no better than every retained value, while replacement removes exactly the weakest candidate. Heap repairs preserve that multiset. Time O(n log(k + 1)), auxiliary space O(k); the result is one value, not a sorted heap array.",
+  "checklist": [
+    "I select a min-heap for the largest-k retention task.",
+    "I compare both children during sift-down.",
+    "I handle invalid ranks and count repeated values."
+  ],
+  "pitfalls": [
+    "Returning heap[k - 1] assumes the heap array is sorted.",
+    "Using a max-heap of k values evicts the wrong candidate.",
+    "Ignoring a right child can break the heap invariant."
+  ],
+  "walkthrough": [
+    {
+      "title": "Two invariants cooperate",
+      "body": "The structural invariant says the buffer is a valid min-heap. The selection invariant says its multiset is the best retained k values. A perfectly repaired heap of the wrong candidates would satisfy only the first. Conversely, keeping the correct candidates in an arbitrary array would require scanning for the minimum on every update. Trace both the threshold and the heap relation so the selection proof and data-structure proof remain distinct."
+    },
+    {
+      "title": "Understand the k extremes",
+      "body": "At k = 1 the heap acts like a running maximum, using constant space and linear work. At k = n it retains all values and the root becomes the minimum of the entire input. Sorting also answers this rank query, but retains and orders more information than needed when k is small. If many rank queries follow on the same static array, paying once for full sorting may become a reasonable alternative."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Repair one insertion",
+      "prompt": "Insert 1 into min-heap [2,4,3] and show its final array.",
+      "hints": [
+        "Append at index 3 to preserve complete shape.",
+        "Compare with parent indices 1, then 0."
+      ],
+      "solution": "Append to get [2,4,3,1], swap with 4 to get [2,1,3,4], then with 2 to get [1,2,3,4]. Only the new ancestor path can violate order. Time O(log(h + 1)) for heap size h, O(1) repair variables besides heap storage; this particular insertion performs two swaps.",
+      "checklist": [
+        "I append before sifting.",
+        "I stop at a valid parent relation or the root."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Merge several ordered feeds",
+      "prompt": "Merge r sorted arrays with a heap of current heads. For [[1,4],[1,3],[]], return [1,1,3,4].",
+      "hints": [
+        "Store value, source ID, and position together.",
+        "After emitting a head, insert only its source’s next item."
+      ],
+      "solution": "Initialize one heap entry per nonempty source. Repeatedly extract the minimum, emit it, and add that source’s successor if any. Every source head is its smallest remaining value, so the smallest head is globally next. Tie-break by source ID and position if deterministic equal-value order is required. For N total values, time O(r + N log(r + 1)), auxiliary heap O(r), output O(N).",
+      "checklist": [
+        "I keep source identity with each value.",
+        "I skip empty sources safely."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can heap construction be linear?",
+      "answer": "Yes, sifting internal nodes downward from the last parent builds a heap in O(n) time because most nodes have very small height. Repeated insertion has a simpler O(n log n) bound but is not the optimal bulk construction."
+    },
+    {
+      "question": "Does rejecting an equal root lose a duplicate?",
+      "answer": "No for a value-only kth-rank result: replacing one equal occurrence by another leaves the retained multiset unchanged. Returning specific occurrence identities would require an explicit tie policy."
+    }
+  ],
+  "takeaways": [
+    "Heap order exposes an extremum, not a sorted sequence.",
+    "Keep the weakest retained candidate cheaply accessible.",
+    "Prove candidate selection separately from structural repair."
+  ]
+}

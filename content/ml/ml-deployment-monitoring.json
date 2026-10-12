@@ -1,0 +1,114 @@
+{
+  "id": "ml-deployment-monitoring",
+  "track": "ml",
+  "title": "Deployment and monitoring: defend an end-to-end ML design",
+  "minutes": 55,
+  "summary": "Design capacity-aware ticket review with historical replay, delayed quality measurement, and rollback.",
+  "prerequisites": [
+    "ml-imbalance-thresholds"
+  ],
+  "prerequisiteNotes": "Integrate availability, evaluation, model selection, and thresholds. The case introduces latency, logging, and versioning.",
+  "objectives": [
+    "Specify a complete prediction pipeline and an operational fallback.",
+    "Separate immediate input and service monitoring from delayed outcome quality.",
+    "Plan a guarded rollout with intervention-aware evaluation and rollback criteria.",
+    "Defend model, policy, and retraining tradeoffs in an end-to-end design case."
+  ],
+  "concepts": [
+    {
+      "title": "Ship the whole decision procedure",
+      "body": "Version feature definitions, preprocessing, parameters, calibration, and action policy together. Replay missing-history and unknown-queue cases to check offline-serving consistency. Log timestamps, versions, actions, and minimal diagnostics under appropriate retention and access controls, not raw ticket bodies for convenience. Include a reliable fallback such as the existing manual queue; a production design must handle unavailable features and scoring failures."
+    },
+    {
+      "title": "Monitor several clocks, not one dashboard",
+      "body": "Latency, errors, missing features, scores, and review saturation are observable immediately. Precision, recall, and calibration require mature labels and complete observation. Report seven-day quality by mature prediction cohort, separating missing labels from negatives. Input drift does not prove degraded quality, and stable input averages do not prove stable quality. Use drift to prioritize investigation and delayed labels for direct supervised evidence."
+    },
+    {
+      "title": "Interventions change what gets observed",
+      "body": "Preventing escalation can make high-risk reviewed tickets appear negative. Labeling only reviewed cases can leave population recall unidentified. Track exposure and representative audit samples where permissible. Use a controlled comparison for causal benefit, respecting safety and operational constraints. Shadow mode measures compatibility and scores, not intervention effects. Predictive performance under an observation policy differs from the causal benefit of review."
+    },
+    {
+      "title": "Retraining is another release, not an automatic cure",
+      "body": "Drift can reflect broken sources, units, new customers, or concept change. Retraining on broken inputs entrenches defects. Diagnose first, collect representative mature labels, and compare candidates under the same contract. Require replay, capacity, slice, and rollback checks before promotion. Choose cadence from measured need and label availability. Rollback must restore feature transformations as well as weights."
+    }
+  ],
+  "example": "Design case: 2000 new tickets arrive per day. Escalation labels mature after seven days. Reviewers can inspect at most 100 tickets per completed daily batch.\nCandidate selection uses earlier mature validation cohorts; the original 160-flag threshold is infeasible. Select a top-100 policy with documented tie-breaking, or a threshold plus a capacity cap, before final testing.\nA mature held-out cohort contains 100 actual escalations. The frozen policy flags 100 tickets: TP=60, FP=40, FN=40, TN=1860.\nPrecision = 60/100 = 60%; recall = 60/100 = 60%; accuracy = 1920/2000 = 96%.\nAssume every review costs $2 and each missed escalation costs $20, with no other costs or intervention effects in this offline calculation.\nPolicy cost = 100*$2 + 40*$20 = $1000 per cohort.\nNo-review baseline cost = 100*$20 = $2000 per cohort. Offline difference = $1000, not proven causal savings.",
+  "task": "Design the ticket-review system: prediction contract, as-of features, mature splits, baseline/model comparison, frozen policy, batch timing, fallback, logging, monitoring, guarded rollout, and retraining. Calculate metrics and costs; explain why controlled product evaluation remains necessary.",
+  "starter": "on_ticket_created:\n  features = point_in_time_features(ticket)\n  score = versioned_pipeline(features)\n  record_minimal_prediction_metadata(score)\non_batch_closed:\n  review = capacity_limited_selection(scores, tie_rule)\nafter_label_maturity:\n  join_cohort_predictions_to_observed_outcomes()\n  report_quality_and_label_coverage_by_slice()",
+  "hints": [
+    "Keep prediction time, batch decision time, and label availability time distinct.",
+    "If review changes the outcome or which labels are collected, offline costs do not identify causal savings."
+  ],
+  "solution": "Predict at creation using initial features and known history, excluding closure information. Fit preprocessing/baselines on older mature cohorts, tune later, and freeze before final test. Compare simple and ensemble classifiers under capacity and latency. Precision and recall are 60%, accuracy 96%, and conditional cost $1000 versus $2000. Define batch waiting time; urgent intervention needs a reevaluated online policy. Use manual fallback on failure. Run shadow checks and a guarded comparison under prespecified service, workload, and slice limits. Monitor immediate inputs and mature quality separately. Audit unreviewed outcomes and exposure before claiming recall or causal savings; diagnose before retraining.",
+  "checklist": [
+    "I specify availability, mature splits, and a frozen pipeline.",
+    "I calculate 60% precision/recall and conditional $1000 cost difference.",
+    "I enforce capacity and batch timing.",
+    "I separate immediate health from delayed quality.",
+    "I include fallback, intervention-aware evaluation, and rollback."
+  ],
+  "pitfalls": [
+    "Immature outcomes treated as negatives create fictitious trends.",
+    "Score drift does not prove accuracy degradation.",
+    "Reviewed-only labels cannot establish population recall.",
+    "Offline costs do not establish causal benefit.",
+    "Weight-only rollback can leave broken transforms active."
+  ],
+  "walkthrough": [
+    {
+      "title": "Turn monitoring into response rules",
+      "body": "Assign alert owners and actions: unknown queues trigger source checks, timeouts trigger fallback, saturation triggers capacity investigation, and mature quality regressions trigger slice analysis and possible rollback. Agree limits before rollout rather than selecting favorable thresholds after seeing results."
+    },
+    {
+      "title": "Walk through a failure and a recovery",
+      "body": "A source switches hours to minutes. Catch the range shift before seven-day labels arrive. On a guardrail breach, pause model actions, use manual fallback, restore compatible features, and replay affected predictions. Audit actions and wasted capacity; retraining is not the first repair for broken units."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Which cohort is ready?",
+      "prompt": "At September 15 noon, can September 7 and September 12 noon cohorts be scored? Labels need seven complete days with no reporting lag.",
+      "hints": [
+        "Add seven days to each creation timestamp.",
+        "Availability of a row is not maturity of its target."
+      ],
+      "solution": "September 7 matured September 14 noon, assuming complete observation. September 12 matures September 19 noon. Report its service statistics separately without inventing negative labels.",
+      "checklist": [
+        "I include only the September 7 cohort in mature quality.",
+        "I state the no-additional-lag and complete-observation assumptions."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "The apparent recall improvement",
+      "prompt": "Only 100 reviewed tickets receive labels. A dashboard claims 100% recall because every labeled escalation was reviewed. Diagnose and repair this evaluation, including tradeoffs.",
+      "hints": [
+        "Where could false negatives be observed?",
+        "A sample outside the reviewed queue can reveal selection bias."
+      ],
+      "solution": "Unobserved false negatives invalidate the denominator. Obtain complete downstream outcomes or audit representative unreviewed tickets with recorded inclusion probabilities and appropriate weighting. Wait for maturity and report uncertainty; this costs labels and time. If reviews change outcomes, also track exposure or use a safely controlled comparison to measure intervention benefit.",
+      "checklist": [
+        "I identify the unobserved false negatives.",
+        "I propose representative outcome collection and acknowledge cost and intervention effects."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What does shadow mode establish?",
+      "answer": "Feature availability, latency, scores, and hypothetical load, not the causal effect of reviews that never occurred."
+    },
+    {
+      "question": "Should drift automatically trigger retraining?",
+      "answer": "Not alone. Require trustworthy mature labels and promotion checks; broken data may need repair or rollback instead."
+    }
+  ],
+  "takeaways": [
+    "Version the decision procedure and test fallback.",
+    "Respect immediate-health and delayed-quality clocks.",
+    "Evaluate capacity, timing, and label collection.",
+    "Separate predictive evidence from causal impact.",
+    "Control retraining and rollback releases."
+  ]
+}

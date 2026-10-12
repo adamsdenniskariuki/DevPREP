@@ -1,0 +1,118 @@
+{
+  "id": "ml-evaluation-leakage",
+  "track": "ml",
+  "title": "Evaluation: measure the decision you will make",
+  "minutes": 45,
+  "summary": "Choose useful classification metrics and keep future information out of model development.",
+  "objectives": [
+    "Calculate precision and recall from a confusion matrix.",
+    "Choose an evaluation split that resembles deployment.",
+    "Recognize feature, preprocessing, and model-selection leakage."
+  ],
+  "concepts": [
+    {
+      "title": "Start with the cost of mistakes",
+      "body": "Precision asks what fraction of predicted positives are truly positive. Recall asks what fraction of actual positives are found. Accuracy can be misleading when positives are rare: predicting no positives can look strong while finding nothing. Select a metric and operating constraint that reflect the real intervention."
+    },
+    {
+      "title": "Only use information available at prediction time",
+      "body": "A feature is not safe merely because it is stored in a table. Confirm when it becomes available relative to the prediction. Refund status, eventual resolution, and future activity can reveal outcomes. Build historical features with a cutoff at the prediction timestamp."
+    },
+    {
+      "title": "Keep evaluation data out of fitting",
+      "body": "Fit imputation, scaling, encoders, and learned feature selection on training data only. Use validation data for thresholds and model choices, then evaluate the fixed pipeline once on an untouched test set. Choose temporal or group-aware splits to match whether deployment predicts future events, new entities, or both."
+    },
+    {
+      "title": "Choose the independence assumption deliberately",
+      "body": "A random row split estimates performance on exchangeable rows, not automatically on future traffic or unseen customers. For a future-ticket service, use ordered windows and mature labels. If the product instead onboards entirely new organizations, hold organizations out so their writing styles and shared workflows cannot appear on both sides. When both novelty and time matter, evaluate future examples from held-out organizations, while keeping training entirely earlier. This can reduce available data substantially; report the resulting population and uncertainty rather than pretending every splitting goal is free."
+    },
+    {
+      "title": "Evaluation is a sequence of decisions",
+      "body": "Validation is the workspace for comparing features, models, and thresholds. Test is a final audit of the locked decision procedure, including preprocessing and review policy. Repeatedly checking test results while making changes spends that independence even when the test data never enter gradient computation. For scarce labels, cross-validation can help model selection, but temporal folds must move forward and respect label delays, while group folds must preserve groups. Fit preprocessing anew inside each training fold. Average fold metrics only after considering whether fold populations and class prevalence are comparable."
+    },
+    {
+      "title": "Report denominators and uncertainty",
+      "body": "A reported recall of 80% means little without its denominator: eight of ten positives is much less stable than eight thousand of ten thousand. On the original 100-positive ticket validation set, one additional missed escalation changes recall by one percentage point. Correlated tickets from the same customer make independent-row uncertainty calculations optimistic. Use repeated temporal windows or group-aware resampling where appropriate, and present counts alongside rates. A better aggregate score is evidence worth investigating, not a guarantee of benefit for every customer group or future period."
+    }
+  ],
+  "example": "A review model evaluates 1000 transactions, of which 40 are actually fraudulent. It flags 50 transactions: 30 are fraud and 20 are legitimate.\nTrue positives = 30; false positives = 20; false negatives = 10; true negatives = 940.\nPrecision = 30 / 50 = 60%. Recall = 30 / 40 = 75%. Accuracy = 970 / 1000 = 97%.\nAn always-legitimate classifier has 96% accuracy but 0% recall. The 97% model may be useful, but usefulness also depends on review cost, missed-fraud cost, and the threshold.",
+  "task": "You predict whether a newly opened support ticket will need escalation within seven days. Prediction happens at ticket creation. The deployment population is future tickets, including repeat customers.\nA validation set has 2000 tickets with 100 actual escalations. At one threshold, 160 are flagged: 80 actual escalations and 80 non-escalations.\nCandidate features are initial message length, queue at creation, customer escalation count strictly before creation, final resolution code, and total messages exchanged before closure.\nDeliver: all four confusion-matrix counts; precision, recall, and accuracy; safe and unsafe features with reasons; a time-based train/validation/test plan that respects the seven-day label delay; and a threshold-selection plan if reviewers can inspect at most 100 of every 2000 tickets.\nNo training or code execution is needed. State what the supplied counts cannot tell you.",
+  "hints": [
+    "Subtract the 80 detected escalations from the 100 actual escalations, then derive true negatives from the 1900 non-escalations.",
+    "A threshold that flags 160 tickets exceeds the review budget. You need validation scores to evaluate a higher threshold or top-100 policy; the existing confusion matrix cannot reveal its performance."
+  ],
+  "solution": "True positives = 80; false positives = 80; false negatives = 20; true negatives = 1820.\nPrecision = 80 / 160 = 50%. Recall = 80 / 100 = 80%. Accuracy = (80 + 1820) / 2000 = 95%. An always-negative baseline also has 95% accuracy but 0% recall.\nInitial message length and queue at creation are available at prediction time. Historical escalation count is usable only if each included escalation was already known before creation; a reconstructed history containing later outcomes would leak. Final resolution code and total messages before closure are unsafe because they describe the future.\nChoose chronological windows: train on older tickets, tune on a later window, and reserve the latest window for final testing. At each simulated training or selection cutoff, include only examples whose seven-day outcome window has fully elapsed. Leave the needed maturity gap before the next simulated deployment, and wait for test labels to mature before scoring. Build features as of each ticket’s creation, not the extraction date.\nFit preprocessing on training only. Tune using validation scores and labels; lock the pipeline before test evaluation. Since deployment includes repeat customers, chronological splitting is the primary match. Also report new-customer performance as a slice, and check near-duplicate tickets rather than assuming a random split is safe.\nThe current threshold violates the 100-ticket budget. Compare candidate thresholds or a defined top-100 policy on validation scores, maximizing escalations found within that budget. Specify tie-breaking and whether review happens in batches; a live queue needs an appropriate capacity policy. The supplied counts cannot determine precision or recall at a different threshold, score calibration, or future traffic performance.",
+  "checklist": [
+    "I derive 80 true positives, 80 false positives, 20 false negatives, and 1820 true negatives.",
+    "I calculate 50% precision and 80% recall and explain why 95% accuracy is insufficient.",
+    "I reject future-dependent features and verify availability of historical outcomes.",
+    "My split and preprocessing plan respect time order and label maturity.",
+    "I recognize the review-budget violation without inventing metrics at another threshold."
+  ],
+  "pitfalls": [
+    "Computing aggregates over a customer’s full history can include events after prediction.",
+    "Fitting a scaler or feature selector before splitting leaks evaluation information.",
+    "Repeatedly choosing models based on test results turns the test set into validation data.",
+    "A confusion matrix at one threshold does not specify the entire precision-recall curve."
+  ],
+  "prerequisites": [
+    "ml-data-preparation"
+  ],
+  "prerequisiteNotes": "Use the prediction-time contract and training-only preprocessing from the preceding lesson. Fractions and percentages are sufficient for the metric calculations.",
+  "walkthrough": [
+    {
+      "title": "Build the four cells before dividing",
+      "body": "For the ticket task, start with 100 actual positives and 1900 actual negatives. Eighty flagged positives leave 20 false negatives. The other 80 flags are false positives, leaving 1820 true negatives. Now choose each denominator according to the question: 160 inspected tickets for precision, 100 escalations for recall, and all 2000 tickets for accuracy. Writing the cells first avoids switching denominators mid-calculation."
+    },
+    {
+      "title": "Simulate selection before deployment",
+      "body": "Imagine choosing a threshold on July 1. Only validation tickets with fully observed seven-day outcomes by that cutoff may inform the choice. A ticket created June 29 is not ready, even if its eventual label is visible in today’s warehouse. After locking the threshold, replay later traffic under the actual batching and capacity rules. Score that period after its labels mature, and separate the prediction date from the date of the quality report."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Distinguish the denominators",
+      "prompt": "A detector flags 20 events, including 12 true positives. There are 30 actual positives among 100 events. Compute precision, recall, and all four cells.",
+      "hints": [
+        "False positives fill the remainder of the flags.",
+        "Actual positives include both found and missed cases."
+      ],
+      "solution": "TP = 12, FP = 8, FN = 18, TN = 62. Precision is 12/20 = 60%, recall is 12/30 = 40%, and accuracy is 74%. The first rate describes the inspected queue; the second describes coverage of all actual positives.",
+      "checklist": [
+        "I derive all four counts summing to 100.",
+        "I distinguish 60% precision from 40% recall."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Match a new-organization launch",
+      "prompt": "Your ticket service will launch at organizations absent from training next quarter. Customers generate many related tickets, and labels arrive seven days later. Describe a defensible evaluation and its main cost.",
+      "hints": [
+        "Holding out individual tickets does not hold out organizations.",
+        "Require both later prediction times and organization separation."
+      ],
+      "solution": "Reserve organizations as groups and evaluate their tickets in a later window. Train only on earlier mature tickets from other organizations; tune with separate groups and appropriate earlier windows. Enforce the maturity gap at each simulated selection cutoff. Audit duplicate templates and report organization-level slices. The cost is fewer eligible examples and potentially wider uncertainty; the benefit is an estimate aligned with the intended new-organization population rather than an easier repeat-customer task.",
+      "checklist": [
+        "I preserve organization boundaries and time order.",
+        "I state the data-efficiency and uncertainty tradeoff."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can we infer a better threshold from one confusion matrix?",
+      "answer": "No. We need scores or counts at additional thresholds. The existing matrix tells us that the current policy exceeds capacity, not which alternative will satisfy quality requirements."
+    },
+    {
+      "question": "Does a seven-day gap always remove every leakage source?",
+      "answer": "No. Seven days addresses the specified outcome window. Late confirmations, overlapping feature windows, duplicated groups, and delayed ingestion require their own checks and may require longer exclusions."
+    }
+  ],
+  "takeaways": [
+    "Choose split boundaries to model the actual deployment population.",
+    "Precision and recall answer different operational questions.",
+    "Lock the complete decision procedure before the final test audit.",
+    "Report counts, maturity rules, and slices with headline metrics."
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "id": "design-end-to-end-bookmarks",
+  "track": "system-design",
+  "title": "End-to-end design: a bounded bookmark service",
+  "minutes": 55,
+  "summary": "Synthesize an architecture from a small set of user needs, then defend it with request traces, numbers, and failure drills.",
+  "prerequisites": [
+    "design-api-data-model",
+    "design-databases-indexes",
+    "design-cache-data-flow",
+    "design-replication-partitioning",
+    "design-consistency",
+    "design-queues-events",
+    "design-rate-limiting",
+    "design-reliability-observability"
+  ],
+  "prerequisiteNotes": "Complete the earlier design exercises. Reuse their reasoning, but do not add a component unless this particular service has a requirement that needs it.",
+  "objectives": [
+    "Derive an architecture from bounded user and workload needs.",
+    "Connect data, request, and recovery paths without contradictory guarantees.",
+    "Defend omissions and identify measurement-based evolution triggers."
+  ],
+  "concepts": [
+    {
+      "title": "Scope creates the architecture",
+      "body": "Serve 200000 daily users making two creates and twenty lists each. Retain 1000-byte records for 180 days; cap pages at 50. Exclude sharing, search, offline edits, recommendations, and webpage fetching. Target p95 service list latency below 300 ms at tenfold average peak, 99.9% monthly eligible-request success, and acknowledged-write survival through one database-node loss. Regional disaster recovery remains a separate requirement, not a consequence of local replication."
+    },
+    {
+      "title": "Choose the smallest justified data path",
+      "body": "Start with stateless authenticated APIs and a transactional owner/time/id-indexed database with supported failover. Atomically store bookmarks and owner-scoped replay mappings. Direct indexed reads are a baseline to test, not assumed proof of capacity. Add caching only for a measured bottleneck with identity, freshness, and fallback policies. Excluding thumbnail fetching avoids unnecessary worker infrastructure; the current workload alone justifies neither sharding nor a broker."
+    },
+    {
+      "title": "Evolution is a decision with a trigger",
+      "body": "Use measured saturation, recovery duration, and tail latency as review triggers. Inspect query plans and page sizes before adding caches. Owner admission may address skew that ordinary sharding cannot. Introducing asynchronous features requires durable intent, bounded workers, and a completion contract together. Preserve assumptions, rejected alternatives, and evidence that would reverse a decision so maintainers can evolve the baseline deliberately."
+    }
+  ],
+  "example": "Daily reads = 200000 × 20 = 4000000; daily writes = 200000 × 2 = 400000.\nPeak reads = 4000000 / 86400 × 10 ≈ 463 requests/s.\nPeak writes = 400000 / 86400 × 10 ≈ 46.3 requests/s.\nRecords retained = 400000 × 180 = 72000000.\nAt 1000 bytes/record plus one assumed 64-byte index entry, three full copies require 229.824 decimal GB before logs, retry records, backups, and headroom.\nArchitecture: client → authenticated bounded API → transactional indexed database with replicated durability; independently retained backups support tested restoration.",
+  "walkthrough": [
+    {
+      "title": "Create, lose the response, then list",
+      "body": "Owner O7 sends URL/title with K9. Authenticate, validate bounds, apply owner/source admission, and atomically commit B17 plus replay metadata under the durable replication policy. A lost response leads to a same-body K9 retry returning B17, not B18. List through an authoritative or minimum-version read-your-writes path with an owner/time/id cursor and 50-row bound. Propagate one remaining deadline; cursor and replay lookups never bypass authorization."
+    },
+    {
+      "title": "Lose a node while retention runs",
+      "body": "During mixed load and cleanup, lose one database node. Let supported failover restore an eligible leader; APIs reject or retry within deadlines. Verify acknowledged identifiers and replay records afterward. Pause cleanup if foreground latency or lag worsens; alert on retention backlog. Separately restore backups and validate records and ownership. Count valid failed attempts even when shedding prevented cascading failure. Passing only with every node healthy means recovery headroom remains unproven."
+    }
+  ],
+  "task": "Produce a brief covering scope, targets, arithmetic, API/schema, two requests, and one failure timeline. Explain authorization, pagination, replay retention, read-your-writes, durable acknowledgement, admission, and recovery. Justify included and omitted components, especially cache, shards, and queues. Validate mixed peak load, owner skew, retention, and node loss. Use the rubric, not an automated architecture grade.",
+  "hints": [
+    "Reuse earlier calculations, but carry every excluded byte category into the final brief.",
+    "A component earns its place by satisfying an explicit requirement or measured bottleneck."
+  ],
+  "solution": "Use an authenticated bounded API, owner-indexed transactional database with supported three-copy durability/failover, and independently restorable backups. Plan 463 peak lists/s, 46.3 creates/s, and 229.824 GB of replicated records/index before overhead. Preserve 24-hour owner-scoped replay and authoritative or minimum-version immediate reads. Benchmark without cache, shards, or workers initially. Keep rate and concurrency admission below measured mixed-workload saturation with recovery headroom; count valid rejection as failure. Verify lost-response retries and node loss preserve acknowledged identifiers without duplicates. Leave disaster recovery targets unresolved until requirements and rehearsals support them. Alternatives must satisfy the same contract and justify their operational cost.",
+  "checklist": [
+    "I connect every component to a scoped need or evidence.",
+    "I show rates and replicated indexed storage with units and exclusions.",
+    "I preserve ownership, replay, pagination, and read-your-writes across traces.",
+    "I specify durable acknowledgement and honest failure outcomes.",
+    "I propose measurable load and recovery experiments and name unresolved targets."
+  ],
+  "pitfalls": [
+    "A catalog of technologies is not an explanation of one request.",
+    "Adding optional features changes capacity, security, and recovery scope.",
+    "Passing a steady-state benchmark does not establish behavior during node loss."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Remove a box",
+      "prompt": "Before the core brief, someone adds a queue between the API and every bookmark insert. Explain which original acknowledgement promise would change and whether this is necessary.",
+      "hints": [
+        "Queued acceptance and a durable bookmark are different states.",
+        "No slow optional work is required by the current scope."
+      ],
+      "solution": "Returning after enqueue promises only durable intent if the queue supports it, not a committed bookmark ready for immediate listing. Keeping synchronous transactional creation avoids introducing pending-state and queue-recovery contracts without a demonstrated need.",
+      "checklist": [
+        "I identify the changed promise.",
+        "I connect the decision to scope.",
+        "I avoid adding asynchronous complexity without evidence."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Introduce one feature deliberately",
+      "prompt": "After the core brief, add an optional daily export with a five-minute completion target. Describe only the necessary architecture changes, capacity questions, and failure semantics.",
+      "hints": [
+        "Separate export acceptance from completion.",
+        "Bound record count and concurrent export work so lists remain protected."
+      ],
+      "solution": "Add durable export intent through an outbox, a bounded worker pool, owner-authorized status/download access, and expiring output storage. Estimate arrival bursts, records and bytes per export, successful worker throughput, and output retention before committing to five minutes. Use stable job identity and retry-safe publication, monitor oldest pending age, and shed or delay optional exports when foreground capacity is threatened.",
+      "checklist": [
+        "I add an explicit asynchronous status contract.",
+        "I estimate new workload and retention rather than reusing list QPS.",
+        "I protect foreground work and owner access."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What would make this initial design unacceptable?",
+      "answer": "Measured failure to meet peak latency, node-loss durability, recovery, or owner-isolation requirements. The number of boxes is not a quality criterion; failing an explicit contract is."
+    },
+    {
+      "question": "What belongs in a handoff besides the diagram?",
+      "answer": "Assumptions, calculations, request/race timelines, data invariants, operational indicators, recovery procedures, rejected alternatives, and open validation questions so another engineer can challenge and evolve the design."
+    }
+  ],
+  "takeaways": [
+    "Synthesize by tracing requirements through decisions, not by collecting components.",
+    "A simple baseline is valid only when its assumptions are tested.",
+    "Keep unknowns and evolution triggers explicit alongside the architecture."
+  ]
+}

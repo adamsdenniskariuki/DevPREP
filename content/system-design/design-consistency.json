@@ -1,0 +1,105 @@
+{
+  "id": "design-consistency",
+  "track": "system-design",
+  "title": "Consistency: choose guarantees per operation",
+  "minutes": 50,
+  "summary": "Use timelines to distinguish stale reads, atomic updates, and decisions that cannot tolerate overselling.",
+  "prerequisites": [
+    "design-replication-partitioning"
+  ],
+  "prerequisiteNotes": "Know leaders, lagging replicas, and ownership fencing. Reuse the cache lesson’s distinction between browsing and authoritative checkout.",
+  "objectives": [
+    "Translate a user journey into a consistency guarantee.",
+    "Trace stale reads and concurrent conditional writes.",
+    "Explain the availability cost of coordination during a partition."
+  ],
+  "concepts": [
+    {
+      "title": "Guarantees apply to observations",
+      "body": "Eventual consistency promises convergence after updates stop and communication succeeds, not a maximum lag. Read-your-writes makes subsequent session reads reflect that client's completed writes. Linearizability places each operation between invocation and response while respecting real-time order. Choose guarantees per operation: browsing may tolerate older descriptions while last-item reservation cannot tolerate competing successful sales. Name the observer and allowed anomaly first."
+    },
+    {
+      "title": "Atomic conditions protect an invariant",
+      "body": "Two buyers can read stock one and both write zero, leaving a valid-looking counter but two promises. Atomically decrement only positive stock and transactionally store a uniquely identified reservation. Idempotency protects retries of one intent; isolation protects competing intents. Neither replaces the other. Process-local locks cannot coordinate multiple API instances, and cached stock cannot authorize the authoritative reservation."
+    },
+    {
+      "title": "Partitions force an explicit response policy",
+      "body": "Reject or defer reservation when authoritative coordination is unreachable; browsing can remain available with stale descriptions. Accepting reservations independently would require a different bounded-allocation protocol to preserve stock. This tradeoff depends on operations and failures, not a universal two-letter slogan. Majority acknowledgements help specific replication protocols, but quorum arithmetic alone cannot prove linearizability: fencing, commit rules, and authoritative read behavior matter."
+    }
+  ],
+  "example": "Initially stock = 1. Clients A and B use different reservation keys.\nA: atomic reserve-if-stock-positive commits reservation RA and stock = 0.\nB: the same conditional operation observes stock = 0 and fails without a reservation.\nA retries after losing the response: its reservation key returns RA; stock stays 0.\nFor three voting replicas, a majority is 2. At most one failed replica can be tolerated for progress if the other two can communicate and the protocol's leadership requirements are met.",
+  "walkthrough": [
+    {
+      "title": "A bookmark vanishes immediately after creation",
+      "body": "A create commits on the leader and returns bookmark B17 with commit version 42. The next list is sent to a replica at version 40 and omits B17. No data loss has occurred, but the user journey is confusing. A session token can require reads at least through version 42, waiting within a deadline or routing to an authoritative read path. Always routing this session to the leader is simpler but adds leader load. A fixed sleep is not a guarantee because lag varies during failures. State what happens when no replica can reach the required version before the deadline."
+    },
+    {
+      "title": "The isolated old leader receives a reservation",
+      "body": "A network partition leaves the former leader alone while the other two voters can communicate. The isolated node must not acknowledge a new reservation as committed under the majority protocol. A newly elected leader also needs the protocol's log-safety and fencing rules before serving authoritative operations. The client may see a timeout and an unknown result, so it retries the same reservation key against the recovered owner. The response can be slower or unavailable during this transition; that is preferable here to selling an item twice. Observe leadership changes and unresolved attempts instead of reporting every timeout as a definite rejection."
+    }
+  ],
+  "task": "Compare browsing, bookmark create-then-list, and last-item reservation by observer, allowed anomaly, authority, and unreachable-source behavior. Trace competing reservations, a lost-response retry, and a lagging bookmark read. Propose bounded read-your-writes and explain why three-voter majority arithmetic is insufficient to prove the protocol correct. Assess observable outcomes, not terminology alone.",
+  "hints": [
+    "Separate duplicate attempts from two genuinely different buyers.",
+    "A guarantee must specify what happens when waiting for it exceeds the deadline."
+  ],
+  "solution": "Allow eventual public descriptions and keep checkout decisions outside that cache. Give bookmark creators read-your-writes using a minimum commit version with a bounded wait and authoritative fallback; on deadline expiry return a documented retryable outcome, not a falsely current list. Reserve stock in a transaction that checks positive stock, decrements once, and stores a unique reservation key. Competing buyers get at most one successful reservation when stock is one; matching retries replay the original result. Require supported authoritative reads and commits from the replication protocol, rejecting or deferring reservations when coordination is unavailable. Two of three voters can form a majority, but safe leader selection and committed-log handling remain necessary. Assess the table by its observable outcomes and failure policy rather than its terminology alone.",
+  "checklist": [
+    "I choose guarantees per operation and observer.",
+    "I distinguish idempotency from concurrency isolation.",
+    "I trace a lagging read and an atomic reservation race.",
+    "I define deadline and partition behavior without promising universal availability."
+  ],
+  "pitfalls": [
+    "Waiting an arbitrary second does not guarantee replica catch-up.",
+    "A valid final counter does not prove that only one reservation succeeded.",
+    "Overlapping quorum sizes alone do not specify a correct replication algorithm."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Identify an observation",
+      "prompt": "Before the core task, a user edits a title successfully and immediately sees the previous title on refresh. State which session guarantee is missing and whether this alone proves data loss.",
+      "hints": [
+        "The observer is the writer.",
+        "An old replica may still hold the earlier version."
+      ],
+      "solution": "Read-your-writes is missing for this journey. The observation does not itself prove data loss; trace commit state and the read source before deciding whether the write disappeared or the read lagged.",
+      "checklist": [
+        "I name the observer.",
+        "I identify the missing guarantee.",
+        "I avoid inferring loss from one stale read."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Two independent stock allocations",
+      "prompt": "After the core task, could two regions each sell offline from a preallocated stock budget of five items? Explain the new invariant and limits.",
+      "hints": [
+        "A bounded allocation differs from both regions sharing an unchecked counter.",
+        "Transfers between budgets require coordination."
+      ],
+      "solution": "With ten total items, disjoint durable budgets of five per region can allow independent sales without exceeding ten, provided each region enforces its local limit and cannot spend the other budget. A region may reject sales while the other has unused stock. Moving allocation safely requires coordinated, nonduplicating transfer and recovery rules.",
+      "checklist": [
+        "I conserve total allocation.",
+        "I enforce local uniqueness and limits.",
+        "I identify stranded capacity and transfer risk."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Does serializable always mean linearizable?",
+      "answer": "No. Serializable transactions correspond to some serial order. Respecting real-time order is an additional property often called strict serializability for transactions; check the actual database guarantee."
+    },
+    {
+      "question": "Can a stale description be correct behavior?",
+      "answer": "Yes, if the browsing contract permits it and correctness-critical fields are validated elsewhere. Correctness means honoring the specified contract, not making every observation equally fresh."
+    }
+  ],
+  "takeaways": [
+    "Describe allowed anomalies before choosing a guarantee.",
+    "Retries and competing intents require different protections.",
+    "Strong decisions need an honest unavailability policy."
+  ]
+}

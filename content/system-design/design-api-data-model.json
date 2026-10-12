@@ -1,0 +1,105 @@
+{
+  "id": "design-api-data-model",
+  "track": "system-design",
+  "title": "APIs and data models: make retries safe",
+  "minutes": 45,
+  "summary": "Define ownership, pagination, and retry semantics together so the interface and stored invariants agree.",
+  "prerequisites": [
+    "design-requirements-capacity"
+  ],
+  "prerequisiteNotes": "Use the bookmark workload and owner isolation from the requirements brief. This lesson adds a contract, not a running backend.",
+  "objectives": [
+    "Specify a bounded create/list API.",
+    "Model ownership and uniqueness as invariants.",
+    "Trace a lost response and an idempotent retry."
+  ],
+  "concepts": [
+    {
+      "title": "The interface is an agreement about outcomes",
+      "body": "Specify who may create a bookmark, maximum field sizes, durable success, and retry behavior. Ownership comes from verified identity; reject a supplied owner field. Distinguish malformed input from temporary dependency failure: unchanged invalid requests should not be retried, whereas temporary failures may permit retries within a deadline. Keep database-specific errors out of the public contract so a storage migration does not break clients."
+    },
+    {
+      "title": "Store the invariants you promise",
+      "body": "Bookmark contains owner_id, bookmark_id, created_at, URL, and title. Intentional repeated saves are allowed; URL is not unique. RetryRecord contains owner_id, idempotency_key, request_fingerprint, bookmark_id, and expiry. Enforce unique owner/key pairs and commit bookmark plus replay information atomically. Otherwise concurrent retries or a crash can create duplicates. Owner scoping prevents unrelated users choosing the same key from colliding or learning each other's result."
+    },
+    {
+      "title": "Bound both pagination and the retry window",
+      "body": "Order by created_at and bookmark_id to break ties. An integrity-protected opaque cursor identifies the last pair; query strictly earlier pairs under the authenticated owner, at most 50 records. This boundary is not a frozen snapshot. Retain replay records for 24 hours and document that later retries may create another bookmark. Unlimited replay would require unlimited history or a different identity rule."
+    }
+  ],
+  "example": "POST /bookmarks uses an Idempotency-Key and a body containing URL and title, not owner.\nFirst success: 201 with bookmark_id B17. Same owner, key, and normalized body: replay B17.\nSame owner and key but different body: 409 conflict, not silent reuse.\nGET /bookmarks?limit=50&cursor=opaque returns at most 50 records and a next cursor.\nAt 400000 creates per day, 24-hour retry retention, and 200 bytes per retry record, raw retry storage is 80000000 bytes = 0.08 decimal GB, before indexes and replication.",
+  "walkthrough": [
+    {
+      "title": "The response disappears after commit",
+      "body": "Request A authenticates owner O7 and presents key K9. The transaction claims O7/K9, inserts B17, and stores the normalized-body fingerprint with the replay result. The database commits, but the network drops the response. Request B repeats K9 with the same body. It reads the committed retry record and returns B17 without another insertion. If B races before A commits, the uniqueness constraint makes B wait or retry the transaction instead of independently passing a check-then-insert test. A client timeout therefore means an unknown outcome, not proof that nothing was written."
+    },
+    {
+      "title": "A tied timestamp meets a changing list",
+      "body": "Suppose B19 and B18 share the same creation timestamp. A page ending at B19 carries both that timestamp and identifier. The next request filters for pairs below that exact boundary and still includes B18. A new B20 inserted above the boundary does not shift an offset and duplicate yesterday's page. Deleting B19 after the cursor was issued also need not invalidate the boundary because its values, not a live-row lookup, define the comparison. This gives stable traversal boundaries, not a historical snapshot: deletions and edits can still change what the user sees."
+    }
+  ],
+  "task": "Write a design-level create/list contract for the private bookmark workload. Include request and response shapes, authentication-derived ownership, size and page bounds, replay lifetime, and statuses for malformed input, conflicting key reuse, and temporary overload. Sketch both tables and the atomic transaction boundary. Trace a response lost after commit and a concurrent duplicate request. Explain list behavior when two bookmarks share a timestamp and another is inserted between pages.",
+  "hints": [
+    "Decide the uniqueness scope before describing a retry lookup.",
+    "A cursor needs a total ordering; a timestamp alone may tie."
+  ],
+  "solution": "Choose owner-scoped keys and a unique constraint on RetryRecord(owner_id, idempotency_key). Validate a bounded request, compute a stable fingerprint of accepted fields, and atomically create B17 plus its replay record. Return the same stable result on a matching replay; return 409 for different content using a retained key. Specify 400 for malformed input and a retryable 503 with bounded backoff guidance for temporary overload. Keep successful replays for 24 hours and tell clients what expiry means. List at most 50 rows using the authenticated owner and a descending (created_at, bookmark_id) boundary. Newer inserts appear on refresh; this is not snapshot isolation across HTTP requests. The rubric rewards an explicit atomic boundary and honest cursor semantics, not a particular identifier format.",
+  "checklist": [
+    "I derive ownership from authentication on every operation.",
+    "I specify bounded payloads, pages, and replay retention.",
+    "I trace duplicate attempts across an atomic commit.",
+    "I explain timestamp ties and concurrent list changes."
+  ],
+  "pitfalls": [
+    "A check followed by an insert is not atomic uniqueness.",
+    "An opaque cursor can still be reused by an unauthorized caller.",
+    "Keeping keys forever silently creates an unbounded data set."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Separate identity from content",
+      "prompt": "Before the core task, decide whether two intentional saves of the same URL should share an identifier, and distinguish that from a retry of one save.",
+      "hints": [
+        "Product identity and request identity need not be the same.",
+        "Ask whether the second action is intentional."
+      ],
+      "solution": "Two deliberate saves may create different bookmark identifiers. Two attempts at one action share an owner-scoped idempotency key and return one identifier. URL uniqueness would conflate these cases.",
+      "checklist": [
+        "I distinguish actions from attempts.",
+        "I choose an owner scope.",
+        "I explain why URL equality is insufficient."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Retry after deletion",
+      "prompt": "After the core contract, consider deleting B17 during its replay window and then retrying the original create. Define behavior without resurrecting the bookmark unexpectedly.",
+      "hints": [
+        "A replay result need not re-execute the action.",
+        "Retain enough history to distinguish deletion from a new request."
+      ],
+      "solution": "Retain the retry mapping until expiry and return a documented replay outcome indicating the original identifier and its deleted state, or a documented gone response. Do not create another bookmark merely because the target row disappeared. Test deletion racing a retry and clarify behavior after the key expires.",
+      "checklist": [
+        "I avoid resurrection.",
+        "I document the response after deletion.",
+        "I identify a race and retention boundary."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Must every response field be byte-for-byte identical on replay?",
+      "answer": "No, but the contract must identify stable outcome fields. If exact replay is promised, persist the required response representation rather than recomputing changing fields."
+    },
+    {
+      "question": "Why not return every bookmark in one call?",
+      "answer": "Unbounded responses make memory, latency, and transfer cost depend on an owner’s entire history. Pagination gives the service and client a bounded unit of work."
+    }
+  ],
+  "takeaways": [
+    "Define retries at the interface and enforce them in storage.",
+    "Authorization survives every cursor and cache layer.",
+    "A pagination boundary is not automatically a snapshot."
+  ]
+}

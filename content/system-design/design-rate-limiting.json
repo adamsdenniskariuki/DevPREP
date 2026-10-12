@@ -1,0 +1,106 @@
+{
+  "id": "design-rate-limiting",
+  "track": "system-design",
+  "title": "Rate limiting: protect capacity and fairness",
+  "minutes": 45,
+  "summary": "Turn a capacity boundary into an admission policy with explicit burst, distribution, and failure semantics.",
+  "prerequisites": [
+    "design-cache-data-flow",
+    "design-queues-events"
+  ],
+  "prerequisiteNotes": "Bring the fleet-wide fallback budget and the distinction between arrivals, in-flight work, and backlog.",
+  "objectives": [
+    "Calculate token-bucket admission over time.",
+    "Separate per-owner fairness from global protection.",
+    "Define distributed limiter and retry failure behavior."
+  ],
+  "concepts": [
+    {
+      "title": "An average rate needs a burst rule",
+      "body": "A token bucket holds at most B tokens and refills at r tokens/s. Requests spend tokens or are rejected; B bounds immediate bursts and r sustained admission. Fixed windows are simpler but permit nearly double bursts across boundaries. Sliding windows smooth that boundary with more state or approximation. Choose the resource and user contract first, including whether expensive operations spend multiple tokens."
+    },
+    {
+      "title": "Fairness and source safety are different limits",
+      "body": "Per-owner limits cannot stop thousands of individually compliant owners overloading the database. Add fleet-level dependency admission and a concurrent-work cap. Use authenticated identity for private fairness; IP-only limits can group unrelated users behind shared networks. Bound unauthenticated limiter state separately. Decide explicitly how valid throttled demand affects availability reporting instead of hiding user failures behind healthy backend metrics."
+    },
+    {
+      "title": "Distributed state has a failure contract",
+      "body": "Full per-instance owner buckets multiply allowance across instances. Shared atomic state tightens enforcement but adds latency and a dependency. Conservative local leases reduce coordination while stranding spare capacity. Failing open during coordinator loss risks source overload; failing closed rejects legitimate users. For cache fallback, allow only bounded emergency allocations within the source budget, preventing stale leases or scale-out from multiplying capacity."
+    }
+  ],
+  "example": "A per-owner token bucket has capacity 20 tokens and refill rate 5 tokens/s, initially full.\nAt t = 0, 25 simultaneous one-token requests admit 20 and reject 5.\nAt t = 2 seconds, with no intervening requests, 10 tokens have refilled.\nA batch of 12 then admits 10 and rejects 2.\nImmediately after that batch, one token requires 0.2 seconds to refill. If Retry-After is expressed as whole seconds, round up to 1 second; this is guidance, not a reservation.",
+  "walkthrough": [
+    {
+      "title": "An owner request passes two gates",
+      "body": "Owner O7 submits a list. The API authenticates O7, checks a per-owner token bucket, and then checks admission for the source path only if a source read is needed. A cache hit need not consume the database-read budget, although it still consumes the API fairness budget. If the source gate rejects, the request must not enter a hidden database queue anyway. Decide whether a rejected second gate refunds the owner token; either policy can be defensible if implemented consistently, but refund races must not mint extra tokens. Emit a structured reason so operations can distinguish unfair demand from an exhausted dependency."
+    },
+    {
+      "title": "A limiter outage meets an API scale-out",
+      "body": "Six instances currently have conservative source allowances totaling 900 reads/s. If the shared coordinator fails, hold those bounded grants rather than creating fresh full-size grants on six new instances. New instances can serve eligible cache hits but should not invent fallback capacity. Expiring grants require conservative clock and ownership rules so replacement grants do not overlap an old holder's spending. This sacrifices some availability and utilization to protect the database. Trace the recovery transition too: reconnecting every process must not refill every owner bucket to full simultaneously or release a synchronized flood of waiting retries."
+    }
+  ],
+  "task": "Specify a rate-limiting policy for bookmark list requests and public-description source fallback. Use the example owner bucket and compute both bursts. Define identity, token cost, refill behavior, response status, retry guidance, and whether rejected requests are queued. Add a global source gate and in-flight bound. Explain state placement across API instances and behavior during coordinator loss plus scale-out. Provide a request trace that distinguishes a cache hit from a source miss and discuss fairness versus utilization.",
+  "hints": [
+    "Cap accumulated tokens at bucket capacity before spending.",
+    "A rate gate and a concurrent-work gate constrain different quantities."
+  ],
+  "solution": "Use an authenticated-owner bucket for fair API admission, with 20-token capacity and 5 tokens/s refill. The initial burst admits 20 of 25; two seconds later it admits 10 of 12. Reject excess owner demand with 429 and rounded-up Retry-After guidance; clients retry with jitter and a deadline, not immediately in lockstep. Apply a separately budgeted source gate to misses and bound in-flight source work so slower queries cannot fill memory indefinitely. A temporary source-protection failure may use a documented retryable 503 rather than misleading clients about their personal quota. Enforce fleet admission atomically or through conservative nonoverlapping allowances. During coordinator outage, retain only known bounded emergency allocations and disallow scale-out from multiplying them. Report rejected demand and gate reasons alongside successful latency.",
+  "checklist": [
+    "I compute token balances and admitted/rejected counts.",
+    "I distinguish owner fairness, global rate, and concurrency.",
+    "I specify retry behavior without an unbounded queue.",
+    "I explain coordinator loss and changing instance count."
+  ],
+  "pitfalls": [
+    "A per-instance limit silently grows when the service scales out.",
+    "Fast retries can turn controlled rejection into a retry storm.",
+    "Rate limiting does not by itself bound slow in-flight requests."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Discard excess refill",
+      "prompt": "Before the core task, an empty bucket has capacity 8 and refill rate 2 tokens/s. After ten idle seconds, how many one-token requests can it admit immediately?",
+      "hints": [
+        "Refill cannot exceed capacity.",
+        "Elapsed time does not create unlimited saved credit."
+      ],
+      "solution": "The bucket reaches 8 tokens after four seconds and remains at 8. It admits eight immediate requests, not twenty.",
+      "checklist": [
+        "I apply the capacity cap.",
+        "I state the immediate burst.",
+        "I distinguish idle credit from sustained rate."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Weight expensive operations",
+      "prompt": "After the core task, give exports a cost of five tokens and lists a cost of one. Explain whether one shared owner bucket protects both fairness and database safety.",
+      "hints": [
+        "A cost estimate may differ from actual work.",
+        "Exports may need a separate concurrency budget."
+      ],
+      "solution": "Weighted tokens can make an export consume more of the owner’s allowance, but the ratio needs measured resource costs. Large exports may hold resources much longer than lists, so use bounded export sizes and separate job/concurrency admission. A shared owner bucket still cannot replace the global dependency budget.",
+      "checklist": [
+        "I explain weighted spending.",
+        "I connect weights to measurement.",
+        "I retain independent dependency protection."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can Retry-After guarantee the next attempt succeeds?",
+      "answer": "No. Other requests may spend newly available capacity before the retry arrives. It is a minimum delay recommendation, not a reserved token."
+    },
+    {
+      "question": "Why separate attempted from admitted rates?",
+      "answer": "Admission can keep backend metrics healthy while legitimate users are being rejected. Attempted demand reveals unmet need and whether limits should be revised after capacity testing."
+    }
+  ],
+  "takeaways": [
+    "Specify both burst capacity and sustained rate.",
+    "Fairness limits do not replace global resource budgets.",
+    "Limiter failure and scale-out must not create capacity from nothing."
+  ]
+}

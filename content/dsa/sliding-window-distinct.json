@@ -1,0 +1,114 @@
+{
+  "id": "sliding-window-distinct",
+  "track": "dsa",
+  "title": "Sliding windows: maintain a valid interval",
+  "minutes": 50,
+  "summary": "Find a longest contiguous segment by expanding once and repairing its invariant.",
+  "objectives": [
+    "Distinguish a contiguous substring from a subsequence.",
+    "Maintain a window containing no repeated characters.",
+    "Explain why nested pointer loops can still take linear time."
+  ],
+  "concepts": [
+    {
+      "title": "A window is a contiguous range",
+      "body": "A substring occupies consecutive positions; you cannot skip an inconvenient character. Represent it with inclusive left and right indices. Expand right to consider a new endpoint, then move left only as far as necessary to restore validity."
+    },
+    {
+      "title": "Repair before measuring",
+      "body": "Keep a set of characters in the current window. If the incoming character already appears, repeatedly remove the leftmost character and advance left until the duplicate is gone. Insert the incoming character, then update the best length. The set and the interval must describe the same characters."
+    },
+    {
+      "title": "Count total movement",
+      "body": "Although shrinking happens inside the expansion loop, each position enters once and leaves at most once. Expected runtime is O(n) with ordinary hash-set operations. Space is O(min(n, alphabet size)). For lowercase English input, at most 26 characters are stored."
+    },
+    {
+      "title": "Validity must survive removing a prefix",
+      "body": "Shrinking cannot introduce duplicates. Since the previous window was valid, only the incoming character can cause a violation. This repair property enables the moving boundary. Negative-sum constraints, for example, need not behave monotonically as endpoints move."
+    },
+    {
+      "title": "A last-seen table is an alternative representation",
+      "body": "Remember each character’s latest index instead of removing set entries. Set left to max(left, lastSeen + 1) before recording the new index. An occurrence outside the window must never move left backward. This represents the same longest-valid-suffix invariant with different state."
+    }
+  ],
+  "example": "Input: text = \"abcaef\".\nAfter reading a, b, c, the valid window is \"abc\", length 3.\nThe next a repeats. Remove the first a, then insert the new a; the window is \"bca\".\nAdding e and f produces \"bcaef\", length 5.\nOutput: 5. \"abcaef\" is not valid because it contains two a characters.",
+  "task": "Write longestDistinct(text), returning the length of the longest contiguous substring with no repeated characters.\nInput contains only lowercase English letters and has length 0 through 100000. Return an integer; returning the substring itself is not required.\nRequired examples: longestDistinct(\"pwwkew\") returns 3, using \"wke\" or \"kew\"; longestDistinct(\"abba\") returns 2; longestDistinct(\"\") returns 0; longestDistinct(\"aaaa\") returns 1.\nAim for O(n) expected time. Do not generate every substring.",
+  "starter": "function longestDistinct(text):\n    present = empty set\n    left = 0\n    best = 0\n    for right from 0 to length(text) - 1:\n        // Shrink until text[right] can be added safely.\n        // Measure the repaired window.\n    return best",
+  "hints": [
+    "When an incoming character is already in the set, removing just one leftmost character may not remove its earlier occurrence.",
+    "Use a while loop for repair. After inserting the incoming character, the inclusive window length is right minus left plus 1."
+  ],
+  "solution": "function longestDistinct(text):\n    present = empty set\n    left = 0\n    best = 0\n    for right from 0 to length(text) - 1:\n        while present contains text[right]:\n            remove text[left] from present\n            left = left + 1\n        add text[right] to present\n        best = max(best, right - left + 1)\n    return best\n\nFor \"pwwkew\", the second w forces removal of p and then the earlier w. The window becomes \"w\", then \"wk\", then \"wke\", reaching length 3. The final w removes the old w and produces \"kew\", also length 3.\nThe repaired window is the longest valid suffix ending at right: any earlier starting point would include the duplicate that forced shrinking. Taking the maximum across endpoints finds the global answer. Each character is inserted once and removed at most once, so expected time is O(n). With the specified alphabet, extra space is O(26), or O(1).",
+  "checklist": [
+    "I can explain why \"pwke\" is not a substring of \"pwwkew\".",
+    "My set matches exactly the characters in the current valid window.",
+    "I can trace a duplicate that requires more than one removal.",
+    "I explain linear time by total pointer movement rather than loop nesting."
+  ],
+  "pitfalls": [
+    "Using an if instead of a while can leave a repeated character in the window.",
+    "Measuring before repair can record an invalid maximum.",
+    "Resetting the whole window discards useful characters and can miss the best answer."
+  ],
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "hash-map-complements",
+    "two-pointers-sorted-pairs"
+  ],
+  "prerequisiteNotes": "Know sets, contiguous half-open or inclusive intervals, and monotone pointer movement. This task uses lowercase letters, not arbitrary Unicode text.",
+  "walkthrough": [
+    {
+      "title": "Why abba catches broken repairs",
+      "body": "After ab, the incoming b repeats. Removing a alone leaves the old b, so remove that too before inserting the new b. The final a extends ba. In a last-seen implementation, its obsolete index zero must not move left backward."
+    },
+    {
+      "title": "Separate alphabet space from input size",
+      "body": "At most 26 distinct lowercase letters occupy the set, independent of n. A general alphabet of size A instead gives O(min(n,A)) space. Returning the actual substring would require saved boundaries and possibly copied output storage; this task returns only a length."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Check one fixed interval",
+      "prompt": "Check whether an entire lowercase string contains no repeats. Explain the results for \"cab\" and \"cac\".",
+      "hints": [
+        "No shrinking is necessary because the interval is fixed.",
+        "A repeated set member disproves validity immediately."
+      ],
+      "solution": "Scan with an empty set. Reject on a previously present character; otherwise insert and continue. Accept at the end. \"cab\" is true and \"cac\" is false at its final c. Expected time O(n), space O(min(n,26)), including O(1) with this alphabet. Empty input is valid, unlike a requirement for a nonempty substring.",
+      "checklist": [
+        "I check membership before insertion.",
+        "I state how empty input behaves."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "At most two distinct letters",
+      "prompt": "Return the longest substring length containing at most two distinct letters. For \"eceba\", return 3 using \"ece\".",
+      "hints": [
+        "Counts are needed because duplicates are allowed.",
+        "Delete a character’s map entry only when its count reaches zero."
+      ],
+      "solution": "Expand right and increment its character count. While the map has more than two keys, decrement the left character, remove zero counts, and advance left. Measure after repair. For \"eceba\", \"ece\" reaches three; adding b forces removal of e then c before two types remain. Each endpoint advances at most n times: expected O(n) time, O(1) alphabet-bounded space. A set without counts cannot tell whether a removed letter still occurs inside.",
+      "checklist": [
+        "I keep counts synchronized with the window.",
+        "I measure only after the distinct-key constraint holds."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not test longest lengths first?",
+      "answer": "Many overlapping substrings still repeat membership work. Reusing the valid suffix guarantees O(n) traversal instead of relying on early success."
+    },
+    {
+      "question": "What about subsequences?",
+      "answer": "They may skip interior positions. A window proves a statement about consecutive positions only; changing that requirement changes the problem."
+    }
+  ],
+  "takeaways": [
+    "Keep stored state identical to the represented interval.",
+    "Repair every violation before scoring a candidate.",
+    "Amortized analysis counts movements across the entire run."
+  ]
+}

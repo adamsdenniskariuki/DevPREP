@@ -1,0 +1,109 @@
+{
+  "id": "ml-trees-ensembles",
+  "track": "ml",
+  "title": "Trees and ensembles: combine simple decisions",
+  "minutes": 45,
+  "summary": "Interpret a tree split numerically, contrast bagging with boosting, and choose complexity under evaluation and serving constraints.",
+  "prerequisites": [
+    "ml-bias-variance"
+  ],
+  "prerequisiteNotes": "Know classification proportions, held-out model selection, and the difference between underfitting and overfitting hypotheses. Tree impurity is introduced from first principles.",
+  "objectives": [
+    "Compute parent and weighted child Gini impurity for a proposed split.",
+    "Explain how bagging and boosting address different modeling problems.",
+    "Choose tree and ensemble controls without confusing feature importance with causality."
+  ],
+  "concepts": [
+    {
+      "title": "A tree asks a sequence of questions",
+      "body": "Trees partition examples with rules such as message length exceeding a threshold. Leaves store predictions from their training examples. Branches capture interactions: long messages might indicate risk only in one queue. Binary Gini impurity is 1 - p*p - (1-p)*(1-p), where p is positive proportion. Pure leaves have zero impurity; evenly mixed leaves have 0.5. Greedy local splits do not guarantee a globally optimal tree."
+    },
+    {
+      "title": "Weight children by how many examples they contain",
+      "body": "Four positives and four negatives give parent impurity 0.5. Splitting into children with counts 3/1 and 1/3 gives each impurity 0.375. Equal child sizes yield weighted impurity 0.375 and reduction 0.125. With unequal sizes, a tiny pure leaf must count less than a large mixed leaf. This reduction is a training criterion, not held-out accuracy improvement or a probability of business success."
+    },
+    {
+      "title": "Bagging reduces dependence on a particular sample",
+      "body": "Bagging averages models fitted to bootstrap samples. Random forests additionally consider random feature subsets at splits, reducing correlation between trees. Averaging unstable trees can reduce variance, but perfectly correlated errors gain little. Tune depth, minimum leaf size, and feature subsampling on validation. Out-of-bag estimates can suit exchangeable data but do not automatically enforce chronology, label maturity, or organization separation. Preserve a deployment-aligned holdout."
+    },
+    {
+      "title": "Boosting adds corrections sequentially",
+      "body": "Boosting sequentially adds learners to improve a specified loss. For squared error, negative gradients correspond to residuals: later trees correct current misses rather than independently voting. Learning rate, rounds, leaf complexity, and subsampling control fit. Smaller rates often need more rounds and serving work. Use validation early stopping, preserving test independence. Neither ensemble technique repairs leakage or guarantees superiority over a linear baseline."
+    }
+  ],
+  "example": "Parent labels: 4 positive, 4 negative. Gini = 1 - 0.5^2 - 0.5^2 = 0.5.\nLeft child: 3 positive, 1 negative. Gini = 1 - 0.75^2 - 0.25^2 = 0.375.\nRight child: 1 positive, 3 negative. Gini = 0.375.\nWeighted child Gini = (4/8)*0.375 + (4/8)*0.375 = 0.375.\nImpurity reduction = 0.5 - 0.375 = 0.125.\nIf each leaf predicts its majority label, training accuracy on these eight examples is 6/8 = 75%; predicting one class at the parent gives 50%.\nNeither number estimates future accuracy without a separate evaluation.",
+  "task": "Explain and calculate the proposed split. A deep tree fits training almost perfectly but performs poorly on future tickets. Compare a shallower tree, a random forest, and boosted shallow trees as experiments. Specify what to hold fixed, which knobs to tune, and how latency, calibration, and feature availability enter the choice.",
+  "starter": "gini(positive, negative):\n  total = positive + negative\n  p = positive / total\n  return 1 - p*p - (1-p)*(1-p)\nweighted_children = sum(child_count / parent_count * child_gini)",
+  "hints": [
+    "Compute child class proportions locally, then weight their impurities by child size.",
+    "An ensemble choice changes both the statistical experiment and the serving budget."
+  ],
+  "solution": "Parent impurity is 0.5, child impurities 0.375, and weighted reduction 0.125; majority leaves correctly label six training examples. Verify feature availability and chronology first. Compare reduced depth or larger leaves, a forest with controlled tree count and subsampling, and boosted shallow trees with a fixed rate/rounds budget. Hold data and evaluation policies fixed. Measure held-out quality under capacity, calibration, model size, and realistic latency. Reject unavailable features regardless of training importance.",
+  "checklist": [
+    "I compute the weighted Gini reduction as 0.125.",
+    "I distinguish independent bagged fits from sequential boosting corrections.",
+    "I name complexity controls and compare on an unchanged holdout.",
+    "I include prediction cost and feature availability in selection."
+  ],
+  "pitfalls": [
+    "An unweighted average of unequal children gives the wrong split criterion.",
+    "A pure training leaf with one example provides weak evidence of future certainty.",
+    "Out-of-bag scoring does not enforce the product’s time and group constraints.",
+    "Impurity-based importance can favor high-cardinality features and does not show causality."
+  ],
+  "walkthrough": [
+    {
+      "title": "Translate a branch into a serving dependency",
+      "body": "Messages before closure may create a pure leaf but are unavailable at creation. Trace split variables to serving-time sources. Readable rules still encode leakage or problematic proxies when input semantics are misunderstood."
+    },
+    {
+      "title": "Compare quality at a fixed resource budget",
+      "body": "If a tree meets latency but misses recall, while an ensemble improves recall but exceeds latency, test smaller ensembles and shallower trees. Include preprocessing and memory costs. A weaker offline score may be preferable when it permits reliable decisions within the response deadline."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Unequal leaves",
+      "prompt": "A parent has six examples. One child contains two positives only; the other contains two positives and two negatives. Compute weighted child impurity.",
+      "hints": [
+        "The pure child contributes zero impurity.",
+        "The mixed child carries four sixths of the weight."
+      ],
+      "solution": "The pure child has Gini zero. The balanced four-example child has Gini 0.5. Weighted impurity is (2/6)*0 + (4/6)*0.5 = 1/3, not the unweighted average 0.25.",
+      "checklist": [
+        "I obtain weighted impurity 1/3.",
+        "I use example counts as weights."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Interrogate an importance claim",
+      "prompt": "A forest ranks customer identifier as its most important feature. Someone concludes that changing a customer’s identifier will reduce escalation risk. Explain two problems and design a diagnostic.",
+      "hints": [
+        "Association is not an intervention effect.",
+        "Identifiers can enable memorization across repeated entities."
+      ],
+      "solution": "An identifier can partition training customers without representing a causal mechanism; changing its string does not change their needs. High cardinality can also make impurity importance misleading. Compare a fixed model without identifiers using chronological and new-customer slices, and consider held-out permutation importance with awareness of correlated features. Preserve organization grouping where deployment requires it. A performance drop after removal shows predictive dependence under the test, not a causal effect of changing identifiers.",
+      "checklist": [
+        "I reject the causal interpretation.",
+        "I test memorization using an evaluation aligned with customer novelty."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Must tree inputs be standardized?",
+      "answer": "Ordinary threshold trees are generally insensitive to monotonic rescaling of individual numeric features, but preprocessing still needs correct units, missing-value handling, and training-only fitting. Distance-based models later in the track have stronger scaling needs."
+    },
+    {
+      "question": "Can more trees always fix overfitting?",
+      "answer": "No. Averaging may stabilize a forest, while extra boosting rounds can overfit. Correlated errors, shift, labels, and feature quality remain limiting factors."
+    }
+  ],
+  "takeaways": [
+    "Tree splits reduce a weighted training impurity, not necessarily deployment error.",
+    "Bagging averages variability; boosting adds sequential corrections.",
+    "Tune complexity against held-out quality and real serving constraints."
+  ]
+}

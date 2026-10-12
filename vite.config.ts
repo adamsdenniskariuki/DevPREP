@@ -56,7 +56,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.replaceAll('\\', '/').includes('/src/content/')) return 'curriculum'
+          const path = id.replaceAll('\\', '/')
+          if ((path.includes('/content/') || path.includes('/src/generated/')) && path.endsWith('.json')) return 'curriculum'
         },
       },
     },

@@ -1,0 +1,113 @@
+{
+  "id": "design-requirements-capacity",
+  "track": "system-design",
+  "title": "Requirements before architecture",
+  "minutes": 40,
+  "summary": "Scope a service, estimate its load, and connect each assumption to a design decision.",
+  "objectives": [
+    "Separate product behavior from measurable quality targets.",
+    "Estimate average traffic, peak traffic, and storage with explicit units.",
+    "Choose an initial architecture without treating estimates as precise forecasts."
+  ],
+  "concepts": [
+    {
+      "title": "Start with the user contract",
+      "body": "Functional requirements describe operations, such as creating a note or opening a shared note. Quality requirements describe acceptable latency, availability, durability, and privacy. Name the critical user journey and explicit non-goals before selecting databases or queues."
+    },
+    {
+      "title": "Keep the units visible",
+      "body": "Daily operations divided by 86400 seconds gives average operations per second. A stated peak multiplier produces a planning estimate, not a guaranteed maximum. Storage is records per day multiplied by bytes per record and retention days. Replicas, indexes, backups, and protocol overhead are separate costs."
+    },
+    {
+      "title": "Let assumptions drive decisions",
+      "body": "A modest average load can still have bursts or a hot record. Start with the simplest design that meets the stated contract, then identify which metric would trigger a change. Capacity estimates alone do not establish latency or availability; use representative load tests and operational measurements."
+    },
+    {
+      "title": "Turn uncertainty into a range",
+      "body": "An average is a budget input, not a safety boundary. The bookmark exercise assumes a tenfold peak because no observed arrival distribution exists yet. Record that assumption beside the estimate, then ask whether a launch notification concentrates traffic into one minute. Separate user demand from retries: two attempts per logical request can double the offered traffic without adding users. Plan a load experiment with bursts, skewed owners, and representative page sizes rather than only a smooth stream of tiny requests. Revise the estimate when measurements disagree; the purpose of arithmetic is to expose consequences, not defend the first guess."
+    },
+    {
+      "title": "Latency, durability, and capacity are different promises",
+      "body": "A database that fits all retained bytes may still miss the latency target because indexes do not fit its working memory or a hot owner causes contention. Likewise, a fast acknowledgement says nothing about crash survival unless the storage acknowledgement policy is specified. Distinguish a request availability objective from a recovery objective: a service can return many successful reads while its backups are unusable. Write down who observes latency, which requests count toward availability, and what failures acknowledged data must survive. Measure these independently before using any single number to claim that the design meets its contract."
+    }
+  ],
+  "example": "Consider a private note service with 40000 daily active users, 15 reads and 2 writes per user per day, and a 6-times peak multiplier.\nReads: 600000 per day / 86400 = about 6.94 per second on average, or 41.7 at assumed peak.\nWrites: 80000 per day / 86400 = about 0.93 per second on average, or 5.6 at assumed peak.\nIf each write creates a new retained 2000-byte record and retention is 90 days, raw storage is 14.4 billion bytes, or 14.4 decimal GB. Three full copies require 43.2 GB before indexes and backups.\nA stateless API and a managed database are a plausible starting point. These figures do not justify sharding by themselves.",
+  "task": "Prepare a short design brief for a private bookmark service. Users create bookmarks and list their own recent bookmarks. Public sharing, search, and offline synchronization are out of scope.\nAssume 200000 daily active users, 20 list requests and 2 new bookmarks per user per day, a 10-times peak multiplier for both operations, 1000 bytes per stored bookmark, 180-day retention, and three full data copies. Use decimal GB and exclude indexes, backups, and request payload overhead from the storage calculation.\nProduct targets: p95 list latency under 300 ms at the assumed peak, 99.9% monthly request availability, and durable acknowledged writes. Authorization must prevent access to another user’s bookmarks.\nDeliver: a scope statement; average and peak read/write estimates; raw and replicated storage; a request flow; two risks or unknowns with validation steps. Use the self-assessment checklist, not a numerical grade.",
+  "hints": [
+    "Calculate daily reads and writes separately before converting either to requests per second. List requests are not new storage records.",
+    "Storage grows by new bookmarks per day, not by active users alone. Explain authorization and durability in the request flow, and identify assumptions a load test must check."
+  ],
+  "solution": "One reasonable brief scopes the service to authenticated create and recent-list operations. Every database query is constrained to the authenticated owner; ownership is not accepted from an untrusted request parameter.\nReads: 200000 × 20 = 4000000 per day, about 46.3 per second average and 463 per second peak.\nWrites: 200000 × 2 = 400000 per day, about 4.63 per second average and 46.3 per second peak.\nRaw storage: 400000 × 1000 × 180 = 72000000000 bytes, or 72 GB. Three full copies require 216 GB before omitted overhead.\nFlow: client authenticates to a stateless API; the API validates input and owner identity; a database stores bookmarks indexed by owner and creation time; lists use bounded pagination. A create response is sent only after the chosen database durability policy confirms the write. Replication configuration and recovery tests must support that policy.\nStart with a managed relational database rather than speculative sharding. Risk one is uneven activity: load-test bursty users, pagination sizes, and index behavior against p95 latency. Risk two is storage and recovery overhead: measure real index size and test backup restoration and failover. Monitor availability rather than inferring it from replica count.\nOther architectures can be reasonable if they preserve the same contract and explain their tradeoffs. This is a discussion checklist, not a uniquely correct diagram.",
+  "checklist": [
+    "I state the two supported operations and at least two non-goals.",
+    "I show separate average and peak traffic estimates with requests-per-second units.",
+    "I distinguish 72 GB of raw records from 216 GB of replicated records and name excluded overhead.",
+    "My flow explains owner authorization, pagination, and when a write is acknowledged.",
+    "I connect two uncertainties to specific measurements or recovery tests."
+  ],
+  "pitfalls": [
+    "Treating daily traffic as requests per second overstates load dramatically.",
+    "Multiplying read traffic by record size and retention confuses transfer volume with stored data.",
+    "A replica count alone is not proof of durability, availability, or successful recovery.",
+    "Choosing distributed components before clarifying requirements adds unexplained complexity."
+  ],
+  "prerequisites": [],
+  "prerequisiteNotes": "Start here. Bring arithmetic with units and the ability to describe an HTTP request; no distributed-systems experience is assumed.",
+  "walkthrough": [
+    {
+      "title": "Trace one bookmark creation before drawing boxes",
+      "body": "A signed-in reader submits a URL. The API derives the owner from the authenticated identity, validates length and allowed URL format, and assigns a bookmark identifier. Storage inserts one record and confirms its configured durable commit before the API returns success. A later list request uses that same authenticated owner and a bounded page size. This trace exposes decisions hidden by a diagram: an untrusted owner parameter cannot select somebody else's records, and a lost success response can cause a duplicate unless a retry contract is added. That retry question becomes the next lesson, not an excuse to ignore it."
+    },
+    {
+      "title": "Review the estimate as a design experiment",
+      "body": "At 400000 new bookmarks per day, retention is the multiplier that turns a daily write budget into a stock of records. Deletion lag creates additional live bytes, so the exercise's 72 GB is a lower-level raw model, not a disk purchase recommendation. Test the p95 target with the proposed owner/time index, a nearly full retention window, and large but allowed pages. Then repeat during a recovery or replica outage. Document which bottleneck appears first and one intervention tied to evidence. A defensible brief can reject sharding today while naming a measured storage or throughput threshold that would reopen the decision."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A units audit",
+      "prompt": "Before the core brief, estimate storage for 12000 new 500-byte records per day retained for 30 days. Show raw bytes and decimal GB, then distinguish storage from reading each record ten times.",
+      "hints": [
+        "Multiply creations, size, and retention.",
+        "One decimal GB is one billion bytes; repeated reads do not create retained records."
+      ],
+      "solution": "12000 × 500 × 30 = 180000000 bytes = 0.18 GB raw. Ten reads per record affect transfer and query work, not this stored-record count. Copies, indexes, and backups require separate estimates.",
+      "checklist": [
+        "I carry bytes and days through the calculation.",
+        "I distinguish stored records from requests.",
+        "I name at least one excluded cost."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Challenge the peak assumption",
+      "prompt": "After the core brief, replace the tenfold traffic peak with a twentyfold peak without changing users, retention, or daily creations. Explain what changes, what does not, and how you would validate the revised design.",
+      "hints": [
+        "A peak multiplier redistributes demand; it does not necessarily change daily volume.",
+        "Check contention and request sizes as well as total throughput."
+      ],
+      "solution": "Peak reads become about 926 requests/s and peak writes about 92.6 requests/s. Raw retained storage remains 72 GB under the unchanged daily-creation assumption. Re-run burst and mixed-read/write tests, inspect queue growth and tail latency, and set admission limits below observed saturation rather than assuming twice the hardware always gives twice the capacity.",
+      "checklist": [
+        "I change both traffic peaks.",
+        "I leave storage unchanged and explain why.",
+        "I propose a measurable mixed-workload test."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not size hardware from requests per second alone?",
+      "answer": "Request cost depends on page size, query shape, contention, payload size, and cache state. Benchmark the actual operation mix before mapping demand to a machine count."
+    },
+    {
+      "question": "Does 99.9% monthly request availability imply a fixed outage allowance?",
+      "answer": "It gives a failed-request budget when defined over requests. Converting it into minutes assumes a time-based definition or uniform traffic; a peak-hour outage can spend a request budget much faster."
+    }
+  ],
+  "takeaways": [
+    "State scope and measurable targets before architecture.",
+    "Keep rates, stored bytes, copies, and retention separate.",
+    "Use uncertainty to choose experiments, not to manufacture precision."
+  ]
+}

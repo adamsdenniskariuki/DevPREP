@@ -1,0 +1,112 @@
+{
+  "id": "hash-map-complements",
+  "track": "dsa",
+  "title": "Hash maps: remember what you have seen",
+  "minutes": 45,
+  "summary": "Replace repeated pair comparisons with a lookup table while preserving distinct indices.",
+  "objectives": [
+    "Explain how a complement lookup avoids a nested scan.",
+    "Maintain a map from a previously seen value to its index.",
+    "Handle duplicates, negative values, and a missing answer."
+  ],
+  "concepts": [
+    {
+      "title": "Ask a smaller question",
+      "body": "For a current value x and target t, the needed partner is t minus x. Instead of asking whether every possible pair works, ask whether that partner appeared earlier. A hash map supports expected constant-time lookup, trading extra memory for less repeated work."
+    },
+    {
+      "title": "Make the invariant explicit",
+      "body": "Before processing index j, the map contains only values at indices smaller than j. Look up the complement before inserting the current value. This prevents a single element from being used twice, even when twice its value equals the target."
+    },
+    {
+      "title": "Separate correctness from performance",
+      "body": "The first successful lookup returns two valid, distinct indices. If no lookup succeeds, no pair exists because each possible later endpoint was checked. Expected runtime is O(n) and extra space is O(n); this runtime assumes ordinary well-behaved hash-map operations."
+    },
+    {
+      "title": "Decide what information may be forgotten",
+      "body": "Any valid pair is accepted, so one earlier index per value suffices. Replacing an earlier occurrence loses no necessary evidence. Returning every pair needs counts or index collections. Choose state from output requirements, not familiarity."
+    },
+    {
+      "title": "Expected performance is a model assumption",
+      "body": "Pathological collisions can slow hash lookup; an ordered balanced map offers logarithmic worst-case operations instead. Also ensure complement subtraction fits the numeric representation. Neither implementation detail changes the distinct-index invariant, but both belong in an honest performance discussion."
+    }
+  ],
+  "example": "Input: values = [4, 9, 1, 6], target = 10.\nAt index 0, partner 6 is absent; remember 4 at index 0.\nAt index 1, partner 1 is absent; remember 9 at index 1.\nAt index 2, partner 9 is present at index 1.\nReturn [1, 2], because 9 + 1 = 10. Stop without processing 6.",
+  "task": "Write pairIndices(values, target), returning any two distinct zero-based indices [i, j] with i < j whose values sum to target. Return [] if none exists. Do not modify values.\nInput: an integer array of length 0 through 100000 and an integer target. Each integer, including target, is between -1000000 and 1000000.\nRequired examples: pairIndices([8, 3, 8, -2], 16) returns [0, 2]; pairIndices([5], 10) returns []; pairIndices([], 0) returns [].\nMultiple valid answers are allowed. Aim for expected O(n) time and O(n) extra space.",
+  "starter": "function pairIndices(values, target):\n    seen = empty map\n    for j from 0 to length(values) - 1:\n        // Find a previously seen partner before remembering values[j].\n    return []",
+  "hints": [
+    "At each index, calculate the exact value needed to complete the target. What information must you remember to return indices rather than values?",
+    "Check seen for target minus values[j] before inserting values[j]. A later duplicate can then match an earlier occurrence without matching itself."
+  ],
+  "solution": "Keep a map from value to an earlier index. Replacing an old index for the same value is safe because any valid pair is accepted.\n\nfunction pairIndices(values, target):\n    seen = empty map\n    for j from 0 to length(values) - 1:\n        need = target - values[j]\n        if seen contains key need:\n            return [seen[need], j]\n        seen[values[j]] = j\n    return []\n\nFor [8, 3, 8, -2] with target 16, store 8 at index 0 and 3 at index 1. The second 8 needs 8, so return [0, 2]. For [5] with target 10, the map is empty during lookup; storing 5 afterward cannot create a pair.\nEvery pair has a later endpoint. When that endpoint is processed, its partner is already in the map, so an existing pair cannot be missed. Expected time is O(n); space is O(n). A nested scan saves auxiliary memory but takes O(n squared) time.",
+  "checklist": [
+    "I can state what is in the map before each iteration.",
+    "I return indices, not the matching values.",
+    "I can trace both a repeated-value match and a one-element non-match.",
+    "I can explain the expected time and extra-space costs."
+  ],
+  "pitfalls": [
+    "Inserting before lookup can return the current index twice.",
+    "Testing an index for truthiness can incorrectly reject index 0; test key membership instead.",
+    "Returning a default pair when no answer exists violates the empty-array contract."
+  ],
+  "prerequisites": [
+    "arrays-prefix-foundations"
+  ],
+  "prerequisiteNotes": "Know index scans and array returns. Map membership is distinct from truthiness.",
+  "walkthrough": [
+    {
+      "title": "Derive the lookup from a quadratic baseline",
+      "body": "Every earlier-index comparison asks whether a value equals the same need, target minus values[j]. Remembering values replaces that repeated scan with membership. Initially the map is empty; after a failed lookup, insertion restores the next iteration’s invariant. Operation order makes the proof executable."
+    },
+    {
+      "title": "Test validity without overconstraining the answer",
+      "body": "Check in-range increasing indices and the target sum. For [4,9,1,6] and target 10, both [0,3] and [1,2] are valid, although this scan returns [1,2]. Contract tests should accept either. Include a no-match case to distinguish remembered candidates from completed pairs."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "An earlier duplicate",
+      "prompt": "Return whether any value occurs twice in an integer array. Trace [6,1,6] and [6].",
+      "hints": [
+        "You need membership but no index in the answer.",
+        "Check the set before adding the current value."
+      ],
+      "solution": "Scan with an initially empty set. Return true when the current value is already present; otherwise add it. Return false after the scan. [6,1,6] returns true at the final position, while [6] returns false. The set contains exactly the distinct earlier values. Expected time is O(n), auxiliary space O(n); empty input is false.",
+      "checklist": [
+        "I distinguish repeated positions from one occurrence.",
+        "I justify the empty-set initialization."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Count all matching index pairs",
+      "prompt": "Return the number of i < j pairs summing to target, rather than one pair. For [2,2,2,3] and target 4, return 3.",
+      "hints": [
+        "Remember the frequency of each earlier value.",
+        "Add the partner frequency before incrementing the current frequency."
+      ],
+      "solution": "Maintain frequency and count. At j, add frequency[target - values[j]] (zero if absent), then increment frequency[values[j]]. The three 2s contribute 0, then 1, then 2 pairs, totaling 3; the 3 contributes none. Each pair is counted exactly at its later endpoint. Expected time O(n), auxiliary space O(n). The answer can reach n(n - 1)/2, so use a sufficiently wide integer.",
+      "checklist": [
+        "I count duplicate occurrences rather than distinct values.",
+        "I still perform lookup before insertion."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not sort first?",
+      "answer": "Sorting costs O(n log n) comparison time and changes positions. Preserving original indices requires bookkeeping; a sorted-input contract cannot be silently substituted."
+    },
+    {
+      "question": "Can this process a stream?",
+      "answer": "Yes, assign arrival indices and retain map entries until a match. Without an answer, memory can grow with distinct arriving values."
+    }
+  ],
+  "takeaways": [
+    "Derive a remembered state from repeated baseline work.",
+    "Update order prevents accidental self-matching.",
+    "Changing “any answer” to “all answers” changes required state."
+  ]
+}

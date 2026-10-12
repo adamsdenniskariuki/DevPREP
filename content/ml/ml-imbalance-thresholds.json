@@ -1,0 +1,110 @@
+{
+  "id": "ml-imbalance-thresholds",
+  "track": "ml",
+  "title": "Imbalance and thresholds: spend a limited review budget",
+  "minutes": 50,
+  "summary": "Choose a decision policy from held-out scores, costs, and staffing limits while preserving prevalence and calibration assumptions.",
+  "prerequisites": [
+    "ml-clustering"
+  ],
+  "prerequisiteNotes": "Recall precision, recall, probabilistic classification, and held-out selection. Clustering provides a contrast: ranked classifier scores, not arbitrary cluster IDs, drive this decision policy.",
+  "objectives": [
+    "Calculate confusion metrics and expected observed cost at different thresholds.",
+    "Explain why resampling changes training, not the deployment prevalence.",
+    "Distinguish a fixed threshold from a batch top-k policy and test capacity explicitly."
+  ],
+  "concepts": [
+    {
+      "title": "Rare positives change the useful baseline",
+      "body": "At 1% prevalence, always predicting negative gives 99% accuracy while finding nothing. Report positive counts, precision, recall, and capacity. Precision changes with prevalence even if true-positive and false-positive rates stay constant. Precision-recall curves compare thresholds, but summary area does not guarantee quality at the staffing limit. Small positive counts make estimates noisy; report denominators and uncertainty."
+    },
+    {
+      "title": "Resampling belongs inside training",
+      "body": "Resampling and weighting change what learning prioritizes. Apply them inside training folds only; preserve representative validation and test prevalence. Duplicating positives before splitting can leak copies into evaluation. These techniques may alter calibration, so raw outputs need not estimate deployment probabilities. A representative calibration set or properly nested procedure can help with sufficient labels. Calibration and threshold selection have different goals."
+    },
+    {
+      "title": "Translate scores into feasible actions",
+      "body": "Fixed thresholds flag scores at or above a value, so traffic and score shifts change volume. Batch top-k selects at most k cases with documented ties. It controls count but may select weak cases and requires waiting for batch closure. Live systems need arrival, reserved-capacity, and overflow rules without knowing future scores. Select on validation and freeze both policy and timing before test."
+    },
+    {
+      "title": "Costs need explicit assumptions",
+      "body": "Assume false positives cost $2, missed positives $10, and correct decisions zero. For calibrated p, flagging costs 2*(1-p) in expectation; not flagging costs 10*p. Flag above 1/6; equality ties. This assumes fixed costs, applicable probabilities, and unlimited capacity. Real reviews also cost money for true positives, may not prevent escalation, and may change later labels. State those differences before applying the algebra."
+    }
+  ],
+  "example": "Validation scores in descending order: [0.9, 0.8, 0.6, 0.4, 0.3, 0.1].\nCorresponding labels: [1, 0, 1, 0, 1, 0]. Flag scores >= threshold.\nThreshold 0.7: TP=1, FP=1, FN=2, TN=2; precision=1/2; recall=1/3; flagged=2.\nThreshold 0.5: TP=2, FP=1, FN=1, TN=2; precision=2/3; recall=2/3; flagged=3.\nAt FP cost $2 and FN cost $10, observed cost is $22 at threshold 0.7 and $12 at threshold 0.5 for this six-case batch.\nA capacity of two reviews makes threshold 0.5 infeasible despite its lower unconstrained cost.\nFor calibrated probabilities with these costs and no capacity constraint, the expected-cost boundary is p = 2/(2+10) = 1/6.",
+  "task": "Work both threshold policies in the example. Choose a feasible policy under two reviews per batch, explain what additional scores or labels would be needed for a stronger claim, and design training and calibration checks if positives are oversampled. Contrast the observed batch costs with the theoretical probability-cost boundary.",
+  "starter": "predicted_positive = score >= threshold\nprecision = true_positives / flagged_count\nrecall = true_positives / actual_positive_count\nobserved_cost = 2 * false_positives + 10 * false_negatives\n# Check capacity before comparing feasible policy costs.",
+  "hints": [
+    "Count labels among the selected prefix rather than inferring from the score magnitudes.",
+    "The probability-cost boundary assumes calibration and does not enforce staffing limits."
+  ],
+  "solution": "Threshold 0.7 gives precision 1/2, recall 1/3, and cost $22; threshold 0.5 gives both rates 2/3 and cost $12. Only 0.7 meets capacity here. Top-two selects the same cases and guarantees batch count, unlike a fixed threshold on future traffic. Six examples cannot establish future quality. Oversample training only and evaluate representative later data and calibration. The 1/6 boundary minimizes simplified expected error cost without capacity; it does not justify an infeasible review queue.",
+  "checklist": [
+    "I compute both confusion matrices and observed costs correctly.",
+    "I reject the three-review policy under a two-review limit.",
+    "I preserve deployment prevalence in validation and test.",
+    "I state calibration and capacity assumptions for the cost boundary."
+  ],
+  "pitfalls": [
+    "Oversampling before splitting can leak duplicate examples into evaluation.",
+    "A threshold meeting yesterday’s capacity may overload tomorrow’s queue.",
+    "Undefined precision for zero flags is not automatically perfect precision.",
+    "Selecting the best of many thresholds on a tiny validation set can overfit."
+  ],
+  "walkthrough": [
+    {
+      "title": "Apply the capacity constraint first",
+      "body": "Tabulate policies, review counts, positives found, and costs. Mark infeasible policies before selection to avoid recommending unserviceable queues. Compare no review too: missing all three positives costs $30 under these simplified assumptions."
+    },
+    {
+      "title": "Specify ties and timing",
+      "body": "Resolve equal scores with a documented stable or reproducibly randomized rule, checking group effects. Define batch closure and maximum wait. Waiting a day for exact top-two ranking may be unacceptable for urgent tickets even when offline metrics look good."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "No flags is not high precision",
+      "prompt": "On the six-case example, set the threshold to 1. Compute recall, review count, and observed cost. What should be reported for precision?",
+      "hints": [
+        "No score reaches 1.",
+        "Precision would divide zero true positives by zero flags."
+      ],
+      "solution": "Review count is zero, recall is 0/3 = 0, and all three positives are missed, costing $30. Precision is undefined mathematically. Report it as not applicable, or disclose an explicit software convention; do not claim 100% precision.",
+      "checklist": [
+        "I obtain zero recall and cost $30.",
+        "I handle the zero denominator explicitly."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Prevalence changes queue quality",
+      "prompt": "A detector has true-positive rate 80% and false-positive rate 10%. Compare precision on 1000 cases with 100 positives versus 10 positives, assuming those rates remain unchanged.",
+      "hints": [
+        "Apply false-positive rate to actual negatives, not all cases.",
+        "Precision divides found positives by all flags."
+      ],
+      "solution": "At 100 positives, TP=80 and FP=90, so precision is 80/170, about 47.1%. At 10 positives, TP=8 and FP=99, so precision is 8/107, about 7.5%. This calculation holds the conditional rates fixed as an assumption; real distribution changes may alter them too. A much rarer target can make the same detector expensive to review.",
+      "checklist": [
+        "I obtain 80/170 and 8/107 precision.",
+        "I state the fixed-rate assumption."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is top-k always better than a fixed threshold?",
+      "answer": "No. It enforces a count but can select low-value cases and needs a defined batch. Thresholds can avoid weak cases but require capacity safeguards under changing traffic."
+    },
+    {
+      "question": "Can a threshold fix bad ranking?",
+      "answer": "Not generally. A threshold chooses where to cut the ranking; it cannot reorder misplaced positives. Improve representation or learning if no feasible operating point meets the quality target."
+    }
+  ],
+  "takeaways": [
+    "Evaluate rare outcomes with positive counts and decision-relevant metrics.",
+    "Resample training only and recheck probability calibration.",
+    "Choose a feasible operational policy, not just the lowest unconstrained error.",
+    "Distinguish observed costs from expected costs under calibration assumptions."
+  ]
+}

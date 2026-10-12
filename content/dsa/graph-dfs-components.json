@@ -1,0 +1,105 @@
+{
+  "id": "graph-dfs-components",
+  "track": "dsa",
+  "title": "Graph DFS: explore connected components",
+  "minutes": 45,
+  "summary": "Use an explicit stack and a whole-graph outer scan to discover every undirected component.",
+  "prerequisites": [
+    "stack-balanced-delimiters",
+    "recursion-fast-power",
+    "graph-bfs-shortest-hops"
+  ],
+  "prerequisiteNotes": "Know adjacency lists, undirected edges, and marking on discovery. DFS changes worklist order, not the meaning of reachability.",
+  "objectives": [
+    "Implement iterative depth-first exploration without recursive stack limits.",
+    "Cover disconnected vertices using an outer loop.",
+    "Distinguish reachability claims from shortest-path claims."
+  ],
+  "concepts": [
+    {
+      "title": "A stack follows the newest frontier",
+      "body": "Depth-first exploration uses last-in, first-out scheduling, tending to pursue recently discovered branches before older pending branches. An explicit stack avoids relying on the runtime’s call-depth limit. Its exact visitation order depends on neighbor order and push order. For component sizes, no particular order is required: all that matters is that each reachable vertex is eventually processed once. Do not attach BFS’s shortest-hop guarantee to a different scheduling policy."
+    },
+    {
+      "title": "One search covers one component",
+      "body": "A component is a maximal set of vertices connected by undirected paths. Starting from an unseen root reaches exactly that root’s component. After its stack empties, scan for another unseen root. Isolated vertices are components of size one, not missing data. The outer scan is essential: a correct traversal from vertex zero can still produce an incomplete whole-graph result if other components exist."
+    },
+    {
+      "title": "Visited state outlives one search",
+      "body": "Keep one visited array for the entire graph, marking a vertex before pushing it. If a discovered vertex has several neighbors leading back to it, they all observe it as already scheduled. Resetting visited for each root would explore old components repeatedly and double-count them. The stack may empty between components, but global classification must remain. The same distinction appears in many algorithms with per-component work and whole-input bookkeeping."
+    }
+  ],
+  "example": "componentSizes(6, [[0,1],[1,2],[2,0],[3,4]]) returns [3,2,1], ordered by the smallest vertex in each component.",
+  "task": "Write componentSizes(n, edges) for an undirected graph with vertices 0 through n - 1. Return sizes in the order obtained by scanning possible roots in increasing ID order. n may be zero and is at most 100000; endpoints are valid, and duplicate edges and self-loops are permitted. Include adjacency construction. Use an explicit stack and do not mutate edges.",
+  "starter": "function componentSizes(n, edges):\n    neighbors = n empty lists\n    // Add both directions.\n    seen = array of n copies of false\n    sizes = empty list\n    // Start a new exploration for each unseen root.\n    return sizes",
+  "hints": [
+    "The outer loop must include every vertex, even those absent from the edge list.",
+    "Mark each root and neighbor when pushing, not when popping."
+  ],
+  "solution": "function componentSizes(n, edges):\n    neighbors = n empty lists\n    for [a, b] in edges:\n        append b to neighbors[a]\n        append a to neighbors[b]\n    seen = array of n copies of false\n    sizes = empty list\n    for root from 0 to n - 1:\n        if seen[root]:\n            continue\n        stack = [root]\n        seen[root] = true\n        size = 0\n        while stack is not empty:\n            u = pop stack\n            size = size + 1\n            for v in neighbors[u]:\n                if not seen[v]:\n                    seen[v] = true\n                    push v onto stack\n        append size to sizes\n    return sizes\n\nThe triangle 0,1,2 yields size 3 despite its cycle. The next unseen root is 3, reaching 4 for size 2; root 5 yields size 1. Every pushed vertex has a path to its root. Conversely, if a reachable vertex were omitted, the first missing vertex on its path would have been discovered by its processed predecessor. Components are disjoint and roots are considered increasingly. Time O(n + E), adjacency space O(n + E), auxiliary seen/stack O(n), and output O(number of components).",
+  "checklist": [
+    "I retain visited state across component searches.",
+    "I include isolated nodes and n = 0.",
+    "I never claim stack discovery gives shortest distances."
+  ],
+  "pitfalls": [
+    "Starting from only vertex zero misses disconnected components.",
+    "Counting pushes without discovery marking can count a vertex repeatedly.",
+    "Treating a directed graph as undirected changes the question."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace the cycle without repetition",
+      "body": "At root 0, mark before scheduling. Scanning its neighbors discovers 1 and 2. Whichever is popped next sees the other already marked, so the triangle cannot multiply stack entries. A self-loop is also harmless because its endpoint is already seen. Duplicate edges cost extra adjacency scans but do not change the output. Count E as the number of supplied entries, including duplicates, when stating the bound."
+    },
+    {
+      "title": "Understand what iterative DFS does not reproduce",
+      "body": "This compact worklist traversal is sufficient for reachability and component sizes. It does not preserve recursive entry-and-exit events exactly: several siblings can be marked before one is processed. Algorithms needing postorder, active-path cycle detection, or discovery finishing times require richer explicit frames or another carefully defined traversal. Replacing recursion with a stack is not automatically equivalent for every observable event."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Reachable membership",
+      "prompt": "For edges [[0,1],[1,2]] on four vertices, determine whether 2 and 3 are reachable from 0.",
+      "hints": [
+        "Maintain a single visited set from source 0.",
+        "An absent edge path leaves vertex 3 unmarked."
+      ],
+      "solution": "A stack starts with 0, then discovers 1 and 2. Thus 2 is reachable and 3 is not. DFS or BFS is sufficient because only existence, not shortest length, is asked. With adjacency already built, traversal time is O(reachable vertices + their adjacency entries), auxiliary space O(V) in the worst case.",
+      "checklist": [
+        "I use visited state to avoid repeats.",
+        "I do not infer reachability from vertex numbering."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Largest land region",
+      "prompt": "In a rectangular 0/1 grid, find the largest four-directionally connected region of ones without mutating the grid. For [[1,0,1],[1,1,0]], return 3.",
+      "hints": [
+        "Treat each land cell as a vertex with at most four neighbors.",
+        "Start a stack only at unseen land cells."
+      ],
+      "solution": "Scan cells; for unseen land, mark and flood with an explicit stack, counting that region and updating a maximum. The left region has three cells; the upper-right cell is isolated because diagonal touching does not count. Empty or all-water grids return zero. For R rows and C columns, time O(RC), auxiliary visited/stack O(RC); implicit neighbors avoid storing an adjacency list.",
+      "checklist": [
+        "I use four directions rather than diagonals.",
+        "I mark before pushing and preserve the input."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can this count strongly connected directed components?",
+      "answer": "No. Undirected components use symmetric reachability. Strong connectivity requires mutual directed reachability and a different algorithm; adding reverse edges would erase the distinction."
+    },
+    {
+      "question": "Why are results ordered by smallest component vertex?",
+      "answer": "The increasing outer scan starts each component at its smallest unseen ID. All smaller IDs either belong to earlier components or would already have triggered this component’s traversal."
+    }
+  ],
+  "takeaways": [
+    "Choose DFS for reachability when layer distances are unnecessary.",
+    "Separate global visited state from one component’s worklist.",
+    "Model grid neighbors implicitly when topology is regular."
+  ]
+}

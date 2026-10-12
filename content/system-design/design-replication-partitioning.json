@@ -1,0 +1,106 @@
+{
+  "id": "design-replication-partitioning",
+  "track": "system-design",
+  "title": "Replication and partitioning solve different problems",
+  "minutes": 50,
+  "summary": "Separate copies for recovery from shards for capacity, then reason about routing, skew, and migration.",
+  "prerequisites": [
+    "design-databases-indexes",
+    "design-cache-data-flow"
+  ],
+  "prerequisiteNotes": "Use the storage access pattern and source-load budget. Replication does not repair inefficient queries or remove cache-outage demand.",
+  "objectives": [
+    "Distinguish replication from partitioning in storage arithmetic.",
+    "Choose and critique a partition key.",
+    "Trace routing and safe ownership transfer during a shard move."
+  ],
+  "concepts": [
+    {
+      "title": "Copies preserve data; partitions divide ownership",
+      "body": "Replication copies the same records for failover and selected reads; every copy still receives writes, so write capacity does not automatically grow. Partitioning assigns different subsets to owners, distributing work but adding routing and cross-partition operations. Each partition may itself have replicas. Label logical bytes, per-copy bytes, and replicated fleet bytes separately to avoid multiplying an already replicated estimate again."
+    },
+    {
+      "title": "A key chooses which work stays together",
+      "body": "Hashing owner_id keeps bookmarks and retry records together for local transactions and lists. Time ranges instead concentrate new writes in today's range. Hashing balances many owners but cannot split one hot owner. Secondary buckets can divide that owner's writes, at the cost of merging lists and carefully placing retry uniqueness. Add this complexity only when measured skew exceeds the original design's capacity."
+    },
+    {
+      "title": "Placement requires a protocol, not just a hash",
+      "body": "Version the bucket-to-owner routing map to detect stale clients during migration. Copy records and capture concurrent changes through a durable stream or bounded write pause. Verify catch-up, fence the old writer, and publish the new owner. Fencing prevents writes under an expired ownership generation. Two writable copies without a conflict protocol create split-brain, not a safe handoff."
+    }
+  ],
+  "example": "Consider 72 GB of logical bookmark records split evenly across 4 shards with 3 full copies of each shard.\nLogical records per shard: 72 / 4 = 18 GB.\nReplicated records across the fleet: 18 × 4 × 3 = 216 GB.\nAssume 800 peak writes/s: uniform placement gives 200 writes/s per shard.\nIf one owner produces 400 writes/s and the remaining 400 distribute evenly, its shard receives 500 writes/s while each other shard receives 100 writes/s. These are planning models, not guaranteed balance.",
+  "walkthrough": [
+    {
+      "title": "One owner-scoped write reaches its replicas",
+      "body": "Owner O7 hashes to bucket 23, whose routing generation 8 points to shard S2. The API sends its bookmark and retry transaction to S2's leader. The leader validates its ownership and acknowledges only after the configured replication durability condition is satisfied. A follower may still lag and is not automatically safe for the immediate read-after-write journey. If the leader fails, the election and log-recovery protocol must select an eligible replacement; a router cannot safely nominate an arbitrary machine merely because it responds quickly. Separate client retry handling from database leadership recovery."
+    },
+    {
+      "title": "A move encounters an old router",
+      "body": "Copy bucket 23 to S4 and replay changes until it catches up. Briefly fence old writes, finish the handoff, and publish generation 9. An API still using generation 8 contacts S2. S2 rejects or redirects the stale generation rather than accepting another write. The API refreshes routing and retries its same idempotency key at S4. Keep enough migration metadata and replay records for that retry to recognize any pre-handoff commit. Verify row counts and sampled content, but also verify ownership: identical copies are not safe if both can independently accept new writes."
+    }
+  ],
+  "task": "Design partition placement for the example workload, preserving owner-list locality and atomic retries. Draw four logical shards with three copies each and label logical versus replicated bytes. Compare owner hashing with time ranges. Trace one normal create and one request using stale routing during a bucket move. Identify the hot-owner limit using the skewed workload and propose an evidence-based response. Describe one replica-loss case and one ownership-transfer failure; do not assume these are the same failure.",
+  "hints": [
+    "A replicated shard contains copies of its subset, not the entire logical database.",
+    "Uniform hashing balances keys; it cannot divide a single hot key."
+  ],
+  "solution": "Hash owner_id into movable logical buckets and maintain a versioned bucket map. Each shard holds about 18 GB of logical records in the idealized even case; fleet record storage remains 216 GB across three copies, excluding indexes and logs. Owner hashing keeps transactions local, whereas time ranges favor chronological deletion but concentrate new writes and scatter long-lived owner lists. The hot shard receives 400 owner writes plus 100 ordinary writes per second, or 500, not 200. First inspect skew and apply appropriate per-owner admission; consider splitting large owners only with a merge and uniqueness design. During migration, catch up changes, fence the previous generation, and redirect stale routers. Recover replica failure through the database's supported election protocol and test acknowledged-write preservation separately from routing correctness.",
+  "checklist": [
+    "I separate logical shards from full copies.",
+    "I calculate uniform and hot-owner load.",
+    "I justify locality and identify its hot-key limit.",
+    "I fence stale ownership and preserve idempotent retries."
+  ],
+  "pitfalls": [
+    "More replicas do not necessarily increase write throughput.",
+    "A hash does not divide a single owner’s load.",
+    "Copying bytes without transferring exclusive write ownership permits conflicting writes."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Count the right bytes",
+      "prompt": "Before the core task, divide 120 GB of logical records into six equal shards with two copies each. State per-shard logical bytes and fleet bytes.",
+      "hints": [
+        "Divide before multiplying copies.",
+        "Shard count does not create new logical records."
+      ],
+      "solution": "Each shard owns 20 GB logically. Six shards with two copies use 240 GB of record storage across the fleet, before overhead.",
+      "checklist": [
+        "I label logical storage.",
+        "I count each copy once.",
+        "I exclude overhead explicitly."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Split a very large owner",
+      "prompt": "After the core task, propose two buckets for one hot owner. Explain how a list of 50 newest bookmarks and an idempotent create would work, including a downside.",
+      "hints": [
+        "Merge ordered results rather than concatenating them.",
+        "The same key must always reach the same uniqueness boundary."
+      ],
+      "solution": "Route creates using a deterministic rule that also fixes replay-record placement. Fetch bounded ordered candidates from both buckets and merge by time/id, returning a cursor with each stream’s boundary. Parallel reads add fan-out and partial-failure handling; random retry routing would violate uniqueness.",
+      "checklist": [
+        "I preserve retry placement.",
+        "I merge with a total order.",
+        "I explain fan-out or partial failure."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is partitioning required just because records exceed memory?",
+      "answer": "No. Databases can use disks and buffer frequently accessed pages. Measure query latency, I/O, and recovery limits before introducing distributed ownership."
+    },
+    {
+      "question": "Why use logical buckets rather than modulo the current shard count?",
+      "answer": "Changing a direct modulo can move most keys. A stable bucket layer lets operators move selected subsets, though the mapping itself needs reliable distribution and versioning."
+    }
+  ],
+  "takeaways": [
+    "Replication and partitioning have different purposes.",
+    "Partition keys determine locality and concentrated load.",
+    "Safe rebalancing transfers ownership as well as bytes."
+  ]
+}
