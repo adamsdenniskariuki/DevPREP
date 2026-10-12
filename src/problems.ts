@@ -1,4 +1,6 @@
+import { PROBLEM_PATTERNS } from './problem-types'
 import type { Problem, ProblemSummary } from './problem-types'
+import type { Progress } from './progress'
 import index from './generated/problem-index.json' with { type: 'json' }
 
 export type { CodeLanguage, Problem, ProblemSummary, ProblemTest } from './problem-types'
@@ -14,6 +16,22 @@ export function loadProblems(): Promise<Map<string, Problem>> {
   return cache
 }
 
+/** Patterns that have problems, in canonical order. */
 export function problemPatterns(): string[] {
-  return [...new Set(problemIndex.map(problem => problem.pattern))]
+  const used = new Set(problemIndex.map(problem => problem.pattern))
+  return PROBLEM_PATTERNS.filter(pattern => used.has(pattern))
+}
+
+export interface PatternProgress { pattern: string; solved: number; total: number }
+
+export function patternProgress(progress: Pick<Progress, 'solved'>, items: ProblemSummary[] = problemIndex): PatternProgress[] {
+  return problemPatterns().map(pattern => {
+    const subset = items.filter(problem => problem.pattern === pattern)
+    return { pattern, total: subset.length, solved: subset.filter(problem => progress.solved?.[problem.id]).length }
+  }).filter(row => row.total > 0)
+}
+
+/** True when a problem is marked core on the given role path. */
+export function isPathCore(problem: Pick<ProblemSummary, 'paths'>, path: string | undefined): boolean {
+  return !!path && (problem.paths ?? []).includes(path as 'swe' | 'senior')
 }

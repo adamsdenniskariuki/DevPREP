@@ -4,6 +4,7 @@ import { getLearningPath, pathProgress } from './learning-paths'
 import { localDay } from './progress'
 import type { Activity, Progress } from './progress'
 import { caseIndex } from './cases'
+import { patternProgress, problemIndex } from './problems'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
 export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10 } as const
@@ -96,6 +97,10 @@ export interface GameStats {
   badges: Badge[]
 }
 
+export function patternSlug(pattern: string): string {
+  return pattern.toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
 function trackComplete(progress: Progress, track: Track) {
   const subset = lessons.filter(lesson => lesson.track === track)
   return subset.length > 0 && subset.every(lesson => Object.hasOwn(progress.records, lesson.id))
@@ -115,6 +120,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const reviews = progress.activity.filter(item => item.mode === 'review').length
   const confident = progress.activity.filter(item => item.rating === 'confident').length
   const path = getLearningPath(progress.selectedPath)
+  const patterns = patternProgress(progress)
   const badges: Badge[] = [
     { id: 'first-lesson', title: 'First step', description: 'Finish your first lesson.', earned: completed >= 1 },
     { id: 'ten-lessons', title: 'Ten down', description: 'Finish 10 lessons.', earned: completed >= 10 },
@@ -124,6 +130,10 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'first-solve', title: 'Green tests', description: 'Pass every test on a coding problem.', earned: solves.length >= 1 },
     { id: 'bilingual', title: 'Bilingual', description: 'Solve a problem in both JavaScript and Python.', earned: solves.some(langs => langs.js && langs.py) },
     { id: 'solves-15', title: 'Pattern spotter', description: 'Solve 15 coding problems.', earned: solves.length >= 15 },
+    { id: 'solves-50', title: 'Half-century', description: 'Solve 50 coding problems.', earned: solves.length >= 50 },
+    { id: 'all-patterns', title: 'Full toolkit', description: 'Solve at least one problem in every pattern.', earned: patterns.every(row => row.solved > 0) },
+    { id: 'all-problems', title: 'Every problem', description: `Solve all ${problemIndex.length} coding problems.`, earned: patterns.every(row => row.solved === row.total) },
+    ...patterns.map(row => ({ id: `pattern-${patternSlug(row.pattern)}`, title: `${row.pattern} cleared`, description: `Solve all ${row.total} ${row.pattern} problems.`, earned: row.solved === row.total })),
     { id: 'first-design', title: 'Architect', description: 'Score your first system design case.', earned: designs.length >= 1 },
     { id: 'designs-10', title: 'Blueprint pro', description: 'Score 10 system design cases.', earned: designs.length >= 10 },
     { id: 'senior-design', title: 'Staff-ready', description: `Score ${STRONG_DESIGN}% or more on an SSE case.`, earned: designs.some(([id, score]) => score.best >= STRONG_DESIGN && caseIndex.find(item => item.id === id)?.level === 'sse') },

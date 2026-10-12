@@ -12,11 +12,11 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
 | **Whiteboard** (`#board`) | A free diagram board saved on this device |
-| **Flashcards** (`#cards`) | 156 spaced-repetition concept cards across all five tracks |
+| **Flashcards** (`#cards`) | 156 spaced-repetition concept cards across all five tracks, plus a recall card per coding problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
 | **Study plan** (`#plan`) | Day-by-day plan up to your interview date |
-| **Progress** (`#progress`) | Per-track completion, streak and freezes, badges, weak areas |
+| **Progress** (`#progress`) | Per-track and per-pattern completion, streak and freezes, badges, weak areas |
 | **Settings** (`#settings`) | Target role, interview date, focus tracks, appearance, About your data (backup/import), welcome tour |
 | **Study** (`#study`) | Chunked lesson → warm-up/core/stretch practice → explanation & confidence → scheduled review |
 
@@ -32,13 +32,16 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 
 ## Code runner
 
-**32 original problems** across 15 DSA patterns (arrays/hashing to bit manipulation), tagged SE or SSE and linked to their lessons. Each has a prompt, examples, progressive hints, a JS and Python solution with explanation, Big-O notes and follow-ups. Lesson pseudocode stays as it was; the runner sits alongside it.
+**59 original problems** across 16 patterns: arrays & hashing, two pointers, sliding window, stack, binary search, linked lists, trees, tries, heaps, graphs, backtracking, dynamic programming, greedy, intervals, bit manipulation, and a senior **design & concurrency** set (caches, rate limiters, iterators, simulated concurrency). Each pattern mixes Easy, Medium and Hard problems (`warm-up`/`core`/`stretch` in the data), tagged SE or SSE and linked to lessons where one fits. Each has a prompt, examples, progressive hints, a JS and Python solution with explanation, Big-O notes and follow-ups. Lesson pseudocode stays as it was; the runner sits alongside it.
+
+- Filter the list by pattern (with solved/total per pattern), difficulty and level. With a Target role set, **SE core** / **SSE core** tags mark the problems that role should cover first, and a toggle shows only those.
+- Problems feed the rest of the app: each one adds a recall card (`dsa-p-<id>`: pattern, key idea, target cost) to the DSA flashcard deck; DSA mocks draw from them by level; the study plan schedules path-core problems first, then the least-practised patterns, easiest first.
 
 - Code runs **on your device** in a Web Worker: JavaScript is stopped after 5 s, Python after 10 s (the worker is terminated, so infinite loops can't freeze the page).
 - Python uses **Pyodide** (WebAssembly CPython). It is fetched only on the first Python run (about 13 MB), then cached by the service worker for offline use. JavaScript works offline straight away.
 - Visible tests show expected vs actual; hidden tests report only pass counts. `console.log`/`print` output is shown.
 - Drafts are saved per problem and language in `devprep.code.v1` (20,000 characters each). They are not part of backups.
-- Passing every test records a first-solve time per language in the backup (`solved`), worth 15 XP, plus 5 XP for the second language. Badges: Green tests, Bilingual, Pattern spotter.
+- Passing every test records a first-solve time per language in the backup (`solved`), worth 15 XP, plus 5 XP for the second language. Badges: Green tests, Bilingual, Pattern spotter (15), Half-century (50), Full toolkit (one in every pattern), Every problem, and a "<Pattern> cleared" badge per pattern.
 
 ## System design practice
 
@@ -323,7 +326,7 @@ Lesson IDs are part of the backup format. Renaming or removing one requires an e
 
 ### Adding a coding problem
 
-Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern`, `level`, `difficulty`, optional `lessonId`, `prompt`, `function` and `starter`/`solution` for `js` and `py`, `tests`, `hiddenTests`, `hints`, `complexity`, `followUps`), append the ID to `content/problems/index.json` and `tests/fixtures/problem-ids.json`, then run `npm test`. Arguments and expected values are JSON; results are compared by value, ignoring object key order. Write problems yourself; don't copy text from problem sites.
+Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern` (one of `PROBLEM_PATTERNS` in `src/problem-types.ts`), `level`, `difficulty`, optional `lessonId`, optional `paths` (`swe`/`senior`: core on that role path), `prompt`, `function` and `starter`/`solution` for `js` and `py`, `tests`, `hiddenTests`, `hints`, `complexity`, `followUps`), append the ID to `content/problems/index.json` (grouped by pattern), `tests/fixtures/problem-ids.json` and its recall card `dsa-p-<id>` to `tests/fixtures/card-ids.json`, then run `npm test`. IDs are append-only: they are stored in backups. Arguments and expected values are JSON; results are compared by value, ignoring object key order. Write problems yourself; don't copy text from problem sites.
 
 ### Adding a system design case
 

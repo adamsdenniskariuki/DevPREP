@@ -1,0 +1,103 @@
+{
+  "id": "decode-nested-repeats",
+  "title": "Expand a compressed banner",
+  "pattern": "Stack",
+  "level": "se",
+  "difficulty": "core",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "prompt": "Expand a compressed banner in which k[text] means text repeated k times and groups can nest, so 2[a3[b]] becomes abbbabbb.\n\n- s has 0 to 2,000 characters: lowercase letters, digits, [ and ]. It is always well-formed.\n- Every [ is preceded by a repeat count k between 1 and 99 (one or two digits); digits appear nowhere else.\n- The expanded result has at most 100,000 characters. Return it as a string.",
+  "function": {
+    "js": "expandRepeats",
+    "py": "expand_repeats"
+  },
+  "starter": {
+    "js": "function expandRepeats(s) {\n  // Your code here\n}\n",
+    "py": "def expand_repeats(s):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "3[ab]2[c]"
+      ],
+      "expected": "abababcc"
+    },
+    {
+      "args": [
+        "x2[a3[b]]y"
+      ],
+      "expected": "xabbbabbby"
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        ""
+      ],
+      "expected": ""
+    },
+    {
+      "args": [
+        "plain"
+      ],
+      "expected": "plain"
+    },
+    {
+      "args": [
+        "1[z]"
+      ],
+      "expected": "z"
+    },
+    {
+      "args": [
+        "12[q]"
+      ],
+      "expected": "qqqqqqqqqqqq"
+    },
+    {
+      "args": [
+        "2[2[2[ab]]]c"
+      ],
+      "expected": "ababababababababc"
+    },
+    {
+      "args": [
+        "a10[b]c"
+      ],
+      "expected": "abbbbbbbbbbc"
+    },
+    {
+      "args": [
+        "99[k]"
+      ],
+      "expected": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+    },
+    {
+      "args": [
+        "ya1[2[zc1[zbabx2[ybz]]1[2[zxayaxzb]ba3[babccby]acyaa]1[zacyabzc]zzz]1[xa1[1[azabxzazzca]2[ayxyyxyxxayzzzaz]1[aaxz]]1[2[xccx]x2[zyabya]3[xzcbyaybyzxa]]3[2[bzyy]bc1[zxya]2[aby]xczy]2[axzzzy3[zxayycabz]2[cxcb]]ac]ba]bxb1[xaya2[z3[b3[xba]xz]]xaxxcc]cxby"
+      ],
+      "expected": "yazczbabxybzybzzxayaxzbzxayaxzbbababccbybabccbybabccbyacyaazacyabzczzzzczbabxybzybzzxayaxzbzxayaxzbbababccbybabccbybabccbyacyaazacyabzczzzxaazabxzazzcaayxyyxyxxayzzzazayxyyxyxxayzzzazaaxzxccxxccxxzyabyazyabyaxzcbyaybyzxaxzcbyaybyzxaxzcbyaybyzxabzyybzyybczxyaabyabyxczybzyybzyybczxyaabyabyxczybzyybzyybczxyaabyabyxczyaxzzzyzxayycabzzxayycabzzxayycabzcxcbcxcbaxzzzyzxayycabzzxayycabzzxayycabzcxcbcxcbacbabxbxayazbxbaxbaxbaxzbxbaxbaxbaxzbxbaxbaxbaxzzbxbaxbaxbaxzbxbaxbaxbaxzbxbaxbaxbaxzxaxxcccxby"
+    }
+  ],
+  "hints": [
+    "When you hit ], which group is ending? The innermost one, the one opened most recently.",
+    "Keep a stack of (text built so far, repeat count) for each open group, and build the current group's text separately.",
+    "On [, push the current text and count and start fresh. On ], pop (prev, k) and set current = prev + current repeated k times. Remember counts can have two digits."
+  ],
+  "solution": {
+    "js": "function expandRepeats(s) {\n  const stack = []\n  let current = ''\n  let count = 0\n  for (const ch of s) {\n    if (ch >= '0' && ch <= '9') {\n      count = count * 10 + Number(ch)\n    } else if (ch === '[') {\n      stack.push([current, count])\n      current = ''\n      count = 0\n    } else if (ch === ']') {\n      const [prev, k] = stack.pop()\n      current = prev + current.repeat(k)\n    } else {\n      current += ch\n    }\n  }\n  return current\n}\n",
+    "py": "def expand_repeats(s):\n    stack = []\n    parts = []\n    count = 0\n    for ch in s:\n        if ch.isdigit():\n            count = count * 10 + int(ch)\n        elif ch == \"[\":\n            stack.append((parts, count))\n            parts, count = [], 0\n        elif ch == \"]\":\n            prev, k = stack.pop()\n            prev.append(\"\".join(parts) * k)\n            parts = prev\n        else:\n            parts.append(ch)\n    return \"\".join(parts)\n",
+    "explanation": "A stack holds the partially built text and repeat count of every enclosing group. Opening a group saves the current state and starts empty; closing one repeats the inner text and appends it to the saved outer text. Digits are accumulated so multi-digit counts work."
+  },
+  "complexity": {
+    "time": "O(n + d · L)",
+    "space": "O(n + L)",
+    "notes": "L is the output length and d the nesting depth: each closing bracket copies at most the text of its own level, so no level copies more than L characters."
+  },
+  "followUps": [
+    "Write the recursive-descent version. What does the call stack replace?",
+    "Return only the character at position p without building the whole string."
+  ]
+}

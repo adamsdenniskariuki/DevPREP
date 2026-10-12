@@ -1,4 +1,5 @@
 import type { Track } from './curriculum-types'
+import { PROBLEM_PATTERNS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 
@@ -86,12 +87,17 @@ const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 export function validateProblem(value: unknown, where = 'problem'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
-  check.keys(value, '', PROBLEM_REQUIRED, ['lessonId'])
+  check.keys(value, '', PROBLEM_REQUIRED, ['lessonId', 'paths'])
   if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
   for (const key of ['title', 'pattern', 'prompt']) check.text(value[key], key)
   if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
   if (!['warm-up', 'core', 'stretch'].includes(value.difficulty as string)) check.fail('difficulty', 'expected warm-up, core or stretch')
   if ('lessonId' in value) check.text(value.lessonId, 'lessonId')
+  if (typeof value.pattern === 'string' && !(PROBLEM_PATTERNS as readonly string[]).includes(value.pattern)) check.fail('pattern', 'expected a known pattern')
+  if ('paths' in value) {
+    const paths = value.paths
+    if (!Array.isArray(paths) || !paths.length || paths.some(path => path !== 'swe' && path !== 'senior') || new Set(paths).size !== paths.length) check.fail('paths', 'expected a non-empty list of swe/senior')
+  }
   const pair = (key: string, extra: string[] = []) => {
     const item = value[key]
     if (!isRec(item)) return check.fail(key, 'expected object')

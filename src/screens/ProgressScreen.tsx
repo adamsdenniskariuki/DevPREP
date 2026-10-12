@@ -4,6 +4,7 @@ import { LEVEL_XP } from '../gamification'
 import Icon from '../components/Icon'
 import { ratingLabels } from '../labels'
 import type { AppModel } from '../app-model'
+import { patternProgress } from '../problems'
 
 export default function ProgressScreen({ app }: { app: AppModel }) {
   const { progress, due, completed, heading, game, weak, browseAll } = app
@@ -31,6 +32,7 @@ export default function ProgressScreen({ app }: { app: AppModel }) {
   const count = subset.filter(lesson => progress.records[lesson.id]).length
   return <div key={item.id}><div className="section-heading"><h3>{item.title}</h3><span>{count} / {subset.length}</span></div><progress value={count} max={subset.length} aria-label={`${item.title} progress`} /></div>
 })}</div></section>
+<section className="card"><h2>Coding patterns</h2><div className="track-progress-list">{patternProgress(progress).map(row => <div key={row.pattern}><div className="section-heading"><h3>{row.pattern}</h3><span>{row.solved} / {row.total}</span></div><progress value={row.solved} max={row.total} aria-label={`${row.pattern} problems solved`} /></div>)}</div></section>
 <section className="card"><h2>Recent practice</h2>{progress.activity.length ? <ol className="activity-list">{progress.activity.slice(-10).reverse().map((item, index) => <li key={`${item.at}-${index}`}><span className="activity-check"><Icon name="check" size={16} /></span><div><strong>{lessons.find(lesson => lesson.id === item.lessonId)?.title}</strong><p>{item.mode === 'review' ? 'Review' : 'Lesson'} · {ratingLabels[item.rating]}</p></div><time dateTime={item.at}>{new Date(item.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></li>)}</ol> : <p className="muted">Your first completed session will appear here.</p>}</section>
   </>
 }

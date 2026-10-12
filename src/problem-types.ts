@@ -1,3 +1,7 @@
+/** Canonical pattern order for lists, filters, progress and badges. */
+export const PROBLEM_PATTERNS = ['Arrays & hashing', 'Two pointers', 'Sliding window', 'Stack', 'Binary search', 'Linked lists', 'Trees', 'Tries', 'Heaps', 'Graphs', 'Backtracking', 'Dynamic programming', 'Greedy', 'Intervals', 'Bit manipulation', 'Design & concurrency'] as const
+export type ProblemPattern = typeof PROBLEM_PATTERNS[number]
+
 export type ProblemLevel = 'se' | 'sse'
 export type ProblemDifficulty = 'warm-up' | 'core' | 'stretch'
 export type CodeLanguage = 'js' | 'py'
@@ -15,6 +19,8 @@ export interface ProblemSummary {
   level: ProblemLevel
   difficulty: ProblemDifficulty
   lessonId?: string
+  /** Learning paths that treat this problem as core practice. */
+  paths?: ('swe' | 'senior')[]
 }
 
 export interface Problem extends ProblemSummary {

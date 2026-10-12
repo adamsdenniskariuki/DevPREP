@@ -39,6 +39,12 @@ describe('problem content', () => {
     expect(problems.some(problem => problem.level === 'sse')).toBe(true)
   })
 
+  it('marks path-core problems so the SE path only needs SE-level problems', () => {
+    for (const problem of problemIndex.filter(item => item.paths?.includes('swe'))) expect(problem.level, problem.id).toBe('se')
+    expect(problemIndex.filter(item => item.paths?.includes('swe')).length).toBeGreaterThan(10)
+    expect(problemIndex.filter(item => item.paths?.includes('senior')).length).toBeGreaterThan(10)
+  })
+
   it('lazy-loads the same problems the index lists', async () => {
     const loaded = await loadProblems()
     expect([...loaded.keys()]).toEqual(problemIndex.map(problem => problem.id))

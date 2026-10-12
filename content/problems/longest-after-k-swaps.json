@@ -1,0 +1,120 @@
+{
+  "id": "longest-after-k-swaps",
+  "title": "Repaint the fence",
+  "pattern": "Sliding window",
+  "level": "se",
+  "difficulty": "core",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "prompt": "Each character of planks is a plank's paint colour; repaint at most k planks and return the length of the longest contiguous run you can make that is all one colour.\n\n- planks has 0 to 100,000 uppercase English letters; 0 <= k <= len(planks).\n- A repaint changes one plank to any colour.\n- Return an integer.",
+  "function": {
+    "js": "longestRepaintRun",
+    "py": "longest_repaint_run"
+  },
+  "starter": {
+    "js": "function longestRepaintRun(planks, k) {\n  // Your code here\n}\n",
+    "py": "def longest_repaint_run(planks, k):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "ABAB",
+        2
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "AABABBA",
+        1
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "ABCDE",
+        1
+      ],
+      "expected": 2
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        "",
+        0
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        "Z",
+        0
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "AAAA",
+        0
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "ABCD",
+        4
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "BAAAB",
+        0
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "ABBBCCCCD",
+        2
+      ],
+      "expected": 6
+    },
+    {
+      "args": [
+        "BBCBCDABACADBBCACDCCCBBDCDADBADCBBDBAABBDCBCBBCBDDDDDBCADBBBDCBBBBACCADCBCDAABCCBBBBBCABCCCDBCBBABCDCACDCBCDCACCCDBCBACCDACADCACDAABABDCCDADCACCDBDCBBBBCDBADBAAAABADBCDBBCBDAACCDCADBAABBBCBACCDCCBABDBCDABCBDBABDCDDBADBBBAACABCCCCBBDDBABADCBDAABBCCCAADDBBAACBCDBCDBAABDCBBBCCADBBCDAAABABBDACDBACBCCABBAABBDCDDCDCCDABABDACCDCAADBAABADDCABCCACADCDCACABCAACBDBBCAADABDDDABDADDBCACDBACDCAACBADBDDCDDACDBBCDBABDBBADADCADADCAAADCDDACCBCDCABACCAACDCCACBCCABCBADADDABCCCCBADCBACDBBCCBBCBAACADCCCDBBCCBACBBCADBBCCBABAABCCDCDBBBADDBABDBCBBCDDDCBABADDCDCBCADDCCDDCCCDDACDDABCDADCBDDADDCCBDACCBCCDBABDDBBCCCDACACBBBADCDCABCBDCDACADADADBDDBBACACDBBBBDCADBDCDDBAAAABCCBBBCABBADCCCBCCCDDDAADCADDCACDDDDBBBCBABABADBADACCCABBDBACADBDACDCDBCADBCBDADDDCBCADBBAADADCCBCAABBADAADCABAAABABBABCCBABBBCBCDDCCCDBCCABDBACDCAABACBABCCAADBCCCBBCCBCCCDCBBBDCDADCDBDCDBBBBDCDCBDCACCCBBBCADAADBCBDBBABBBBBBABACBCCBCADCBDDBADBDAAADADDBDBDDDAADADCACCDBCDABACDBBCCDBBCCBCAADCADADDCDBBBDDCACCCACCDDBBDBCCDDBBDDDBAABAACDCDABCDBBBACBDDCCC",
+        0
+      ],
+      "expected": 6
+    },
+    {
+      "args": [
+        "BBCBCDABACADBBCACDCCCBBDCDADBADCBBDBAABBDCBCBBCBDDDDDBCADBBBDCBBBBACCADCBCDAABCCBBBBBCABCCCDBCBBABCDCACDCBCDCACCCDBCBACCDACADCACDAABABDCCDADCACCDBDCBBBBCDBADBAAAABADBCDBBCBDAACCDCADBAABBBCBACCDCCBABDBCDABCBDBABDCDDBADBBBAACABCCCCBBDDBABADCBDAABBCCCAADDBBAACBCDBCDBAABDCBBBCCADBBCDAAABABBDACDBACBCCABBAABBDCDDCDCCDABABDACCDCAADBAABADDCABCCACADCDCACABCAACBDBBCAADABDDDABDADDBCACDBACDCAACBADBDDCDDACDBBCDBABDBBADADCADADCAAADCDDACCBCDCABACCAACDCCACBCCABCBADADDABCCCCBADCBACDBBCCBBCBAACADCCCDBBCCBACBBCADBBCCBABAABCCDCDBBBADDBABDBCBBCDDDCBABADDCDCBCADDCCDDCCCDDACDDABCDADCBDDADDCCBDACCBCCDBABDDBBCCCDACACBBBADCDCABCBDCDACADADADBDDBBACACDBBBBDCADBDCDDBAAAABCCBBBCABBADCCCBCCCDDDAADCADDCACDDDDBBBCBABABADBADACCCABBDBACADBDACDCDBCADBCBDADDDCBCADBBAADADCCBCAABBADAADCABAAABABBABCCBABBBCBCDDCCCDBCCABDBACDCAABACBABCCAADBCCCBBCCBCCCDCBBBDCDADCDBDCDBBBBDCDCBDCACCCBBBCADAADBCBDBBABBBBBBABACBCCBCADCBDDBADBDAAADADDBDBDDDAADADCACCDBCDABACDBBCCDBBCCBCAADCADADDCDBBBDDCACCCACCDDBBDBCCDDBBDDDBAABAACDCDABCDBBBACBDDCCC",
+        25
+      ],
+      "expected": 46
+    }
+  ],
+  "hints": [
+    "A window can be made uniform when its length minus the count of its most common colour is at most k.",
+    "Grow a window to the right with letter counts; when it becomes invalid, slide the left edge forward by one.",
+    "Track maxCount, the largest count ever seen in a window. It never needs to decrease: the answer only improves when a window holds a higher count, so the window length never has to shrink."
+  ],
+  "solution": {
+    "js": "function longestRepaintRun(planks, k) {\n  const counts = new Array(26).fill(0)\n  let left = 0\n  let maxCount = 0\n  for (let r = 0; r < planks.length; r++) {\n    const c = planks.charCodeAt(r) - 65\n    counts[c]++\n    maxCount = Math.max(maxCount, counts[c])\n    if (r - left + 1 - maxCount > k) {\n      counts[planks.charCodeAt(left) - 65]--\n      left++\n    }\n  }\n  return planks.length - left\n}\n",
+    "py": "def longest_repaint_run(planks, k):\n    counts = [0] * 26\n    left = 0\n    max_count = 0\n    for r, ch in enumerate(planks):\n        c = ord(ch) - 65\n        counts[c] += 1\n        max_count = max(max_count, counts[c])\n        if r - left + 1 - max_count > k:\n            counts[ord(planks[left]) - 65] -= 1\n            left += 1\n    return len(planks) - left\n",
+    "explanation": "The window never shrinks: it grows when valid and slides (left and right both advance) when not, so its length is the best seen so far, and the answer is n - left at the end. A stale maxCount can only keep the window at its current size, never grow it wrongly, because growth needs a genuinely larger count."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "Counts are a fixed 26-entry array. Recomputing the exact max over 26 letters each step also works in O(26n)."
+  },
+  "followUps": [
+    "Solve it by trying each target colour separately with a simpler window. What does that cost?",
+    "Return the start index of the best run as well, choosing the leftmost on ties."
+  ]
+}

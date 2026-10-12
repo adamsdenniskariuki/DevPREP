@@ -65,6 +65,7 @@ describe('content schema', () => {
       const built = buildFlashcards()
       expect(JSON.parse(readFileSync('src/generated/flashcards.json', 'utf8'))).toEqual(built.decks)
       expect(JSON.parse(readFileSync('src/generated/flashcard-index.json', 'utf8'))).toEqual(built.index)
+    for (const deck of built.decks) expect(validateDeck(deck, `generated ${deck.track} deck`)).toEqual([])
     })
   })
 
@@ -86,5 +87,12 @@ describe('content schema', () => {
   it('loads every lesson file into the bundled curriculum in track order', () => {
     expect(lessons.map(lesson => lesson.track)).toEqual([...lessons.map(lesson => lesson.track)].sort((a, b) => TRACK_IDS.indexOf(a) - TRACK_IDS.indexOf(b)))
     expect(new Set(lessons.map(lesson => lesson.id)).size).toBe(lessons.length)
+  })
+  it('adds one generated recall card per runnable problem to the DSA deck', async () => {
+    // @ts-expect-error plain JS build script
+    const { buildFlashcards, buildProblems } = await import('../scripts/build-content.mjs')
+    const dsa = buildFlashcards().decks.find((deck: { track: string }) => deck.track === 'dsa')
+    const ids = dsa.cards.map((card: { id: string }) => card.id)
+    for (const problem of buildProblems().problems as { id: string }[]) expect(ids).toContain(`dsa-p-${problem.id}`)
   })
 })

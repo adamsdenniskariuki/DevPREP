@@ -4,13 +4,13 @@ import Icon from '../components/Icon'
 import CodeEditor from '../components/CodeEditor'
 import { lessons } from '../curriculum'
 import { clearDraft, readDraft, writeDraft } from '../code-drafts'
-import { loadProblems, problemIndex, problemPatterns } from '../problems'
+import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from '../problems'
 import type { CodeLanguage, Problem, ProblemSummary } from '../problem-types'
 import { formatArgs, formatValue, TIMEOUT_MS, type CaseOutcome } from '../runner/core'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 
 const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
-const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Warm-up', core: 'Core', stretch: 'Stretch' }
+const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
 
 /** Renders plain prompt text: blank lines split paragraphs, "- " lines become a list. */
 function TextBlocks({ text }: { text: string }) {
@@ -34,30 +34,63 @@ export default function CodeScreen({ app, problemId }: { app: AppModel; problemI
   return summary ? <ProblemPage key={summary.id} app={app} summary={summary} /> : <ProblemList app={app} />
 }
 
+const PATH_LABEL = { swe: 'SE core', senior: 'SSE core' } as const
+
 function ProblemList({ app }: { app: AppModel }) {
   const { progress, heading } = app
+  const path = progress.selectedPath
+  const [pattern, setPattern] = useState('all')
   const [level, setLevel] = useState<'all' | 'se' | 'sse'>('all')
-  const shown = problemIndex.filter(problem => level === 'all' || problem.level === level)
+  const [difficulty, setDifficulty] = useState<'all' | ProblemSummary['difficulty']>('all')
+  const [coreOnly, setCoreOnly] = useState(false)
+  const shown = problemIndex.filter(problem => (pattern === 'all' || problem.pattern === pattern)
+    && (level === 'all' || problem.level === level)
+    && (difficulty === 'all' || problem.difficulty === difficulty)
+    && (!coreOnly || isPathCore(problem, path)))
   const solvedCount = problemIndex.filter(problem => progress.solved?.[problem.id]).length
+  const totals = new Map(patternProgress(progress).map(row => [row.pattern, row]))
   return <>
     <div className="page-heading"><div><div className="eyebrow">PRACTICE · CODE</div><h1 ref={heading} tabIndex={-1}>Code runner</h1><p>Original problems in JavaScript or Python. Tests run on your device.</p></div><span className="pill">{solvedCount} of {problemIndex.length} solved</span></div>
-    <fieldset className="field">
-      <legend>Level</legend>
-      <div className="chip-group">
-        {([['all', 'All'], ['se', 'SE'], ['sse', 'SSE stretch']] as const).map(([id, label]) => <label key={id} className="chip"><input type="radio" name="code-level" checked={level === id} onChange={() => setLevel(id)} />{label}</label>)}
+    <div className="code-filters">
+      <div className="field">
+        <label htmlFor="code-pattern">Pattern</label>
+        <select id="code-pattern" value={pattern} onChange={event => setPattern(event.target.value)}>
+          <option value="all">All patterns ({problemIndex.length})</option>
+          {[...totals.values()].map(row => <option key={row.pattern} value={row.pattern}>{row.pattern} ({row.solved}/{row.total})</option>)}
+        </select>
       </div>
-    </fieldset>
-    {problemPatterns().map(pattern => {
-      const items = shown.filter(problem => problem.pattern === pattern)
+      <fieldset className="field">
+        <legend>Difficulty</legend>
+        <div className="chip-group">
+          {([['all', 'All'], ...Object.entries(DIFFICULTY)] as [typeof difficulty, string][]).map(([id, label]) => <label key={id} className="chip"><input type="radio" name="code-difficulty" checked={difficulty === id} onChange={() => setDifficulty(id)} />{label}</label>)}
+        </div>
+      </fieldset>
+      <fieldset className="field">
+        <legend>Level</legend>
+        <div className="chip-group">
+          {([['all', 'All'], ['se', 'SE'], ['sse', 'SSE stretch']] as const).map(([id, label]) => <label key={id} className="chip"><input type="radio" name="code-level" checked={level === id} onChange={() => setLevel(id)} />{label}</label>)}
+          {path && <label className="chip"><input type="checkbox" checked={coreOnly} onChange={event => setCoreOnly(event.target.checked)} />{PATH_LABEL[path]} only</label>}
+        </div>
+      </fieldset>
+    </div>
+    {shown.length === 0 && <p className="card empty-note">No problems match these filters.</p>}
+    {problemPatterns().map(name => {
+      const items = shown.filter(problem => problem.pattern === name)
       if (!items.length) return null
-      return <section key={pattern} className="code-group" aria-labelledby={`pattern-${pattern}`}>
-        <h2 className="section-title" id={`pattern-${pattern}`}>{pattern}</h2>
+      const total = totals.get(name)
+      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+      return <section key={name} className="code-group" aria-labelledby={`pattern-${slug}`}>
+        <div className="code-group-head">
+          <h2 className="section-title" id={`pattern-${slug}`}>{name}</h2>
+          {total && <span className="pattern-count">{total.solved} of {total.total} solved</span>}
+        </div>
         <ul className="card code-list">
           {items.map(problem => <li key={problem.id} className="code-row">
             <a href={`#code/${problem.id}`}>{problem.title}</a>
             <span className="code-row-meta">
-              <span className="pill">{DIFFICULTY[problem.difficulty]}</span>
+              <span className={`pill diff-${problem.difficulty}`}>{DIFFICULTY[problem.difficulty]}</span>
               {problem.level === 'sse' && <span className="pill">SSE</span>}
+              {isPathCore(problem, path) && <span className="pill core">{PATH_LABEL[path!]}</span>}
               <SolvedMarks solved={progress.solved?.[problem.id]} />
             </span>
           </li>)}
