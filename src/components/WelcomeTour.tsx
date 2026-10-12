@@ -11,7 +11,7 @@ export default function WelcomeTour({ app }: { app: AppModel }) {
     <div className="tour-top"><span className="eyebrow">WELCOME · {step + 1} / {steps}</span><button className="text-button" onClick={closeTour}>Skip tour</button></div>
     {step === 0 && <>
       <h2 id="tour-title">Prep for your next engineering interview.</h2>
-      <p>DSA, system design, ML and behavioural practice in short, focused sessions. Everything stays on this device.</p>
+      <p>DSA, system design, ML, AI and behavioural practice in short, focused sessions. Everything stays on this device.</p>
       <button className="primary" onClick={next}>Let’s go</button>
     </>}
     {step === 1 && <>
