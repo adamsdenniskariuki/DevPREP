@@ -1,0 +1,105 @@
+{
+  "id": "design-databases-indexes",
+  "track": "system-design",
+  "title": "Databases and indexes: design for a query",
+  "minutes": 45,
+  "summary": "Choose a store and index from access patterns, then account for retention, write amplification, and recovery.",
+  "prerequisites": [
+    "design-api-data-model"
+  ],
+  "prerequisiteNotes": "Bring the owner-scoped bookmark tables, atomic retry transaction, and ordered cursor contract from the previous lesson.",
+  "objectives": [
+    "Choose storage from required invariants and access patterns.",
+    "Explain a composite index using a concrete list request.",
+    "Estimate index storage separately and plan safe retention."
+  ],
+  "concepts": [
+    {
+      "title": "Begin with access patterns, not database labels",
+      "body": "Bookmarks need owner-isolated ordered lists, point lookups, and atomic bookmark/retry insertion. A relational store maps these to transactions and indexes. Alternatives can work if they support the same invariants: a key-value store needs suitable transactions and ordered range reads. Embedding an owner's entire history in one document instead creates growing-write and size-limit problems. Compare operation costs, not database labels."
+    },
+    {
+      "title": "A composite index is an ordered route",
+      "body": "Index owner_id followed by descending created_at and bookmark_id. Owner equality narrows the range; remaining columns match cursor order. A time-first index may inspect unrelated owners before finding 50 rows. Verify bounded range scans in query plans. Covering title and URL can reduce row fetches but duplicates large values and increases writes; measure the tradeoff using realistic field sizes."
+    },
+    {
+      "title": "Logical size is not physical headroom",
+      "body": "Budget indexes, replay records, free space, logs, replicas, and backups separately. Deletion may not immediately reclaim disk bytes and propagates work to copies. Retention here uses creation age, not last edit, preventing indefinite retention through edits. Delete in bounded batches while monitoring lock waits and replica lag. Time-partition dropping can help cleanup but must preserve query locality and uniqueness."
+    }
+  ],
+  "example": "For the core workload, 400000 bookmarks/day × 180 days = 72000000 retained rows.\nAssume one secondary index costs 64 bytes/row: 72000000 × 64 = 4608000000 bytes = 4.608 decimal GB.\nRaw records plus this index: 72 + 4.608 = 76.608 GB per full copy.\nThree full copies: 76.608 × 3 = 229.824 GB, excluding logs, free space, backups, and retry records.\nConceptual access path: owner_id = authenticated owner AND (created_at, bookmark_id) < cursor, ordered descending, limit 50.",
+  "walkthrough": [
+    {
+      "title": "Follow a list through the index",
+      "body": "Owner O7 asks for the next 50 bookmarks below timestamp T and identifier B19. The storage engine seeks to O7/T/B19 in the composite index, scans that owner's earlier entries, and retrieves permitted fields. It stops at the limit instead of sorting millions of unrelated rows. Confirm with an execution plan and measured rows examined; authorization must also constrain a subsequent row fetch, not only an application-side filter. Test owners with very different history sizes and tied timestamps. The same global row count can produce quite different latency when one account owns most of the data."
+    },
+    {
+      "title": "Trace an insert during retention work",
+      "body": "Creating B20 writes the base row, its secondary-index entry, the replay mapping, and a commit log before acknowledgement under the chosen durability policy. Meanwhile, a retention worker deletes a bounded batch of old rows. Excessive batch size holds locks longer, generates more replication work at once, and can make a previously fast create miss its deadline. Start with conservative batches, measure commit latency and lag, and pause cleanup when foreground work is threatened. Track oldest retained row age as well as disk usage so pausing cleanup does not silently break the retention promise."
+    }
+  ],
+  "task": "Prepare a storage decision for the bookmark create/list contract. Compare a relational option with one alternative using transactions, ordered access, and operational recovery rather than brand names. Specify keys and one list index. Show retained-row, secondary-index, and three-copy storage arithmetic using the example assumptions. Describe the request path and a bounded retention process. Propose measurements that could disprove the choice, including a nearly full data set and retention running concurrently with creates.",
+  "hints": [
+    "Column order should follow equality filtering before cursor ordering.",
+    "A secondary index adds work on writes even when no reads use it."
+  ],
+  "solution": "Start with a transactional relational store and the owner/time/id index because the service requires an atomic bookmark/replay insert and descending owner lists. A partitioned key-value alternative needs an explicit way to keep that transaction inside one partition and provide range reads; otherwise additional coordination is introduced without a demonstrated need. The model contains 72 million retained rows and a 4.608 GB index per copy; three copies of records plus this index require 229.824 GB before other overhead. Keep large values out of the index initially, fetch at most a bounded page, and benchmark the extra row reads. Delete by creation age in short batches, monitoring foreground latency, lock waits, lag, and cleanup backlog. Restore a backup into an isolated environment to verify the recovery plan; a successful backup job alone is insufficient.",
+  "checklist": [
+    "I connect a store choice to transaction and query requirements.",
+    "I explain composite-index order using one cursor request.",
+    "I separate records, index bytes, copies, and excluded overhead.",
+    "I test retention alongside foreground writes and recovery."
+  ],
+  "pitfalls": [
+    "An index on each individual column is not necessarily equivalent to the composite ordering.",
+    "Deleting data does not guarantee immediate disk reclamation.",
+    "A fast empty-database benchmark says little about retained production-scale data."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Spot the wrong leading column",
+      "prompt": "Before the core task, compare (created_at, owner_id) with (owner_id, created_at, bookmark_id) for private recent lists. Describe rows each may inspect.",
+      "hints": [
+        "The owner filter is equality.",
+        "A cursor needs a tie breaker."
+      ],
+      "solution": "The owner-first index seeks directly into one owner’s ordered range and supports a total cursor order. The time-first index groups all owners by time and may inspect unrelated rows; without bookmark_id the proposed ordering also leaves timestamp ties unresolved.",
+      "checklist": [
+        "I name the equality prefix.",
+        "I explain unrelated-row work.",
+        "I include a tie breaker."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Price a covering index",
+      "prompt": "After the core task, suppose a covering index adds 300 bytes per retained row. Estimate extra bytes per copy and explain what latency evidence would justify it.",
+      "hints": [
+        "Use 72 million rows.",
+        "Compare fewer row fetches against larger writes and cache footprint."
+      ],
+      "solution": "72000000 × 300 = 21600000000 bytes, or 21.6 GB extra per copy and 64.8 GB across three copies. Adopt it only if representative list tests show useful tail-latency or I/O improvement without unacceptable write latency, memory pressure, or recovery time.",
+      "checklist": [
+        "I show per-copy and replicated growth.",
+        "I name a measurable read benefit.",
+        "I name a write or recovery cost."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Should every foreign-key or filter column have an index?",
+      "answer": "Not automatically. Assess actual queries, cardinality, and write cost, then verify plans. Unused indexes still require maintenance and storage."
+    },
+    {
+      "question": "Can a replica replace a backup?",
+      "answer": "No. Accidental deletion or corrupted application writes can propagate to replicas. Recovery needs independently retained history and a tested restore procedure."
+    }
+  ],
+  "takeaways": [
+    "Choose a database by the operations and invariants it must support.",
+    "Explain index order with the real request predicate.",
+    "Include maintenance and restoration in the storage decision."
+  ]
+}

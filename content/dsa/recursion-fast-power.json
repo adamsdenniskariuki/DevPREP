@@ -1,0 +1,105 @@
+{
+  "id": "recursion-fast-power",
+  "track": "dsa",
+  "title": "Recursion: contracts, progress, and the call stack",
+  "minutes": 45,
+  "summary": "Derive exponentiation by squaring with a smaller recursive subproblem and an explicit base case.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "binary-search-lower-bound",
+    "sorting-stable-merge"
+  ],
+  "prerequisiteNotes": "Know function parameters, return values, integer division, and logarithmic halving. Each recursive call has its own local variables.",
+  "objectives": [
+    "Identify a base case and a decreasing nonnegative measure.",
+    "Use a recursive result without expanding every nested call mentally.",
+    "Account for both arithmetic work and active stack frames."
+  ],
+  "concepts": [
+    {
+      "title": "A recursive call has a contract",
+      "body": "To compute power(base, exponent), assume a call with a smaller exponent returns the correct power. Your job is to combine that result correctly and ensure the smaller call is genuinely closer to a base case. This is induction expressed as a program. Trying to remember every active frame at once makes the code feel mysterious; a precise function contract lets each frame reason locally while the proof connects all frames."
+    },
+    {
+      "title": "Halving exposes reusable work",
+      "body": "For an even exponent 2k, base raised to 2k equals the square of base raised to k. For an odd exponent 2k + 1, multiply that square by base once more. Compute the half-power once and store it. Calling the same recursive expression twice duplicates the entire subtree of work and destroys the intended logarithmic operation count. The shape of the call tree matters as much as its depth."
+    },
+    {
+      "title": "Frames consume memory",
+      "body": "A pending call retains its parameters and waits to square the recursive answer, so ordinary runtimes keep one frame per halving level. The stack is O(log(exponent + 1)), not O(1). For arbitrary-precision integers, multiplication cost depends on operand size. This lesson reports the number of arithmetic operations under a unit-cost numeric model; it does not claim that multiplying enormous exact integers always takes constant real time."
+    }
+  ],
+  "example": "power(3,5) returns 243. Exponents descend 5 -> 2 -> 1 -> 0; returns are 1,3,9,243.",
+  "task": "Write power(base, exponent) for integer base and nonnegative integer exponent. Define exponent zero to return 1, including power(0,0). Assume arithmetic is exact and report arithmetic-operation complexity separately from large-integer bit costs. Do not use a built-in exponent operator. Trace power(-2,3) = -8 and power(7,0) = 1.",
+  "starter": "function power(base, exponent):\n    // Return the identity for the empty product.\n    // Recursively compute one half-power and combine it.",
+  "hints": [
+    "An exponent of zero needs no recursive work.",
+    "The parity of exponent determines whether a final factor of base is needed."
+  ],
+  "solution": "function power(base, exponent):\n    if exponent == 0:\n        return 1\n    half = power(base, floor(exponent / 2))\n    result = half * half\n    if exponent modulo 2 == 1:\n        result = result * base\n    return result\n\nFor power(3,5), exponent 0 returns 1; exponent 1 returns 1 * 1 * 3 = 3; exponent 2 returns 3 * 3 = 9; exponent 5 returns 9 * 9 * 3 = 243. Nonnegative exponent strictly decreases until zero. Assuming the half-power is correct, the even and odd algebra establishes the caller’s result. There are O(log(exponent + 1)) arithmetic operations for positive exponent and constant base-case work; stack space O(log(exponent + 1)) with a constant minimum frame. Exact integer bit time and storage grow with result size.",
+  "checklist": [
+    "I handle zero before recursing.",
+    "I compute the half-power once per frame.",
+    "I include pending frames and numeric assumptions in complexity."
+  ],
+  "pitfalls": [
+    "Recursing on an unchanged exponent never reaches the base.",
+    "Computing the half-power twice duplicates work.",
+    "Allowing negative exponents without a new contract can cause nontermination or wrong numeric types."
+  ],
+  "walkthrough": [
+    {
+      "title": "Descending calls and returning values are different phases",
+      "body": "The descending phase only establishes smaller exponents; it does not yet know the large result. The returning phase squares known smaller answers. Draw separate columns for exponent and returned value in the example. This distinction becomes especially useful in trees, where a parent must wait for child summaries. A printed trace that mixes call entry and return without labels can make a correct recursive order look inconsistent."
+    },
+    {
+      "title": "Start with a slower recurrence",
+      "body": "The straightforward recurrence multiplies base by power(base, exponent - 1), requiring exponent calls. It is correct but can exhaust the call stack for large exponents. Halving changes the decreasing measure much faster while using algebra to recover the skipped factors. Optimization here is not removing recursion; it is choosing a better subproblem. The same recurrence can later be converted to a loop with an accumulator if constant stack space is needed."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Sum a prefix recursively",
+      "prompt": "Define sumFirst(values, k), summing the first k values for 0 <= k <= length(values). Trace [2,5,1] with k = 2.",
+      "hints": [
+        "The first zero values sum to zero.",
+        "Separate values[k - 1] from the first k - 1 values."
+      ],
+      "solution": "Return 0 when k = 0; otherwise return sumFirst(values, k - 1) + values[k - 1]. The sample returns 2 + 5 = 7. Every call reduces k, and the final element is included exactly once. Time O(k), stack O(k) with a constant base frame. An iterative scan achieves the same time with constant auxiliary space.",
+      "checklist": [
+        "I do not read an element at k = 0.",
+        "I distinguish stack space from input storage."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Exponentiation modulo a bound",
+      "prompt": "Compute base raised to exponent modulo positive m without constructing the full power. Verify base 3, exponent 5, m 7 gives 5.",
+      "hints": [
+        "Reduce the base and each multiplication result modulo m.",
+        "The zero-exponent identity becomes 1 modulo m."
+      ],
+      "solution": "Return 1 modulo m at exponent zero, then reduce each squared half-power and extra base multiplication modulo m. Reduction preserves product residue, so the recurrence remains correct. 243 modulo 7 is 5; m = 1 always returns 0. Time and stack space are O(1 + log(exponent + 1)) under unit-cost arithmetic. Normalize negative residues consistently; intermediate products still need sufficient width or safe modular multiplication.",
+      "checklist": [
+        "I handle m = 1.",
+        "I do not confuse small residues with guaranteed safe products."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is recursion automatically slower than iteration?",
+      "answer": "No universal rule applies. Call overhead and stack limits matter, but the recurrence and work count usually matter more. Both forms can implement the same algorithm with different space behavior."
+    },
+    {
+      "question": "Why explicitly define zero to the zero power here?",
+      "answer": "The task needs an unambiguous return value. Defining every zero exponent as the empty product 1 makes the programming contract consistent; broader mathematical contexts can use different conventions."
+    }
+  ],
+  "takeaways": [
+    "Trust a smaller-call contract, then prove the combination.",
+    "Name a measure that decreases toward the base case.",
+    "Count repeated calls and retained frames, not just source lines."
+  ]
+}

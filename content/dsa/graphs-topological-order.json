@@ -1,0 +1,106 @@
+{
+  "id": "graphs-topological-order",
+  "track": "dsa",
+  "title": "Directed graphs: schedule prerequisites",
+  "minutes": 50,
+  "summary": "Remove zero-indegree work in dependency order and detect cycles through unfinished vertices.",
+  "prerequisites": [
+    "queues-fifo-simulation",
+    "graph-bfs-shortest-hops",
+    "graph-dfs-components",
+    "heaps-top-k"
+  ],
+  "prerequisiteNotes": "Know directed versus undirected edges, adjacency lists, and FIFO queues. Here [a,b] means a must precede b.",
+  "objectives": [
+    "Translate a prerequisite relation into directed edges.",
+    "Maintain indegree relative to the unfinished subgraph.",
+    "Distinguish a valid topological order from proof that no order exists."
+  ],
+  "concepts": [
+    {
+      "title": "Dependencies are directional",
+      "body": "An edge a to b says a must appear before b. Unlike the undirected component lesson, do not add a reverse edge: doing so invents a dependency cycle. A valid topological order need not be unique because unrelated vertices may be scheduled in either order. The task asks for any valid order, with a deterministic FIFO trace for the example. Vertex numbers are labels, not an ordering guarantee."
+    },
+    {
+      "title": "Indegree counts unresolved prerequisites",
+      "body": "Initialize indegree[v] to the number of incoming edges. A vertex with zero indegree can be scheduled because all its prerequisites have already been removed, or it had none. When scheduling u, decrement indegree for each outgoing neighbor to remove precisely those dependencies. Enqueue a neighbor only when its count becomes zero. The invariant is about edges remaining among unfinished vertices, not about the original graph forever."
+    },
+    {
+      "title": "A stuck remainder certifies a cycle",
+      "body": "If unfinished vertices remain but none has indegree zero, each has an incoming edge from another unfinished vertex. Repeatedly following such predecessors in a finite set must revisit a vertex, yielding a directed cycle. Conversely, a directed cycle can never have all its vertices removed by zero-indegree choices, because each waits on another. Comparing processed count with n therefore distinguishes successful scheduling from impossibility."
+    }
+  ],
+  "example": "dependencyOrder(4, [[0,2],[1,2],[2,3]]) returns [0,1,2,3] with increasing initial queue order. dependencyOrder(2, [[0,1],[1,0]]) returns absent.",
+  "task": "Write dependencyOrder(n, edges), returning any permutation of vertices respecting every directed edge, or absent if impossible. n is 0 through 100000; endpoints are valid; no duplicate edges are supplied, but self-loops may occur. Empty input returns [] rather than absent. Initialize zero-indegree vertices in increasing ID order and process outgoing entries in their input order for the worked trace.",
+  "starter": "function dependencyOrder(n, edges):\n    outgoing = n empty lists\n    indegree = array of n zeros\n    // Build directed edges and enqueue initially ready vertices.\n    order = empty list\n    // Remove ready work and release its dependents.",
+  "hints": [
+    "An edge increments its destination’s indegree only.",
+    "If fewer than n vertices are emitted, return an explicit failure rather than a partial schedule."
+  ],
+  "solution": "function dependencyOrder(n, edges):\n    outgoing = n empty lists\n    indegree = array of n zeros\n    for [a, b] in edges:\n        append b to outgoing[a]\n        indegree[b] = indegree[b] + 1\n    queue = empty list\n    for v from 0 to n - 1:\n        if indegree[v] == 0:\n            append v to queue\n    head = 0\n    order = empty list\n    while head < length(queue):\n        u = queue[head]\n        head = head + 1\n        append u to order\n        for v in outgoing[u]:\n            indegree[v] = indegree[v] - 1\n            if indegree[v] == 0:\n                append v to queue\n    if length(order) != n:\n        return absent\n    return order\n\nThe sample starts with queue [0,1]. Removing 0 leaves vertex 2 with one prerequisite; removing 1 releases 2, which later releases 3. Each emitted vertex has no unfinished predecessor, so every edge points forward in the result. A cycle leaves a nonempty remainder. Time O(n + E), adjacency storage O(n + E), auxiliary indegree/queue space O(n), and output O(n). A self-loop prevents its vertex from becoming ready.",
+  "checklist": [
+    "I interpret every edge in the documented direction.",
+    "I enqueue only when the remaining count becomes zero.",
+    "I reject incomplete output while accepting an empty graph."
+  ],
+  "pitfalls": [
+    "Adding reverse edges creates false cycles.",
+    "Decrementing once per vertex instead of once per edge releases work incorrectly.",
+    "Returning a partial order hides unresolved cyclic work."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace the join point",
+      "body": "Vertex 2 depends on both 0 and 1, so releasing it after just one predecessor would be premature. Its count moves from two to one to zero; only the final transition enqueues it. This is why a plain visited boolean is insufficient for the scheduling decision. BFS distance discovery needs one path, while prerequisite scheduling needs all incoming obligations satisfied. Similar queue syntax can encode very different invariants."
+    },
+    {
+      "title": "Validate an order independently",
+      "body": "Build position[v] from the returned list. Confirm each vertex occurs once, then verify position[a] < position[b] for every edge. This certificate accepts alternative valid schedules and catches reversed edges. To test cycle rejection, include a cycle in one component and ready work in another: processing some vertices must not be mistaken for complete success. A failed result need not identify the exact cycle under this contract."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Find initially ready work",
+      "prompt": "For vertices 0..3 and edges [[0,2],[1,2]], list initial indegrees and ready vertices.",
+      "hints": [
+        "Count incoming edges separately for every vertex.",
+        "An isolated vertex has zero prerequisites."
+      ],
+      "solution": "Indegrees are [0,0,2,0] and initial ready vertices are [0,1,3]. Vertex 2 is not ready until both incoming dependencies are removed. Computing these values takes O(n + E) time, O(n) indegree storage, and O(n) ready output in the worst case.",
+      "checklist": [
+        "I include isolated vertex 3.",
+        "I count both prerequisites of 2."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Smallest available ID first",
+      "prompt": "Require the lexicographically smallest valid order. Explain why the FIFO core needs a min-heap instead. For edges [[0,1]] on vertices 0..2, return [0,1,2].",
+      "hints": [
+        "The initial ready set is {0,2}.",
+        "After removing 0, newly ready 1 should precede waiting 2."
+      ],
+      "solution": "Use a min-heap of ready IDs and always extract the smallest. Any valid order must choose a ready vertex next; choosing the smallest gives the smallest possible next position, and the same argument applies to the remainder. The sample FIFO order would be [0,2,1], while the heap gives [0,1,2]. Time O(E + n log(n + 1)), auxiliary O(n) beyond adjacency, output O(n).",
+      "checklist": [
+        "I reconsider all currently ready IDs at each step.",
+        "I preserve the same cycle detection."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Does topological order minimize total completion time?",
+      "answer": "No. It only respects precedence. Durations, parallel worker limits, and optimization objectives require additional scheduling models; a valid order alone makes no optimality claim."
+    },
+    {
+      "question": "How can we tell whether the order is unique?",
+      "answer": "For a DAG, if more than one vertex is ready at any step, either can be chosen next and multiple orders exist. Exactly one ready choice at every step implies uniqueness."
+    }
+  ],
+  "takeaways": [
+    "Model prerequisite direction before choosing a traversal.",
+    "Indegree tracks remaining obligations, not mere reachability.",
+    "Validate output by edge order and detect incomplete processing."
+  ]
+}

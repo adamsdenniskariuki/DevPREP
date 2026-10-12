@@ -1,0 +1,113 @@
+{
+  "id": "binary-search-lower-bound",
+  "track": "dsa",
+  "title": "Binary search: find a boundary",
+  "minutes": 50,
+  "summary": "Search for the first qualifying position, including duplicates and absent targets.",
+  "objectives": [
+    "Express a sorted-array query as a false-to-true boundary.",
+    "Maintain a half-open search interval without off-by-one errors.",
+    "Return a useful insertion position even when a target is absent."
+  ],
+  "concepts": [
+    {
+      "title": "Search a monotone predicate",
+      "body": "For a sorted array and target t, the statement values[i] >= t is false for an initial prefix and true for the remaining suffix. Lower bound asks for the first true position. If every position is false, the answer is n, one past the last element."
+    },
+    {
+      "title": "Use a half-open interval",
+      "body": "Initialize low = 0 and high = n. Positions below low are known to be too small; positions at or above high, when inside the array, are known to qualify. The unclassified interval is [low, high). When the middle qualifies, keep it as a possible boundary by setting high = middle. Otherwise set low = middle + 1."
+    },
+    {
+      "title": "Termination is part of the design",
+      "body": "While low < high, middle always refers to a real array element. Each update strictly shrinks the interval. When low equals high, all earlier positions are too small and this is the first qualifying position or n. The array is never read at index n."
+    },
+    {
+      "title": "A boundary is more general than membership",
+      "body": "Lower bound supports insertion, threshold counts, and duplicate ranges even when equality never occurs. Its answer space includes n, unlike element indices. For membership, check that the returned boundary is below n before reading its element and comparing for equality."
+    },
+    {
+      "title": "Write the predicate before writing the loop",
+      "body": "The predicate values[i] >= target is false then true. One observation therefore classifies an entire side of the search. If the predicate switches back and forth, that elimination is unjustified. Binary search is a monotonicity argument, not simply visiting middle positions."
+    }
+  ],
+  "example": "Input: values = [1, 3, 3, 7], target = 3.\nStart low = 0, high = 4. Middle 2 contains 3, so high becomes 2.\nMiddle 1 contains 3, so high becomes 1.\nMiddle 0 contains 1, so low becomes 1.\nReturn 1, the first occurrence, not the arbitrary matching position 2.",
+  "task": "Write lowerBound(values, target), returning the smallest zero-based index i where values[i] >= target. Return values.length when no element qualifies.\nInput is a nondecreasing integer array of length 0 through 1000000. Values and target are between -1000000000 and 1000000000. Do not modify the array.\nRequired examples: lowerBound([2, 4, 4, 4, 9], 4) returns 1; with target 6 returns 4; with target 10 returns 5; lowerBound([], 3) returns 0.\nUse O(log(n + 1)) time and O(1) extra space.",
+  "starter": "function lowerBound(values, target):\n    low = 0\n    high = length(values)\n    while low < high:\n        middle = low + floor((high - low) / 2)\n        // Classify middle and shrink the unclassified interval.\n    return low",
+  "hints": [
+    "Finding an equal value does not prove it is the first qualifying value. Which side could contain an earlier one?",
+    "If values[middle] >= target, set high to middle. Otherwise middle cannot be the answer, so set low to middle + 1."
+  ],
+  "solution": "function lowerBound(values, target):\n    low = 0\n    high = length(values)\n    while low < high:\n        middle = low + floor((high - low) / 2)\n        if values[middle] >= target:\n            high = middle\n        else:\n            low = middle + 1\n    return low\n\nFor [2, 4, 4, 4, 9] with target 6, middle 2 contains 4, so low becomes 3. Middle 4 contains 9, so high becomes 4. Middle 3 contains 4, so low becomes 4. Return 4.\nWith target 10, every inspected value is too small and low eventually reaches 5. Empty input starts with both bounds at 0 and returns 0 without reading an element.\nSorted order makes each classification apply to an entire side. The invariant therefore survives each update, and termination identifies the boundary. The interval roughly halves each time, giving O(log(n + 1)) time and O(1) extra space.",
+  "checklist": [
+    "I can state what is known below low and at or above high.",
+    "I return the first qualifying position when duplicates exist.",
+    "I handle empty input and a target larger than all values without reading past the array.",
+    "Both branches strictly shrink the interval."
+  ],
+  "pitfalls": [
+    "Returning immediately on equality can return a later duplicate.",
+    "Combining half-open bounds with high = middle - 1 can skip the answer.",
+    "Setting low = middle can fail to make progress when the interval has one element."
+  ],
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "two-pointers-sorted-pairs"
+  ],
+  "prerequisiteNotes": "Know sorted arrays and half-open bounds. Integer division rounds down.",
+  "walkthrough": [
+    {
+      "title": "Check the smallest undecided interval",
+      "body": "When high = low + 1, middle equals low. A true predicate sets high to low; false sets low to high. Both terminate. Using low = middle instead would loop forever. Also trace empty input and an all-false array to audit the boundary n."
+    },
+    {
+      "title": "Use a result certificate",
+      "body": "For returned k, all earlier values must be below target, and values[k] must qualify if k < n. This independently testable certificate catches returning a later duplicate. Calculating middle as low plus half the difference also avoids adding two potentially large indices."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Linear boundary oracle",
+      "prompt": "Find the first value at least 5 in [1,4,6,6] by a left-to-right scan; explain the result for [].",
+      "hints": [
+        "Return immediately on the first qualifying value.",
+        "The fallback position is the array length."
+      ],
+      "solution": "Scan indices in increasing order and return the first whose value is at least target. The sample returns 2 and empty input returns 0. Earlier values were explicitly checked and rejected. Time O(n), auxiliary space O(1). This slower, simple method is a useful independent oracle for validating binary search on small generated arrays.",
+      "checklist": [
+        "I return a boundary rather than a value.",
+        "I use n when no index qualifies."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Count a duplicate run",
+      "prompt": "Count target occurrences using two boundaries. For [1,3,3,3,8], target 3, return 3.",
+      "hints": [
+        "Find the first value >= target and the first value > target.",
+        "The difference between those boundaries is a half-open interval length."
+      ],
+      "solution": "Compute lower with >= and upper with >; return upper - lower. Boundaries 1 and 4 give 3. Absent targets make boundaries coincide, including empty input. Time O(log(n + 1)), auxiliary space O(1). Avoid target + 1, which can overflow; change the predicate instead.",
+      "checklist": [
+        "I change the predicate consistently.",
+        "I handle absence without scanning."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is this logarithmic on linked lists?",
+      "answer": "Not with ordinary traversal: reaching middle positions lacks constant-time indexing. Comparison count alone does not capture the access cost."
+    },
+    {
+      "question": "Can we search feasible capacities?",
+      "answer": "Yes, with monotone feasibility and bounds covering the answer. Multiply iteration count by feasibility-test cost when reporting runtime."
+    }
+  ],
+  "takeaways": [
+    "Search answer boundaries without reading outside element bounds.",
+    "Prove progress on a one-position interval.",
+    "Choose a monotone predicate and state its false and true regions."
+  ]
+}

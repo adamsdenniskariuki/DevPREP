@@ -1,0 +1,104 @@
+{
+  "id": "greedy-interval-selection",
+  "track": "dsa",
+  "title": "Greedy: prove an earliest-finish choice",
+  "minutes": 50,
+  "summary": "Select the largest compatible interval set using an exchange argument rather than a plausible heuristic.",
+  "prerequisites": [
+    "sorting-stable-merge",
+    "backtracking-subsets"
+  ],
+  "prerequisiteNotes": "Know sorting with a comparator and subset enumeration as a baseline. Intervals use [start,end), so touching endpoints are compatible.",
+  "objectives": [
+    "Choose an ordering that supports a safe local decision.",
+    "Prove a greedy choice by exchanging it into an optimal solution.",
+    "Identify variants where the same choice no longer optimizes the objective."
+  ],
+  "concepts": [
+    {
+      "title": "Specify what is being maximized",
+      "body": "The goal is the number of nonoverlapping intervals, with every interval worth one. It is not total occupied duration, total reward, or minimum idle time. Greedy algorithms are particularly sensitive to this distinction: a locally sensible decision for one objective may be disastrous for another. Positive duration and half-open endpoints are explicit assumptions here. Two intervals can meet at one endpoint without overlapping."
+    },
+    {
+      "title": "Earliest finish leaves the most room",
+      "body": "Among currently compatible intervals, choose the one with smallest end time. Consider an optimal remaining schedule whose first interval is different. The greedy interval finishes no later, so replacing that first interval with the greedy one leaves every later scheduled interval feasible and preserves the count. Thus some optimal schedule begins with the greedy choice. Reapply the same exchange argument to the suffix after its end."
+    },
+    {
+      "title": "Sorting exposes the next safe choice",
+      "body": "Sort a copy of interval records by end, breaking ties by original index for deterministic output. Then scan once, accepting an interval when its start is at least the last chosen end. Rejected intervals overlap the chosen frontier and cannot extend that particular valid schedule. The exchange proof, not the scan itself, shows that retaining this frontier does not sacrifice a globally larger answer. Track original IDs because sorting rearranges positions."
+    }
+  ],
+  "example": "selectIntervals([[0,4],[1,2],[2,3],[3,5]]) returns [1,2,3]. Touching intervals [1,2), [2,3), [3,5) are compatible.",
+  "task": "Write selectIntervals(intervals), returning original indices of a maximum-cardinality compatible subset in scheduled order. Each integer pair has start < end; negative times are allowed. n is 0 through 100000. Touching endpoints are compatible. Sort a copy by end then original index, do not mutate input, and return [] for no intervals.",
+  "starter": "function selectIntervals(intervals):\n    records = intervals paired with original indices\n    sort records by end, then index\n    chosen = empty list\n    lastEnd = absent\n    // Accept each compatible earliest finisher.\n    return chosen",
+  "hints": [
+    "Earliest start can trap you in one long interval.",
+    "Use start >= lastEnd, and keep a separate absent state before any choice."
+  ],
+  "solution": "function selectIntervals(intervals):\n    records = intervals paired with original indices\n    sort records by end, then index\n    chosen = empty list\n    lastEnd = absent\n    for record in records:\n        if lastEnd is absent or record.start >= lastEnd:\n            append record.index to chosen\n            lastEnd = record.end\n    return chosen\n\nThe sample sorts IDs as 1,2,0,3 by ends 2,3,4,5. Choose 1 then 2, reject 0 because its start 0 is before lastEnd 3, and choose 3 because it starts at 3. The result has three intervals. An optimal schedule’s first interval can be exchanged for the earliest finisher without losing any later interval; induction proves the full greedy count optimal. Sorting time O(n log(n + 1)), scanning time O(n), copied records O(n) auxiliary space, and output O(n).",
+  "checklist": [
+    "I maximize count rather than time or reward.",
+    "I explain the exchange argument for the first choice.",
+    "I preserve original indices and accept touching endpoints."
+  ],
+  "pitfalls": [
+    "Sorting by earliest start can choose one long blocking interval.",
+    "Using > instead of >= incorrectly rejects touching intervals.",
+    "Returning sorted-array positions loses original interval identity."
+  ],
+  "walkthrough": [
+    {
+      "title": "Disprove competing intuitions",
+      "body": "In the main example, earliest-start selection chooses [0,4) and blocks both [1,2) and [2,3), yielding fewer intervals. Shortest duration is not a universal fix either: with [0,3), [3,6), and [2,4), the shortest interval overlaps both members of a compatible pair. A counterexample rejects a heuristic; an exchange proof establishes the chosen rule for all valid inputs. Collect both kinds of reasoning rather than trusting a few favorable traces."
+    },
+    {
+      "title": "Keep the frontier meaning precise",
+      "body": "lastEnd is the finish time of the final chosen interval, not the most recent interval inspected. Updating it after a rejection would erase the actual compatibility boundary. Since accepted intervals are ordered by finish and each starts after the previous end, they form a valid schedule. Negative starting times require an absent initial frontier or a genuine negative-infinity abstraction; initializing lastEnd to zero would incorrectly discard legal early intervals."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Check compatibility",
+      "prompt": "Are [1,3) and [3,6) compatible? Are [1,4) and [3,6)? State a symmetric condition for two positive-duration intervals.",
+      "hints": [
+        "An interval excludes its end boundary.",
+        "Either interval may come first in the input."
+      ],
+      "solution": "The first pair is compatible and the second overlaps. For [a,b) and [c,d), compatibility is b <= c or d <= a. Two comparisons take O(1) time and O(1) space. This is a pairwise check, not an optimization algorithm for choosing among many intervals.",
+      "checklist": [
+        "I allow equality at touching boundaries.",
+        "I check both possible temporal orders."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Rewards break the exchange",
+      "prompt": "Intervals [0,2), [2,4), [0,4) have rewards 3,3,10. Explain why earliest-finish selection fails to maximize reward, and outline a correct dynamic program.",
+      "hints": [
+        "Replacing an interval can preserve count but change reward.",
+        "After sorting by finish, compare skipping interval i with taking it plus a compatible prefix."
+      ],
+      "solution": "Greedy selects the first two for reward 6, while the long interval yields 10. Sort by end, find p(i), the last earlier interval ending at or before start[i], using binary search. Let best[i] be max(best[i - 1], reward[i] + best[p(i)]), with empty-prefix reward zero. This considers the two exhaustive cases for an optimum. Time O(n log(n + 1)), auxiliary O(n); reconstruction needs saved choices or retracing the table.",
+      "checklist": [
+        "I identify the failed reward-preservation step.",
+        "I restrict the take case to a compatible prefix."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is greedy simply backtracking without undo?",
+      "answer": "No. Removing alternatives is justified only by a proof that at least one optimal solution remains. Backtracking explores alternatives explicitly; an unproved one-branch search is merely a heuristic."
+    },
+    {
+      "question": "Could two valid maximum schedules differ?",
+      "answer": "Yes. The task allows any maximum-cardinality subset. The end/index comparator makes the worked implementation deterministic, but optimality tests should also verify count and compatibility rather than assume uniqueness."
+    }
+  ],
+  "takeaways": [
+    "Tie an optimization proof to the exact objective.",
+    "Exchange an optimal solution toward the greedy choice.",
+    "A convincing counterexample is enough to reject a heuristic, not enough to prove another."
+  ]
+}

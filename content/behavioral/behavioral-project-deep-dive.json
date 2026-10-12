@@ -1,0 +1,105 @@
+{
+  "id": "behavioral-project-deep-dive",
+  "track": "behavioral",
+  "title": "Project deep dive: explain decisions at several depths",
+  "minutes": 50,
+  "summary": "Connect project goals, constraints, architecture, decisions, validation, and limitations truthfully.",
+  "prerequisites": [
+    "behavioral-collaboration-leadership"
+  ],
+  "prerequisiteNotes": "Combine ownership, evidence, tradeoffs, and credit in a shareable personal or public project.",
+  "objectives": [
+    "Explain a project as a short overview and a deeper decision-focused account.",
+    "Connect technical choices to requirements, alternatives, and validation evidence.",
+    "Handle detailed questions while marking confidentiality and knowledge boundaries."
+  ],
+  "concepts": [
+    {
+      "title": "Use layers instead of a chronological inventory",
+      "body": "Start with the user problem, scope, and your responsibility. Add components or workflow as needed to explain decisions, not every file or meeting. Prepare a standalone overview, then expand into a decision, alternative, and evidence. Invite the interviewer to choose the next depth rather than delivering an uninterrupted implementation tour."
+    },
+    {
+      "title": "Connect design to a constraint and a check",
+      "body": "Connect each choice to a requirement, considered alternative, and supporting check. Distinguish actual tests from hoped-for properties: sample inputs do not establish production reliability, scalability, or broad accessibility. State what remains untested. Use real observations, not invented traffic numbers, cost savings, or company claims that make a project sound substantial."
+    },
+    {
+      "title": "Set boundaries without abandoning the explanation",
+      "body": "Decline proprietary details while discussing general reasoning. Offer a public or fictional analogy explicitly distinguished from the real system; do not blend its behavior into your history. For a teammate’s component, describe your interface knowledge and credit their work without pretending to know internals. Follow “I do not know” with how you would verify."
+    }
+  ],
+  "example": "Fictional illustration: A student builds a local reading-list importer for their own files. The interesting decision is preserving the last valid list when a new import is malformed. A deep dive can explain input validation, the replace step, and a failed-import test without inventing users, revenue, deployment scale, or employer details. A small project can support substantial reasoning.",
+  "task": "Choose a real shareable project. Prepare a ninety-second overview and a four-minute expansion of one technical decision. Include the user need, scope, your contribution, a simple component or workflow map, one rejected alternative, validation evidence, and an unresolved limitation. Add a boundary statement for confidential or unfamiliar details. If you have no suitable project, rehearse the fictional importer explicitly as an illustration, not a personal achievement.",
+  "hints": [
+    "Center the expansion on one decision with an alternative and a test rather than listing technologies.",
+    "Mark what you personally implemented, what others owned, and what you cannot safely or reliably explain."
+  ],
+  "solution": "Fictional rehearsal, not a claimed project:\nI built a local reading-list importer for a student exercise. Its purpose was to combine my sample files without replacing the current list with malformed input. I owned the parsing and replacement workflow; the exercise did not include a hosted service or real user deployment.\nThe workflow read a candidate file, validated the expected fields, built a candidate list, and replaced the current list only after validation succeeded. I chose this separation so an invalid candidate would not immediately erase the existing in-memory list.\nAn alternative was updating entries as they were parsed. That required a recovery policy for partially applied imports, which was unnecessary for the exercise’s small files. The tradeoff was keeping a full candidate list in memory; I did not test large files and would revisit the design if that became a requirement.\nI tested a valid import and a malformed input that failed validation, checking that the previous list remained available. Those checks supported the sample workflow, not crash-safe storage or concurrent updates. I would need additional persistence design before making either claim.\nMy main learning was to define what must remain true on failure before choosing the update flow. I can explain the small prototype completely, but I would not imply that it had production-scale reliability.\nFor your own account, retain only requirements, implementation details, and evidence that are true and safe to discuss.",
+  "checklist": [
+    "My overview identifies the user need, scope, and personal contribution.",
+    "My expansion connects a decision to a constraint and an alternative.",
+    "I distinguish tested behavior from untested properties.",
+    "I label analogies and respect confidentiality or knowledge boundaries."
+  ],
+  "pitfalls": [
+    "Reciting architecture vocabulary without connecting choices to the problem.",
+    "Claiming production properties from a classroom prototype or limited sample tests.",
+    "Disclosing private implementation details or inventing another team’s internals under follow-up pressure."
+  ],
+  "walkthrough": [
+    {
+      "title": "Build a decision card",
+      "body": "Write six headings: problem, constraint, choice, alternative, evidence, and limitation. Fill them for one decision you actually made. If the alternative was not considered at the time, label it a retrospective comparison. This distinction keeps the answer thoughtful without rewriting the project’s history. Practice explaining the card without showing internal diagrams or source code."
+    },
+    {
+      "title": "Switch depth on request",
+      "body": "Rehearse the overview, then ask a partner to interrupt with a failure-mode question. Answer that question first and offer a deeper explanation only if useful. Review scope, causal reasoning, validation, credit, and boundaries as reflection categories. Identify one unsupported property claim and remove or qualify it. Record a genuine unresolved question for further study instead of improvising authority."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Compress an architecture tour",
+      "prompt": "Explain one real project workflow in three sentences: input, transformation, and observable output or failure behavior.",
+      "hints": [
+        "Omit tool names unless they explain a decision.",
+        "Keep the failure claim as narrow as your evidence."
+      ],
+      "solution": "Fictional illustration: “The prototype reads a candidate list. It validates fields before replacing the current in-memory list. In the malformed-input test, the previous list remained available.” This does not imply durable transactional storage.",
+      "checklist": [
+        "The workflow is understandable.",
+        "The observable behavior is specific.",
+        "Untested properties are not implied."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Handle a confidentiality boundary",
+      "prompt": "Rehearse responding to a request for a private architecture detail while still demonstrating relevant reasoning.",
+      "hints": [
+        "State the boundary without revealing the detail indirectly.",
+        "Offer a clearly separate public or fictional example."
+      ],
+      "solution": "Response structure: “I cannot share that implementation detail. I can explain the general consistency tradeoff with a fictional local importer, if useful.” Keep the analogy’s assumptions separate from the real project and do not imply identical behavior.",
+      "checklist": [
+        "The boundary is explicit.",
+        "The alternative is clearly labeled.",
+        "No confidential equivalence is implied."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What changes if inputs become much larger?",
+      "answer": "Identify which current assumption breaks, such as holding a candidate list in memory. Discuss options and needed measurements without claiming you implemented or validated a larger-scale design."
+    },
+    {
+      "question": "What was the weakest decision?",
+      "answer": "Name a real tradeoff or limitation, explain what you knew then, and describe evidence that would justify revisiting it. Do not invent a flaw or pretend every choice was optimal."
+    }
+  ],
+  "takeaways": [
+    "Depth comes from decisions, alternatives, and evidence rather than vocabulary.",
+    "A prototype’s tested scope is a strength when stated honestly.",
+    "Boundaries and clearly labeled analogies preserve both confidentiality and credibility."
+  ]
+}

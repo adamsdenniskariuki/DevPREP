@@ -1,0 +1,110 @@
+{
+  "id": "ml-optimization-regularization",
+  "track": "ml",
+  "title": "Optimization and regularization: control the fit",
+  "minutes": 50,
+  "summary": "Work one gradient update, reason about learning rates and feature scales, and distinguish fitting the training objective from generalizing.",
+  "prerequisites": [
+    "ml-regression-classification"
+  ],
+  "prerequisiteNotes": "Know residuals, squared loss, and linear predictions. The required derivative is supplied; no calculus course or training framework is needed.",
+  "objectives": [
+    "Calculate one gradient-descent update using a stated loss convention.",
+    "Explain learning-rate and feature-scaling effects on optimization.",
+    "Distinguish regularization, early stopping, and held-out model selection."
+  ],
+  "concepts": [
+    {
+      "title": "The gradient points uphill",
+      "body": "For prediction w*x, objective J = 0.5*(w*x-y)^2 has gradient g = (w*x-y)*x. Gradient descent uses w_next = w - learning_rate*g, subtracting the uphill direction. The factor 0.5 cancels the derivative’s factor two. Unhalved squared error doubles the gradient; compare learning rates only when loss conventions and example reductions agree. A real model’s intercept also needs its own gradient."
+    },
+    {
+      "title": "A step size is part of a controlled experiment",
+      "body": "Small steps can progress slowly; large steps can overshoot and diverge. Feature scale changes curvature, so standardization can help without creating predictive information. Minibatch gradients noisily estimate the full training gradient. Shuffle only eligible training examples and preserve the evaluation protocol. Monitor objective curves, nonfinite values, and seed stability. A stalled optimizer does not prove the dataset lacks learnable signal."
+    },
+    {
+      "title": "Regularization changes what is optimized",
+      "body": "L2 adds 0.5*lambda*w^2 to this objective and lambda*w to its gradient. It favors smaller weights under the chosen scaling, trading fit for possible generalization benefit, not guaranteed fairness or robustness. Document whether intercepts are excluded. L1 can encourage exact zeros with suitable optimization; ordinary L2 generally shrinks weights. Select strength on validation and report predictive loss separately from the penalized training objective."
+    },
+    {
+      "title": "Early stopping spends validation information",
+      "body": "Selecting the best validation checkpoint can restrain overfitting, but repeated selection makes its score optimistic. Reserve test for the frozen choice. Prespecify patience, meaningful improvement, and training budget; save the best checkpoint, not just the last. Isolated validation dips may reflect noise or shift. Compare seeds and slices without mistaking more tuning for new independent evidence."
+    }
+  ],
+  "example": "Use dimensionless standardized x = 2, target y = 4, weight w = 1, and no intercept.\nData objective J = 0.5 * (w*x - y)^2 = 2.\nGradient g = (w*x - y)*x = -4.\nWith learning rate 0.1, w_next = 1 - 0.1*(-4) = 1.4.\nNew prediction = 2.8; new data objective = 0.5*(2.8 - 4)^2 = 0.72.\nWith L2 lambda = 0.5 at the original w, total gradient = -4 + 0.5*1 = -3.5; w_next = 1.35.\nWith no penalty and learning rate 1, w_next = 5 and data objective = 18: a larger step can be worse.",
+  "task": "Reproduce both updates and explain their signs, overshoot, and why lower training loss does not justify shipping. Design a small learning-rate and regularization experiment, preserving test independence and distinguishing predictive from penalized losses.",
+  "starter": "prediction = w * x\ngradient = (prediction - y) * x\ngradient += regularization_strength * w\nnext_w = w - learning_rate * gradient\n# Evaluate predictive validation loss without the weight penalty.",
+  "hints": [
+    "The L2 gradient is computed at the original weight, not at a weight already updated this step.",
+    "A training objective improvement demonstrates optimization progress, not future accuracy."
+  ],
+  "solution": "The residual is -2 and gradient -4. Subtracting 0.1 times that gradient gives weight 1.4 and loss 0.72 instead of 2. L2 adds +0.5, yielding gradient -3.5 and weight 1.35. Learning rate 1 overshoots to weight 5, prediction 10, and loss 18. Check stable convergence across a small prespecified rate range, then compare penalty strengths with fixed data, architecture, and budget. Select using unpenalized validation loss; freeze the checkpoint, inspect uncertainty and slices, and evaluate test once.",
+  "checklist": [
+    "I state the halved squared-error objective before taking its gradient.",
+    "I derive weights 1.4 and 1.35 under the two update rules.",
+    "I explain overshoot using the loss of 18 at learning rate 1.",
+    "I keep penalized training objectives distinct from validation predictive losses."
+  ],
+  "pitfalls": [
+    "Forgetting the loss normalization changes the effective learning rate.",
+    "Applying the weight penalty twice implements a different optimizer.",
+    "Regularizing unscaled features can penalize equivalent effects unequally.",
+    "Selecting checkpoints on test data contaminates the final audit."
+  ],
+  "walkthrough": [
+    {
+      "title": "Read a learning curve before adding complexity",
+      "body": "Exploding loss suggests checking step size, feature magnitude, and nonfinite arithmetic. Flat losses suggest checking gradients and actual parameter updates. Improving training but worsening validation suggests complexity, regularization, or shift. These patterns generate experiments, not unique diagnoses."
+    },
+    {
+      "title": "Keep the comparisons honest",
+      "body": "Record the objective, transform, seed, training window, batch reduction, and checkpoint rule. This toy update uses dimensionless standardized inputs and targets; its loss is not hours squared. In real regression, target scale determines loss units and penalty meaning. Reusing lambda after changing units may not preserve the experiment."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A zero-gradient check",
+      "prompt": "Using the same x = 2 and y = 4 with no penalty, evaluate the gradient at w = 2. What happens after a learning-rate-0.1 step?",
+      "hints": [
+        "Compute the prediction before the gradient.",
+        "A perfect fit has zero residual in this single-example objective."
+      ],
+      "solution": "Prediction is 4, residual is zero, gradient is zero, and the weight remains 2. This is a useful implementation check for the unregularized update, not a guarantee of an optimum for any other dataset or penalized objective.",
+      "checklist": [
+        "I obtain a zero gradient and unchanged weight.",
+        "I qualify the result by the specified objective."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Why shrink a perfect fit?",
+      "prompt": "At x = 2, y = 4, w = 2, add L2 lambda = 0.5 and take a step of 0.1. Compute the new data and total objectives and compare with the original total objective.",
+      "hints": [
+        "At the original weight only the penalty contributes to the gradient.",
+        "Add 0.5*lambda*w^2 to the data objective at each weight."
+      ],
+      "solution": "The gradient is 1, so the new weight is 1.9. Prediction is 3.8 and data objective is 0.02. The new penalty is 0.25*1.9^2 = 0.9025, so total objective is 0.9225, below the original total of 1. The data fit worsens while the penalized objective improves. This is exactly the tradeoff being optimized, not an arithmetic contradiction.",
+      "checklist": [
+        "I derive weight 1.9 and total objective 0.9225.",
+        "I explain why data loss can rise while total loss falls."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Does regularization always improve validation?",
+      "answer": "No. Excess penalties underfit; useful strength depends on scaling, data, and model. Measure rather than assume improvement."
+    },
+    {
+      "question": "Is one checkpoint conclusive?",
+      "answer": "No. Noise and repeated selection matter. Prespecify the search, check stability, and preserve test independence."
+    }
+  ],
+  "takeaways": [
+    "Specify the objective and units before computing a gradient.",
+    "Learning rate controls whether a local direction produces a useful step.",
+    "Regularization trades training fit against a preference for simpler parameters.",
+    "Optimization success and generalization success require different evidence."
+  ]
+}

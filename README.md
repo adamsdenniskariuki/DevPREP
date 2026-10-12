@@ -170,7 +170,7 @@ Review dates use the device’s local calendar, including daylight-saving change
 
 ## GitHub Pages deployment
 
-The intended site URL is **https://adamsdenniskariuki.github.io/DevPREP/**. A successful PR build does **not** mean the site is live.
+The site is **https://devprep.madebyfavor.com/** (the project URL https://adamsdenniskariuki.github.io/DevPREP/ redirects there). A successful PR build does **not** mean the site is live.
 
 1. In the repository’s **Settings → Pages → Build and deployment**, select **GitHub Actions** as the source. A repository administrator must enable this; it is not enabled by adding a workflow alone.
 2. Review and merge the implementation PR into `main`.
@@ -182,58 +182,60 @@ Pull requests run the same validation but **cannot deploy**. The workflow uses t
 
 All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so refreshing or sharing a route does not need a server rewrite or a custom 404 page. `#study` resumes this browser’s active session; it is not a shared lesson URL.
 
-### Custom domain: staged activation only
+### Custom domain
 
-The approved hostname is **devprep.madebyfavor.com**. `public/CNAME` contains that hostname and Vite copies it to `dist/CNAME`. With an **Actions-based Pages deployment**, GitHub ignores this file for domain configuration; an administrator must set the repository's remote custom domain separately. See [GitHub's custom-domain documentation](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site). This compatibility change does not alter DNS, Pages settings, or HTTPS settings.
+The site is served at **https://devprep.madebyfavor.com/**. Pages is configured for that domain, and `public/CNAME` (copied to `dist/CNAME`) matches it.
 
-Required DNS record at the provider for `madebyfavor.com`:
+**DNS (one-time, at the provider for `madebyfavor.com`):** add this record if it is not already present.
 
 | Type | Host/name | Target/value |
 | --- | --- | --- |
 | CNAME | `devprep` | `adamsdenniskariuki.github.io` |
 
-The target has **no scheme or path**: do not include `https://` or `/DevPREP/`.
+Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-DnsName devprep.madebyfavor.com -Type CNAME`, then enable **Enforce HTTPS** in Settings → Pages once the certificate is issued.
 
-**Activation sequence (do not skip the backup or approval gates):**
-
-1. Before any redirect/domain activation, open **https://adamsdenniskariuki.github.io/DevPREP/#progress** in each browser/profile with progress and choose **Export backup**. Keep the downloaded JSON safe; export again if you continue studying before activation.
-2. Review and merge the compatibility PR, then let the normal `main` workflow deploy the compatible artifact to the **existing URL first**. Do not manually deploy or activate the domain as part of PR preparation.
-3. Verify the existing URL still loads scripts/styles, navigates and refreshes hash routes, resumes drafts, and exports backups. Local regression checks: `npm run build` followed by `npm run test:e2e -- tests/domain.spec.ts` verifies both mounts using one artifact.
-4. Confirm DNS readiness: provider access, the exact intended record, and whether any existing record resolves correctly. Do not publish a new unclaimed Pages CNAME in advance: GitHub warns of domain-takeover risk and recommends domain verification and setting the Pages domain before publishing DNS. Creating/changing DNS requires separate approval; the approved hostname is not authorization to change DNS.
-5. **Only after separate activation approval**, an administrator sets **Settings > Pages > Custom domain** to `devprep.madebyfavor.com`, coordinates any separately approved DNS update, verifies resolution (for example, `Resolve-DnsName devprep.madebyfavor.com -Type CNAME`), waits for GitHub's DNS check and certificate provisioning, and enables **Enforce HTTPS** when available. The GitHub Pages URL may then redirect to the custom domain, so old-origin backups must already be downloaded.
-6. Verify **https://devprep.madebyfavor.com/** and refresh `/#roadmap`, `/#study`, and `/#progress`. Use **Progress > Import backup**, select the exported JSON, and confirm **Replace progress**. Confirm due dates and unfinished drafts before discarding any backup.
-
-**Local storage is origin-scoped.** `https://devprep.madebyfavor.com` cannot read progress from `https://adamsdenniskariuki.github.io`. A redirect does not transfer storage; there is **no automatic migration**. Import replaces, rather than merges, any progress already created at the new origin. The domain tests exercise an explicit export/import between different local hostnames in the same browser context.
+**Local storage is origin-scoped.** Progress saved at `https://adamsdenniskariuki.github.io/DevPREP/` is not visible at the custom domain. Export a backup from the old origin and import it at the new one; import replaces rather than merges.
 
 ## Code map
 
 | File | Responsibility |
 | --- | --- |
 | `src/curriculum-types.ts` | Teaching sections, staged exercises, and lesson schema |
-| `src/curriculum.ts` | Track metadata and prerequisite-ordered curriculum assembly |
-| `src/content/` | Four expanded tracks, preserved published starter contracts, and worked-example tests |
-| `src/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
-| `src/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
+| `content/<track>/` | Lesson data: one JSON file per lesson plus `track.json` (title, description, ordered lesson IDs) |
+| `content/paths.json` | SWE and Senior SWE path phases and senior prompts |
+| `scripts/build-content.mjs` | Aggregates `content/` into `src/generated/curriculum.json` (ignored; runs automatically before dev, build, typecheck and tests) |
+| `src/content-schema.ts` | Strict lesson/track schema; `src/content-schema.test.ts` validates every file |
+| `src/curriculum.ts` | Loads the generated curriculum |
+| `src/content-tests/` | Worked-example and contract tests per track |
+| `src/lesson-ids.test.ts`, `tests/fixtures/lesson-ids.json` | Append-only registry of every shipped lesson ID |
+| `src/components/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
+| `src/components/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
 | `src/learning-paths.ts`, `src/learning-paths.test.ts` | Curated path phases, senior extensions, selection/progress helpers, prerequisite and preservation tests |
-| `src/PathPicker.tsx`, `src/PathRoadmap.tsx`, `src/PathPrompt.tsx` | Opt-in path selection, ordered roadmap, and senior discussion surfaces |
-| `src/LessonList.tsx`, `src/format.ts` | Shared lesson rows and review-date formatting for path and all-track views |
-| `src/accents.css`, `src/AccentPicker.tsx`, `src/useAccent.ts` | Central accent palettes, appearance selection, and visible preference recovery |
+| `src/components/Path*.tsx` | Opt-in path selection, ordered roadmap, and senior discussion surfaces |
+| `src/components/LessonList.tsx`, `src/format.ts` | Shared lesson rows and review-date formatting for path and all-track views |
+| `src/accents.css`, `src/components/AccentPicker.tsx`, `src/useAccent.ts` | Central accent palettes, appearance selection, and visible preference recovery |
 | `src/accent-preference.ts`, `src/accent-preference.test.ts`, `tests/accents.spec.ts` | Separate preference contract, startup/error checks, real palette contrast and browser coverage |
 | `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
 | `src/sw.ts`, `src/pwa-cache.ts` | Integrity-checked, mount-scoped offline caches and safe version routing |
-| `src/usePwa.ts`, `src/PwaPanel.tsx`, `src/pwa-client.ts` | Install guidance, actual readiness, update discovery and guarded user restart |
+| `src/usePwa.ts`, `src/components/PwaPanel.tsx`, `src/pwa-client.ts` | Install guidance, actual readiness, update discovery and guarded user restart |
 | `public/icons/`, `scripts/generate-pwa-icons.mjs` | Original install icons and reproducible PNG generation |
 | `playwright.pwa.config.ts`, `tests/pwa*` | Dedicated production offline/failure/two-release lifecycle tests |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
-| `src/App.tsx` | Today, roadmap, study, review, progress, and backup flows |
+| `src/App.tsx` | Shell, routing, storage alerts, and backup flows |
+| `src/screens/` | Today, roadmap, review, progress, and study screens |
+| `src/components/` | Reusable UI components |
 | `src/styles.css` | Clawpilot tokens and responsive layouts |
 | `src/progress.test.ts` | Curriculum contract, state transitions, invalid inputs, storage failures |
 | `tests/app.spec.ts` | Production-browser workflows, keyboard behavior, viewport checks, visual captures |
 | `tests/domain.spec.ts` | Same-artifact root/project assets, hash refresh, and explicit cross-origin backup transfer |
 | `tests/serve-dist.mjs` | Strict dual-mount static server for isolated browser tests |
-| `public/CNAME` | Custom hostname copied to the Pages artifact; not remote activation |
+| `public/CNAME` | Custom hostname (`devprep.madebyfavor.com`) copied to the Pages artifact |
 | `.github/workflows/deploy.yml` | PR validation and gated `main` deployment |
+
+### Adding content
+
+Add `content/<track>/<new-id>.json` and append its ID to that track's `track.json` and to `tests/fixtures/lesson-ids.json`. `npm test` validates the schema and regenerates the bundle.
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.

@@ -1,0 +1,112 @@
+{
+  "id": "stack-balanced-delimiters",
+  "track": "dsa",
+  "title": "Stacks: match nested obligations",
+  "minutes": 45,
+  "summary": "Use last-in, first-out order to validate correctly nested brackets.",
+  "objectives": [
+    "Explain why balanced counts do not imply valid nesting.",
+    "Represent unfinished opening brackets with a stack.",
+    "Handle early mismatches and unfinished input separately."
+  ],
+  "concepts": [
+    {
+      "title": "The newest opener must close first",
+      "body": "Nested structures create obligations in reverse order. If a square bracket opens inside parentheses, it must close before the parentheses do. A stack stores these outstanding openers, with the most recent on top."
+    },
+    {
+      "title": "Match type as well as count",
+      "body": "On an opener, push it. On a closer, require a nonempty stack and a matching top element, then pop. A string such as \"([)]\" has equal opening and closing counts but invalid nesting, so counters alone are insufficient."
+    },
+    {
+      "title": "Validate the end state",
+      "body": "Reject an incompatible closer immediately because no future character can repair the prefix. After all input is consumed, accept only if the stack is empty. Remaining openers represent unfinished obligations. Each character is processed once; maximum nesting depth determines stack space."
+    },
+    {
+      "title": "The stack is a compressed history",
+      "body": "Completed pairs no longer constrain the future and can be forgotten. Unmatched openers still matter in nesting order. The stack retains exactly this unresolved history, rather than the entire prefix. This general modeling technique keeps unfinished obligations and discards completed work."
+    },
+    {
+      "title": "Some failures are irreversible",
+      "body": "A wrong or unpaired closer cannot be repaired by any suffix. Remaining openers might still close later, so reject those only at end of input. Prefix failures and final-state failures serve different logical purposes in validators; neither check replaces the other."
+    }
+  ],
+  "example": "Input: \"([]{})\".\nPush (, then [. The ] matches [ and pops it.\nPush {. The } matches { and pops it.\nThe final ) matches ( and leaves an empty stack. Return true.\nFor \"([)]\", the ) encounters [ on top, so return false immediately.",
+  "task": "Write isBalanced(text), returning true exactly when all brackets are matched by type and correctly nested.\nInput length is 0 through 100000 and contains only these six characters: ( ) [ ] { }. No other characters need handling. Empty input is valid.\nRequired examples: isBalanced(\"{[()]}[]\") returns true; isBalanced(\"[(])\") returns false; isBalanced(\"]\") returns false; isBalanced(\"((\") returns false; isBalanced(\"\") returns true.\nUse O(n) time and at most O(n) extra space.",
+  "starter": "function isBalanced(text):\n    stack = empty stack\n    matchingOpener = map from each closer to its opener\n    for character in text:\n        // Push an opener or validate and pop a closer.\n    return stack is empty",
+  "hints": [
+    "The stack only needs unmatched openers, not the entire processed prefix.",
+    "Before popping for a closer, check both that the stack is nonempty and that its top equals the closer’s required opener."
+  ],
+  "solution": "function isBalanced(text):\n    stack = empty stack\n    matchingOpener = { \")\": \"(\", \"]\": \"[\", \"}\": \"{\" }\n    for character in text:\n        if character is \"(\" or \"[\" or \"{\":\n            push character onto stack\n        else:\n            if stack is empty:\n                return false\n            if top(stack) != matchingOpener[character]:\n                return false\n            pop stack\n    return stack is empty\n\nFor \"{[()]}[]\", the first three openers push {, [, (. The next three closers pop (, [, { in that order. The final [] pushes and pops [, leaving no obligations. Return true.\nFor \"[(])\", ] requires [ but the top is (, so return false. For \"((\", no closer fails, but the nonempty final stack still requires false.\nThe stack is exactly the sequence of unmatched openers in encounter order. Matching its top enforces proper nesting. Time is O(n), and extra space is O(d) for maximum nesting depth d, which can be n.",
+  "checklist": [
+    "I can explain why \"[(])\" fails despite balanced counts.",
+    "I guard against popping an empty stack.",
+    "I check the final stack rather than assuming every processed prefix is complete.",
+    "I can relate space usage to maximum nesting depth."
+  ],
+  "pitfalls": [
+    "Counting each bracket type ignores cross-type nesting.",
+    "Accepting after the loop without checking the stack allows unfinished openers.",
+    "Removing the oldest opener uses queue order instead of nesting order."
+  ],
+  "prerequisites": [
+    "arrays-prefix-foundations"
+  ],
+  "prerequisiteNotes": "Know array scans, boolean returns, and empty collections. A stack exposes push, pop, and top at one end.",
+  "walkthrough": [
+    {
+      "title": "Trace state, not just counts",
+      "body": "For ([)], top [ blocks the next ). Reaching below it would close an outer obligation while its inner one remains unresolved. Counts cannot capture that ordering. Record the stack after every symbol and check it lists exactly the unmatched openers in encounter order."
+    },
+    {
+      "title": "Measure depth and implementation costs",
+      "body": "Sequence ()()() needs depth one, whereas (((()))) needs four. Storage follows nesting depth, not pair count. Growable-array end pushes are amortized constant-time and pops avoid shifting. Front insertions would undermine the cost model even if they reproduced the same abstract stack behavior."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Only one bracket type",
+      "prompt": "Validate strings containing only ( and ). Use a counter rather than a stack. Explain why \")(\" is invalid even though its final count is zero.",
+      "hints": [
+        "Increment on open and decrement on close.",
+        "A negative prefix count means a closer arrived too soon."
+      ],
+      "solution": "Keep balance = 0. Update it for each symbol and immediately reject if it becomes negative. At the end accept exactly when balance is zero. \")(\" fails on its first symbol; empty input passes. With one type, only the number of unresolved identical openers matters. Time O(n), auxiliary space O(1); multiple bracket types require retaining their order.",
+      "checklist": [
+        "I reject negative prefixes.",
+        "I require zero final balance."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Explain the first failure",
+      "prompt": "Return the index of the first incompatible closer. If there is no incompatible closer but openers remain, return n. Return -1 for valid input. For \"[(])\", return 2; for \"((\", return 2.",
+      "hints": [
+        "Carry the current scan index into early rejection.",
+        "The end-of-input boundary can represent unfinished obligations."
+      ],
+      "solution": "Use the original opener stack and matching checks. Return i instead of false on an empty-stack or wrong-top closer. After scanning, return n if the stack is nonempty, otherwise -1. The sentinel n is a boundary, not an index to read. This reports exactly the requested failure category, with O(n) time and O(d) space; locating the earliest unmatched opener instead would require storing opener indices.",
+      "checklist": [
+        "I distinguish an actual symbol position from end-of-input.",
+        "I preserve type checking while adding diagnostics."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can a queue replace the stack?",
+      "answer": "No. A queue closes the oldest opener first, while nesting demands the newest. The valid string ([]) illustrates the reversal."
+    },
+    {
+      "question": "What if ordinary text is included?",
+      "answer": "The current input contract excludes it. A broader parser needs explicit rules for ignoring text, handling quotes, and recognizing escapes; silently treating every other character as a closer would be incorrect."
+    }
+  ],
+  "takeaways": [
+    "Store unfinished obligations in the order future work needs them.",
+    "Prefix failure and incomplete final state are different checks.",
+    "Abstract operation costs depend on the underlying collection."
+  ]
+}

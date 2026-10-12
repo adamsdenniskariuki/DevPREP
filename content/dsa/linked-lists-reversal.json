@@ -1,0 +1,104 @@
+{
+  "id": "linked-lists-reversal",
+  "track": "dsa",
+  "title": "Linked lists: preserve links while rewiring",
+  "minutes": 45,
+  "summary": "Reverse a singly linked chain in place using a precise partition of processed and unprocessed nodes.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "two-pointers-sorted-pairs"
+  ],
+  "prerequisiteNotes": "Know loops and object identity. A node has a value and a next reference; null means no node, not a node whose value is zero.",
+  "objectives": [
+    "Separate node identity from stored values.",
+    "Save a successor before overwriting a link.",
+    "Prove that a rewiring loop neither loses nodes nor creates cycles."
+  ],
+  "concepts": [
+    {
+      "title": "References replace positional access",
+      "body": "A singly linked node stores its value and the reference to the next node. Finding the kth node requires following k links from the head, unlike constant-time array indexing. Inserting after a known node can be constant-time, but finding that node still costs traversal. Reversal changes links and the head, not values. Two equal-valued nodes remain distinct objects and must both appear in the reversed result."
+    },
+    {
+      "title": "Partition the chain",
+      "body": "Maintain previous as the head of the already reversed prefix and current as the first unprocessed node. Initially previous is null and current is the original head. The two chains together contain every original node exactly once. Reversing current.next transfers one node from the unprocessed chain to the reversed chain, provided its original successor was saved first. This invariant makes each assignment’s purpose visible."
+    },
+    {
+      "title": "Mutation is an API choice",
+      "body": "In-place reversal changes every next link. A caller retaining a reference to the old head now holds the tail, not an unchanged view of the list. The task permits this mutation and returns the new head. A nonmutating variant would allocate new nodes, using O(n) additional space. State ownership assumptions explicitly; an algorithm can be logically correct yet violate a caller’s expectation about shared data."
+    }
+  ],
+  "example": "reverseList(4 -> 1 -> 7 -> null) returns 7 -> 1 -> 4 -> null, using the same three nodes.",
+  "task": "Write reverseList(head) for a finite, acyclic singly linked list of at most 100000 nodes. Each node has value and next. Rewire existing nodes and return the new head without allocating replacement nodes or modifying values. A null head returns null. Assume no other operation mutates the list concurrently. Use O(n) time and O(1) auxiliary space.",
+  "starter": "function reverseList(head):\n    previous = null\n    current = head\n    while current != null:\n        // Preserve the old successor before changing current.next.\n    return previous",
+  "hints": [
+    "After current.next changes, where will you find the unprocessed suffix?",
+    "Save nextNode, reverse the link, then advance previous and current in that order."
+  ],
+  "solution": "function reverseList(head):\n    previous = null\n    current = head\n    while current != null:\n        nextNode = current.next\n        current.next = previous\n        previous = current\n        current = nextNode\n    return previous\n\nFor 4 -> 1 -> 7, first save node 1 and point 4 to null. Then save 7 and point 1 to 4. Finally save null and point 7 to 1. current becomes null and previous names 7. Each iteration transfers exactly one node while preserving the two-chain partition. Thus all original nodes appear once, in reverse order, and the old head terminates the chain. Time O(n), auxiliary space O(1); returned nodes are the existing input storage, not a new O(n) copy.",
+  "checklist": [
+    "I save the successor before rewiring.",
+    "I return the new head and preserve node identities.",
+    "I handle null and one-node inputs without special unsafe dereferences."
+  ],
+  "pitfalls": [
+    "Reading current.next after overwriting it loses the suffix.",
+    "Returning the old head exposes only the new tail.",
+    "Swapping values instead of links violates the identity-preserving task."
+  ],
+  "walkthrough": [
+    {
+      "title": "Draw references after every assignment",
+      "body": "For the first node, current.next becomes null even though more nodes remain. That is safe only because nextNode still points to the remainder. previous then takes ownership of the reversed prefix and current advances along the saved reference. Avoid compressing these operations into an opaque multiple assignment while learning: the sequence explains why information is never lost. Null acts as the empty-chain boundary on both sides."
+    },
+    {
+      "title": "Test structure, not just printed values",
+      "body": "A value-only test can miss replacement nodes, duplicate references, and cycles. Retain the original node objects, reverse the chain, and verify their exact reversed identity order plus a null final link. Reverse again to recover the original ordering and head identity. Repeated values make this especially useful because equal displayed values do not prove that all distinct nodes survived. The acyclic precondition is essential; this routine is not a cycle detector."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Count a chain",
+      "prompt": "Count nodes in 8 -> 8 -> null without changing any links. Return zero for null.",
+      "hints": [
+        "Advance a cursor by next until null.",
+        "Count positions, even when values repeat."
+      ],
+      "solution": "Set count = 0 and cursor = head. While cursor is not null, increment count and advance cursor = cursor.next. The sample returns 2. The cursor marks the first uncounted node, so each node contributes once. Time O(n), auxiliary space O(1), assuming a finite acyclic chain.",
+      "checklist": [
+        "I preserve links.",
+        "I count both equal-valued nodes."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Detect a cycle without extra storage",
+      "prompt": "Return whether a singly linked structure contains a cycle. Explain the result for A -> B -> C -> B and for null.",
+      "hints": [
+        "Move one cursor one step and another two steps.",
+        "Compare node identity, not value, after advancing."
+      ],
+      "solution": "Initialize slow and fast at head. While fast and fast.next exist, move slow once and fast twice; return true if they are identical. Otherwise return false when the fast path reaches null. In a cycle, the relative position advances one step per iteration modulo cycle length, so a meeting is inevitable. The sample is true and null is false. Time O(n) in distinct reachable nodes, auxiliary space O(1).",
+      "checklist": [
+        "I guard both fast dereferences.",
+        "I explain eventual meeting rather than relying on one trace."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why is an array reversal different?",
+      "answer": "Array reversal exchanges values at accessible indices. A singly linked list has no constant-time backward access; rewiring remembered next references is the natural linear traversal."
+    },
+    {
+      "question": "Can recursive reversal use constant space?",
+      "answer": "Ordinary recursion keeps O(n) active frames for this chain. Iterative rewiring avoids that stack; do not assume a runtime performs tail-call elimination."
+    }
+  ],
+  "takeaways": [
+    "Preserve a reference before destroying its only access path.",
+    "Use a partition invariant for mutation-heavy loops.",
+    "Test object identity and termination as well as values."
+  ]
+}

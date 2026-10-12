@@ -1,0 +1,105 @@
+{
+  "id": "sorting-stable-merge",
+  "track": "dsa",
+  "title": "Sorting: merge ordered runs stably",
+  "minutes": 50,
+  "summary": "Build a bottom-up merge sort and account for stability, copying, and repeated passes.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "two-pointers-sorted-pairs",
+    "binary-search-lower-bound"
+  ],
+  "prerequisiteNotes": "Know half-open intervals, array buffers, and comparing ordered values. Recursion is not required for bottom-up sorting.",
+  "objectives": [
+    "Merge two ordered runs without skipping or duplicating records.",
+    "Explain how a tie rule preserves stability.",
+    "Derive O(n log n) work from linear passes and doubling run width."
+  ],
+  "concepts": [
+    {
+      "title": "Sorted runs are reusable evidence",
+      "body": "A run of length one is already sorted. Merging two sorted runs requires comparing only their first unconsumed records, because no later record in either run is smaller. Emit the smaller head and advance only that run. Repeating this operation builds a larger sorted run. Unlike a general pair search, the output must retain every record, including equal values, so running out of one side means copying the remainder of the other."
+    },
+    {
+      "title": "Stability preserves earlier order",
+      "body": "A stable sort leaves equal-key records in their original relative order. When merging adjacent runs, choose the left record on a tie. Its original position preceded every right-run record, and each run already preserves its own ties. Stability matters when records carry labels or when a previous ordering should remain a secondary ordering. Plain equal numbers cannot reveal stability in tests; labeled records can."
+    },
+    {
+      "title": "Bottom-up passes replace recursive splitting",
+      "body": "Begin with run width one, merge adjacent runs, then double width. An unmatched final run is copied normally using clipped boundaries. Each pass reads and writes O(n) records; after O(log n) passes one run spans the input. Reusing two n-sized buffers keeps peak auxiliary storage O(n). Allocating a fresh output per merge can obscure this bound and cause needless allocation overhead, even if asymptotic peak memory remains linear."
+    }
+  ],
+  "example": "stableSort([(3,\"a\"),(1,\"b\"),(3,\"c\"),(2,\"d\")]) returns [(1,\"b\"),(2,\"d\"),(3,\"a\"),(3,\"c\")], ordered by the first field.",
+  "task": "Write stableSort(records), a nonmutating bottom-up merge sort for records (integer key, label). Return a new array sorted by key with stable equal-key order. n is at most 100000 and may be zero. Labels are opaque data, not tie breakers. Use O(n log(n + 1)) time and O(n) auxiliary storage; assume constant-time key comparison.",
+  "starter": "function stableSort(records):\n    source = copy of records\n    target = array of length length(records)\n    width = 1\n    // Merge adjacent runs, then exchange buffer roles.\n    return source",
+  "hints": [
+    "Use mid = min(start + width, n) and end = min(start + 2 * width, n).",
+    "Take from the left when keys are equal; handle either exhausted run before reading its head."
+  ],
+  "solution": "function stableSort(records):\n    n = length(records)\n    source = copy of records\n    target = array of length n\n    width = 1\n    while width < n:\n        for start from 0 to n - 1 stepping 2 * width:\n            mid = min(start + width, n)\n            end = min(start + 2 * width, n)\n            i = start\n            j = mid\n            for out from start to end - 1:\n                if i < mid and (j == end or source[i].key <= source[j].key):\n                    target[out] = source[i]\n                    i = i + 1\n                else:\n                    target[out] = source[j]\n                    j = j + 1\n        exchange source and target\n        width = 2 * width\n    return source\n\nThe sample first forms [(1,b),(3,a)] and [(2,d),(3,c)]. Their merge emits 1, then 2, then left 3 before right 3. By induction each pass produces stable sorted runs twice as wide. Every output position is written once per pass. Time O(n log(n + 1)), including the initial copy; peak auxiliary space O(n) and returned array O(n). Empty and singleton inputs skip merging but still return a new array.",
+  "checklist": [
+    "I preserve every record exactly once.",
+    "I choose the left run on equal keys.",
+    "I handle an incomplete last run and preserve input order."
+  ],
+  "pitfalls": [
+    "Using < instead of <= can reverse equal-key groups across runs.",
+    "Reading a run head after its end causes invalid access.",
+    "Returning the inactive buffer loses the last completed pass."
+  ],
+  "walkthrough": [
+    {
+      "title": "An odd-sized pass",
+      "body": "With five records and width two, the first merge combines positions [0,2) and [2,4). The second has left run [4,5) and empty right run [5,5). Its exhaustion checks copy the final record safely. This is why clipped half-open boundaries are useful: a leftover run needs no separate algorithm and no invented padding values that might collide with real keys."
+    },
+    {
+      "title": "Prove more than sortedness",
+      "body": "A correct output is sorted, is a permutation of input records, and preserves equal-key relative order. Test all three properties. An accidentally duplicated record might still leave keys sorted, while a swapped pair of equal keys would pass both sortedness and value-count checks. Keeping unique labels in a test distinguishes identities without changing the comparator. Also verify the original array remains unchanged, since mutation is explicitly forbidden."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Merge two short runs",
+      "prompt": "Merge [1,4] and [2,4,5] into one sorted sequence. Mark equal 4s by their originating side.",
+      "hints": [
+        "Compare only the unconsumed heads.",
+        "Choose left 4 before right 4."
+      ],
+      "solution": "Emit 1,2,4-left,4-right,5. At each step the smaller remaining head is globally smallest among remaining values. Merging lengths a and b takes O(a + b) time, O(1) working cursor space, and O(a + b) output space. An empty side is handled by copying the other.",
+      "checklist": [
+        "I retain both 4s.",
+        "I copy the remaining suffix."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Count inversions during merging",
+      "prompt": "Count pairs i < j with values[i] > values[j]. For [3,1,2], return 2. Explain how merging can count them efficiently.",
+      "hints": [
+        "When a right value beats the left head, all remaining left values are larger.",
+        "Equal values are not inversions."
+      ],
+      "solution": "During each merge, when right is strictly smaller, add mid - i before emitting it. Count inversions inside smaller runs on earlier passes and cross-run inversions on their merge. [3,1,2] contains (3,1) and (3,2). Each pair crosses exactly one merge boundary, so it is counted once. Time O(n log(n + 1)), auxiliary space O(n), and a wide integer count may be needed.",
+      "checklist": [
+        "I add the entire remaining left-run length.",
+        "I exclude ties from the count."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not always use insertion sort?",
+      "answer": "Insertion sort can be simple and efficient for tiny or nearly sorted inputs, but shifting across a reverse-ordered array takes O(n squared) time. Merge passes provide a predictable worst-case bound."
+    },
+    {
+      "question": "Does O(n log n) apply to all sorting?",
+      "answer": "It is a comparison-sorting benchmark, not a universal lower bound for every model. Bounded integer domains allow counting approaches with costs depending on the domain size."
+    }
+  ],
+  "takeaways": [
+    "A merge consumes two sorted frontiers without rescanning.",
+    "Stable ordering is an explicit equality decision.",
+    "Verify ordering, permutation, stability, and mutation separately."
+  ]
+}

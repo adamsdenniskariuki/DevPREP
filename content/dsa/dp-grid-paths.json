@@ -1,0 +1,106 @@
+{
+  "id": "dp-grid-paths",
+  "track": "dsa",
+  "title": "Two-dimensional DP: count paths through a grid",
+  "minutes": 55,
+  "summary": "Count right-and-down routes around obstacles, then compress a two-dimensional recurrence to one row.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "graph-dfs-components",
+    "graphs-topological-order",
+    "dp-nonadjacent-sum"
+  ],
+  "prerequisiteNotes": "Know DP states, row/column indices, and directed dependencies. Movement is right or down only; cells with value 1 are blocked.",
+  "objectives": [
+    "Define a two-coordinate state and its incoming transitions.",
+    "Choose a traversal order that satisfies dependencies.",
+    "Explain what a rolling cell means before and after update."
+  ],
+  "concepts": [
+    {
+      "title": "Count paths, not reachable cells",
+      "body": "Let ways[r][c] count valid routes from the upper-left cell to cell (r,c). A reachable cell may have many routes, so a visited boolean cannot represent this answer. Every route into a nonstart open cell arrives either from above or from the left. These sets are disjoint because their final moves differ, so their counts add. Obstacles have zero ways regardless of how many routes approach them."
+    },
+    {
+      "title": "The grid is a directed acyclic graph",
+      "body": "Each legal move increases row plus column by one, so no route can cycle. Row-major processing visits both incoming predecessors before a cell, making it a topological evaluation order. This is why no recursive cycle detection or repeated relaxation is needed. Allowing arbitrary four-directional movement would change the problem substantially: unrestricted walks can revisit cells and may be infinite in number."
+    },
+    {
+      "title": "One row stores two moments at once",
+      "body": "Before updating column c, rowWays[c] still refers to the previous row, so it supplies the count from above. rowWays[c - 1] has already been updated for the current row, so it supplies the count from the left. The array therefore mixes old and new rows intentionally. Iterate left to right, and reset blocked positions to zero; otherwise stale routes from above would leak through obstacles."
+    }
+  ],
+  "example": "countGridPaths([[0,0,0],[0,1,0],[0,0,0]]) returns 2. Rolling rows become [1,1,1], [1,0,1], [1,1,2].",
+  "task": "Write countGridPaths(blocked), counting routes from (0,0) to (R - 1,C - 1) using only right or down steps through zero-valued cells. Return 0 for no rows, no columns, a blocked start, or a blocked destination. The rectangular 0/1 grid has at most 20 rows and 20 columns. Do not mutate it. Use exact integer arithmetic, O(RC) time, and O(C) auxiliary space.",
+  "starter": "function countGridPaths(blocked):\n    // Handle empty dimensions before reading the first cell.\n    rowWays = array of C zeros\n    rowWays[0] = 1\n    // Update one row left to right, clearing obstacles.\n    return rowWays[C - 1]",
+  "hints": [
+    "The initial one is a seed for the start, and a blocked start must erase it.",
+    "At an open nonfirst column, add the current-row left count to the still-stored above count."
+  ],
+  "solution": "function countGridPaths(blocked):\n    R = length(blocked)\n    if R == 0:\n        return 0\n    C = length(blocked[0])\n    if C == 0:\n        return 0\n    rowWays = array of C zeros\n    rowWays[0] = 1\n    for r from 0 to R - 1:\n        for c from 0 to C - 1:\n            if blocked[r][c] == 1:\n                rowWays[c] = 0\n            else if c > 0:\n                rowWays[c] = rowWays[c] + rowWays[c - 1]\n    return rowWays[C - 1]\n\nFor the example, the first row has one route to each cell. The center obstacle clears its count, producing [1,0,1]. The last row combines its incoming routes to give [1,1,2]. Each update sums disjoint last-step alternatives, and the seed represents the single empty route at an open start. A blocked start erases it before propagation. Time O(RC), auxiliary space O(C), scalar output O(1). The largest 20-by-20 open-grid count is 35345263800, requiring more than a 32-bit signed integer but fitting exactly in a safe 64-bit integer.",
+  "checklist": [
+    "I distinguish path counts from reachability.",
+    "I explain old-row versus current-row meanings in the same array.",
+    "I clear blocked cells and use a sufficiently wide count."
+  ],
+  "pitfalls": [
+    "Iterating right to left reads stale left counts.",
+    "Skipping an obstacle without clearing it preserves invalid routes.",
+    "Initializing every cell to one bypasses obstacle and boundary logic."
+  ],
+  "walkthrough": [
+    {
+      "title": "Start with the full table",
+      "body": "Put one at an open start, zero at obstacles, and otherwise add above and left, treating missing neighbors as zero. A single open cell returns one: the route starts at its destination without moving. A one-row grid has one route until its first obstacle and zero afterward. These cases explain initialization without ad hoc patches."
+    },
+    {
+      "title": "Prove the rolling update order",
+      "body": "At the start of a row, every entry holds the above-cell count. After columns before c are updated, they hold the current row, while columns c onward still hold the old row. Updating c reads exactly the two dependencies needed, then extends the processed prefix by one. This loop invariant justifies both storage reuse and direction. It is the two-dimensional version of computing current before shifting one-dimensional DP state."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "An obstacle-free rectangle",
+      "prompt": "Count routes through a two-row, three-column open grid and show the full count table.",
+      "hints": [
+        "The first row and first column each have one route per cell.",
+        "Each remaining cell adds its above and left neighbors."
+      ],
+      "solution": "The table is [[1,1,1],[1,2,3]], so the answer is 3. The routes place the one downward move before, between, or after the two rightward moves. Tabulation takes O(RC) time and O(RC) table storage; rolling storage reduces it to O(C). No path enumeration is necessary.",
+      "checklist": [
+        "I count three routes rather than six cells.",
+        "I include the start’s empty route."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Minimum-cost right/down route",
+      "prompt": "Replace obstacles with nonnegative cell costs and return the minimum sum including both endpoints. For [[1,4,1],[2,1,1]], return 5. Explain the recurrence and boundary initialization.",
+      "hints": [
+        "Use minimum instead of addition to combine alternative predecessors.",
+        "Add the current cell cost after choosing the cheaper incoming route."
+      ],
+      "solution": "Set cost at the start to its own value. For other cells, best[r][c] = cellCost + min(best above, best left), with unavailable predecessors treated as infinity. The sample route 1 -> 2 -> 1 -> 1 costs 5. Initialize a rolling row to infinity and seed the start explicitly; careless zeros create nonexistent free entrances. Time O(RC), auxiliary O(C), scalar output O(1). An empty grid needs a separately documented absent-route result.",
+      "checklist": [
+        "I include both endpoint costs.",
+        "I do not count a missing predecessor as a zero-cost route."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why is adding route counts correct but adding minimum costs wrong?",
+      "answer": "Counting combines disjoint sets of alternatives by addition. Optimization selects the better alternative by minimum, then adds the cost common to entering the current cell. The state meaning determines the combining operation."
+    },
+    {
+      "question": "Can the smaller dimension determine storage?",
+      "answer": "Yes. Traverse the grid with rows and columns conceptually exchanged so the rolling buffer spans min(R,C). Preserve valid dependency order and avoid allocating a transposed copy if claiming only that smaller auxiliary bound."
+    }
+  ],
+  "takeaways": [
+    "A multidimensional state can follow an acyclic dependency graph.",
+    "Specify boundary and unreachable values as part of the recurrence.",
+    "Rolling storage is safe only with a proven read/write order."
+  ]
+}

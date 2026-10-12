@@ -1,0 +1,118 @@
+{
+  "id": "ml-bias-variance",
+  "track": "ml",
+  "title": "Bias and variance: choose the next experiment",
+  "minutes": 45,
+  "summary": "Use training and validation behavior to form testable hypotheses instead of blindly adding complexity.",
+  "objectives": [
+    "Recognize underfitting and overfitting patterns in comparable errors.",
+    "Choose interventions that address an observed learning problem.",
+    "Separate diagnostic hypotheses from conclusions about causality."
+  ],
+  "concepts": [
+    {
+      "title": "Compare errors on the same basis",
+      "body": "Training error measures fit to seen data; validation error estimates performance on unseen data from the chosen evaluation population. Compare the same loss and preprocessing. If both errors are poor, insufficient model capacity, weak features, optimization failure, or noisy labels may be responsible. High bias is a useful hypothesis, not the only explanation."
+    },
+    {
+      "title": "Look at the generalization gap",
+      "body": "Low training error and much higher validation error suggest overfitting, but distribution shift or an unrepresentative split can produce the same pattern. Regularization, simpler models, and more representative training examples can help after checking split integrity. A larger model is not the default response to a large gap."
+    },
+    {
+      "title": "Use learning curves to test hypotheses",
+      "body": "Compare errors as training-set size grows while holding the evaluation set fixed. Falling validation error suggests more representative data may help. A high plateau with little gap points toward features, capacity, optimization, or irreducible noise. Tune on validation, keep the test set untouched, and consider uncertainty across runs and meaningful slices."
+    },
+    {
+      "title": "Design a diagnostic that could prove you wrong",
+      "body": "A useful hypothesis predicts an observable change. If optimization failure explains a high training error, fixing an excessive learning rate or increasing a clearly insufficient training budget should lower that error under the same objective. If weak features explain the plateau, merely training longer may not help. State a stopping rule and a meaningful improvement before running the experiment. Changing architecture, data, regularization, and threshold together might improve the product, but it gives little evidence about which intervention mattered or which one to try next."
+    },
+    {
+      "title": "Hold the comparison population fixed",
+      "body": "A learning curve varies training size while evaluating on the same held-out examples. Otherwise a lower validation error could reflect an easier window rather than a better model. For chronological data, sample eligible history without slipping later examples into an earlier training cutoff. Record the training population as well as its size: adding twenty thousand near-duplicates is not the same intervention as adding representative new cases. Inspect error by time and user group, because a shrinking aggregate gap can coexist with a worsening minority slice."
+    },
+    {
+      "title": "Separate practical diagnosis from formal decomposition",
+      "body": "The numerical training-validation gap is not statistical variance. A formal decomposition depends on a loss, a data-generating distribution, and behavior across possible training samples; three observed error pairs do not identify those quantities. Label noise, distribution shift, finite-sample uncertainty, and selection bias can all affect the observed gap. Use high bias and high variance as shorthand for testable patterns, not as precise measurements extracted from a dashboard. Better explanations preserve uncertainty while still recommending a concrete next experiment."
+    }
+  ],
+  "example": "On a fixed validation set, a flexible model has these classification error rates:\nWith 1000 training examples: training 2%, validation 18%.\nWith 5000 training examples: training 4%, validation 12%.\nWith 20000 training examples: training 5%, validation 9%.\nThe shrinking gap and improving validation error support collecting more representative data as a promising experiment. They do not prove that the next batch will improve equally, or that all remaining error is variance.\nA separate simple model at training 17% and validation 18% needs a different investigation: verify optimization and features before assuming more of the same data will fix it.",
+  "task": "A binary classifier uses the same clean chronological split and classification-error metric across these runs. A simple baseline has training error 19% and validation error 20%. A larger model has training error 1% and validation error 13%. The larger model with regularization has training error 6% and validation error 9%.\nThe product goal is validation error at most 10%, subject to acceptable errors across important user groups. The untouched test set has not been scored.\nDeliver: a tentative diagnosis for each run; a provisional model choice; two next experiments, each with one changed factor and a success criterion; and checks required before claiming readiness.\nDo not compute a formal bias/variance decomposition from these three pairs of numbers. No training or code execution is required.",
+  "hints": [
+    "Compare both the absolute error and the training-to-validation gap. The smallest training error is not necessarily the best candidate.",
+    "The regularized model meets the aggregate validation target. A final claim still needs slice checks, uncertainty assessment, and a one-time test evaluation after choices are fixed."
+  ],
+  "solution": "The simple baseline has a one-percentage-point gap but poor errors on both sets. Underfitting is plausible; first confirm convergence, usable features, and label quality. The larger model fits training extremely well but has a 12-point gap, suggesting overfitting after checking temporal shift and split representativeness. Regularization raises training error to 6% while lowering validation error to 9%, evidence that limiting fit helped generalization in this comparison.\nProvisionally choose the regularized model: it has the lowest observed validation error and meets the aggregate 10% goal. Do not choose the 1%-training-error model merely for fitting training best.\nExperiment one: vary only regularization strength over a small prespecified range, keeping architecture, data, and training budget fixed. Success is a stable validation improvement below 9% across repeated seeds without worsening predefined critical slices beyond their agreed limits.\nExperiment two: keep the selected model configuration fixed and add a larger representative training sample with the same historical cutoff and feature rules. Compare against the current sample on the same validation window. Success is a repeatable reduction in validation error and a narrower gap without harmful slice regressions.\nBefore readiness, inspect class-specific errors, important user groups, temporal drift, uncertainty from finite evaluation data, and inference cost. Define acceptable slice thresholds with product stakeholders rather than inventing them after seeing results. Lock preprocessing, model, and decision threshold, then evaluate once on the untouched test set. These results support a model-selection hypothesis; they do not identify exact bias, variance, or irreducible error.",
+  "checklist": [
+    "I describe the gaps as 1, 12, and 3 percentage points.",
+    "I select the 9%-validation-error model provisionally rather than optimizing training error.",
+    "I name at least one explanation other than model capacity for poor generalization.",
+    "Each proposed experiment changes one factor and has a stated success criterion.",
+    "I keep the test set out of iteration and include slice and uncertainty checks before readiness."
+  ],
+  "pitfalls": [
+    "Interpreting a training-validation gap as a direct numerical estimate of variance is unjustified.",
+    "Comparing different metrics or different evaluation populations makes gaps hard to interpret.",
+    "Adding regularization indefinitely can eventually cause underfitting.",
+    "An aggregate target can hide unacceptable errors for a smaller group."
+  ],
+  "prerequisites": [
+    "ml-optimization-regularization"
+  ],
+  "prerequisiteNotes": "Use comparable held-out losses and the distinction between optimization and regularization. Formal statistical bias-variance decomposition is not required.",
+  "walkthrough": [
+    {
+      "title": "Compare gaps in percentage points",
+      "body": "Subtract training error from validation error: 20 minus 19 is one percentage point, 13 minus 1 is twelve points, and 9 minus 6 is three points. These are differences in rates, not relative percentage improvements. The regularized candidate has the best observed validation error, even though its training error is worse than the larger unregularized model. That is a reason for provisional selection, not final readiness."
+    },
+    {
+      "title": "Add a falsifiable slice check",
+      "body": "Suppose the selected candidate has 9% error overall but a small new-customer slice has 18%. First report its denominator and compare the baseline on the same slice. Investigate missing history, unfamiliar queues, and annotation differences. Define an acceptable slice error with the product owner before more tuning. A representative-data experiment should be judged on both overall improvement and this prespecified slice, not solely on the headline target."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Percentage points versus relative change",
+      "prompt": "Validation error falls from 12% to 9%. Express both the percentage-point reduction and the relative error reduction. Does either quantify statistical variance?",
+      "hints": [
+        "Subtract the rates for percentage points.",
+        "Divide the reduction by the original error for a relative change."
+      ],
+      "solution": "The reduction is three percentage points. Relative error reduction is (12 - 9)/12 = 25%. Neither number measures statistical variance; each summarizes two observed error rates under the evaluation protocol.",
+      "checklist": [
+        "I distinguish three points from 25%.",
+        "I avoid interpreting either as a variance estimate."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "An alternative explanation for a large gap",
+      "prompt": "A model has training error 2% and validation error 20%. Validation comes from a newly onboarded organization with a different ticket taxonomy. Propose two controlled checks before increasing regularization.",
+      "hints": [
+        "Check whether feature categories and labels mean the same thing.",
+        "Compare errors within a matched population when possible."
+      ],
+      "solution": "First audit label definitions and unknown-category rates for the new organization using a small reviewed sample; semantic mismatch may explain apparent model failure. Second evaluate fixed models on a later window from existing organizations and separately on the new organization, keeping metric definitions constant. A gap isolated to the new population supports a shift hypothesis. Additional regularization may still help, but its benefit must be measured rather than inferred from the aggregate gap alone.",
+      "checklist": [
+        "I test taxonomy and feature compatibility.",
+        "I compare fixed models across explicitly named populations."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Should we always collect more data when validation error is high?",
+      "answer": "No. Learning curves and error analysis can reveal a plateau, label defects, missing information, or optimization failure. Collecting more of the same data may reproduce the same limitations."
+    },
+    {
+      "question": "Why not choose the smallest generalization gap?",
+      "answer": "A model that predicts the majority class everywhere can have a small gap and poor usefulness. Consider absolute quality, constraints, uncertainty, and slices alongside the gap."
+    }
+  ],
+  "takeaways": [
+    "Treat observed patterns as hypotheses, not unique diagnoses.",
+    "Change one factor and define success before measuring.",
+    "Hold evaluation examples and metrics fixed for learning-curve comparisons.",
+    "A provisional validation winner still needs an independent readiness audit."
+  ]
+}

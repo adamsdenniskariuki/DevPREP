@@ -1,0 +1,104 @@
+{
+  "id": "queues-fifo-simulation",
+  "track": "dsa",
+  "title": "Queues: process arrivals fairly",
+  "minutes": 40,
+  "summary": "Simulate round-robin work with first-in, first-out order and an explicit progress measure.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "stack-balanced-delimiters"
+  ],
+  "prerequisiteNotes": "Know stack operations and array traversal. This lesson contrasts last-in, first-out obligations with first-in, first-out waiting.",
+  "objectives": [
+    "Model a waiting line with a queue.",
+    "Implement constant-time logical dequeue with a head index.",
+    "Analyze a simulation by the number of events, not just the number of inputs."
+  ],
+  "concepts": [
+    {
+      "title": "Arrival order is the policy",
+      "body": "A queue removes the oldest waiting item. In round-robin scheduling, a job receives one unit of service and, if unfinished, joins the back. Later jobs therefore receive turns before that job runs again. The queue determines fairness among waiting jobs, but does not magically reduce the amount of work required. State the scheduling policy before selecting operations; using a stack would favor recently requeued work and produce a different completion order."
+    },
+    {
+      "title": "A moving head avoids shifts",
+      "body": "Store queue entries in an array and read queue[head], then increment head. New entries append at the end. The logical queue is the suffix starting at head; old entries before it are inactive. This avoids repeatedly removing index zero, which may shift the entire suffix. It does retain historical entries, so its memory bound depends on total enqueues. A circular buffer can reuse consumed slots when bounded live storage matters."
+    },
+    {
+      "title": "Count service events",
+      "body": "Let S be the sum of all requested positive work units. Every iteration reduces remaining work by exactly one, so there are S iterations. A bound stated only as O(n) would miss potentially large jobs. Inputs below restrict S to keep the simulation practical. Termination follows from a nonnegative remaining-work measure that strictly decreases, not from the queue getting shorter every turn; unfinished jobs rejoin it."
+    }
+  ],
+  "example": "completionOrder([2,1,3]) returns [1,0,2]. Service IDs are 0,1,2,0,2,2.",
+  "task": "Write completionOrder(work), returning job indices in completion order. All jobs arrive initially in index order; each turn consumes one unit, then unfinished jobs join the back. Each work value is a positive integer; empty input returns []. There are at most 100000 jobs and at most 1000000 total units. Do not modify work. Include the space cost of retained queue entries.",
+  "starter": "function completionOrder(work):\n    remaining = copy of work\n    queue = indices 0 through length(work) - 1\n    head = 0\n    completed = empty list\n    // Serve one unit per turn.\n    return completed",
+  "hints": [
+    "Store job IDs in the queue so their remaining work can live in a separate array.",
+    "After decrementing, append either to completed or to queue, never both."
+  ],
+  "solution": "function completionOrder(work):\n    remaining = copy of work\n    queue = indices 0 through length(work) - 1\n    head = 0\n    completed = empty list\n    while head < length(queue):\n        job = queue[head]\n        head = head + 1\n        remaining[job] = remaining[job] - 1\n        if remaining[job] == 0:\n            append job to completed\n        else:\n            append job to queue\n    return completed\n\nFor [2,1,3], job 0 rejoins after its first turn; job 1 finishes next. Job 2 rejoins, then job 0 finishes, then job 2 receives its remaining two turns. The output is [1,0,2]. At every boundary the live queue contains each unfinished job exactly once in its next-turn order. Serving and possibly requeueing preserves that invariant. Time O(n + S); the append-only queue retains S entries, so auxiliary space O(n + S), with O(n) output. A reusable circular queue reduces auxiliary space to O(n).",
+  "checklist": [
+    "I preserve next-turn order when requeueing.",
+    "I never requeue a completed job.",
+    "I count total service units and retained history in complexity."
+  ],
+  "pitfalls": [
+    "Removing the first array entry can add shifting work.",
+    "Using input values as IDs confuses equal-sized jobs.",
+    "Requeueing before checking zero gives finished jobs extra turns."
+  ],
+  "walkthrough": [
+    {
+      "title": "Distinguish live size from allocated size",
+      "body": "At most n unfinished jobs are live at any moment, but the simple array does not discard consumed entries. After many turns its length can be S even if only one job remains. Draw a divider at head when tracing the example: only entries to its right can be served. This explains both cheap dequeue and historical storage without pretending the physical array is always the logical queue."
+    },
+    {
+      "title": "Check policy edge cases",
+      "body": "With one job of work four, the same ID is served four times and appears once in the result. With all work values one, no requeue occurs and completion order is input order. Empty input skips the loop. Zero-unit jobs are excluded deliberately: supporting them would require specifying whether they complete before any service, and in what tie order. A simulation is correct only relative to those policy choices."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A short waiting line",
+      "prompt": "Enqueue A, enqueue B, dequeue, enqueue C, then drain the queue. State all removed values.",
+      "hints": [
+        "Only remove the oldest still-waiting value.",
+        "A removed item no longer competes with later arrivals."
+      ],
+      "solution": "The first removal is A; draining later removes B then C. Each queue operation costs O(1) with suitable storage; k operations cost O(k) time. Maximum live storage is two entries. A head-index array retains three enqueued entries in this trace, illustrating why live and allocated size can differ.",
+      "checklist": [
+        "I return A before B.",
+        "I distinguish removed history from waiting entries."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Reuse the waiting slots",
+      "prompt": "Describe a circular-array implementation for the same scheduler that uses O(n) queue storage, including the full-versus-empty distinction.",
+      "hints": [
+        "Track head and the number of live entries.",
+        "The append position is (head + size) modulo capacity."
+      ],
+      "solution": "For nonempty input allocate n slots, track head and size, and initialize all IDs. Dequeue reads head, advances it modulo n, and decrements size. Enqueue writes at (head + size) modulo n and increments size. A service always removes before any requeue, so capacity is never exceeded. Handle empty input before modulo operations. Time remains O(n + S), auxiliary space O(n), and output O(n).",
+      "checklist": [
+        "I avoid modulo zero for empty input.",
+        "I use size to distinguish full and empty states."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Would prioritizing the shortest job produce the same answer?",
+      "answer": "Not generally. It changes scheduling policy and requires selecting by remaining work rather than arrival order. A priority queue, introduced later, models that choice."
+    },
+    {
+      "question": "Is the runtime polynomial in the digits of each work value?",
+      "answer": "Not necessarily. It depends on numeric total S, which can be huge relative to its encoded length. The explicit total-work constraint makes this event-by-event simulation feasible."
+    }
+  ],
+  "takeaways": [
+    "Choose a collection whose removal order matches the policy.",
+    "Use a head index when array-front removal would shift data.",
+    "Parameterize simulations by events as well as input records."
+  ]
+}

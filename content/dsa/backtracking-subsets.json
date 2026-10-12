@@ -1,0 +1,105 @@
+{
+  "id": "backtracking-subsets",
+  "track": "dsa",
+  "title": "Backtracking: choose, explore, undo",
+  "minutes": 50,
+  "summary": "Enumerate subsets with a reusable path while separating search state from saved results.",
+  "prerequisites": [
+    "recursion-fast-power",
+    "graph-dfs-components",
+    "sorting-stable-merge"
+  ],
+  "prerequisiteNotes": "Know recursive frames and depth-first traversal. The core input contains distinct values; subsets preserve input order.",
+  "objectives": [
+    "Define a search state and its legal next choices.",
+    "Restore mutable path state after each recursive branch.",
+    "Include output volume when analyzing enumeration."
+  ],
+  "concepts": [
+    {
+      "title": "The search tree is implicit",
+      "body": "At index i, decide whether to exclude or include values[i], then recurse to i + 1. Every root-to-leaf sequence of decisions specifies one subset. There is no need to construct a separate tree of objects: recursive frames encode its position. Because each decision advances the index, the search terminates and no input position can be selected twice. Distinct input values make decision sequences and value subsets one-to-one."
+    },
+    {
+      "title": "Undo restores the caller’s world",
+      "body": "Keep one mutable path containing included values from earlier indices. An include branch appends the current value, explores descendants, then removes that value before returning. The caller must receive the same path contents it had before the child branch. Missing the undo contaminates later branches with choices they never made. A path local to the overall enumeration is shared across frames intentionally; the restoration invariant makes that sharing safe."
+    },
+    {
+      "title": "A result needs a snapshot",
+      "body": "At a leaf, append a copy of path to output. Saving the same mutable list reference repeatedly would leave many outputs pointing at whatever the path contains later. Enumeration costs cannot be summarized by recursion depth alone: n distinct elements have 2^n subsets, and copying their members takes O(n * 2^n) time overall. Auxiliary path and stack are O(n), separate from potentially exponential returned output."
+    }
+  ],
+  "example": "subsets([2,5]) returns [[],[5],[2],[2,5]] using exclude-before-include order. subsets([]) returns [[]].",
+  "task": "Write subsets(values) for up to 18 distinct integers. Return all subsets as independent arrays, preserving original input order inside each subset. Follow exclude-before-include traversal so the worked output is deterministic. Do not mutate values. Empty input has one subset, the empty subset. Explain why exponential output is unavoidable.",
+  "starter": "function subsets(values):\n    output = empty list\n    path = empty list\n    // Explore a decision at each index.\n    return output",
+  "hints": [
+    "At index n, all include/exclude decisions are complete.",
+    "Copy the current path at a leaf; undo each append after exploring its branch."
+  ],
+  "solution": "function subsets(values):\n    output = empty list\n    path = empty list\n    function visit(index):\n        if index == length(values):\n            append copy of path to output\n            return\n        visit(index + 1)\n        append values[index] to path\n        visit(index + 1)\n        remove last value from path\n    visit(0)\n    return output\n\nFor [2,5], excluding 2 first yields [] and [5]. Including 2 then yields [2] and [2,5]. Each leaf corresponds to one distinct decision vector; every vector is explored once. The path contains exactly the included positions before index, and undo restores it after a branch. Time O(n * 2^n) for nonempty input including snapshots; auxiliary path/stack O(n), output O(n * 2^n). Empty input still performs constant work and stores one empty result.",
+  "checklist": [
+    "I save independent snapshots rather than shared path references.",
+    "I restore path state after inclusion.",
+    "I return the empty subset and separate output space from working space."
+  ],
+  "pitfalls": [
+    "Appending path without copying aliases all saved answers.",
+    "Forgetting to pop includes a choice in unrelated branches.",
+    "Reporting O(n) runtime counts depth but ignores the number of leaves."
+  ],
+  "walkthrough": [
+    {
+      "title": "Use a decision table to prove coverage",
+      "body": "Two positions have four decision vectors: exclude/exclude, exclude/include, include/exclude, and include/include. They map to the four explicit sample outputs in that order. For n positions, extending every length n minus one decision vector by either decision doubles the count. This gives both a completeness proof and an output-size lower bound. No pruning can remove a legal branch when the contract asks for every subset."
+    },
+    {
+      "title": "Know when pruning is justified",
+      "body": "In a constrained search, a branch can stop early only if no extension can become a valid answer. For example, with strictly positive values, a partial sum already above a nonnegative target cannot fall back down by adding more. With negative values that proof fails. Backtracking is not “try everything quickly”; it is an organized enumeration where each pruning condition needs a reason grounded in the input constraints."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Two-position decisions",
+      "prompt": "List every binary decision string of length two in zero-before-one order. Explain the length-zero result.",
+      "hints": [
+        "Choose 0 or 1 at each position.",
+        "A completed empty decision sequence is still one result."
+      ],
+      "solution": "The outputs are 00,01,10,11. For length zero, return one empty string, not zero strings. Recurse by appending each bit and undoing it afterward, snapshotting at the required length. For length n, time O(n * 2^n) including output copying, auxiliary O(n), and output O(n * 2^n), with constant work at n = 0.",
+      "checklist": [
+        "I produce every decision combination once.",
+        "I distinguish no choices from no solutions."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Unique subsets with repeated values",
+      "prompt": "Allow duplicates and return each value subset once. For [1,1,2], the six subsets are [],[1],[1,1],[1,1,2],[1,2],[2], in any order.",
+      "hints": [
+        "Sort a copy to group equal values.",
+        "In a choose-next-index traversal, skip equal candidates only at the same recursion depth."
+      ],
+      "solution": "Sort a copy. At visit(start), emit a path copy, then loop i from start onward. Skip i when i > start and values[i] equals values[i - 1]; otherwise append it, recurse on i + 1, and undo. Same-depth skipping removes equivalent first choices while deeper selection still permits two 1s. Worst-case time O(n log(n + 1) + n * 2^n), auxiliary O(n), output exponential; duplicates can reduce actual output.",
+      "checklist": [
+        "I sort a copy, not the input.",
+        "I allow equal values at different depths."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Could bit masks enumerate the same subsets?",
+      "answer": "Yes. Each n-bit mask encodes inclusion decisions. It has similar output-scale work and avoids recursion, but backtracking more naturally accommodates partial-state constraints and pruning."
+    },
+    {
+      "question": "Can we stream results instead of retaining them?",
+      "answer": "Yes. Yield snapshots or invoke a consumer at leaves, retaining only O(n) search state plus the current result. Total output work remains exponential; reduced storage does not eliminate enumeration time."
+    }
+  ],
+  "takeaways": [
+    "A branch is a choice under an explicit search-state contract.",
+    "Undo restores shared working state; copying preserves completed answers.",
+    "Output size can dominate any possible algorithm."
+  ]
+}

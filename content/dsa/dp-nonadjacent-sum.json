@@ -1,0 +1,106 @@
+{
+  "id": "dp-nonadjacent-sum",
+  "track": "dsa",
+  "title": "One-dimensional DP: summarize the best prefix",
+  "minutes": 55,
+  "summary": "Replace exponential include-or-skip search with a recurrence for the maximum nonadjacent sum.",
+  "prerequisites": [
+    "arrays-prefix-foundations",
+    "recursion-fast-power",
+    "backtracking-subsets",
+    "greedy-interval-selection"
+  ],
+  "prerequisiteNotes": "Know include/exclude decisions and prefix boundaries. Empty selection is allowed, so the answer is never negative.",
+  "objectives": [
+    "Define each DP state independently of implementation indices.",
+    "Derive exhaustive take-or-skip transitions and base cases.",
+    "Compress storage only after identifying which earlier states remain live."
+  ],
+  "concepts": [
+    {
+      "title": "A state is a question with one answer",
+      "body": "Let best[k] be the maximum sum selectable from the first k values with no two selected positions adjacent. The state stores an optimal value, not one particular selected set. Many recursive paths ask the same prefix question; memoization can answer it once, while bottom-up tabulation computes states in dependency order. A vague state such as “best so far” hides which inputs and constraints it actually summarizes."
+    },
+    {
+      "title": "Partition by the final decision",
+      "body": "For a nonempty prefix, an optimal selection either skips its final value or takes it. Skipping leaves best[k - 1]. Taking values[k - 1] forbids the preceding position, leaving best[k - 2] plus that value. These alternatives cover all valid selections and each uses an optimal independent prefix. Empty selection gives base value zero and safely handles all-negative arrays. The recurrence is a proof by cases, not a pattern to memorize without a state."
+    },
+    {
+      "title": "Rolling storage follows dependency lifetime",
+      "body": "Only the previous two prefix answers are needed to compute the next. Keep them as twoBack and oneBack, calculate current before overwriting either, then shift them forward. This reduces auxiliary space from O(n) to O(1), but loses the history useful for reconstructing selected indices. Start with a full table when learning; compression is a separate optimization whose correctness depends on reading old values before replacing them."
+    }
+  ],
+  "example": "maxNonAdjacent([4,1,1,4]) returns 8 by selecting indices [0,3]. Prefix optima are [0,4,4,5,8]. maxNonAdjacent([-5,-2]) returns 0.",
+  "task": "Write maxNonAdjacent(values), returning the maximum sum of values at nonadjacent indices. Any number of positions, including zero, may be selected. n is 0 through 100000; each value is between -1000000 and 1000000. Return 0 for []. Do not mutate input. Use O(n) time and O(1) auxiliary space, with an accumulator wide enough for the result.",
+  "starter": "function maxNonAdjacent(values):\n    twoBack = 0\n    oneBack = 0\n    // Compare excluding and including each arriving value.\n    return oneBack",
+  "hints": [
+    "If you include the current position, which preceding prefix remains usable?",
+    "Calculate the next optimum before shifting the two saved states."
+  ],
+  "solution": "function maxNonAdjacent(values):\n    twoBack = 0\n    oneBack = 0\n    for value in values:\n        current = max(oneBack, twoBack + value)\n        twoBack = oneBack\n        oneBack = current\n    return oneBack\n\nStarting at zero, [4,1,1,4] produces current values 4,4,5,8. At the final 4, taking it uses the optimum 4 from the first two positions rather than the adjacent prefix optimum 5. Skipping and taking are exhaustive and feasible, so their maximum equals the prefix optimum. Both saved values begin at zero to represent the empty prefix and the virtual empty prefix before the first position. Time O(n), auxiliary space O(1), scalar output O(1). Input bounds permit sums around 50000000000, so avoid a 32-bit signed accumulator.",
+  "checklist": [
+    "I state what each saved prefix answer means.",
+    "I allow the empty selection for negative inputs.",
+    "I compute current before overwriting needed states."
+  ],
+  "pitfalls": [
+    "Choosing the largest remaining value greedily can block a better pair.",
+    "Using oneBack + value can select adjacent positions.",
+    "Initializing with the first value forces an unwanted negative selection."
+  ],
+  "walkthrough": [
+    {
+      "title": "From branching search to shared states",
+      "body": "A recursive solver can branch on taking or skipping each final position. The skip branch asks about one shorter prefix, while the take branch asks about two shorter positions. Those recursive trees repeatedly revisit identical prefix lengths. Because a prefix optimum depends only on that prefix length and the fixed input, a table can share the answers. This reuse is the key difference from subset enumeration, where distinct completed subsets must all be returned."
+    },
+    {
+      "title": "Try a greedy counterexample",
+      "body": "For [4,5,4], choosing the largest value first gives 5, but the two endpoints give 8. The DP evaluates both possibilities: after two positions the optimum is 5, then taking the final 4 combines it with the first-prefix optimum 4. This trace demonstrates why a locally best element does not summarize the impact of adjacency. Small exhaustive subset checks are a strong test oracle for larger-looking DP logic."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Fill the uncompressed table",
+      "prompt": "Write all prefix optima for [2,7,3], including the empty prefix, and identify the final answer.",
+      "hints": [
+        "Begin best[0] = 0 for the empty prefix.",
+        "For each prefix compare its last value plus the two-shorter optimum with skipping it."
+      ],
+      "solution": "The table is [0,2,7,7]. Taking the final 3 yields 2 + 3 = 5, while skipping it retains 7. A full table takes O(n) time and O(n) auxiliary space. It is easier to inspect than rolling variables and produces the same value, making it useful for explaining the recurrence before optimizing storage.",
+      "checklist": [
+        "I include the empty-prefix entry.",
+        "I use the two-shorter prefix in the take case."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Return a witness selection",
+      "prompt": "Return selected indices as well as the optimum sum. For [4,1,1,4], one witness is [0,3]. Define a tie rule.",
+      "hints": [
+        "Retain the full prefix table.",
+        "Walk backward: if skipping preserves the optimum, skip; otherwise take and jump two positions."
+      ],
+      "solution": "Build best[0..n]. Set k = n; while k > 0, skip to k - 1 when best[k] equals best[k - 1]. Otherwise record k - 1 and move to max(0,k - 2). Reverse the recorded indices. Preferring skip on ties makes reconstruction deterministic and avoids selecting zero-gain positions. The witness has the optimal sum and no adjacent indices. Time O(n), auxiliary table O(n), output O(n) worst case.",
+      "checklist": [
+        "I move back two positions after taking.",
+        "I verify the witness sum matches the reported optimum."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What changes if at least one value must be chosen?",
+      "answer": "The empty-selection base is no longer sufficient by itself. Track whether anything has been selected, or handle the all-nonpositive case with the largest single value under a carefully revised recurrence."
+    },
+    {
+      "question": "Can memoization give the same complexity?",
+      "answer": "Yes. Cache the optimum for each prefix length so each state is solved once. It uses O(n) cache and potentially O(n) call stack, whereas bottom-up rolling storage avoids both."
+    }
+  ],
+  "takeaways": [
+    "Define the subproblem before deriving the recurrence.",
+    "Exhaustive final-decision cases establish correctness.",
+    "Compress storage only after tracing dependency lifetimes."
+  ]
+}

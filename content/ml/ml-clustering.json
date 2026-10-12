@@ -1,0 +1,109 @@
+{
+  "id": "ml-clustering",
+  "track": "ml",
+  "title": "Clustering: discover structure without inventing labels",
+  "minutes": 45,
+  "summary": "Work a k-means iteration, inspect the geometry induced by features, and validate usefulness without pretending clusters are ground truth.",
+  "prerequisites": [
+    "ml-trees-ensembles"
+  ],
+  "prerequisiteNotes": "Use training-only preprocessing and squared-distance arithmetic. No linear algebra is required beyond averaging coordinates.",
+  "objectives": [
+    "Perform assignment and centroid-update steps for a small k-means example.",
+    "Explain how scaling, outliers, and cluster shape affect the result.",
+    "Validate cluster stability and operational usefulness without claiming discovered labels."
+  ],
+  "concepts": [
+    {
+      "title": "Similarity is a modeling choice",
+      "body": "Clustering groups examples by a representation and similarity rule, usually without target labels. It can organize ticket themes, but clusters are not automatically escalation classes or causal segments. Distance on message length asks a different question from distance on text embeddings, which themselves have learned limitations. Define useful similarity for the workflow and inspect representative and boundary examples before naming groups."
+    },
+    {
+      "title": "K-means alternates two simple operations",
+      "body": "Choose k centroids, assign points to the nearest centroid by squared Euclidean distance, and update each centroid to its assigned points’ mean. Repeat until stable. Exact assignment and mean updates do not increase the objective on fixed data, but initialization can produce different local solutions. Define empty-cluster reinitialization and tie handling. More clusters permit lower training distortion, so minimizing distortion alone cannot choose meaningful k."
+    },
+    {
+      "title": "Geometry explains both strength and failure",
+      "body": "K-means favors compact Euclidean groups; curved shapes, unequal density, and outliers can defeat that geometry. Dollars may dominate a 0-to-1 feature unless scaling is addressed. Training-fitted standardization can help but changes distance meaning: a high-variance feature might legitimately deserve influence. Choose scaling for the task, not blindly. Alternative methods impose different shape or density assumptions and their own parameters."
+    },
+    {
+      "title": "Evaluate discovery without manufacturing certainty",
+      "body": "Check stability across seeds and samples, separation measures, and analyst usefulness. Silhouette compares cohesion with distance to the nearest other cluster; it is not accuracy and can favor certain shapes. Freeze historical centroids before measuring future assignment distances. Distant points may reflect novelty, bad units, or poor representation, not fraud. Keep customer content out of broad dashboards and review samples under appropriate access controls."
+    }
+  ],
+  "example": "One-dimensional points are [1, 2, 8, 9] minutes. Choose k = 2 and initial centroids [1, 8] minutes.\nAssignment: [1, 2] goes to centroid 1; [8, 9] goes to centroid 8.\nInitial within-cluster sum of squared distances = 0 + 1 + 0 + 1 = 2 minutes squared.\nUpdated centroids = [1.5, 8.5] minutes.\nUpdated sum of squared distances = 0.25 + 0.25 + 0.25 + 0.25 = 1 minute squared.\nMean squared distance = 1/4 = 0.25 minutes squared.\nCluster numbers 0 and 1 are arbitrary identifiers; swapping them does not change the partition.",
+  "task": "Work the k-means example and propose a workflow for grouping support tickets to help analysts discover themes. Explain representation, scaling, initialization checks, choosing k, handling distant future tickets, and how you would measure usefulness without calling the clusters escalation labels.",
+  "starter": "centroids = initialize(training_points, k)\nrepeat:\n  assignments = nearest_centroid(training_points, centroids)\n  centroids = mean_of_each_assigned_group(training_points, assignments)\n# Freeze preprocessing and centroids before evaluating future assignments.",
+  "hints": [
+    "Compute squared distances to the assigned centroid both before and after the mean update.",
+    "Ask what an analyst will do differently because the grouping exists."
+  ],
+  "solution": "Groups [1,2] and [8,9] have means 1.5 and 8.5 minutes. Squared-distance sum falls from 2 to 1 minute squared; the mean is 0.25 minutes squared. Choose privacy-appropriate content representation for themes, fit preprocessing on training, and compare several seeds and k values. Inspect boundaries, stability, and analyst efficiency against ungrouped review. Freeze centroids for future assignment; monitor distances and assignment rates. Inspect unusual cases without labeling them fraud. Version cluster IDs because refits can reorder or split groups.",
+  "checklist": [
+    "I derive centroids 1.5 and 8.5 minutes and squared-distance sum 1.",
+    "I explain the representation and scaling behind similarity.",
+    "I check stability and task usefulness rather than claiming accuracy without labels.",
+    "I define future assignment and cluster-version behavior."
+  ],
+  "pitfalls": [
+    "Treating numeric cluster IDs as ordered categories invents a relationship.",
+    "Selecting k only by training distortion rewards ever more clusters.",
+    "An outlier is not automatically an error or malicious event.",
+    "Comparing cluster ID 1 across refits without alignment can misread drift."
+  ],
+  "walkthrough": [
+    {
+      "title": "Name a cluster only after inspecting it",
+      "body": "A group mixing billing questions, legal notices, and empty messages may reflect formatting rather than topic. Inspect representative and boundary points, not just centroid neighbors. Revise unhelpful representations; a neat visualization is insufficient validation."
+    },
+    {
+      "title": "Version the assignment policy",
+      "body": "Version preprocessing, centroids, tie rules, and distance thresholds together. Report later counts and distances under the frozen version. Refitting may capture new themes, but compare versions with human review and align groups before reporting growth. A new cluster number does not prove new behavior."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Assign a future point",
+      "prompt": "With frozen centroids 1.5 and 8.5 minutes, assign a new point at 7 minutes and compute its squared distance to the chosen centroid.",
+      "hints": [
+        "Compare absolute distances 5.5 and 1.5 minutes.",
+        "Square the smaller distance after choosing the nearest centroid."
+      ],
+      "solution": "The point joins the group centered at 8.5 minutes. Its squared distance is (7 - 8.5)^2 = 2.25 minutes squared. This measures deviation under the chosen geometry, not the probability that the ticket is abnormal.",
+      "checklist": [
+        "I choose centroid 8.5 and distance squared 2.25.",
+        "I avoid interpreting distance as probability."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A misleading improvement from more clusters",
+      "prompt": "On the four-point example, k = 4 can place one centroid at each point and achieve zero distortion. Explain why this does not settle the choice of k for an analyst-facing grouping tool.",
+      "hints": [
+        "Every singleton can fit itself perfectly.",
+        "The tool must summarize future cases in useful groups."
+      ],
+      "solution": "Zero training distortion follows from memorizing every point, not necessarily from discovering reusable structure. Four singleton groups offer little summarization and may be unstable on new data. Compare candidate k values using stability, future assignment behavior, manageable analyst workload, and reviewed coherence. A distortion curve can inform the discussion, but there is no guaranteed correct elbow or universal k hidden in these four numbers.",
+      "checklist": [
+        "I explain why zero distortion can be unhelpful.",
+        "I propose evaluation tied to the analyst workflow."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can labels still help evaluate an unsupervised system?",
+      "answer": "Yes, if a separate labeled audit answers a relevant question. Keep those labels out of purportedly unsupervised fitting and disclose if repeated audit-driven choices make that audit part of model selection."
+    },
+    {
+      "question": "Can we call the farthest points anomalies?",
+      "answer": "Only as a defined distance-based flag. Investigate whether they are meaningful unusual cases, corrupted inputs, or ordinary examples poorly represented by the chosen geometry."
+    }
+  ],
+  "takeaways": [
+    "Clusters summarize a chosen geometry, not hidden ground-truth labels.",
+    "K-means alternates nearest-centroid assignments and mean updates.",
+    "Validate stability, future behavior, and human usefulness alongside distortion."
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "design-queues-events",
+  "track": "system-design",
+  "title": "Queues and events: durable work, bounded delay",
+  "minutes": 50,
+  "summary": "Decouple slow work without losing events, duplicating effects, or hiding a growing backlog.",
+  "prerequisites": [
+    "design-consistency",
+    "design-api-data-model"
+  ],
+  "prerequisiteNotes": "Understand atomic commit, retries, and uncertainty after a timeout. Apply those ideas to a worker rather than another HTTP attempt.",
+  "objectives": [
+    "Trace an outbox event from transaction to acknowledgement.",
+    "Make duplicate delivery safe at the effect boundary.",
+    "Calculate backlog growth and drain time with explicit service-rate assumptions."
+  ],
+  "concepts": [
+    {
+      "title": "Asynchronous changes the promise",
+      "body": "Asynchronous thumbnail generation makes create success mean durable bookmark plus scheduled work, not finished thumbnail. Expose pending, ready, and failed states with a bounded completion expectation and delayed-result policy. A queue absorbs temporary arrival/service imbalance but cannot fix permanent undercapacity. Backlog age and storage grow indefinitely when arrivals exceed useful completions, even while enqueue latency looks healthy."
+    },
+    {
+      "title": "Use a durable handoff, not a dual-write hope",
+      "body": "Commit-then-publish can lose work on a crash; publish-then-commit can schedule nonexistent bookmarks. Store bookmark and outbox intent atomically. A relay publishes committed intent with a stable event identifier and records progress. Crashing between publish and progress can cause duplicate publication: expect at-least-once delivery. Monitor unpublished outbox lag separately because broker health cannot reveal a stalled relay."
+    },
+    {
+      "title": "Acknowledge after the effect is safe",
+      "body": "Durably record results before acknowledgement to avoid lost work. A crash afterward causes redelivery, so use unique event identifiers and atomic result transitions. Local deduplication cannot eliminate uncertainty between an external email's success and local recording; use destination-supported idempotency or document duplicates. Bound retry attempts and age, apply backoff, and quarantine poison messages rather than letting them consume capacity forever."
+    }
+  ],
+  "example": "During a 120-second burst, arrivals are 300 jobs/s and successful worker capacity is 200 jobs/s.\nStarting empty, backlog growth is (300 - 200) × 120 = 12000 jobs.\nAfter the burst, arrivals drop to 100 jobs/s while capacity remains 200 jobs/s.\nNet drain is 100 jobs/s, so the 12000-job backlog drains in 120 seconds.\nThis fluid estimate assumes constant service rates, no retries, no preexisting backlog, and no per-key ordering bottleneck.",
+  "walkthrough": [
+    {
+      "title": "The relay publishes twice",
+      "body": "A create transaction stores B17 and outbox event E42. The relay publishes E42, then crashes before marking it sent. Its replacement publishes E42 again. Worker W1 generates the thumbnail and transactionally records the ready result under E42. Worker W2 receives the duplicate and detects the committed result, so it acknowledges without regenerating a different visible result. The queue still delivered twice, but the durable transition occurred once. Keep deduplication history at least as long as the possible redelivery/replay window, and define how manually replayed older events are handled."
+    },
+    {
+      "title": "A poison event meets an overloaded queue",
+      "body": "Event E43 references an invalid image format. Repeated immediate retries consume capacity that could finish valid jobs. Classify the failure as permanent, persist an explanatory failed state, and quarantine the message with restricted diagnostic metadata. A transient source outage instead gets bounded retries with jitter. Monitor oldest eligible job age, successful throughput, and retry volume together: falling queue length can mean messages are failing, not that useful work is completing. If backlog delay exceeds the product bound, pause optional work or reject new jobs explicitly rather than returning an undeliverable completion promise."
+    }
+  ],
+  "task": "Design an asynchronous thumbnail workflow for private bookmarks. Define the user-visible create and status contract, atomic outbox transaction, relay behavior, worker effect boundary, and deduplication retention. Trace crashes before publish, after publish, and after result commit but before acknowledgement. Calculate backlog and drain time for the example burst. Describe retry classification, quarantine handling, and metrics that distinguish successful completion from merely removing messages. Keep the design conceptual and do not implement a broker or worker.",
+  "hints": [
+    "Every transition between durable systems has a crash window.",
+    "Drain time uses spare capacity after ongoing arrivals, not total processing capacity."
+  ],
+  "solution": "Commit bookmark B17 and outbox E42 together, return a durable bookmark with thumbnail status pending, and let a monitored relay publish stable event IDs. A crash before publish leaves recoverable intent; a crash afterward can create a duplicate. Store the worker's result with an E42 uniqueness boundary before acknowledging. A repeat observes ready and safely acknowledges again. Define a bounded replay window and keep effect history through it. Quarantine permanent format errors; back off transient dependencies and cap retry age. The burst produces 12000 queued jobs and requires 120 seconds to drain once arrivals fall to 100/s with 200/s successful capacity. Measure oldest pending age, outbox lag, useful completions, and retries. If the agreed completion target cannot be met, show delayed status and reduce optional admissions rather than disguising the backlog.",
+  "checklist": [
+    "I commit durable work intent with the bookmark.",
+    "I trace duplicates through the actual effect boundary.",
+    "I compute growth and drain using net rates.",
+    "I define retries, quarantine, retention, and user-visible delay."
+  ],
+  "pitfalls": [
+    "A queue acknowledgement before the durable effect can lose work.",
+    "Exactly-once delivery claims often conceal an unprotected external effect.",
+    "Queue length alone cannot distinguish success from fast permanent failure."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Find spare processing capacity",
+      "prompt": "Before the core task, a backlog is 600 jobs, new arrivals are 40/s, and successful capacity is 60/s. Estimate drain time and name an assumption.",
+      "hints": [
+        "Ongoing arrivals consume part of capacity.",
+        "Use the net rate."
+      ],
+      "solution": "Spare capacity is 20 jobs/s, so 600 / 20 = 30 seconds assuming stable rates and no retries or ordering constraints.",
+      "checklist": [
+        "I subtract arrivals.",
+        "I include seconds.",
+        "I state a simplifying assumption."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "An older edit finishes last",
+      "prompt": "After the core task, two thumbnail jobs for bookmark versions 4 and 5 execute out of order. Prevent the older job from overwriting the newer result without demanding global queue ordering.",
+      "hints": [
+        "Carry the source version.",
+        "Condition the final visible-state update, not only job startup."
+      ],
+      "solution": "Include bookmark version and event ID. At result commit, update the visible thumbnail only if the source version is still current or newer than the installed result under the chosen rule. Version 4 can complete its job record without replacing version 5. Global ordering would unnecessarily serialize unrelated bookmarks.",
+      "checklist": [
+        "I carry a source version.",
+        "I guard the commit boundary.",
+        "I preserve parallelism for unrelated work."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why monitor outbox lag separately from broker lag?",
+      "answer": "Work can be durable in the database but unpublished. Broker metrics cannot see that backlog, so they can appear healthy while users wait indefinitely."
+    },
+    {
+      "question": "Should a quarantined message be replayed automatically forever?",
+      "answer": "No. Diagnose the cause, repair data or code as appropriate, and replay with bounded scope while retaining event identity. Replaying blindly recreates the same failure load."
+    }
+  ],
+  "takeaways": [
+    "Asynchrony changes when success is visible.",
+    "Durable intent and idempotent effects close different crash windows.",
+    "Backlog drains only through capacity left after new arrivals."
+  ]
+}

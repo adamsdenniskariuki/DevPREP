@@ -1,0 +1,115 @@
+{
+  "id": "design-cache-data-flow",
+  "track": "system-design",
+  "title": "Caching: trace hits, misses, and writes",
+  "minutes": 45,
+  "summary": "Design a cache as a fallible copy, not an unexplained box between clients and data.",
+  "objectives": [
+    "Trace cache-aside read hits, read misses, and updates.",
+    "Describe stale-data races and distinguish freshness from correctness.",
+    "Plan for cache outages and hot-key bursts without overwhelming the database."
+  ],
+  "concepts": [
+    {
+      "title": "Name the source of truth",
+      "body": "In cache-aside, the application checks the cache, reads the database on a miss, and optionally stores the result with an expiration. The database remains authoritative. A cached response can be stale; the product contract must say where that is acceptable and where authoritative validation is required."
+    },
+    {
+      "title": "Invalidation has races",
+      "body": "Writing the database and then deleting a cache entry is useful but not a complete consistency protocol. An earlier read can fetch old data, pause, and repopulate the cache after deletion. Expiration limits an entry’s lifetime after insertion, not necessarily its age since the database changed. Strict freshness needs stronger coordination or an authoritative read."
+    },
+    {
+      "title": "A cache failure changes downstream load",
+      "body": "A high hit rate can conceal a database that cannot handle all incoming reads. Short cache timeouts, bounded fallback concurrency, request coalescing, and load shedding protect the source. Coalescing means multiple misses for one key share one in-flight source read; coordinating across API instances requires an explicit design."
+    },
+    {
+      "title": "Budget fallback globally",
+      "body": "A local connection pool protects one process, not the database as a whole. If six API instances each permit 200 source reads per second, they already consume the entire 1200-per-second tested ceiling before background work. Choose a smaller aggregate budget and divide or coordinate it across the actual instance count. Autoscaling the API must not automatically increase this source budget. Admission can bound rate and concurrent work separately: a slow database may have too many in-flight queries even while starts per second remain modest. Reject excess work promptly instead of letting waiting requests consume every connection and memory slot."
+    },
+    {
+      "title": "Cache identity is part of correctness",
+      "body": "The product-description key contains locale because two users may legitimately need different representations of the same product. Include every public variation that affects the response, normalize allowed values, and cap key cardinality. Do not simply cache a full authenticated response in a public namespace. Negative caching also needs a contract: caching a missing product can reduce repeated lookups but hide a newly created product until invalidation or expiry. Keep negative lifetimes short, distinguish not-found from a source timeout, and never cache a dependency failure as if it proved that the product does not exist."
+    }
+  ],
+  "example": "A public article service receives 2000 reads per second with a 95% hit rate. In a simplified steady-state model, database reads are 2000 × 0.05 = 100 per second.\nA cold cache could send all 2000 reads per second to the database: 20 times its usual read load.\nWith cache-aside, a hit returns the article immediately. A miss reads the database and caches the article for 60 seconds. An edit commits to the database, then attempts cache deletion.\nA paused miss can still repopulate an old article after that deletion. A 60-second expiration alone is therefore not proof that every response is at most 60 seconds behind an edit.",
+  "task": "Design the read and update flow for public product descriptions. Normal traffic is 5000 reads per second, expected hit rate is 90%, and the database has been load-tested for at most 1200 reads per second under the relevant write load.\nDescriptions may be briefly stale during browsing. Checkout must validate current price and stock against the authoritative service; neither is served from this description cache.\nDeliver: cache key and contents; hit, miss, and description-update flows; an expiration policy; one stale-repopulation timeline; a cache-outage protection plan; and three operational metrics. Estimate normal database reads and the cache-outage overload factor.\nDo not promise a hard freshness bound from expiration alone. Use the checklist to discuss tradeoffs; multiple designs are acceptable.",
+  "hints": [
+    "Normal misses are the fraction not served by the cache. Compare full incoming traffic, not normal misses, with the tested database capacity.",
+    "Trace a reader fetching an old value before an update but inserting it after invalidation. Then decide how to prevent, detect, or tolerate that race without using cached price or stock at checkout."
+  ],
+  "solution": "A reasonable key is description:v1:productId:locale, with a canonical validated locale. Cache only public description fields, source version, and source-read metadata; do not include user-specific content or checkout decisions.\nOn a hit, return the description. On a miss, coalesce concurrent requests for the same key, read the authoritative store through a bounded concurrency pool, and cache a successful result with a nominal 60-second expiration plus small randomized jitter. Jitter spreads expirations; it is not a freshness guarantee.\nFor updates, commit to the source first, then delete relevant description keys. Record and retry failed invalidations. A possible race is: reader A fetches version 4; writer B commits version 5 and deletes the cache key; A stores version 4. For this browsing contract, accept brief staleness, bound source-read time, and skip cache insertion for overdue reads. Stronger requirements could use coordinated version-aware insertion or bypass the cache for critical reads.\nNormal database reads are 5000 × 0.10 = 500 per second. An unprotected outage sends 5000 per second, about 4.17 times the tested 1200-per-second capacity, and 10 times normal database read load.\nUse short cache timeouts and a circuit breaker. Bound aggregate fallback traffic across API instances below the tested capacity with headroom for other work, coalesce hot keys, and reject excess browsing requests with a retryable response instead of allowing an unbounded queue. Per-instance limits must account for instance count.\nTrack cache hit rate, source-read rate and saturation, and end-to-end p95 latency with error rate. Also alert on invalidation failures. At checkout, the authoritative service validates price and stock independently of this cache.\nThe chosen policy favors browsing availability and simplicity over strict freshness; that tradeoff is explicit rather than hidden.",
+  "checklist": [
+    "I can trace a hit, a miss, and an update without treating the cache as authoritative.",
+    "I calculate 500 normal source reads per second and about 4.17 times capacity during an unprotected outage.",
+    "I describe a stale-repopulation race and avoid claiming expiration alone eliminates it.",
+    "My outage plan bounds aggregate database traffic and defines an overload response.",
+    "I keep authoritative checkout validation separate and name at least three useful metrics."
+  ],
+  "pitfalls": [
+    "Including private fields in a public shared cache can expose data across users.",
+    "Treating cache failure as unlimited database fallback can cause a second outage.",
+    "Saying “invalidate after writes” without a race timeline overstates freshness.",
+    "A global hit-rate average can hide a single hot key or a poorly performing locale."
+  ],
+  "prerequisites": [
+    "design-databases-indexes"
+  ],
+  "prerequisiteNotes": "Understand the authoritative query and its measured capacity before adding a cache. The original public-description exercise remains separate from private bookmark data.",
+  "walkthrough": [
+    {
+      "title": "Make the stale-insertion race visible",
+      "body": "At time zero, reader A misses and starts a source read of description version 4. Writer B commits version 5 and successfully deletes the cache entry. Reader A then resumes and stores version 4, so reader C receives the old description despite successful invalidation. Source-read deadlines and refusing insertion after an excessive delay reduce this window but do not constitute a linearizable protocol. In this exercise browsing can tolerate the outcome; checkout cannot reuse the same path for stock decisions. Explain which response can be stale and why the business action remains safe instead of claiming every read has magically become current."
+    },
+    {
+      "title": "Rehearse a cache outage as a controlled experiment",
+      "body": "Disable cache access in a test while maintaining the original 5000 reads per second. Permit at most 900 source reads per second across the fleet, leaving 300 below the tested ceiling for headroom under the stated model. Excess distinct-key requests receive a retryable response with backoff guidance; same-key requests may share in-flight work. Measure actual database admission, saturation, and client-visible errors. Restore cache access gradually, avoiding a synchronized refill storm. A design that remains inside the source budget may still miss the browsing availability target, so record that limitation and decide whether more source capacity is worth its cost."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Translate hits into source work",
+      "prompt": "Before the core exercise, use 3000 reads per second and an 80% hit rate to calculate source reads. Explain why a high hit rate says nothing by itself about the age of a returned description.",
+      "hints": [
+        "The miss fraction is one minus the hit fraction.",
+        "A successful cache lookup may return an old value."
+      ],
+      "solution": "3000 × 0.20 = 600 source reads per second in the simplified model. Hit rate measures reuse, not freshness; source versions and update/invalidation timing are needed to reason about age.",
+      "checklist": [
+        "I calculate misses with units.",
+        "I identify the steady-state assumption.",
+        "I distinguish reuse from freshness."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Scale instances without scaling overload",
+      "prompt": "After the original core exercise, allocate a 900-source-read/s fleet budget over six instances, then twelve instances. Describe a safe transition and the effect of skewed traffic.",
+      "hints": [
+        "Divide the fixed budget, not the tested database ceiling.",
+        "Static equal shares can waste capacity when instances receive unequal demand."
+      ],
+      "solution": "Equal allocation gives 150 reads/s per instance at six instances and 75 at twelve. Update allocations conservatively so old and new processes do not temporarily spend more than 900 combined. Static shares are simple but underutilize spare capacity under skew; a coordinated limiter uses capacity better but becomes another dependency requiring a failure policy.",
+      "checklist": [
+        "I retain the same aggregate cap.",
+        "I address overlapping old and new allocations.",
+        "I explain a skew or coordination tradeoff."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Does jitter reduce normal source work?",
+      "answer": "Its main purpose is spreading expirations over time. It can smooth refill bursts without reducing the total misses caused by expiration; measure both rate and burst concentration."
+    },
+    {
+      "question": "Should a failed invalidation undo the committed edit?",
+      "answer": "Usually not for this browsing contract. Record and retry invalidation, expose its failures operationally, and keep the source authoritative. Stronger atomic visibility needs a different protocol."
+    }
+  ],
+  "takeaways": [
+    "A cached copy has an explicit identity and staleness policy.",
+    "Protect the source with a fleet-wide fallback budget.",
+    "Rehearse cold-cache recovery as well as normal hits."
+  ]
+}

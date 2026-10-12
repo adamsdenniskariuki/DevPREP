@@ -1,0 +1,106 @@
+{
+  "id": "design-reliability-observability",
+  "track": "system-design",
+  "title": "Reliability and observability: test the promise",
+  "minutes": 50,
+  "summary": "Define user-visible success, budget time and errors, and connect failure signals to recovery actions.",
+  "prerequisites": [
+    "design-rate-limiting",
+    "design-replication-partitioning"
+  ],
+  "prerequisiteNotes": "Use admission, replication, and bounded retries as mechanisms. This lesson asks how you know those mechanisms actually protect users.",
+  "objectives": [
+    "Define availability and latency indicators with honest denominators.",
+    "Budget deadlines and retry work.",
+    "Use traces and recovery exercises to validate failure handling."
+  ],
+  "concepts": [
+    {
+      "title": "Measure the user journey",
+      "body": "Count eligible authenticated create/list requests, including dependency failures and capacity rejections as unsuccessful. Document exclusions for malformed or unauthorized attempts beforehand. Define latency boundaries including admission waits; service latency excludes client network delay. Aggregate indicators can hide affected groups, so use bounded breakdowns by operation and region. Avoid owner identifiers as unbounded metric labels and do not equate healthy processes with successful journeys."
+    },
+    {
+      "title": "Deadlines are budgets, not independent timeouts",
+      "body": "Allocate one request deadline across authentication, cache, source, response, and margin. Propagate remaining time and safely cancel abandoned work. Independent full-length dependency timeouts can exceed the caller's entire budget. Choose one retry owner; permit only suitable failures and idempotent operations within the original deadline. Circuit breakers reduce repeated calls to failing dependencies, but probes and recovery must also remain bounded."
+    },
+    {
+      "title": "Durability must survive a recovery exercise",
+      "body": "Recovery time objective bounds restoration time; recovery point objective bounds acceptable historical loss for a specified disaster. Replicas and backup schedules prove neither. Restore independently retained backups, replay logs, validate records and authorization, and measure elapsed time. State which failures durable acknowledgement survives, distinguishing node loss from regional disaster. Untested recovery is an unknown rather than a demonstrated guarantee."
+    }
+  ],
+  "example": "For 1000000 eligible requests in a reporting window and a 99.9% success objective, the budget is 1000 unsuccessful requests.\nIf 400 eligible requests have failed, 600 failures remain in that window's budget.\nA separate time-based 99.9% objective over 30 days permits 43.2 minutes unavailable: 30 × 24 × 60 × 0.001.\nDo not substitute that time budget for the request-based budget when traffic varies.\nIllustrative 300 ms service budget: authentication 20 ms + cache 10 ms + source 180 ms + response 30 ms + margin 60 ms.",
+  "walkthrough": [
+    {
+      "title": "Follow one slow list with a trace",
+      "body": "A valid list gets a correlation identifier, spends 18 ms authenticating, and times out its cache lookup after 10 ms. The source gate admits it, but a database span reveals 170 ms of execution and 40 ms waiting for a connection. That wait must count against the request deadline; hiding it outside the span makes the database look fast while users time out. Record outcome, operation, bounded error category, and timings without logging bookmark URLs or titles. Trace sampling should retain useful failures while respecting privacy and storage limits. Compare traces with rate and saturation metrics rather than diagnosing from one slow example alone."
+    },
+    {
+      "title": "Turn an alert into a recovery action",
+      "body": "A cache outage raises source admission rejections while database latency remains bounded. This is successful containment but degraded user availability, not complete health. Alert on error-budget consumption and valid rejected demand, then follow a runbook that confirms source headroom, checks cache connectivity, and restores cache gradually. During a database failover exercise, verify that successful create responses remain readable afterward and retry keys still replay the same identifiers. Measure recovery duration and lost or ambiguous outcomes. A dashboard is useful only when each signal supports a decision, an owner, and a next diagnostic step."
+    }
+  ],
+  "task": "Define bookmark create/list eligibility, success, latency boundaries, and the example 99.9% error budget. Allocate 300 ms without double-spending and decide whether retry fits. Select demand, error, latency, and saturation signals plus a trace. Design cache-outage and recovery exercises with pass/stop conditions. Distinguish containment from user availability.",
+  "hints": [
+    "A rejected valid request still represents an unsuccessful user journey under this exercise’s definition.",
+    "Include pool waiting and retry attempts in the same elapsed-time budget."
+  ],
+  "solution": "Count valid authenticated create/list attempts at the defined service boundary and include dependency errors and capacity shedding as failures. One million eligible requests allow 1000 failures; after 400, 600 remain. Track attempts and outcome categories, end-to-end tail latency including waits, source saturation, and outbox or cache-fallback backlog as appropriate. Allocate 20/10/180/30/60 ms to authentication/cache/source/response/margin; a second full 180 ms source attempt does not fit after the first consumes its allocation. Prefer a fast documented failure unless a safe retry fits the remaining deadline. Rehearse cache loss under load and verify the source cap, then rehearse failover and restore while checking acknowledged writes and replay behavior. Stop the exercise if isolation fails or the agreed error ceiling is reached; record measured recovery gaps rather than asserting that replicas solved them.",
+  "checklist": [
+    "I define the indicator denominator and unsuccessful outcomes.",
+    "I distinguish request and time availability budgets.",
+    "I allocate one deadline including waits and attempts.",
+    "I connect signals to recovery actions and measurable exercises."
+  ],
+  "pitfalls": [
+    "Dropping throttled valid demand from reports can conceal an outage.",
+    "Independent full-duration retries at several layers multiply load and latency.",
+    "A backup that has never been restored is unverified recovery evidence."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Spend a request budget",
+      "prompt": "Before the core task, compute the failed-request allowance for 200000 eligible requests at 99.5% success. Does that number reveal how many minutes an outage may last?",
+      "hints": [
+        "Multiply by the unsuccessful fraction.",
+        "Request volume can vary by minute."
+      ],
+      "solution": "200000 × 0.005 = 1000 failures. Without a traffic distribution or separate time-based definition, this does not establish a fixed outage duration.",
+      "checklist": [
+        "I use the failure fraction.",
+        "I preserve request units.",
+        "I avoid converting to minutes without assumptions."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A hidden retry multiplier",
+      "prompt": "After the core task, suppose the client makes two attempts, the API makes two dependency attempts per client attempt, and a proxy makes two attempts per dependency call. Calculate worst-case source attempts and propose one retry owner.",
+      "hints": [
+        "Multiply nested attempts, including originals.",
+        "Keep idempotency and one deadline across retries."
+      ],
+      "solution": "2 × 2 × 2 = 8 source attempts per logical request. Give one layer an explicitly bounded retry policy and disable overlapping retries elsewhere; propagate the deadline and request identity. Actual safe attempt count depends on remaining time and dependency load.",
+      "checklist": [
+        "I compute the multiplicative bound.",
+        "I nominate one retry owner.",
+        "I retain deadline and identity constraints."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can individual component p95 values simply be added?",
+      "answer": "Not to obtain an exact end-to-end p95; percentile observations need not occur on the same requests. Use allocation as a planning tool and measure the end-to-end distribution directly."
+    },
+    {
+      "question": "Why set stop conditions for a failure exercise?",
+      "answer": "Testing should be bounded and reversible. Stop conditions limit harm, prevent unrelated failures from being mistaken for the scenario, and make recovery ownership explicit."
+    }
+  ],
+  "takeaways": [
+    "An objective needs an honest measurement boundary.",
+    "Retries spend the same latency and capacity budgets as original attempts.",
+    "Recovery confidence comes from measured, bounded rehearsals."
+  ]
+}

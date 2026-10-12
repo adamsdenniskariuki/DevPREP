@@ -1,0 +1,107 @@
+{
+  "id": "ml-data-preparation",
+  "track": "ml",
+  "title": "Data preparation: reconstruct what was knowable",
+  "minutes": 45,
+  "summary": "Define the prediction contract, audit data availability, and fit a reproducible preprocessing pipeline without leaking the future.",
+  "prerequisites": [],
+  "prerequisiteNotes": "Start with arithmetic averages, percentages, and the idea of a table with rows and columns. No model training experience is assumed.",
+  "objectives": [
+    "Define a prediction unit, timestamp, target, and outcome window.",
+    "Distinguish event time from availability time when constructing features.",
+    "Fit imputation and scaling on training data and reuse the fitted state."
+  ],
+  "concepts": [
+    {
+      "title": "A row is a decision, not just a record",
+      "body": "Define who receives which decision and when. One row represents a ticket at creation, labeled by escalation within seven days. Predicting whether an already open ticket escalates tomorrow is different: accumulated messages are available for that prediction, but not at creation. Record the outcome window and population alongside the schema. A ticket created yesterday is not a negative seven-day example; its label is immature until the observation window elapses."
+    },
+    {
+      "title": "Availability is stricter than event time",
+      "body": "An event dated Monday but ingested Wednesday was unavailable Tuesday. Historical replay needs both event and availability cutoffs, otherwise chronological data can contain future knowledge. Historical escalation counts must include only outcomes known at ticket creation, not every outcome in today’s extraction table. Audit individual timelines before trusting a large join. Identify duplicates and shared customers before splitting; copied messages across windows can exaggerate generalization even without an explicit target column."
+    },
+    {
+      "title": "Learn preprocessing only from training",
+      "body": "Split raw examples first. Fit medians, vocabularies, and scaling statistics on training; persist them with the model. Transform validation and test without refitting. For values 2, 4, and 6 hours, mean is 4 hours and population variance is 8/3 hours squared, giving a scale near 1.633 hours. The value 6 becomes about 1.225 standard units. State the variance convention: sample variance differs. Reserve unknown-category handling and avoid dividing by zero for constant columns."
+    },
+    {
+      "title": "Missingness and representation are product decisions",
+      "body": "Missing income is not zero income; collection may have failed. A training median plus a missingness indicator preserves that distinction, but process changes can make the indicator brittle. Review units, ranges, categories, and missingness by source and time. One-hot encoding represents nominal categories without inventing an ordering; mapping colors to 1, 2, and 3 imposes misleading geometry. Target encoding additionally requires out-of-fold construction for training rows, not merely hiding validation labels."
+    }
+  ],
+  "example": "Training response times are [2, 4, 6] hours; validation contains [100] hours.\nTraining mean = 4 hours; population variance = 8/3 hours squared; standard deviation = sqrt(8/3) hours.\nStandardized training value 6 = (6 - 4) / sqrt(8/3) = 1.224745.\nTraining-median imputation for a missing value gives 4 hours.\nIncluding validation would change the mean to 28 hours. This is leakage, not evidence that the training pipeline learned a useful improvement.\nThe validation value remains extreme after transformation; investigate its units and source rather than silently refitting or clipping using the test distribution.",
+  "task": "Prepare creation-time seven-day escalation predictions using ticket timestamps, initial queue/message length, final resolution, and history. Specify rows, mature labels, availability cutoffs, missing/category handling, and stored artifacts. Explain why the example’s combined scaler leaks.",
+  "starter": "prediction_time = ticket.created_at\nraw_train, raw_validation, raw_test = chronological_windows(rows)\n# Specify label maturity and as-of joins before fitting.\npreprocessor = fit(raw_train)\nvalidation_features = transform(preprocessor, raw_validation)",
+  "hints": [
+    "A past event can still be unavailable when its ingestion or outcome confirmation happens later.",
+    "Separate the rules that define a row from the statistics learned by fitting the preprocessor."
+  ],
+  "solution": "Use creation-time rows with completely observed seven-day outcomes at fitting cutoff. Accept initial queue and message length; reject final resolution. Join history only when events and their confirmation were available before creation. Split chronologically and inspect duplicates. Fit medians, scaling, and vocabularies on training only, preserving mean 4 hours rather than 28. Define missingness indicators and an unknown queue category. Store versioned feature definitions, cutoff rules, statistics, vocabulary, and units. Investigate extreme validation values without refitting.",
+  "checklist": [
+    "I specify the prediction timestamp and complete seven-day label window.",
+    "I enforce event-time and availability-time cutoffs for historical features.",
+    "I fit preprocessing only on training and store its reusable state.",
+    "I define missing-value and unseen-category behavior."
+  ],
+  "pitfalls": [
+    "Treating unresolved recent outcomes as negatives creates mislabeled training data.",
+    "A chronological split does not repair a future-looking feature join.",
+    "Global imputation or feature selection before splitting leaks evaluation information.",
+    "Dropping every row with missing fields can silently change the target population."
+  ],
+  "walkthrough": [
+    {
+      "title": "Replay one ticket",
+      "body": "A ticket opens Tuesday at noon. A prior escalation occurred Monday but was confirmed Wednesday. It must not enter Tuesday’s count. Trace that record through availability filtering into the feature row: one concrete replay can expose assumptions a dataset-wide summary conceals."
+    },
+    {
+      "title": "Freeze and audit the transformation",
+      "body": "Serialize the fitted pipeline and transform a later batch twice to check determinism. Compare offline and serving features for identical recorded inputs. Log missingness and unknown-category rates, not raw messages. Fix mismatches before comparing scores; a sophisticated estimator cannot reliably compensate for inconsistent inputs."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Impute without peeking",
+      "prompt": "Training ages are 10, 20, and 30 days. Validation ages are missing and 90 days. What values enter median imputation, and what fills the missing value?",
+      "hints": [
+        "Use only the three training values to fit.",
+        "Transformation does not recompute the median for each batch."
+      ],
+      "solution": "Fit median 20 days from training only and use it for missing validation age. Retain observed 90 unless a predefined validity rule rejects it. Refitting on validation leaks and changes batch behavior.",
+      "checklist": [
+        "I obtain a training median of 20 days.",
+        "I leave fitting separate from validation transformation."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Repair a late-arriving history",
+      "prompt": "A feature job counts all historical escalations using event timestamps. Outcomes are often confirmed two days later. Propose a repair and one replay test without deleting all historical features.",
+      "hints": [
+        "Add the time at which the outcome became known.",
+        "Choose a test case where event and confirmation straddle prediction."
+      ],
+      "solution": "Filter event and confirmation times before prediction and version the definition. The Monday event confirmed Wednesday contributes zero on Tuesday. Rebuild using recorded availability history; if that history is missing, disclose the replay limitation and consider a conservative lag or prospective collection instead of claiming perfect fidelity.",
+      "checklist": [
+        "I enforce two availability conditions.",
+        "I acknowledge missing historical metadata rather than inventing it."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Can an unsupervised scaler see test inputs?",
+      "answer": "Not under this held-out protocol: fitting adapts to test distribution. A transductive protocol needs separate justification and deployment alignment."
+    },
+    {
+      "question": "Should every extreme value be removed?",
+      "answer": "No. Verify units and validity first; rare cases may matter. Learn clipping thresholds inside training only."
+    }
+  ],
+  "takeaways": [
+    "Define what was knowable before choosing features.",
+    "A mature label and an available feature obey different time constraints.",
+    "Persist preprocessing as part of the model, not as an informal notebook step."
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "id": "ml-regression-classification",
+  "track": "ml",
+  "title": "Regression and classification: choose a target and a loss",
+  "minutes": 45,
+  "summary": "Connect predictions to continuous or categorical targets, work through baseline metrics, and distinguish a probability from an action.",
+  "prerequisites": [
+    "ml-evaluation-leakage"
+  ],
+  "prerequisiteNotes": "Bring held-out evaluation, confusion-matrix reasoning, and arithmetic with squares. Log loss is introduced with a supplied natural-log value.",
+  "objectives": [
+    "Select regression or classification from the target and intended decision.",
+    "Calculate MAE, MSE, and RMSE with meaningful units.",
+    "Interpret a logistic probability, binary log loss, and a decision threshold separately."
+  ],
+  "concepts": [
+    {
+      "title": "The target determines the question",
+      "body": "Regression predicts quantities such as resolution hours; classification predicts categories such as seven-day escalation. Expected resolution time does not directly give the probability of exceeding a deadline; uncertainty matters too. Start with a training-fitted baseline: a constant mean for squared error, median for absolute error, or prevalence for probability prediction. Evaluate it using the same split and information contract as complex models."
+    },
+    {
+      "title": "A loss encodes how mistakes grow",
+      "body": "MAE averages absolute residuals, preserving target units. MSE averages squared residuals, emphasizing large misses and producing squared units. RMSE takes the square root of MSE, returning to target units but differing from MAE. For actual times 2, 4, 8 and predictions 3, 5, 6 hours, prediction-minus-actual residuals are 1, 1, -2 hours. MAE is 4/3 hours, MSE is 2 hours squared, and RMSE is sqrt(2) hours."
+    },
+    {
+      "title": "Linear scores and logistic probabilities",
+      "body": "Linear regression combines weighted features and an intercept. Binary logistic regression transforms that score with sigmoid: p = 1 / (1 + exp(-score)). Score zero gives probability 0.5. Probabilities are dimensionless estimates, not individual certainties. Binary log loss is -log(p) for label one and -log(1-p) for label zero, using natural logarithms. Confident mistakes receive large penalties; thresholded accuracy discards this confidence information."
+    },
+    {
+      "title": "An estimate is not an intervention",
+      "body": "A 0.7 escalation probability does not prescribe an action: capacity, error costs, and safeguards matter. Log loss evaluates probabilities; precision and recall evaluate decisions. Calibration asks whether comparable events assigned probabilities near 0.7 occur roughly 70% of the time. Useful ranking need not imply good calibration, but probability-based expected costs require it. Check representative held-out data and avoid interpreting observational weights as causal effects."
+    }
+  ],
+  "example": "Regression: actual = [2, 4, 8] hours; predicted = [3, 5, 6] hours.\nResiduals = [1, 1, -2] hours.\nMAE = (1 + 1 + 2) / 3 = 4/3 hours.\nMSE = (1 + 1 + 4) / 3 = 2 hours squared.\nRMSE = sqrt(2) = 1.414214 hours.\nBinary classification: a positive label assigned p = 0.8 has log loss -ln(0.8) = 0.223144.\nA negative label assigned p = 0.8 has log loss -ln(0.2) = 1.609438.\nAt threshold 0.5, both probabilities trigger the positive action; their losses depend on the observed label.",
+  "task": "A support team wants estimated resolution hours and a queue of tickets likely to escalate. Explain why these are different targets. Work the regression metrics in the example, compare the two binary losses, and propose one training-only baseline for each target. Describe which held-out metrics would support a limited-capacity review queue and what cannot be concluded from a probability of 0.8 alone.",
+  "starter": "residual = predicted_hours - actual_hours\nmae = mean(abs(residual))\nmse = mean(residual * residual)\nrmse = sqrt(mse)\naction = escalation_probability >= chosen_threshold",
+  "hints": [
+    "Check units after each operation; squaring an hour error changes its units.",
+    "Probability quality and queue quality are related but not interchangeable evaluations."
+  ],
+  "solution": "Resolution hours require regression; seven-day escalation requires binary classification. Absolute residuals total 4 hours and squared residuals total 6 hours squared, yielding MAE 4/3, MSE 2, and RMSE sqrt(2) in their respective units. At p = 0.8 the losses are 0.223144 for a positive and 1.609438 for a negative. Fit training-mean and training-prevalence baselines, respectively. Evaluate on the same later window, reporting precision and recall under capacity plus calibration when probabilities guide costs. Probability alone justifies neither calibration nor intervention.",
+  "checklist": [
+    "I distinguish resolution-time regression from escalation classification.",
+    "I compute the three regression metrics and retain their units.",
+    "I distinguish probability loss from threshold-dependent queue metrics.",
+    "I fit baselines on training only."
+  ],
+  "pitfalls": [
+    "MSE and RMSE cannot be compared numerically as though they share units.",
+    "A low training loss does not establish performance on future tickets.",
+    "A score labeled probability is not automatically calibrated.",
+    "Linear model weights describe associations, not intervention effects."
+  ],
+  "walkthrough": [
+    {
+      "title": "Check the baseline on the same cases",
+      "body": "A frozen training mean of 4 hours gives absolute errors 2, 0, and 4 hours on these cases: MAE 2 hours. The candidate improves to 4/3 hours. Three cases demonstrate arithmetic, not statistical confidence or future superiority."
+    },
+    {
+      "title": "Choose reporting for the actual user",
+      "body": "Report time errors in hours, including tail errors, and escalation counts within staffing limits. Include review volume, precision, and recall. If severe delays have disproportionate consequences, consider a tailored loss or quantile prediction rather than assuming average error captures business cost."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "One large regression miss",
+      "prompt": "Two predictions have residuals 0 and 4 hours. Compute MAE and RMSE and explain which is larger.",
+      "hints": [
+        "Average absolute residuals for MAE.",
+        "Take the square root after averaging squared residuals."
+      ],
+      "solution": "MAE is 2 hours. MSE is 8 hours squared and RMSE is sqrt(8), about 2.828 hours. RMSE is larger because squaring gives the large miss extra influence before returning to hours.",
+      "checklist": [
+        "I obtain MAE 2 hours and RMSE about 2.828 hours.",
+        "I explain the order of operations."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Same actions, different probabilities",
+      "prompt": "Two true labels are [1, 0]. Model A predicts [0.6, 0.4]; model B predicts [0.9, 0.1]. Compare their threshold-0.5 accuracy and mean log loss. What changes if B becomes overconfident on future errors?",
+      "hints": [
+        "Both models choose the same two classes.",
+        "For each model the probability assigned to the correct label is the same across these two cases."
+      ],
+      "solution": "Both achieve 100% accuracy on these two cases. A has mean log loss -ln(0.6), about 0.510826; B has -ln(0.9), about 0.105361. B assigns more probability to the observed outcomes here. Future confident mistakes could reverse the loss advantage, so evaluate representative held-out cases and calibration rather than generalizing from two successes.",
+      "checklist": [
+        "I separate identical accuracy from different log losses.",
+        "I limit the conclusion to the evaluated cases."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why might median prediction beat mean prediction on MAE?",
+      "answer": "A median minimizes total absolute error for a constant predictor on the fitting sample; the mean minimizes squared error. Held-out performance still depends on how representative training was."
+    },
+    {
+      "question": "Does lower log loss guarantee higher recall at our capacity?",
+      "answer": "No. Average probability quality and the ordering near a specific review cutoff are different properties; evaluate the chosen capacity-constrained policy directly."
+    }
+  ],
+  "takeaways": [
+    "Choose the target before choosing a model.",
+    "Carry units and aggregation conventions through every metric.",
+    "Separate probability estimation, threshold choice, and operational value."
+  ]
+}
