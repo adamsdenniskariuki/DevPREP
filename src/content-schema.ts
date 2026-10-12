@@ -140,6 +140,34 @@ export function validateTrack(value: unknown, where = 'track'): string[] {
   return check.errors
 }
 
+export const CARD_FRONT_MAX = 200
+export const CARD_BACK_MAX = 600
+
+/** Validates a content/flashcards/<track>.json deck. Card ids must start with the track prefix. */
+export function validateDeck(value: unknown, where = 'deck'): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', ['track', 'title', 'cards'])
+  if (!TRACK_IDS.includes(value.track as Track)) check.fail('track', 'unknown track')
+  check.text(value.title, 'title')
+  if (!Array.isArray(value.cards) || value.cards.length < 10) { check.fail('cards', 'expected at least 10 cards'); return check.errors }
+  const ids = new Set<string>()
+  value.cards.forEach((card, index) => {
+    const path = `cards[${index}]`
+    if (!isRec(card)) return check.fail(path, 'expected object')
+    check.keys(card, path, ['id', 'front', 'back', 'level'])
+    if (typeof card.id !== 'string' || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(card.id) || !card.id.startsWith(`${String(value.track)}-`)) check.fail(`${path}.id`, 'expected kebab-case id starting with the track id')
+    else if (ids.has(card.id)) check.fail(`${path}.id`, 'duplicate card id')
+    else ids.add(card.id)
+    check.text(card.front, `${path}.front`)
+    check.text(card.back, `${path}.back`)
+    if (typeof card.front === 'string' && card.front.length > CARD_FRONT_MAX) check.fail(`${path}.front`, `longer than ${CARD_FRONT_MAX} characters`)
+    if (typeof card.back === 'string' && card.back.length > CARD_BACK_MAX) check.fail(`${path}.back`, `longer than ${CARD_BACK_MAX} characters`)
+    if (card.level !== 'se' && card.level !== 'sse') check.fail(`${path}.level`, 'expected "se" or "sse"')
+  })
+  return check.errors
+}
+
 const CASE_REQUIRED = ['id', 'title', 'level', 'minutes', 'summary', 'prompt', 'lessons', 'steps', 'diagram', 'rubric']
 export const DIAGRAM_COLS = 6
 export const DIAGRAM_ROWS = 5

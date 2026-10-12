@@ -6,9 +6,11 @@ import type { Activity, Progress } from './progress'
 import { caseIndex } from './cases'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
+/** A mock interview score at or above this percentage earns the strong-mock bonus. */
+export const STRONG_MOCK = 80
 export const LEVEL_XP = 200
 export const FREEZE_EVERY = 7
 export const MAX_FREEZES = 2
@@ -28,6 +30,15 @@ export function solveXp(progress: Pick<Progress, 'solved'>): number {
 /** XP from scored case studies: each scored case earns XP once, plus a bonus once its best reaches 80%. */
 export function designXp(progress: Pick<Progress, 'designs'>): number {
   return Object.values(progress.designs ?? {}).reduce((sum, score) => sum + XP_RULES.design + (score.best >= STRONG_DESIGN ? XP_RULES.designStrong : 0), 0)
+}
+
+/** XP from flashcards: each review counts, so XP grows with practice rather than with cards seen. */
+export function cardXp(progress: Pick<Progress, 'cards'>): number {
+  return Object.values(progress.cards ?? {}).reduce((sum, card) => sum + card.reviews * XP_RULES.card, 0)
+}
+
+export function mockXp(progress: Pick<Progress, 'mocks'>): number {
+  return (progress.mocks ?? []).reduce((sum, mock) => sum + XP_RULES.mock + (mock.percent >= STRONG_MOCK ? XP_RULES.mockStrong : 0), 0)
 }
 
 function dayNumber(day: string): number {
@@ -91,12 +102,15 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
   const designs = Object.entries(progress.designs ?? {})
   const designDays = designs.map(([, score]) => localDay(new Date(score.at)))
-  const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays], localDay(now))
+  const cards = Object.values(progress.cards ?? {})
+  const mocks = progress.mocks ?? []
+  const practiceDays = [...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
+  const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
   const confident = progress.activity.filter(item => item.rating === 'confident').length
@@ -113,6 +127,12 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'first-design', title: 'Architect', description: 'Score your first system design case.', earned: designs.length >= 1 },
     { id: 'designs-10', title: 'Blueprint pro', description: 'Score 10 system design cases.', earned: designs.length >= 10 },
     { id: 'senior-design', title: 'Staff-ready', description: `Score ${STRONG_DESIGN}% or more on an SSE case.`, earned: designs.some(([id, score]) => score.best >= STRONG_DESIGN && caseIndex.find(item => item.id === id)?.level === 'sse') },
+    { id: 'first-cards', title: 'Card shark', description: 'Review your first flashcard.', earned: cards.length >= 1 },
+    { id: 'cards-mastered-50', title: 'Long-term memory', description: 'Move 50 flashcards to a two-week interval or longer.', earned: cards.filter(card => card.box >= 4).length >= 50 },
+    { id: 'first-mock', title: 'Under the clock', description: 'Finish a mock interview.', earned: mocks.length >= 1 },
+    { id: 'mocks-5', title: 'Interview-ready', description: 'Finish 5 mock interviews.', earned: mocks.length >= 5 },
+    { id: 'mock-every-track', title: 'All-rounder', description: 'Finish a mock interview in every track.', earned: tracks.every(track => mocks.some(mock => mock.track === track.id)) },
+    { id: 'story-bank', title: 'Storyteller', description: 'Write 5 behavioral stories.', earned: (progress.stories ?? []).length >= 5 },
     { id: 'streak-3', title: 'Warming up', description: 'Reach a 3-day streak.', earned: streak.best >= 3 },
     { id: 'streak-7', title: 'Full week', description: 'Reach a 7-day streak.', earned: streak.best >= 7 },
     { id: 'streak-30', title: 'Habit formed', description: 'Reach a 30-day streak.', earned: streak.best >= 30 },

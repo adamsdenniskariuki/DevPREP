@@ -3,9 +3,10 @@ import type { Lesson, Track } from './curriculum'
 import type { GameStats, WeakArea } from './gamification'
 import type { LearningPath, PathId } from './learning-paths'
 import type { CodeLanguage } from './problem-types'
-import type { Activity, Mode, Profile, Progress } from './progress'
+import type { Activity, MockResult, Mode, Profile, Progress, Story } from './progress'
+import type { Grade } from './flashcards'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -41,6 +42,13 @@ export interface AppModel {
   solveProblem: (problemId: string, lang: CodeLanguage) => number
   /** Saves a self-scored case study and returns the XP it added (0 if the best score did not improve the total). */
   scoreDesign: (caseId: string, percent: number) => number
+  /** Grades a flashcard and returns the XP it earned. */
+  gradeCard: (cardId: string, grade: Grade) => number
+  /** Saves a finished mock interview and returns the XP it earned. */
+  finishMock: (result: Omit<MockResult, 'at'>) => number
+  /** Adds or updates a story. Returns an error message, or an empty string on success. */
+  saveStory: (story: Omit<Story, 'updatedAt'>) => string
+  deleteStory: (id: string) => void
   tourOpen: boolean
   closeTour: () => void
   replayTour: () => void

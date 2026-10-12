@@ -1,0 +1,222 @@
+{
+  "track": "dsa",
+  "title": "DSA essentials",
+  "cards": [
+    {
+      "id": "dsa-hash-map-ops",
+      "front": "What are the average and worst-case costs of insert, lookup, and delete in a hash map?",
+      "back": "Average O(1) per operation with a good hash and bounded load factor. Worst case is O(n) when many keys collide into one bucket (Java 8+ treeified buckets cap this at O(log n)).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-heap-ops",
+      "front": "What do push, pop, and peek cost on a binary heap, and how fast can you build one from n items?",
+      "back": "Push and pop are O(log n) because an element sifts along one root-to-leaf path; peek at the min/max is O(1). Bottom-up heapify builds a heap from n items in O(n), not O(n log n).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-bst-balanced-vs-skewed",
+      "front": "How does search time in a BST depend on its shape?",
+      "back": "Search, insert, and delete are O(h) where h is the height. A balanced tree (AVL, red-black) keeps h = O(log n); inserting sorted keys into a plain BST yields a skewed chain with h = O(n).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-sorting-lower-bound",
+      "front": "Why can no comparison-based sort beat n log n in the worst case?",
+      "back": "A comparison sort is a binary decision tree that must distinguish all n! orderings, so its depth is at least log2(n!) = Omega(n log n). Counting, radix, and bucket sort escape this bound by exploiting key structure instead of comparisons.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-bfs-dfs-complexity",
+      "front": "What is the time and space complexity of BFS or DFS on a graph stored as an adjacency list?",
+      "back": "O(V + E) time, since each vertex is dequeued or visited once and each edge is scanned once (twice if undirected). Extra space is O(V) for the visited set plus the queue or stack.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-dijkstra-complexity",
+      "front": "What is the running time of Dijkstra with a binary heap, and what precondition must hold?",
+      "back": "O((V + E) log V): every vertex is popped once and every edge relaxation may push or decrease-key at O(log V). Edge weights must be non-negative; with negative edges use Bellman-Ford.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-union-find",
+      "front": "What makes union-find nearly constant time per operation?",
+      "back": "Path compression flattens trees during find, and union by rank or size attaches the shorter tree under the taller one. Together they give amortized O(alpha(n)) per operation, where alpha is the inverse Ackermann function, effectively <= 4 for any practical n.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-dynamic-array-amortized",
+      "front": "Why is append to a dynamic array O(1) amortized even though resizing copies everything?",
+      "back": "Capacity grows geometrically (for example doubling), so total copy work over n appends is n + n/2 + n/4 + ... < 2n. Spread over n operations that is O(1) each, although an individual append that triggers a resize costs O(n).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-two-pointers",
+      "front": "When is the two-pointer technique a good fit?",
+      "back": "When the input is sorted or has a monotonic property so that moving one pointer provably discards candidates, e.g. pair sums in a sorted array, merging, partitioning, or removing duplicates in place. It usually turns an O(n^2) pair scan into O(n).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-sliding-window",
+      "front": "What signals that a problem calls for a sliding window?",
+      "back": "You need the best or count of contiguous subarrays/substrings and the window validity changes monotonically as you extend the right end and shrink the left. Each index enters and leaves once, giving O(n); it breaks down with negative numbers in sum constraints.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-monotonic-stack",
+      "front": "What problems does a monotonic stack solve, and why is it linear?",
+      "back": "Next/previous greater or smaller element, stock span, largest rectangle in a histogram, and similar nearest-boundary queries. Each index is pushed and popped at most once, so the whole pass is O(n).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-binary-search-on-answer",
+      "front": "What is binary search on the answer, and what property does it require?",
+      "back": "Instead of searching an array, you search the range of possible answers and test each candidate with a feasibility check. It requires monotonicity: if value x is feasible then every larger (or smaller) value is too. Cost is O(log(range) * check).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-topological-sort",
+      "front": "How do you produce a topological order, and how do you detect a cycle?",
+      "back": "Kahn's algorithm repeatedly removes zero in-degree nodes with a queue; if fewer than V nodes are emitted, a cycle exists. Alternatively, DFS post-order reversed gives an order, and meeting a node that is still on the recursion stack signals a cycle. Both are O(V + E).",
+      "level": "se"
+    },
+    {
+      "id": "dsa-backtracking",
+      "front": "When do you reach for backtracking, and how do you keep it tractable?",
+      "back": "When you must enumerate or search combinatorial choices (subsets, permutations, N-queens, constraint puzzles). Build a partial solution, recurse, then undo the choice; prune early with constraint checks, sorting, or bounds since worst case is exponential.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-dp-state-design",
+      "front": "How do you design the state for a dynamic programming solution?",
+      "back": "Pick the smallest set of parameters that fully determines the remaining subproblem (index, remaining capacity, last choice, bitmask...). Write the transition, base cases, and evaluation order; time is roughly number of states * transition cost.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-greedy-exchange",
+      "front": "How do you justify that a greedy algorithm is correct?",
+      "back": "Use an exchange argument: take any optimal solution, show you can swap its first differing choice for the greedy choice without making it worse, and repeat. If no such argument holds, a counterexample usually exists and DP is needed.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-intervals-sort",
+      "front": "What is the standard first step for merging or scheduling intervals?",
+      "back": "Sort by start time, then sweep while tracking the current end to merge overlaps in O(n log n). For maximum non-overlapping intervals sort by end time instead; for minimum rooms use a min-heap of end times or a sweep over start/end events.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-bit-clear-lowest",
+      "front": "What does x & (x - 1) compute, and what is it used for?",
+      "back": "It clears the lowest set bit of x. It tests powers of two (x > 0 and x & (x - 1) == 0) and counts set bits in O(number of ones) by looping until x becomes 0. Related: x & -x isolates the lowest set bit.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-xor-tricks",
+      "front": "Which XOR property finds the single non-duplicated number in an array where every other value appears twice?",
+      "back": "XOR is associative and commutative, a ^ a = 0, and a ^ 0 = a, so XOR-ing all elements cancels pairs and leaves the unique value. O(n) time and O(1) space.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-recursion-stack-space",
+      "front": "How much space does a recursive algorithm use even without explicit data structures?",
+      "back": "O(maximum recursion depth) for call frames. Balanced divide and conquer uses O(log n), but recursion on a linked list or skewed tree uses O(n) and can overflow the stack, so convert to iteration with an explicit stack when depth is large.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-quickselect",
+      "front": "What are the complexities of quickselect for finding the k-th smallest element?",
+      "back": "Average O(n) because each partition discards a constant fraction in expectation; worst case O(n^2) with consistently bad pivots. Random pivots make the worst case unlikely, and median-of-medians guarantees O(n) with a larger constant.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-top-k-heap",
+      "front": "How do you find the k largest elements of a stream of n items efficiently?",
+      "back": "Maintain a min-heap of size k: push each item and pop when size exceeds k, leaving the k largest. Time O(n log k), space O(k), which beats sorting when k is much smaller than n.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-loop-invariant",
+      "front": "What is a loop invariant and why does it matter in interviews?",
+      "back": "A condition true before and after every iteration (e.g. 'everything left of lo is < target'). Stating it makes boundary handling in binary search, partitioning, and sliding windows correct by construction and is a strong signal of rigor.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-binary-search-bounds",
+      "front": "What is a reliable template for binary search to avoid off-by-one bugs?",
+      "back": "Search a half-open range [lo, hi) for the first index where a predicate becomes true: while lo < hi, mid = lo + (hi - lo) / 2; if pred(mid) set hi = mid else lo = mid + 1. On exit lo is the answer (or hi if none), and the midpoint formula avoids overflow.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-prefix-sums",
+      "front": "How do prefix sums speed up range queries, and how do they combine with a hash map?",
+      "back": "Precompute P[i] = sum of first i elements so any range sum is P[r] - P[l] in O(1). Storing counts of seen prefix sums in a hash map counts subarrays summing to k in O(n), and it works with negative numbers where sliding windows fail.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-trie",
+      "front": "When is a trie preferable to a hash set of strings?",
+      "back": "When you need prefix queries: autocomplete, startsWith, longest common prefix, or word search on a grid with pruning. Operations are O(L) in key length, at the cost of higher memory from per-node child maps.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-graph-representation",
+      "front": "Adjacency list vs adjacency matrix: when do you pick each?",
+      "back": "Lists use O(V + E) space and suit sparse graphs and traversal; matrices use O(V^2) space but give O(1) edge lookup and suit dense graphs or algorithms like Floyd-Warshall.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-shortest-path-choice",
+      "front": "Which shortest-path algorithm fits unweighted, 0/1-weighted, non-negative, and negative-weight graphs?",
+      "back": "Unweighted: BFS O(V + E). 0/1 weights: deque-based 0-1 BFS O(V + E). Non-negative: Dijkstra. Negative edges: Bellman-Ford O(V * E), which also detects negative cycles. All pairs on small graphs: Floyd-Warshall O(V^3).",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-mst",
+      "front": "How do Kruskal and Prim build a minimum spanning tree and what do they cost?",
+      "back": "Kruskal sorts edges and adds the cheapest that joins two components using union-find, O(E log E). Prim grows one tree from a start node using a min-heap of crossing edges, O(E log V). Both rely on the cut property.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-lru-cache-design",
+      "front": "How do you implement an LRU cache with O(1) get and put?",
+      "back": "Combine a hash map from key to node with a doubly linked list ordered by recency. On access move the node to the front; on overflow evict the tail node and delete its key from the map.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-dp-memo-vs-tab",
+      "front": "Top-down memoization vs bottom-up tabulation: what are the trade-offs?",
+      "back": "Memoization is easier to derive and only computes reachable states but costs recursion overhead and stack depth. Tabulation needs an explicit evaluation order but avoids stack limits and often allows rolling arrays to cut space, e.g. O(n * W) to O(W) in knapsack.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-master-theorem",
+      "front": "What does T(n) = 2T(n/2) + O(n) solve to, and what common algorithm has it?",
+      "back": "O(n log n): there are log n levels and each does O(n) total work. Merge sort is the classic example; T(n) = T(n/2) + O(1) gives O(log n) as in binary search.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-cycle-detection-linked-list",
+      "front": "How do you detect a cycle in a linked list in O(1) extra space and find where it starts?",
+      "back": "Floyd's tortoise and hare: a slow pointer moves 1 step and a fast pointer 2; they meet iff there is a cycle. Then reset one pointer to the head and advance both 1 step at a time; they meet at the cycle entry.",
+      "level": "se"
+    },
+    {
+      "id": "dsa-amortized-vs-average",
+      "front": "What is the difference between amortized and average-case complexity?",
+      "back": "Amortized bounds the total cost of any sequence of operations, so it is a worst-case guarantee spread over the sequence. Average case is an expectation over random inputs or random choices and can still be bad for an unlucky single run.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-complexity-tradeoff-discussion",
+      "front": "In an interview, how should you present time vs space trade-offs between candidate solutions?",
+      "back": "State the brute force and its cost, then each improvement with its time, space, and assumptions (sorted input, value range, mutability). Pick one with a reason tied to constraints like n up to 1e5 implying roughly O(n log n) or better.",
+      "level": "sse"
+    },
+    {
+      "id": "dsa-input-size-heuristic",
+      "front": "What input sizes roughly correspond to which feasible complexities?",
+      "back": "Around 1e8 simple operations per second is a rough budget: n ~ 10-12 allows O(n!), n ~ 20-25 allows O(2^n), n ~ 500 allows O(n^3), n ~ 5000 allows O(n^2), and n ~ 1e5 to 1e6 needs O(n log n) or O(n).",
+      "level": "sse"
+    }
+  ]
+}
