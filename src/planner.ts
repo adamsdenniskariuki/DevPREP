@@ -1,7 +1,7 @@
 import { lessons } from './curriculum'
 import type { Track } from './curriculum-types'
 import { caseIndex } from './cases'
-import { problemIndex } from './problems'
+import { isPathCore, patternProgress, problemIndex } from './problems'
 import { weakAreas } from './gamification'
 import { getLearningPath, pathLessonIds } from './learning-paths'
 import type { Progress } from './progress'
@@ -55,6 +55,25 @@ export function lessonQueue(progress: Progress): string[] {
   return order
 }
 
+const DIFFICULTY_ORDER = { 'warm-up': 0, core: 1, stretch: 2 } as const
+
+/**
+ * Unsolved problems in plan order: core problems on the chosen path first, then patterns with the
+ * lowest share solved (weak areas), then easier problems first. SSE-only problems need the senior path.
+ */
+export function problemQueue(progress: Progress) {
+  const path = progress.selectedPath
+  const share = new Map(patternProgress(progress).map(row => [row.pattern, row.solved / row.total]))
+  return problemIndex
+    .filter(problem => !progress.solved?.[problem.id] && (path === 'senior' || problem.level === 'se'))
+    .map((problem, order) => ({ problem, order }))
+    .sort((a, b) => Number(isPathCore(b.problem, path)) - Number(isPathCore(a.problem, path))
+      || share.get(a.problem.pattern)! - share.get(b.problem.pattern)!
+      || DIFFICULTY_ORDER[a.problem.difficulty] - DIFFICULTY_ORDER[b.problem.difficulty]
+      || a.order - b.order)
+    .map(item => item.problem)
+}
+
 /**
  * Builds a day-by-day plan from today until the interview (or a default week).
  * Every day has flashcards; lessons are spread evenly (up to 3 a day); coding problems and
@@ -72,7 +91,7 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
   const perDay = Math.min(MAX_LESSONS_PER_DAY, Math.max(1, Math.ceil(queue.length / studyDays)))
   const lessonById = new Map(lessons.map(lesson => [lesson.id, lesson]))
   const senior = progress.selectedPath === 'senior'
-  const problems = problemIndex.filter(problem => !progress.solved?.[problem.id] && (senior || problem.level === 'se'))
+  const problems = problemQueue(progress)
   const cases = caseIndex.filter(item => !progress.designs?.[item.id]).sort((a, b) => Number(senior ? b.level === 'sse' : a.level === 'sse') - Number(senior ? a.level === 'sse' : b.level === 'sse'))
   const mockTracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
   let lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0

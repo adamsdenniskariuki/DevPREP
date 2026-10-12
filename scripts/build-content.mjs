@@ -36,7 +36,7 @@ export function buildProblems(root = 'content') {
     return read(join(dir, `${id}.json`))
   })
   if (files.size) throw new Error(`content/problems has problems not listed in index.json: ${[...files].join(', ')}`)
-  const index = problems.map(({ id, title, pattern, level, difficulty, lessonId }) => ({ id, title, pattern, level, difficulty, ...(lessonId ? { lessonId } : {}) }))
+  const index = problems.map(({ id, title, pattern, level, difficulty, lessonId, paths }) => ({ id, title, pattern, level, difficulty, ...(lessonId ? { lessonId } : {}), ...(paths ? { paths } : {}) }))
   return { problems, index }
 }
 
@@ -56,6 +56,25 @@ export function buildCases(root = 'content') {
   return { cases, index }
 }
 
+/** First sentence of a prompt, so a card can recall a problem without its full statement. */
+export function firstSentence(text) {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const match = /^.*?[.?!](?=\s|$)/.exec(flat)
+  return match ? match[0] : flat
+}
+
+/** One recall card per runnable problem: spot the pattern, the key idea and the target complexity. */
+export function problemCard(problem) {
+  const question = `${problem.title}: which pattern fits, and what is the target cost?`
+  const front = `${question} ${firstSentence(problem.prompt)}`
+  return {
+    id: `dsa-p-${problem.id}`,
+    front: front.length <= 200 ? front : question,
+    back: `${problem.pattern}. ${problem.hints.at(-1)} Time ${problem.complexity.time}, space ${problem.complexity.space}.`,
+    level: problem.level,
+  }
+}
+
 export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
@@ -67,6 +86,8 @@ export function buildFlashcards(root = 'content') {
     return read(join(dir, `${id}.json`))
   })
   if (files.size) throw new Error(`content/flashcards has decks for unknown tracks: ${[...files].join(', ')}`)
+  const dsa = decks.find(deck => deck.track === 'dsa')
+  dsa.cards = [...dsa.cards, ...buildProblems(root).problems.map(problemCard)]
   const index = decks.map(deck => ({ track: deck.track, title: deck.title, cards: deck.cards.map(card => card.id) }))
   return { decks, index }
 }

@@ -3,10 +3,12 @@ import knownCards from '../tests/fixtures/card-ids.json' with { type: 'json' }
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import { BOX_DAYS, cardIds, deckIndex, dueCount, gradeCard, loadDecks, masteredCount, sessionQueue } from './flashcards'
 import { buildMock, mockScore, MOCK_MINUTES, seeded } from './mocks'
-import { lessonQueue, planStudy, MAX_LESSONS_PER_DAY } from './planner'
+import { lessonQueue, planStudy, problemQueue, MAX_LESSONS_PER_DAY } from './planner'
 import { deleteStory, emptyProgress, parseBackup, recordCard, recordMock, saveStory, serializeBackup, MAX_STORIES } from './progress'
 import { gameStats, cardXp, mockXp } from './gamification'
-import { loadProblems } from './problems'
+import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from './problems'
+import { PROBLEM_PATTERNS } from './problem-types'
+import { recordSolve } from './progress'
 import { loadCases } from './cases'
 import { lessons, tracks } from './curriculum'
 import { selectPath } from './learning-paths'
@@ -203,5 +205,45 @@ describe('study planner', () => {
 
   it('caps very distant interviews at 90 days', () => {
     expect(planStudy({ ...emptyProgress(now), profile: { interviewDate: '2026-12-01' } }, today).days).toHaveLength(90)
+  })
+})
+
+describe('problem patterns', () => {
+  const now = new Date(2025, 2, 10, 12)
+  it('lists patterns in canonical order with per-pattern totals', () => {
+    expect(problemPatterns()).toEqual(PROBLEM_PATTERNS.filter(pattern => problemIndex.some(problem => problem.pattern === pattern)))
+    const rows = patternProgress(emptyProgress(now))
+    expect(rows.reduce((sum, row) => sum + row.total, 0)).toBe(problemIndex.length)
+    const first = problemIndex[0]
+    const solved = patternProgress(recordSolve(emptyProgress(now), first.id, 'py', now)).find(row => row.pattern === first.pattern)
+    expect(solved?.solved).toBe(1)
+  })
+
+  it('queues unsolved problems with path-core problems first and hides SSE-only problems from the SE path', () => {
+    for (const path of ['swe', 'senior'] as const) {
+      const progress = selectPath(emptyProgress(now), path)
+      const queue = problemQueue(progress)
+      if (path === 'swe') expect(queue.every(problem => problem.level === 'se')).toBe(true)
+      const core = queue.filter(problem => isPathCore(problem, path))
+      expect(queue.slice(0, core.length)).toEqual(core)
+    }
+    const first = problemQueue(emptyProgress(now))[0]
+    expect(problemQueue(recordSolve(emptyProgress(now), first.id, 'js', now))).not.toContainEqual(first)
+  })
+
+  it('prefers the least-practised pattern once core problems are equal', () => {
+    const progress = recordSolve(emptyProgress(now), problemIndex[0].id, 'js', now)
+    const queue = problemQueue(progress).filter(problem => !isPathCore(problem, undefined))
+    expect(queue[0].pattern).not.toBe(problemIndex[0].pattern)
+  })
+
+  it('awards a badge for clearing a pattern', () => {
+    let progress = emptyProgress(now)
+    const pattern = problemIndex[0].pattern
+    const badgeId = (p: typeof progress) => gameStats(p, now).badges.find(badge => badge.id === 'pattern-arrays-and-hashing')?.earned
+    expect(badgeId(progress)).toBe(false)
+    for (const problem of problemIndex.filter(item => item.pattern === pattern)) progress = recordSolve(progress, problem.id, 'js', now)
+    expect(badgeId(progress)).toBe(true)
+    expect(gameStats(progress, now).badges.find(badge => badge.id === 'all-patterns')?.earned).toBe(false)
   })
 })

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 const PROGRESS_KEY = 'devprep.progress.v1'
 const DRAFTS_KEY = 'devprep.code.v1'
 const problem = JSON.parse(readFileSync(new URL('../content/problems/count-pair-sums.json', import.meta.url), 'utf8'))
+const index: { id: string; title: string; pattern: string; difficulty: string; level: string; paths?: string[] }[] = JSON.parse(readFileSync(new URL('../src/generated/problem-index.json', import.meta.url), 'utf8'))
 
 async function openProblem(page: Page) {
   await page.goto('./#practice')
@@ -37,9 +38,36 @@ test('a JavaScript solve passes visible and hidden tests, earns XP once and is s
   await page.getByRole('button', { name: 'Run tests' }).click()
   await expect(results.locator('.run-summary')).toHaveText(/^All \d+ tests passed\.$/)
   await page.getByRole('link', { name: /All problems/ }).click()
-  await expect(page.locator('.page-heading .pill')).toHaveText(`1 of 32 solved`)
+  await expect(page.locator('.page-heading .pill')).toHaveText(`1 of ${index.length} solved`)
+  await expect(page.getByRole('combobox', { name: 'Pattern' }).locator('option', { hasText: `${problem.pattern} (1/` })).toHaveCount(1)
   await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
   await expect(page.getByText('Green tests')).toBeVisible()
+  const patternTotal = index.filter(item => item.pattern === problem.pattern).length
+  await expect(page.getByRole('progressbar', { name: `${problem.pattern} problems solved` })).toHaveJSProperty('value', 1)
+  await expect(page.getByRole('progressbar', { name: `${problem.pattern} problems solved` })).toHaveJSProperty('max', patternTotal)
+})
+
+test('the problem list filters by pattern, difficulty and path-core problems', async ({ page }) => {
+  await page.goto('./#code')
+  const rows = page.locator('.code-row')
+  await expect(rows).toHaveCount(index.length)
+  const pattern = index[index.length - 1].pattern
+  await page.getByRole('combobox', { name: 'Pattern' }).selectOption(pattern)
+  await expect(rows).toHaveCount(index.filter(item => item.pattern === pattern).length)
+  await expect(page.locator('.code-group h2')).toHaveText([pattern])
+  await page.getByRole('combobox', { name: 'Pattern' }).selectOption('all')
+  await page.getByRole('radio', { name: 'Hard' }).check()
+  await expect(rows).toHaveCount(index.filter(item => item.difficulty === 'stretch').length)
+  await page.getByRole('radio', { name: 'All', exact: true }).first().check()
+  await expect(page.getByRole('checkbox', { name: /core only/ })).toHaveCount(0)
+  await page.goto('./#settings')
+  await page.getByLabel('Target role').selectOption('swe')
+  await page.goto('./#code')
+  const core = index.filter(item => item.paths?.includes('swe'))
+  await expect(page.locator('.pill.core')).toHaveCount(core.length)
+  await page.getByRole('checkbox', { name: 'SE core only' }).check()
+  await expect(rows).toHaveCount(core.length)
+  if (!core.length) await expect(page.getByText('No problems match these filters.')).toBeVisible()
 })
 
 test('drafts survive a reload, reset asks first, and the language toggle keeps each draft', async ({ page }) => {
