@@ -56,6 +56,21 @@ export function buildCases(root = 'content') {
   return { cases, index }
 }
 
+export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
+export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
+
+export function buildFlashcards(root = 'content') {
+  const dir = join(root, 'flashcards')
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json')))
+  const decks = TRACK_ORDER.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/flashcards/${id}.json is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/flashcards has decks for unknown tracks: ${[...files].join(', ')}`)
+  const index = decks.map(deck => ({ track: deck.track, title: deck.title, cards: deck.cards.map(card => card.id) }))
+  return { decks, index }
+}
+
 function writeIfChanged(path, value) {
   const text = JSON.stringify(value) + '\n'
   if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
@@ -72,4 +87,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const designs = buildCases()
   writeIfChanged(CASES_OUTPUT, designs.cases)
   writeIfChanged(CASE_INDEX_OUTPUT, designs.index)
+  const cards = buildFlashcards()
+  writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
+  writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)
 }

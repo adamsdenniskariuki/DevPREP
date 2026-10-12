@@ -1,0 +1,122 @@
+import { expect, test } from '@playwright/test'
+
+const PROGRESS_KEY = 'devprep.progress.v1'
+const saved = (page: import('@playwright/test').Page) => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}'), PROGRESS_KEY)
+
+test('flashcards: reveal, grade, re-queue Again and schedule the rest', async ({ page }) => {
+  await page.goto('./#practice')
+  await page.getByRole('link', { name: /Flashcards/ }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Flashcards' })).toBeFocused()
+  await page.getByRole('radio', { name: 'Behavioral' }).check()
+  await page.getByRole('button', { name: 'Learn new cards' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Card 1 of 10' })).toBeVisible()
+  await page.getByRole('button', { name: 'Show answer' }).click()
+  await expect(page.getByRole('group', { name: 'How well did you recall it?' })).toBeVisible()
+  await page.keyboard.press('3')
+  await expect(page.getByRole('heading', { level: 1, name: 'Card 2 of 10' })).toBeVisible()
+  await page.getByRole('button', { name: 'Show answer' }).click()
+  await page.getByRole('button', { name: /^Again/ }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Card 3 of 11' })).toBeVisible()
+  const progress = await saved(page)
+  const cards = Object.values(progress.cards) as { box: number }[]
+  expect(cards.map(card => card.box).sort()).toEqual([0, 1])
+  await page.goto('./#cards')
+  await page.reload()
+  await expect(page.getByRole('heading', { level: 1, name: 'Flashcards' })).toBeFocused()
+  await expect(page.locator('.page-heading .pill')).toHaveText('1 due')
+})
+
+test('mock interview: timed answers survive a reload, then rubric scoring saves XP', async ({ page }) => {
+  await page.goto('./#mock')
+  await expect(page.getByRole('heading', { level: 1, name: 'Mock interviews' })).toBeFocused()
+  await page.getByRole('radio', { name: 'SE', exact: true }).check()
+  await page.getByRole('button', { name: /Behavioral/ }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Behavioral' })).toBeVisible()
+  await expect(page.getByRole('timer')).toHaveText(/^(30:00|29:5\d)$/)
+  await expect(page.locator('.mock-question')).toHaveCount(3)
+  await page.getByRole('textbox', { name: 'Your answer' }).first().fill('I led the migration and cut p99 by 40%.')
+  await page.reload()
+  await expect(page.getByRole('textbox', { name: 'Your answer' }).first()).toHaveValue('I led the migration and cut p99 by 40%.')
+  await page.getByRole('button', { name: 'Finish & review' }).click()
+  await expect(page.getByRole('heading', { name: 'Score yourself' })).toBeFocused()
+  await expect(page.getByText('I led the migration and cut p99 by 40%.')).toBeVisible()
+  const boxes = page.getByRole('checkbox')
+  await expect(boxes).toHaveCount(15)
+  for (let i = 0; i < 6; i++) await boxes.nth(i).check()
+  await expect(page.getByText('Score: 40%')).toBeVisible()
+  await page.getByRole('button', { name: 'Save result' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Saved 40%. +30 XP' })).toBeVisible()
+  const progress = await saved(page)
+  expect(progress.mocks).toEqual([expect.objectContaining({ track: 'behavioral', percent: 40 })])
+  await expect(page.locator('.upcoming-row')).toContainText('Behavioral interviews · 40%')
+})
+
+test('story bank: validates, saves, edits, covers competencies and deletes', async ({ page }) => {
+  await page.goto('./#stories')
+  await expect(page.getByRole('heading', { level: 1, name: 'Story bank' })).toBeFocused()
+  await page.getByRole('button', { name: 'New story' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'New story' })).toBeFocused()
+  await page.getByRole('button', { name: 'Save story' }).click()
+  await expect(page.getByRole('alert')).toHaveText('Give the story a short title.')
+  await page.getByLabel('Title').fill('Settled the API versioning dispute')
+  await page.getByRole('checkbox', { name: 'Conflict' }).check()
+  await page.getByLabel(/^Action/).fill('I wrote a one-page comparison and ran a 30-minute decision meeting.')
+  await page.getByRole('button', { name: 'Save story' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Story bank' })).toBeFocused()
+  await expect(page.locator('.coverage-cell.covered')).toHaveCount(1)
+  await expect(page.locator('.coverage-cell.covered')).toContainText('1 story')
+  await page.getByRole('button', { name: 'Edit Settled the API versioning dispute' }).click()
+  await page.getByRole('checkbox', { name: 'Influence' }).check()
+  await page.getByRole('button', { name: 'Save story' }).click()
+  await expect(page.locator('.coverage-cell.covered')).toHaveCount(2)
+  expect((await saved(page)).stories[0].competencies).toEqual(['conflict', 'influence'])
+  page.once('dialog', dialog => dialog.accept())
+  await page.getByRole('button', { name: 'Delete Settled the API versioning dispute' }).click()
+  await expect(page.locator('.coverage-cell.covered')).toHaveCount(0)
+  expect((await saved(page)).stories).toBeUndefined()
+})
+
+test('study plan: default week, dated plan and starting a planned lesson', async ({ page }) => {
+  await page.goto('./#plan')
+  await expect(page.getByRole('heading', { level: 1, name: 'Your next 7 days' })).toBeFocused()
+  await expect(page.locator('.plan-day')).toHaveCount(7)
+  await expect(page.locator('.plan-day.today h2')).toContainText('Today')
+  const target = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 14); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })
+  await page.getByLabel('Interview date').fill(target)
+  await expect(page.getByRole('heading', { level: 1, name: /^Plan to / })).toBeVisible()
+  await expect(page.locator('.plan-day')).toHaveCount(15)
+  await expect(page.locator('.plan-day').last()).toContainText('Interview day: light review only')
+  const first = page.locator('.plan-day.today button.plan-item').first()
+  const title = (await first.locator('span').first().textContent())!
+  await first.click()
+  await expect(page).toHaveURL(/#study$/)
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible()
+})
+
+test('home links to flashcards and the full plan; practice tools are all live', async ({ page }) => {
+  await page.goto('./#practice')
+  await expect(page.locator('.tool-card.live')).toHaveCount(6)
+  await expect(page.getByText('Coming soon')).toHaveCount(0)
+  await page.goto('./#home')
+  await expect(page.locator('.daily-plan').getByRole('link', { name: /Full study plan/ })).toBeVisible()
+  await page.locator('.daily-plan').getByRole('link', { name: /Open/ }).first().click()
+  await expect(page).toHaveURL(/#cards$/)
+})
+
+for (const route of ['cards', 'mock', 'stories', 'plan']) {
+  test(`${route} fits a 320px screen`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 720 })
+    await page.goto(`./#${route}`)
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+    if (route === 'mock') {
+      await page.getByRole('button', { name: /System Design/i }).click()
+      await expect(page.getByRole('timer')).toBeVisible()
+    }
+    if (route === 'stories') await page.getByRole('button', { name: 'New story' }).click()
+    if (route === 'cards') {
+      await page.getByRole('button', { name: 'Learn new cards' }).click()
+      await page.getByRole('button', { name: 'Show answer' }).click()
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+}

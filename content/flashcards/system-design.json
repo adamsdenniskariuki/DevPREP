@@ -1,0 +1,222 @@
+{
+  "track": "system-design",
+  "title": "System design essentials",
+  "cards": [
+    {
+      "id": "system-design-lb-l4-vs-l7",
+      "front": "What is the difference between L4 and L7 load balancing?",
+      "back": "L4 balancers route by IP and port on TCP/UDP connections without inspecting payloads, so they are fast and protocol-agnostic. L7 balancers parse HTTP or gRPC and can route by path, header, or cookie, terminate TLS, retry, and rewrite, at higher CPU cost.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-lb-algorithms",
+      "front": "Name common load-balancing algorithms and when each fits.",
+      "back": "Round robin for uniform requests, least connections or least outstanding requests for variable latency, weighted variants for heterogeneous hosts, and consistent hashing when affinity to a backend (cache locality, sessions) matters. Power-of-two-choices gives near least-loaded results cheaply.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-cache-aside",
+      "front": "How does cache-aside work and what is its main consistency hazard?",
+      "back": "The app reads the cache, and on a miss loads from the database and populates the cache; writes go to the database and invalidate the key. A race between a slow reader repopulating a stale value and a concurrent write can leave stale data until TTL expiry.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-write-through-vs-back",
+      "front": "Write-through vs write-back caching: what is the trade-off?",
+      "back": "Write-through updates cache and store synchronously, keeping them consistent at the cost of write latency. Write-back acknowledges after updating the cache and flushes later, giving fast writes and coalescing but risking data loss if the cache fails before flushing.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-cache-eviction",
+      "front": "LRU vs LFU eviction: when does each do better?",
+      "back": "LRU keeps recently used items and adapts quickly to shifting access patterns but is polluted by one-off scans. LFU keeps frequently used items and resists scans but adapts slowly unless counts decay; many systems use hybrids such as segmented LRU or TinyLFU admission.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-cache-stampede",
+      "front": "What is a cache stampede and how do you mitigate it?",
+      "back": "When a hot key expires, many requests miss simultaneously and hammer the backend. Mitigations: request coalescing or a per-key lock so one caller refreshes, serving stale while revalidating, probabilistic early refresh, and jittered TTLs so keys do not expire together.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-ttl",
+      "front": "What role does TTL play in a cache and how do you choose it?",
+      "back": "TTL bounds how long stale data can live and lets unused keys age out. Choose it from tolerated staleness and change rate: short for volatile data, long plus explicit invalidation for rarely changing data, with jitter to avoid synchronized expiry.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-cdn",
+      "front": "What does a CDN do and what content benefits most?",
+      "back": "A CDN caches content at edge locations near users, cutting latency and origin load and absorbing traffic spikes. Static, cacheable assets benefit most; dynamic content can still gain from edge TLS termination, connection reuse to the origin, and short TTLs.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-sql-vs-nosql",
+      "front": "How do you choose between a relational database and a NoSQL store?",
+      "back": "Relational fits structured data with joins, multi-row transactions, and ad hoc queries. NoSQL (key-value, document, wide-column) fits known access patterns needing horizontal scale, flexible schema, or very high write throughput, usually trading joins and some transactional guarantees.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-db-indexes",
+      "front": "What does a database index cost, and how does a composite index get used?",
+      "back": "An index (often a B-tree) speeds reads from a full scan to O(log n) lookups but adds write amplification and storage. A composite index on (a, b) serves filters on a or on a and b (leftmost prefix) but generally not on b alone.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-leader-follower",
+      "front": "What are the trade-offs of leader-follower replication?",
+      "back": "All writes go through one leader, which keeps ordering simple; followers scale reads and provide failover. Asynchronous followers can serve stale reads and may lose acknowledged writes on failover; synchronous replication avoids loss but adds latency and availability risk.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-multi-leader",
+      "front": "When would you use multi-leader replication and what is the main problem?",
+      "back": "For multi-region writes with low local latency or offline-capable clients. Concurrent writes to the same record in different leaders conflict, so you need a resolution strategy such as last-write-wins, CRDTs, or application-level merge.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-leaderless-quorum",
+      "front": "In leaderless replication with N replicas, what does R + W > N guarantee?",
+      "back": "Any read quorum overlaps any write quorum in at least one replica, so a read sees the latest acknowledged write under normal operation. Sloppy quorums, concurrent writes, and clock-based conflict resolution can still produce anomalies, so it is not linearizability.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-sharding-strategies",
+      "front": "Hash vs range sharding: what are the trade-offs?",
+      "back": "Hash sharding spreads keys evenly and avoids hot ranges but makes range scans hit every shard. Range sharding keeps range queries local and ordered but can create hotspots, e.g. time-ordered keys all landing on the newest shard.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-consistent-hashing",
+      "front": "Why use consistent hashing for distributing keys?",
+      "back": "Nodes and keys map onto a hash ring and each key belongs to the next node clockwise, so adding or removing a node moves only about 1/N of keys instead of nearly all. Virtual nodes smooth load imbalance and allow weighting by capacity.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-cap",
+      "front": "What does the CAP theorem actually state?",
+      "back": "When a network partition occurs, a replicated system must choose between consistency (linearizable reads and writes) and availability (every non-failed node answers). Without a partition you can have both; CAP says nothing about latency.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-pacelc",
+      "front": "What does PACELC add to CAP?",
+      "back": "If Partitioned, choose Availability or Consistency; Else, during normal operation, choose Latency or Consistency. It captures that strong consistency costs coordination latency even when the network is healthy.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-consistency-models",
+      "front": "Order these from strongest to weakest: eventual, linearizable, causal, read-your-writes.",
+      "back": "Linearizable is strongest (single up-to-date copy in real time), then causal (causally related writes seen in order), then session guarantees like read-your-writes, then eventual (replicas converge if writes stop).",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-queue-vs-stream",
+      "front": "How does a message queue differ from a log-based stream?",
+      "back": "A queue delivers each message to one consumer and removes it once acknowledged, good for task distribution. A stream is a durable append-only log that consumers read by offset, so many independent consumers can replay history at their own pace.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-kafka-ordering",
+      "front": "What ordering does Kafka guarantee, and how do consumer groups scale reads?",
+      "back": "Ordering is guaranteed only within a partition, so records sharing a key go to the same partition to stay ordered. In a consumer group each partition is assigned to one consumer, so parallelism is capped by the partition count.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-exactly-once",
+      "front": "Why is end-to-end exactly-once delivery mostly a myth, and what do you do instead?",
+      "back": "Networks and crashes force a choice between possibly losing or possibly duplicating messages. Practical systems use at-least-once delivery plus idempotent processing (dedupe keys, upserts, transactional offset commits) to get effectively-once results.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-idempotency-keys",
+      "front": "How do idempotency keys make retries safe for a payment API?",
+      "back": "The client sends a unique key per logical operation; the server stores the key with the result atomically and returns the stored result on any retry instead of re-executing. Keys need a scoped retention window and handling for concurrent in-flight duplicates.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-token-bucket",
+      "front": "How does the token bucket rate limiter behave?",
+      "back": "Tokens refill at rate r up to capacity b and each request consumes one; requests without a token are rejected or delayed. It enforces a long-run average of r while allowing bursts up to b.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-leaky-bucket",
+      "front": "How does a leaky bucket differ from a token bucket?",
+      "back": "A leaky bucket queues requests and drains them at a constant rate, smoothing output and dropping arrivals when the queue is full. A token bucket permits bursts up to its capacity, whereas a leaky bucket shapes traffic to a steady flow.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-sliding-window-limiter",
+      "front": "What problem does a sliding window rate limiter fix compared with fixed windows?",
+      "back": "Fixed windows allow up to 2x the limit across a boundary (end of one window plus start of the next). A sliding log is exact but memory heavy; a sliding window counter weights the previous window's count by overlap to approximate it cheaply.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-distributed-rate-limit",
+      "front": "How do you rate limit across many API gateway instances?",
+      "back": "Keep counters in a shared low-latency store with atomic increments or scripts, keyed by client and window. To cut latency, allow small local budgets synced periodically, accepting slight over-admission; fail open or closed based on risk.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-back-pressure",
+      "front": "What is back-pressure and how is it applied?",
+      "back": "Signalling upstream to slow down when a downstream component is saturated, rather than buffering without bound. Mechanisms include bounded queues that block or reject, credit-based flow control, 429/503 with Retry-After, and load shedding of low-priority work.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-red-use",
+      "front": "What are the RED and USE methods?",
+      "back": "RED (Rate, Errors, Duration) monitors request-driven services from the caller's view. USE (Utilization, Saturation, Errors) monitors resources like CPU, disk, and queues. Together they cover symptoms and likely causes.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-sli-slo",
+      "front": "How do SLI, SLO, SLA, and error budget relate?",
+      "back": "An SLI is a measured indicator (e.g. fraction of requests under 300 ms). An SLO is the internal target for it (99.9% over 30 days); an SLA is a contractual promise with penalties. The error budget is 1 - SLO and gates risky launches when exhausted.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-seconds-per-day",
+      "front": "What rough constants help with back-of-envelope estimates?",
+      "back": "A day has 86,400 seconds, about 1e5; a month is about 2.6e6 seconds; a year about 3.15e7. So 1M requests/day averages about 12 req/s, and peak is often estimated at 2-10x the average.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-storage-estimate",
+      "front": "Estimate yearly storage for 10M new records per day at 1 KB each.",
+      "back": "10M * 1 KB = 10 GB per day, so about 3.65 TB per year before replication. With 3x replication that is roughly 11 TB, plus headroom for indexes and growth.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-latency-numbers",
+      "front": "What are rough latency orders of magnitude for memory, SSD, and network?",
+      "back": "Main memory reference about 100 ns; SSD random read about 100 microseconds; round trip within a datacenter about 0.5 ms; cross-continent round trip about 50-150 ms. Use them to judge whether a design fits a latency budget.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-tail-latency",
+      "front": "Why do p99 latencies matter more as fan-out grows?",
+      "back": "If a request fans out to 100 backends and waits for all, the chance at least one hits its 1% slow tail is 1 - 0.99^100, about 63%. Mitigations include hedged requests, timeouts with partial results, and reducing variance.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-outbox-pattern",
+      "front": "How does the transactional outbox pattern avoid dual-write inconsistency?",
+      "back": "The service writes the business change and an event row to an outbox table in one local transaction; a relay or change-data-capture process publishes outbox rows to the broker. Delivery is at-least-once, so consumers must be idempotent.",
+      "level": "sse"
+    },
+    {
+      "id": "system-design-retries-backoff",
+      "front": "What makes client retries safe rather than harmful?",
+      "back": "Retry only idempotent or idempotency-keyed operations, use exponential backoff with jitter, cap attempts, and add a retry budget or circuit breaker so retries do not amplify an outage into a retry storm.",
+      "level": "se"
+    },
+    {
+      "id": "system-design-read-replicas-lag",
+      "front": "How do you give users read-your-writes consistency with asynchronous read replicas?",
+      "back": "Route a user's reads to the leader for a short period after they write, or track the write's log position and only read from replicas that have caught up to it. Sticky sessions to one replica also help but break on failover.",
+      "level": "sse"
+    }
+  ]
+}

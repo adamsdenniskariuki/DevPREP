@@ -1,0 +1,186 @@
+{
+  "track": "ml",
+  "title": "Machine learning essentials",
+  "cards": [
+    {
+      "id": "ml-bias-variance",
+      "front": "How do bias and variance show up in train and validation error?",
+      "back": "High bias: both errors high and close together, so the model underfits; add capacity or features. High variance: low training error but much higher validation error, so it overfits; add data, regularize, or simplify.",
+      "level": "se"
+    },
+    {
+      "id": "ml-l1-vs-l2",
+      "front": "How do L1 and L2 regularization differ in effect on weights?",
+      "back": "L1 adds the sum of absolute weights and drives many to exactly zero, giving sparse models and implicit feature selection. L2 adds the sum of squared weights and shrinks weights smoothly toward zero, handling correlated features more stably.",
+      "level": "se"
+    },
+    {
+      "id": "ml-precision-recall-f1",
+      "front": "Define precision, recall, and F1.",
+      "back": "Precision = TP / (TP + FP), the share of predicted positives that are correct. Recall = TP / (TP + FN), the share of actual positives found. F1 is their harmonic mean, 2PR / (P + R), which is low if either is low.",
+      "level": "se"
+    },
+    {
+      "id": "ml-roc-vs-pr-auc",
+      "front": "Why prefer PR-AUC over ROC-AUC on heavily imbalanced data?",
+      "back": "ROC uses the false positive rate, whose denominator is the huge negative class, so many false positives barely move it and ROC-AUC looks optimistic. PR-AUC uses precision, which directly reflects those false positives; its baseline equals the positive rate.",
+      "level": "se"
+    },
+    {
+      "id": "ml-calibration",
+      "front": "What does it mean for a classifier to be calibrated, and how do you fix poor calibration?",
+      "back": "Among examples scored 0.8, about 80% should be positive; check with a reliability diagram or Brier score. Fix with Platt scaling or isotonic regression fitted on held-out data. Calibration matters when scores drive thresholds or expected-value decisions.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-data-leakage",
+      "front": "What is data leakage and give two common sources.",
+      "back": "Information unavailable at prediction time leaking into training, inflating offline metrics. Common sources: features computed after the label event (e.g. future aggregates) and preprocessing fitted on the full dataset before splitting, or random splits on time-dependent data.",
+      "level": "se"
+    },
+    {
+      "id": "ml-cross-validation",
+      "front": "When should you use stratified, grouped, or time-series cross-validation?",
+      "back": "Stratified keeps class ratios per fold for imbalanced labels. Grouped keeps all rows of an entity (user, patient) in one fold to avoid leakage. Time-series CV trains on the past and validates on the future with expanding or rolling windows.",
+      "level": "se"
+    },
+    {
+      "id": "ml-class-imbalance",
+      "front": "What are options for handling severe class imbalance?",
+      "back": "Use suitable metrics (PR-AUC, recall at fixed precision), class weights or focal loss, resampling such as undersampling negatives or SMOTE on training folds only, and tune the decision threshold to business costs. If you downsample, recalibrate probabilities.",
+      "level": "se"
+    },
+    {
+      "id": "ml-gbm-vs-rf",
+      "front": "Gradient boosting vs random forest: how do they differ?",
+      "back": "Random forests average many deep trees trained on bootstrap samples with feature subsampling, reducing variance and being robust with little tuning. Gradient boosting adds shallow trees sequentially to fit residual gradients, reducing bias and usually winning on tabular data but needing careful tuning and early stopping.",
+      "level": "se"
+    },
+    {
+      "id": "ml-feature-engineering",
+      "front": "Give examples of high-value feature engineering for tabular models.",
+      "back": "Aggregates over time windows (counts, means, recency), ratios and differences, target encoding with out-of-fold computation for high-cardinality categories, cyclical encodings for time of day, and interaction features grounded in domain knowledge.",
+      "level": "se"
+    },
+    {
+      "id": "ml-relu",
+      "front": "Why is ReLU the default hidden activation?",
+      "back": "It is cheap and its gradient is 1 for positive inputs, which avoids the saturation that makes sigmoid and tanh gradients vanish. Units can die if they get stuck negative; variants like Leaky ReLU or GELU help.",
+      "level": "se"
+    },
+    {
+      "id": "ml-softmax-ce",
+      "front": "How do softmax and cross-entropy work together for multi-class classification?",
+      "back": "Softmax turns logits into probabilities via exp(z_i) / sum_j exp(z_j); cross-entropy is -log of the probability assigned to the true class. Their combined gradient w.r.t. logits is simply p - y, and implementations fuse them with log-sum-exp for numerical stability.",
+      "level": "se"
+    },
+    {
+      "id": "ml-vanishing-gradients",
+      "front": "What causes vanishing gradients and what mitigates them?",
+      "back": "Backprop multiplies many per-layer derivatives; if they are mostly below 1 the gradient shrinks exponentially with depth. Mitigations: ReLU-family activations, careful initialization (He/Xavier), residual connections, normalization layers, and gated recurrent units for sequences.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-dropout",
+      "front": "How does dropout regularize a network, and what changes at inference?",
+      "back": "During training each unit is zeroed with probability p, discouraging co-adaptation and acting like an ensemble of subnetworks. With inverted dropout, kept activations are scaled by 1/(1-p) during training so inference simply disables dropout with no rescaling.",
+      "level": "se"
+    },
+    {
+      "id": "ml-batch-norm",
+      "front": "What does batch normalization do and what is a practical pitfall?",
+      "back": "It normalizes activations using mini-batch mean and variance, then applies a learned scale and shift, stabilizing and speeding training. At inference it uses running statistics, so tiny batches or train/serve distribution shifts hurt; layer norm avoids batch dependence.",
+      "level": "se"
+    },
+    {
+      "id": "ml-two-tower",
+      "front": "What is a two-tower recommender model and why is it popular for retrieval?",
+      "back": "One tower embeds the user/context and another embeds items, trained so relevant pairs have high dot product. Item embeddings are precomputed and indexed for approximate nearest neighbor search, enabling fast retrieval from millions of items, though it cannot model fine user-item feature interactions.",
+      "level": "se"
+    },
+    {
+      "id": "ml-candidate-gen-vs-ranking",
+      "front": "Why split a recommender into candidate generation and ranking stages?",
+      "back": "Candidate generation cheaply narrows millions of items to hundreds with high recall (ANN, co-occurrence, heuristics). A heavier ranking model then scores those few with rich cross features for precision; a re-ranking step can add diversity, freshness, and business rules.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-cold-start",
+      "front": "How do you handle cold start for new users and new items?",
+      "back": "New users: use context, popularity, onboarding preferences, and fast session-based signals. New items: use content features and metadata embeddings, and reserve exploration traffic (e.g. bandits) to gather interactions quickly.",
+      "level": "se"
+    },
+    {
+      "id": "ml-ndcg",
+      "front": "What does NDCG measure and why is it normalized?",
+      "back": "DCG sums graded relevance discounted by log2(position + 1), rewarding relevant items near the top. Dividing by the ideal DCG of a perfect ordering gives a 0-1 score comparable across queries with different numbers of relevant items.",
+      "level": "se"
+    },
+    {
+      "id": "ml-mrr",
+      "front": "What is MRR and when is it the right ranking metric?",
+      "back": "Mean Reciprocal Rank averages 1/rank of the first relevant result across queries. It suits tasks where users need one correct answer (navigational search, QA) but ignores additional relevant results.",
+      "level": "se"
+    },
+    {
+      "id": "ml-fraud-delayed-labels",
+      "front": "Why are delayed labels a problem in fraud detection and how do you cope?",
+      "back": "Chargebacks can arrive weeks later, so recent data looks falsely clean and naive training or evaluation is biased. Use a label maturity window, evaluate on matured cohorts, add faster proxy labels (analyst reviews), and monitor drift in score distributions meanwhile.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-train-serve-skew",
+      "front": "What is training/serving skew and how do you prevent it?",
+      "back": "A mismatch between feature values or logic seen in training and at serving, e.g. different code paths or data freshness. Prevent it with shared feature definitions, logging served features for training, and monitoring feature distributions online vs offline.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-point-in-time",
+      "front": "What is a point-in-time correct join in a feature store?",
+      "back": "For each training label at time t, join only feature values that were known as of t, never later updates. It avoids leakage from future data and makes offline training match what the online model would have seen.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-shadow-vs-canary",
+      "front": "Shadow deployment vs canary release for a new model: what is the difference?",
+      "back": "Shadow runs the new model on live traffic without serving its outputs, validating latency, errors, and prediction distributions with zero user impact. Canary serves a small slice of real users, measuring true business impact with limited blast radius.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-ab-peeking",
+      "front": "Why is repeatedly peeking at an A/B test and stopping at significance a problem?",
+      "back": "Each look is another chance for a false positive, so the real type I error rate far exceeds the nominal alpha. Fix the sample size in advance or use sequential methods designed for continuous monitoring.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-srm",
+      "front": "What is sample ratio mismatch in an experiment and why does it matter?",
+      "back": "The observed split between arms differs significantly from the designed split (checked with a chi-squared test). It signals bugs in assignment, logging, or filtering that bias results, so the experiment should not be trusted until fixed.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-concept-drift",
+      "front": "What is the difference between data drift and concept drift?",
+      "back": "Data drift is a change in the input distribution P(x); concept drift is a change in the relationship P(y | x), so the same inputs now imply different labels. Concept drift typically requires retraining with fresh labels, not just recalibration.",
+      "level": "se"
+    },
+    {
+      "id": "ml-baseline-first",
+      "front": "Why build a simple baseline before a complex model?",
+      "back": "It sets a reference for whether added complexity pays off, quickly validates the data pipeline and metrics, and is often good enough to ship. Heuristics, logistic regression, or popularity rankers are common baselines.",
+      "level": "se"
+    },
+    {
+      "id": "ml-offline-online-gap",
+      "front": "Why might a model that wins offline lose in an online A/B test?",
+      "back": "Offline metrics may not match the business objective, logged data carries selection bias from the old policy, features may be skewed at serving, and feedback loops or latency changes alter user behavior. Validate with online experiments.",
+      "level": "sse"
+    },
+    {
+      "id": "ml-threshold-selection",
+      "front": "How should you pick a decision threshold for a binary classifier?",
+      "back": "Base it on the costs of false positives and false negatives or an operational constraint such as review capacity, using a validation set. Default 0.5 is rarely optimal, especially with imbalance or uncalibrated scores.",
+      "level": "se"
+    }
+  ]
+}

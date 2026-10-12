@@ -1,0 +1,186 @@
+{
+  "track": "ai",
+  "title": "AI and LLM engineering essentials",
+  "cards": [
+    {
+      "id": "ai-attention-formula",
+      "front": "Write the scaled dot-product attention formula.",
+      "back": "Attention(Q, K, V) = softmax(Q * K^T / sqrt(d_k)) * V. Each query scores every key, softmax turns scores into weights, and the output is the weighted sum of values.",
+      "level": "se"
+    },
+    {
+      "id": "ai-sqrt-dk",
+      "front": "Why divide attention scores by sqrt(d_k)?",
+      "back": "With roughly unit-variance components, a dot product of d_k-dimensional vectors has variance about d_k, so raw scores grow with dimension and push softmax into saturated regions with tiny gradients. Scaling by sqrt(d_k) keeps score variance near 1.",
+      "level": "se"
+    },
+    {
+      "id": "ai-causal-mask",
+      "front": "What does the causal mask do in a decoder-only transformer?",
+      "back": "It sets scores for future positions to negative infinity before softmax, so token i attends only to positions <= i. This matches autoregressive generation and lets training compute all next-token losses in parallel.",
+      "level": "se"
+    },
+    {
+      "id": "ai-kv-cache",
+      "front": "What does the KV cache store and why does it speed up generation?",
+      "back": "The key and value projections of all previous tokens at every layer. Each new token then computes only its own Q, K, V and attends to the cached keys and values, avoiding recomputation over the whole prefix at every step.",
+      "level": "se"
+    },
+    {
+      "id": "ai-kv-cache-memory",
+      "front": "How do you estimate KV cache memory for a model?",
+      "back": "About 2 * layers * kv_heads * head_dim * seq_len * batch * bytes_per_value (2 for K and V). It grows linearly with context length and batch size, which is why grouped-query attention and KV quantization matter for long contexts.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-bpe",
+      "front": "How does byte-pair encoding tokenization work?",
+      "back": "Start from bytes or characters and repeatedly merge the most frequent adjacent pair into a new token until reaching the vocabulary size. Common words become single tokens while rare words split into subwords, so there are no out-of-vocabulary failures.",
+      "level": "se"
+    },
+    {
+      "id": "ai-embeddings-cosine",
+      "front": "Why is cosine similarity typical for comparing text embeddings?",
+      "back": "It compares direction and ignores vector magnitude, which often reflects length or frequency rather than meaning. For L2-normalized vectors, cosine equals the dot product, so ANN indexes can use fast inner product search.",
+      "level": "se"
+    },
+    {
+      "id": "ai-temperature-top-p",
+      "front": "How do temperature and top-p change sampling?",
+      "back": "Temperature divides logits before softmax: below 1 sharpens toward the top token, above 1 flattens the distribution. Top-p (nucleus) samples only from the smallest set of tokens whose cumulative probability reaches p, cutting off the unlikely tail.",
+      "level": "se"
+    },
+    {
+      "id": "ai-few-shot",
+      "front": "When does few-shot prompting help and what are its pitfalls?",
+      "back": "Examples demonstrate format, style, and edge-case handling better than instructions alone. Pitfalls: the model copies surface features or label distribution of the examples, ordering effects, and extra tokens adding cost and latency.",
+      "level": "se"
+    },
+    {
+      "id": "ai-structured-output",
+      "front": "How do you get reliable structured output such as JSON from an LLM?",
+      "back": "Provide a schema and prefer constrained decoding or native structured-output/function-calling modes that restrict tokens to valid output. Always validate against the schema and retry or repair on failure.",
+      "level": "se"
+    },
+    {
+      "id": "ai-rag-pipeline",
+      "front": "What are the main stages of a RAG pipeline?",
+      "back": "Ingest and chunk documents, embed and index them; at query time optionally rewrite the query, retrieve candidates, rerank, assemble context within the token budget, and generate an answer with citations. Evaluate retrieval and generation separately.",
+      "level": "se"
+    },
+    {
+      "id": "ai-chunking",
+      "front": "What are the trade-offs in choosing chunk size for RAG?",
+      "back": "Small chunks give precise embeddings but lose surrounding context; large chunks keep context but dilute relevance and waste tokens. Structure-aware splitting, modest overlap, and parent-document retrieval (match small, return larger) balance the two.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-hybrid-retrieval",
+      "front": "Why combine lexical and dense retrieval?",
+      "back": "BM25 excels at exact terms like IDs, names, and rare jargon; dense embeddings capture paraphrase and semantic similarity. Fusing them, e.g. with reciprocal rank fusion, improves recall across both query types.",
+      "level": "se"
+    },
+    {
+      "id": "ai-cross-encoder-rerank",
+      "front": "Why rerank retrieved passages with a cross-encoder?",
+      "back": "Bi-encoders embed query and document separately, which is fast but coarse. A cross-encoder reads the query and passage together and scores relevance much more accurately, but it is too slow for the whole corpus, so apply it only to the top few dozen candidates.",
+      "level": "se"
+    },
+    {
+      "id": "ai-rag-vs-finetune",
+      "front": "When should you choose RAG versus fine-tuning?",
+      "back": "Use RAG for knowledge that changes, must be cited, or is access-controlled. Use fine-tuning to change behavior, format, tone, or narrow-task skill, or to shrink prompts. They combine well: fine-tune for style, retrieve for facts.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-lora",
+      "front": "What does LoRA train and how many parameters does it add for a d x d weight at rank r?",
+      "back": "It freezes the base weight W and learns a low-rank update B * A, with A of shape r x d and B of shape d x r, adding 2 * d * r parameters. For d = 4096 and r = 8 that is 65,536 vs about 16.8M for the full matrix (about 0.4%).",
+      "level": "se"
+    },
+    {
+      "id": "ai-qlora",
+      "front": "How does QLoRA reduce fine-tuning memory?",
+      "back": "It quantizes the frozen base model to 4-bit, computes in higher precision on the fly, and trains only LoRA adapters in higher precision. Paged optimizer states help absorb memory spikes, making large-model fine-tuning feasible on a single GPU.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-llm-judge-bias",
+      "front": "What biases affect LLM-as-judge evaluation and how do you reduce them?",
+      "back": "Position bias, verbosity bias, self-preference for its own model family, and sensitivity to wording. Mitigate by swapping answer order, using rubrics with specific criteria, pairwise or reference-based grading, and calibrating against human labels.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-eval-set",
+      "front": "How should you build an evaluation set for an LLM feature?",
+      "back": "Sample real or realistic inputs covering common cases, edge cases, adversarial prompts, and known failures; label expected behavior with clear rubrics. Version it, keep it separate from prompt tuning to avoid overfitting, and grow it from production failures.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-tool-calling",
+      "front": "How does tool calling work in an LLM agent loop?",
+      "back": "The model receives tool schemas, emits a structured call with arguments, the runtime executes it and returns the result as a message, and the model continues until it answers. The runtime must validate arguments, enforce permissions, and cap iterations.",
+      "level": "se"
+    },
+    {
+      "id": "ai-compounding-error",
+      "front": "Why do long multi-step agent workflows fail more often than single calls?",
+      "back": "Errors compound: if each step succeeds 95% of the time independently, 20 steps succeed about 0.95^20, roughly 36%. Shorten chains, add verification and checkpoints, use deterministic code where possible, and allow recovery or human review.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-prompt-injection",
+      "front": "What is the difference between direct and indirect prompt injection?",
+      "back": "Direct injection comes from the user typing instructions to override the system prompt. Indirect injection hides instructions in content the model ingests, such as web pages, emails, or retrieved documents, and is more dangerous because the user may be the victim.",
+      "level": "se"
+    },
+    {
+      "id": "ai-injection-mitigation",
+      "front": "How do you mitigate prompt injection in an agent with tools?",
+      "back": "Treat model output and retrieved content as untrusted: least-privilege tools, human confirmation for side-effecting actions, separating trusted instructions from data, output filtering, and blocking data exfiltration paths such as arbitrary URLs. No prompt wording alone is a complete defense.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-semantic-cache",
+      "front": "What are the risks of a semantic cache for LLM responses?",
+      "back": "Similar-looking queries can need different answers (negation, different entities, dates), so a loose threshold returns wrong cached answers. Cached answers can also leak across users or tenants and go stale; scope by user or permissions and tune thresholds on labeled pairs.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-ttft-throughput",
+      "front": "How do time to first token and throughput trade off in LLM serving?",
+      "back": "TTFT is dominated by prefill of the prompt; per-token latency by decode, which is memory-bandwidth bound. Larger batches raise total tokens per second but increase per-request latency, so serving systems use continuous batching and set batch limits per latency SLO.",
+      "level": "sse"
+    },
+    {
+      "id": "ai-model-routing",
+      "front": "What is model routing or a cascade, and why use it?",
+      "back": "Send each request to the cheapest model likely to handle it, escalating to a larger model when a classifier, confidence signal, or validator says the small model failed. It cuts cost and latency while keeping quality on hard cases.",
+      "level": "se"
+    },
+    {
+      "id": "ai-guardrails",
+      "front": "What are guardrails in an LLM application?",
+      "back": "Checks around the model: input filters for abuse or injection, output validation for schema, safety, PII, and policy, plus grounding checks. They run as deterministic code or smaller classifiers and decide whether to block, repair, or escalate.",
+      "level": "se"
+    },
+    {
+      "id": "ai-hallucination-grounding",
+      "front": "How do you reduce hallucinations in a question-answering app?",
+      "back": "Ground answers in retrieved sources and require citations, instruct the model to say it does not know when context lacks the answer, verify claims against sources with a checker, and lower temperature. Measure faithfulness separately from answer relevance.",
+      "level": "se"
+    },
+    {
+      "id": "ai-context-window-cost",
+      "front": "Why can't you just stuff everything into a long context window?",
+      "back": "Cost and prefill latency scale with tokens, and self-attention compute grows quadratically with sequence length. Models also use mid-context information less reliably, so targeted retrieval often beats dumping everything in.",
+      "level": "se"
+    },
+    {
+      "id": "ai-decoding-determinism",
+      "front": "Does temperature 0 guarantee identical LLM outputs across runs?",
+      "back": "Not necessarily: greedy decoding is deterministic in principle, but batching, floating-point non-associativity on GPUs, and backend changes can flip near-tied tokens. Design evaluations and caching to tolerate small variations.",
+      "level": "se"
+    }
+  ]
+}

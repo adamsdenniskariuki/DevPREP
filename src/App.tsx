@@ -1,14 +1,16 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordDesign, recordSolve, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
-import type { Mode, Profile, Rating, StudySession } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordMock, recordSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
+import { gradeCard as gradeFlashcard } from './flashcards'
+import type { Grade } from './flashcards'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
 import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, daysUntil, designXp, gameStats, solveXp, weakAreas } from './gamification'
+import { activityXp, cardXp, daysUntil, designXp, gameStats, mockXp, solveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { caseIds } from './cases'
 import type { CodeLanguage } from './problem-types'
@@ -24,10 +26,14 @@ import PracticeScreen from './screens/PracticeScreen'
 import ProgressScreen from './screens/ProgressScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import Study from './screens/Study'
+import PlanScreen from './screens/PlanScreen'
 import type { AppModel, Route } from './app-model'
 
 const CodeScreen = lazy(() => import('./screens/CodeScreen'))
 const DesignScreen = lazy(() => import('./screens/DesignScreen'))
+const FlashcardsScreen = lazy(() => import('./screens/FlashcardsScreen'))
+const MockScreen = lazy(() => import('./screens/MockScreen'))
+const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
 
 const navigation = [
   { id: 'home', label: 'Home', icon: 'home' },
@@ -36,7 +42,7 @@ const navigation = [
   { id: 'progress', label: 'Progress', icon: 'chart' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board']
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan']
 /** Hashes from earlier releases keep working as bookmarks. */
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 
@@ -143,6 +149,31 @@ export default function App() {
     return designXp(after) - designXp(before)
   }
 
+  function gradeCard(id: string, grade: Grade) {
+    const before = latest.current
+    const state = gradeFlashcard(before.cards?.[id], grade, localDay(new Date()))
+    const after = recordCard(before, id, state)
+    store.update(value => recordCard(value, id, state))
+    latest.current = after
+    return cardXp(after) - cardXp(before)
+  }
+  function finishMock(result: Omit<MockResult, 'at'>) {
+    const before = latest.current
+    const after = recordMock(before, result)
+    store.update(value => recordMock(value, result))
+    latest.current = after
+    return mockXp(after) - mockXp(before)
+  }
+  function saveStory(story: Omit<Story, 'updatedAt'>) {
+    try { latest.current = saveStoryTo(latest.current, story) } catch (error) { return (error as Error).message }
+    store.update(value => saveStoryTo(value, story))
+    return ''
+  }
+  function deleteStory(id: string) {
+    latest.current = deleteStoryFrom(latest.current, id)
+    store.update(value => deleteStoryFrom(value, id))
+  }
+
   function changePath(id: PathId | undefined) {
     store.update(value => selectPath(value, id))
     setNotice(`${getLearningPath(id)?.title ?? 'All curriculum'} selected. Your progress is unchanged.`)
@@ -229,10 +260,10 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' ? 'home' : route === 'code' || route === 'design' || route === 'board' ? 'practice' : route
+  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
@@ -285,6 +316,10 @@ export default function App() {
             {route === 'practice' && <PracticeScreen app={app} />}
             {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
             {(route === 'design' || route === 'board') && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} board={route === 'board'} /></Suspense>}
+            {route === 'cards' && <Suspense fallback={<p role="status">Loading flashcards…</p>}><FlashcardsScreen app={app} /></Suspense>}
+            {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
+            {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}
+            {route === 'plan' && <PlanScreen app={app} />}
             {route === 'progress' && <ProgressScreen app={app} />}
             {route === 'settings' && <SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} />}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}

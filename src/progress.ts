@@ -5,6 +5,9 @@ import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
 import { problemIds } from './problems'
 import { caseIds } from './cases'
+import { cardIds } from './flashcards'
+import { COMPETENCY_IDS } from './stories'
+import type { Competency } from './stories'
 import type { CodeLanguage } from './problem-types'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
@@ -49,7 +52,39 @@ export interface Progress {
   solved?: Record<string, SolvedProblem>
   /** Best self-scored rubric percentage per system design case study. */
   designs?: Record<string, DesignScore>
+  /** Spaced-repetition state per flashcard that has been reviewed at least once. */
+  cards?: Record<string, CardState>
+  /** Finished mock interviews, oldest first. */
+  mocks?: MockResult[]
+  /** The behavioral story bank, in the order the user created them. */
+  stories?: Story[]
 }
+export interface CardState {
+  /** Leitner box 0-6; higher boxes wait longer before the next review. */
+  box: number
+  due: string
+  at: string
+  reviews: number
+}
+export interface MockResult {
+  track: Track
+  at: string
+  percent: number
+  minutes: number
+}
+export interface Story {
+  id: string
+  title: string
+  competencies: Competency[]
+  situation: string
+  task: string
+  action: string
+  result: string
+  updatedAt: string
+}
+export const MAX_MOCKS = 500
+export const MAX_STORIES = 50
+export const MAX_STORY_FIELD = 2_000
 export type SolvedProblem = Partial<Record<CodeLanguage, string>>
 export interface DesignScore {
   best: number
@@ -120,7 +155,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -172,13 +207,100 @@ export function parseBackup(text: string): Progress {
   const profile = Object.hasOwn(root, 'profile') ? parseProfile(root.profile) : undefined
   const solved = Object.hasOwn(root, 'solved') ? parseSolved(root.solved) : undefined
   const designs = Object.hasOwn(root, 'designs') ? parseDesigns(root.designs) : undefined
+  const cards = Object.hasOwn(root, 'cards') ? parseCards(root.cards) : undefined
+  const mocks = Object.hasOwn(root, 'mocks') ? parseMocks(root.mocks) : undefined
+  const stories = Object.hasOwn(root, 'stories') ? parseStories(root.stories) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
     ...(profile ? { profile } : {}),
     ...(solved ? { solved } : {}),
     ...(designs ? { designs } : {}),
+    ...(cards ? { cards } : {}),
+    ...(mocks ? { mocks } : {}),
+    ...(stories ? { stories } : {}),
   }
+}
+
+function parseCards(value: unknown): Record<string, CardState> {
+  const raw = object(value)
+  const cards: Record<string, CardState> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!cardIds.has(id)) invalid('unknown flashcard. This backup may need a newer app version.')
+    const card = object(entry, ['box', 'due', 'at', 'reviews'])
+    cards[id] = { box: integer(card.box, 0, 6), due: day(card.due), at: timestamp(card.at), reviews: integer(card.reviews, 1, 100_000) }
+  }
+  return cards
+}
+
+/** Stores a flashcard grade computed by gradeCard (src/flashcards.ts). */
+export function recordCard(progress: Progress, cardId: string, state: CardState, now = new Date()): Progress {
+  if (!cardIds.has(cardId)) throw new Error('Unknown flashcard.')
+  return { ...progress, updatedAt: now.toISOString(), cards: { ...progress.cards, [cardId]: state } }
+}
+
+function parseMocks(value: unknown): MockResult[] {
+  if (!Array.isArray(value) || value.length > MAX_MOCKS) invalid('invalid mock interview history.')
+  return value.map(entry => {
+    const raw = object(entry, ['track', 'at', 'percent', 'minutes'])
+    if (!tracks.some(track => track.id === raw.track)) invalid('unknown mock interview track.')
+    return { track: raw.track as Track, at: timestamp(raw.at), percent: integer(raw.percent, 0, 100), minutes: integer(raw.minutes, 0, 600) }
+  })
+}
+
+export function recordMock(progress: Progress, result: Omit<MockResult, 'at'>, now = new Date()): Progress {
+  if (!tracks.some(track => track.id === result.track)) throw new Error('Unknown track.')
+  if (!Number.isInteger(result.percent) || result.percent < 0 || result.percent > 100) throw new Error('Score must be a whole percentage.')
+  const minutes = Math.max(0, Math.min(600, Math.round(result.minutes)))
+  const mocks = [...progress.mocks ?? [], { track: result.track, at: now.toISOString(), percent: result.percent, minutes }].slice(-MAX_MOCKS)
+  return { ...progress, updatedAt: now.toISOString(), mocks }
+}
+
+function storyText(value: unknown, max: number): string {
+  if (typeof value !== 'string' || value.length > max) invalid('invalid story text.')
+  return value
+}
+
+function parseStories(value: unknown): Story[] {
+  if (!Array.isArray(value) || value.length > MAX_STORIES) invalid('invalid story bank.')
+  const ids = new Set<string>()
+  return value.map(entry => {
+    const raw = object(entry, ['id', 'title', 'competencies', 'situation', 'task', 'action', 'result', 'updatedAt'])
+    if (typeof raw.id !== 'string' || !/^s[a-z0-9]{4,24}$/.test(raw.id) || ids.has(raw.id)) invalid('invalid story id.')
+    ids.add(raw.id)
+    const list = raw.competencies
+    if (!Array.isArray(list) || new Set(list).size !== list.length || list.some(item => !COMPETENCY_IDS.includes(item as Competency))) invalid('unknown story competency.')
+    return {
+      id: raw.id, title: storyText(raw.title, 120), competencies: list as Competency[],
+      situation: storyText(raw.situation, MAX_STORY_FIELD), task: storyText(raw.task, MAX_STORY_FIELD),
+      action: storyText(raw.action, MAX_STORY_FIELD), result: storyText(raw.result, MAX_STORY_FIELD),
+      updatedAt: timestamp(raw.updatedAt),
+    }
+  })
+}
+
+/** Adds or replaces a story by id. Text is clipped to the backup limits. */
+export function saveStory(progress: Progress, story: Omit<Story, 'updatedAt'>, now = new Date()): Progress {
+  if (!/^s[a-z0-9]{4,24}$/.test(story.id)) throw new Error('Invalid story id.')
+  const clean: Story = {
+    id: story.id, title: story.title.slice(0, 120),
+    competencies: [...new Set(story.competencies)].filter(item => COMPETENCY_IDS.includes(item)),
+    situation: story.situation.slice(0, MAX_STORY_FIELD), task: story.task.slice(0, MAX_STORY_FIELD),
+    action: story.action.slice(0, MAX_STORY_FIELD), result: story.result.slice(0, MAX_STORY_FIELD),
+    updatedAt: now.toISOString(),
+  }
+  const list = progress.stories ?? []
+  const exists = list.some(item => item.id === story.id)
+  if (!exists && list.length >= MAX_STORIES) throw new Error(`The story bank holds up to ${MAX_STORIES} stories.`)
+  const stories = exists ? list.map(item => item.id === story.id ? clean : item) : [...list, clean]
+  return { ...progress, updatedAt: now.toISOString(), stories }
+}
+
+export function deleteStory(progress: Progress, id: string, now = new Date()): Progress {
+  const stories = (progress.stories ?? []).filter(item => item.id !== id)
+  const next: Progress = { ...progress, updatedAt: now.toISOString(), stories }
+  if (!stories.length) delete next.stories
+  return next
 }
 
 function parseDesigns(value: unknown): Record<string, DesignScore> {
