@@ -47,7 +47,7 @@ export default function LessonReader({ lesson, sectionId, select, openLesson }: 
           const prerequisite = lessons.find(item => item.id === id)!
           return <button key={id} onClick={() => openLesson(prerequisite)}>{prerequisite.title}</button>
         })}</div>}
-        <p className="helper">Prerequisites are recommendations, not locks. Opening another lesson asks before replacing this session. All core and optional work shares one session notebook.</p>
+        <p className="helper">Prerequisites are suggestions, not locks.</p>
       </>}
       {teaching && <>
         {teaching.body.split(/\n\s*\n/).map((paragraph, i) => <p className="preserve-lines" key={i}>{paragraph}</p>)}
