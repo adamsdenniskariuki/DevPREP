@@ -1,0 +1,122 @@
+{
+  "id": "ml-search-ranking",
+  "track": "ml",
+  "title": "ML system design: search and learning to rank",
+  "minutes": 60,
+  "summary": "Design a search stack from query understanding through hybrid lexical and semantic retrieval to learning-to-rank, and evaluate it with NDCG@k, MRR, and debiased click data within a per-stage latency budget.",
+  "prerequisites": [
+    "ml-recsys-design"
+  ],
+  "prerequisiteNotes": "Reuses the multi-stage funnel, ANN retrieval, position bias, and A/B testing from recommendation design. Search adds an explicit query, graded relevance judgments, and listwise ranking objectives.",
+  "objectives": [
+    "Lay out query understanding, hybrid retrieval, and staged ranking with a latency budget per stage.",
+    "Compare pointwise, pairwise, and listwise learning-to-rank and choose one with reasons.",
+    "Compute NDCG@k and MRR by hand and explain what each rewards.",
+    "Turn biased click logs into training labels using click models and propensity weighting."
+  ],
+  "concepts": [
+    {
+      "title": "Query understanding comes first",
+      "body": "Normalize and tokenize, correct spelling, detect language, and classify intent and category (navigational, product, informational). Recognize entities such as brands, sizes, and locations, and expand with synonyms or learned rewrites. Errors propagate: a wrong category filter can remove every relevant result, so use low-confidence predictions as soft boosts rather than hard filters, and log rewrites so failures can be traced."
+    },
+    {
+      "title": "Hybrid retrieval: lexical plus semantic",
+      "body": "BM25 scores documents from an inverted index using inverse document frequency, term-frequency saturation (parameter k1), and document-length normalization (parameter b). It is fast, explainable, and strong on exact terms such as part numbers and names, but misses vocabulary mismatch. Dense retrieval embeds queries and documents with a dual encoder and uses ANN search; it captures paraphrase but can miss exact identifiers, needs relevance training data, and requires reindexing when the encoder changes. Production systems usually union both candidate sets or fuse them, for example with reciprocal rank fusion, sum of 1/(c + rank) with a constant c such as 60. Cross-encoders that read query and document together are the most accurate rerankers but too expensive beyond the top 50 to 100 candidates."
+    },
+    {
+      "title": "Learning to rank: pointwise, pairwise, listwise",
+      "body": "Pointwise models regress or classify the relevance of each document independently; simple, but they spend effort on absolute scores when only order within a query matters. Pairwise models learn that document i should outrank j for the same query (RankNet-style logistic or hinge losses); they focus on order but treat every swapped pair as equally costly unless weighted, and pairs grow quadratically. Listwise methods target list metrics directly; LambdaMART scales each pair's gradient by the change in NDCG from swapping it, so errors near the top count most, and gradient-boosted LambdaMART is a strong production baseline. Features: query-document (BM25 per field, embedding similarity, exact match), document (quality, popularity, freshness, price), query (length, intent), and context (locale, device, user history). Compute historical click-through features point-in-time and smooth them for sparse documents."
+    },
+    {
+      "title": "Metrics: NDCG@k and MRR",
+      "body": "DCG@k = sum over positions i = 1..k of gain(rel_i) / log2(i + 1), with gain 2^rel - 1 for graded labels (some teams use linear gain rel; always state which). NDCG@k = DCG@k / IDCG@k, where IDCG is the DCG of the ideal ordering of the judged documents, so NDCG lies in [0, 1] and is comparable across queries. MRR averages 1 / rank of the first relevant result over queries, scoring 0 when none is found; it suits navigational queries with one right answer. Human judgments give graded, consistent labels but are expensive and can disagree with real intent; clicks are plentiful but biased. Online, track successful-session rate, abandonment, reformulations, and time to first click, and use interleaving for sensitive ranker comparisons."
+    },
+    {
+      "title": "Click models and position bias",
+      "body": "A click needs both examination and attraction: under the position-based model, P(click) = P(examine position) * P(relevant). The cascade model assumes users scan top-down and stop at the first satisfying result, so a click at rank 3 suggests ranks 1 and 2 were seen and skipped. Estimate examination propensities by randomizing, for example swapping adjacent results for a small slice of traffic, then weight clicks by the inverse propensity, or train with position as a feature and fix it at serving. Clip extreme weights to control variance, and remember that unclicked results at low ranks may never have been seen."
+    }
+  ],
+  "example": "One query has six judged documents, grades 0 to 3. The model ranks them with grades [3, 2, 3, 0, 1, 2].\nGain = 2^rel - 1, discount = log2(i + 1). Terms rounded to 3 decimals; totals use unrounded terms.\nRank 1: 7 / 1.000 = 7.000\nRank 2: 3 / 1.585 = 1.893\nRank 3: 7 / 2.000 = 3.500\nRank 4: 0 / 2.322 = 0.000\nRank 5: 1 / 2.585 = 0.387\nDCG@5 = 12.780.\nIdeal order [3, 3, 2, 2, 1, 0]: 7.000 + 4.417 + 1.500 + 1.292 + 0.387, IDCG@5 = 14.595.\nNDCG@5 = 12.780 / 14.595 = 0.876.\nMRR over three queries whose first relevant result is at rank 1, rank 3, and not returned: (1 + 1/3 + 0) / 3 = 0.444.\nLatency budget for p99 200 ms: query understanding 15 ms, lexical and ANN retrieval in parallel 40 ms, light ranker over ~1000 candidates 30 ms, heavy ranker over top 100 70 ms, re-rank and business rules 15 ms, network and fan-out overhead 30 ms; sum 200 ms.",
+  "task": "Design product search for a marketplace with 100M listings, 5,000 queries per second at peak, and p99 latency 200 ms. Cover query understanding, hybrid retrieval, a two-stage ranker with a learning-to-rank objective, the feature set, label sources (judgments and clicks) and debiasing, offline metrics, online evaluation, and the latency budget. Reproduce the NDCG@5 and MRR numbers in the example and explain why NDCG uses IDCG.",
+  "starter": "query -> normalize, spell-correct, classify intent/category, extract entities\nretrieve: BM25 top 500 || ANN top 500 -> fuse/dedupe ~1000\nL1: light GBDT over ~1000 -> top 100\nL2: LambdaMART or cross-encoder over top 100 -> re-rank rules -> page of results\nlabels: graded judgments (eval) + debiased clicks (training)\nmetrics: NDCG@10, MRR for navigational slice; online: success, abandonment, reformulation",
+  "hints": [
+    "Discounts use log2(i + 1), so position 1 has discount 1.",
+    "IDCG comes from sorting the judged documents by grade, not from the model's list. Expensive models belong in the stage that sees the fewest candidates."
+  ],
+  "solution": "Query understanding normalizes, corrects spelling, and predicts category and attributes as soft boosts. Retrieval runs BM25 over title, attribute, and description fields alongside a dual-encoder ANN index, about 500 candidates each, fused and deduplicated. A light GBDT ranks about 1000 candidates using cheap features; a LambdaMART model or a distilled cross-encoder reorders the top 100 with richer features: field-level BM25, embedding similarity, price, seller quality, freshness, stock, and point-in-time smoothed click-through. Use a listwise objective because only the top of the page matters. Training labels come from clicks and purchases weighted by inverse examination propensities estimated from a small randomized slice; graded human judgments form the evaluation set. Offline report NDCG@10 overall and MRR for navigational queries, sliced by query frequency and category; online, A/B test or interleave on successful sessions, abandonment, and reformulation rate with latency guardrails. In the example DCG@5 = 12.780, IDCG@5 = 14.595, NDCG@5 = 0.876, and MRR = 0.444. IDCG normalizes by the best achievable score for that query so that queries with many or few relevant documents are comparable. The per-stage budget sums to 200 ms, but stage tails do not add simply, so measure end-to-end p99 and set timeouts with graceful degradation, such as skipping the heavy ranker.",
+  "checklist": [
+    "I compute DCG@5 = 12.780, IDCG@5 = 14.595, NDCG@5 = 0.876, and MRR = 0.444.",
+    "I combine lexical and semantic retrieval and justify each.",
+    "I choose a learning-to-rank objective and explain the trade-off.",
+    "I debias click labels with propensities from randomization.",
+    "I allocate latency per stage and plan degradation on timeout."
+  ],
+  "pitfalls": [
+    "Computing IDCG from the model's own top k instead of all judged documents inflates NDCG.",
+    "Treating unclicked low-ranked results as irrelevant ignores that users never examined them.",
+    "Hard category filters from a low-confidence classifier silently remove relevant results.",
+    "Using a cross-encoder on thousands of candidates breaks the latency budget.",
+    "Click-through features computed with future data leak labels into training."
+  ],
+  "walkthrough": [
+    {
+      "title": "Spend the latency where it buys relevance",
+      "body": "Run lexical and semantic retrieval in parallel and pass only a few hundred candidates to expensive stages. Precompute document features and cache popular queries. At 5,000 QPS, a heavy ranker over 100 candidates scores 500,000 query-document pairs per second, which sets accelerator count and batch size. Define fallbacks: if the heavy ranker times out, return the light ranker's order instead of an error."
+    },
+    {
+      "title": "Explain metric choice to the interviewer",
+      "body": "NDCG@k rewards putting the most relevant items first and uses graded labels, so it fits browsing queries. MRR only looks at the first relevant hit, so it fits navigational queries such as a brand or exact product. Report both by query segment, since head queries dominate averages while tail queries often hold the failures."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "One swap changes NDCG",
+      "prompt": "In the example, swap the documents at ranks 2 and 3 so the ranked grades become [3, 3, 2, 0, 1, 2]. Recompute DCG@5 and NDCG@5.",
+      "hints": [
+        "Only ranks 2 and 3 change; IDCG does not change.",
+        "Rank 2 now has gain 7 and rank 3 has gain 3."
+      ],
+      "solution": "Terms: 7.000 + 4.417 (7/1.585) + 1.500 (3/2) + 0.000 + 0.387, so DCG@5 = 13.303. NDCG@5 = 13.303 / 14.595 = 0.911, up from 0.876. Moving a grade-3 document above a grade-2 document near the top matters because the top discounts are steep.",
+      "checklist": [
+        "I keep IDCG at 14.595.",
+        "I obtain DCG@5 = 13.303 and NDCG@5 = 0.911."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Estimate a propensity weight",
+      "prompt": "In a randomized experiment the same documents are shuffled across positions. Click-through is 0.30 at position 1 and 0.12 at position 3. Assuming the position-based model, compute the relative examination propensity of position 3 and the click weight to use for training. Then name two risks of inverse propensity weighting.",
+      "hints": [
+        "Randomization makes average relevance equal across positions.",
+        "Normalize propensities relative to position 1."
+      ],
+      "solution": "With equal average relevance, the CTR ratio estimates examination: 0.12 / 0.30 = 0.4 relative to position 1, so a click at position 3 gets weight 1 / 0.4 = 2.5. Risks: very low propensities at deep positions create huge weights and high variance, so clip or smooth them; propensities can vary by device, query type, and page layout, so estimate them per segment and re-estimate after UI changes. Randomization itself costs some user experience, so keep the slice small.",
+      "checklist": [
+        "I obtain relative propensity 0.4 and weight 2.5.",
+        "I name variance from small propensities and context-dependent propensities."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you prefer MRR over NDCG?",
+      "answer": "When each query has essentially one correct answer, such as navigational or known-item search. NDCG fits graded relevance and browsing, where several results matter."
+    },
+    {
+      "question": "Why not use a cross-encoder for all retrieved candidates?",
+      "answer": "It needs a full model pass per query-document pair, so 1000 candidates at 5,000 QPS is 5 million passes per second. Use it on the top 50 to 100, or distill it into a cheaper ranker."
+    },
+    {
+      "question": "How do you get relevance labels for a brand-new search vertical?",
+      "answer": "Bootstrap with BM25 and heuristics, collect graded human judgments on sampled queries, use carefully debiased clicks as traffic grows, and consider LLM-assisted labeling validated against human agreement."
+    }
+  ],
+  "takeaways": [
+    "Combine lexical and semantic retrieval; each covers the other's blind spots.",
+    "Use listwise or lambda-weighted objectives because only the top of the list matters.",
+    "NDCG normalizes by the ideal ordering; MRR looks only at the first relevant hit.",
+    "Clicks are biased by position; estimate propensities with randomization before training on them.",
+    "Budget latency per stage and degrade gracefully on timeouts."
+  ]
+}

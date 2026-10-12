@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'behavioral']
+export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'ai', 'behavioral']
 const read = path => JSON.parse(readFileSync(path, 'utf8'))
 
 export function buildCurriculum(root = 'content') {

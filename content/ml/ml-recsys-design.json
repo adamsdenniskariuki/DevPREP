@@ -1,0 +1,117 @@
+{
+  "id": "ml-recsys-design",
+  "track": "ml",
+  "title": "ML system design: recommendation systems",
+  "minutes": 60,
+  "summary": "Design a multi-stage recommender: candidate generation with collaborative filtering and two-tower embeddings, ranking, re-ranking, cold start, bias from implicit feedback, and offline plus online evaluation.",
+  "prerequisites": [
+    "ml-deployment-monitoring"
+  ],
+  "prerequisiteNotes": "Assumes you can define a prediction contract, separate immediate health from delayed quality, and plan a guarded rollout. Recommendation adds massive candidate sets, implicit labels, and feedback loops between what the model shows and what it later learns from.",
+  "objectives": [
+    "Frame a recommendation problem with an objective, implicit-feedback labels, and serving constraints.",
+    "Design a retrieval, ranking, and re-ranking funnel and justify the model and latency at each stage.",
+    "Handle cold start, position bias, and feedback loops with concrete mitigations.",
+    "Evaluate with recall@k and ranking metrics offline, then an A/B test with guardrails online."
+  ],
+  "concepts": [
+    {
+      "title": "Frame the objective and the labels",
+      "body": "Clarify the surface (home feed, similar items, email), the business goal (purchases, long-term retention, watch time), and constraints: catalog size, user count, freshness, and p99 latency. Most labels are implicit: clicks, dwell time, add-to-cart, purchases, skips. A missing interaction is not a negative; the item may never have been shown. Use impressions without engagement as negatives, plus sampled negatives for retrieval. Optimizing clicks alone rewards clickbait, so blend several predicted outcomes into one score and protect longer-term metrics with guardrails."
+    },
+    {
+      "title": "The funnel: retrieve, rank, re-rank",
+      "body": "No heavy model can score millions of items per request, so stages trade accuracy for cost. Candidate generation pulls hundreds to a few thousand items from several sources. Matrix factorization learns user and item vectors whose dot product approximates interaction; item-item co-occurrence powers similar-item lists. A two-tower model encodes the user (history, context) and the item (id plus content features) separately, trains with in-batch or sampled negatives, and serves by precomputing item vectors into an approximate nearest neighbor (ANN) index such as HNSW or IVF with product quantization, accepting slightly lower recall for sub-linear lookup. Add trending, fresh, and followed-creator sources. The ranker is a heavier GBDT or deep model with user-item cross features predicting several heads, for example p(click) and p(purchase | click). Re-ranking applies diversity (category caps or maximal marginal relevance), deduplication, freshness, policy filters, and business rules."
+    },
+    {
+      "title": "Cold start, position bias, and feedback loops",
+      "body": "New users: start with popular-by-context lists, onboarding choices, and fast in-session signals. New items: include content features (text, image embeddings, category) in the item tower so an item gets a vector before any interactions, and reserve a small exploration budget (randomized slots or a bandit). Implicit feedback is biased: higher positions get more clicks regardless of relevance, and the model learns only from what it chose to show, so popular items gain exposure and the catalog tail starves. Log the position and the serving policy's propensity, estimate examination probability with small randomized experiments, weight clicks by inverse propensity (a click where examination probability is 0.25 counts with weight 4), or train with position as a feature and fix it to one value at serving."
+    },
+    {
+      "title": "Offline and online evaluation",
+      "body": "Split by time: train on earlier weeks, evaluate on a later week, never randomly across time. Retrieval is measured by recall@k: the fraction of a user's held-out relevant items that appear in the top-k candidates, since the ranker cannot recover what retrieval dropped. Ranking uses NDCG@k or MAP on impressed lists, plus calibration if heads are blended, and coverage and diversity. Logged data reflects the old policy, so offline gains often shrink online. Confirm with an A/B test randomized by user, a primary metric such as purchases per user, and guardrails such as latency, return rate, and unsubscribes; run full weeks to average out novelty and weekday effects. Interleaving compares two rankers with less traffic but measures preference, not total business impact."
+    },
+    {
+      "title": "Scale and serving",
+      "body": "Storage and compute drive design. 10M items at 64 float32 dimensions is 10,000,000*64*4 bytes = 2.56 GB; int8 quantization cuts it to 0.64 GB. Brute-force scoring is 640M multiply-adds per request, which is why ANN indexes exist. Keep recent user actions in a streaming store so the user tower reflects the current session; rebuild item indexes on a schedule with incremental inserts for new items. Precompute recommendations offline for low-traffic surfaces, compute online when context matters, and cache aggressively. Fall back to a popularity list when retrieval or ranking times out."
+    }
+  ],
+  "example": "Two-tower retrieval for one user with user vector u = [1, 0.5, -1].\nItem vectors: A = [0.8, 0.2, 0.1], B = [0.1, 0.9, -0.5], C = [0.5, 0.5, 0.5], D = [-0.2, 0.4, -0.9].\nDot products: A = 0.8 + 0.1 - 0.1 = 0.80; B = 0.1 + 0.45 + 0.5 = 1.05; C = 0.5 + 0.25 - 0.5 = 0.25; D = -0.2 + 0.2 + 0.9 = 0.90.\nRanking: B (1.05), D (0.90), A (0.80), C (0.25).\nHeld-out relevant items for this user: {C, D}.\nrecall@2 = |{B, D} intersect {C, D}| / 2 = 1/2 = 0.5; precision@2 = 1/2 = 0.5; recall@4 = 2/2 = 1.0.\nScale: 10M items * 64 dims * 4 bytes = 2.56 GB in float32, 0.64 GB in int8; exact scoring = 10M * 64 = 640M multiply-adds per request.\nPosition bias: a click at a slot whose estimated examination probability is 0.25 gets inverse-propensity weight 1/0.25 = 4.",
+  "task": "Design the \"Recommended for you\" carousel on an e-commerce home page: 50M monthly users, 10M products, 20 slots, p99 latency 200 ms. Cover the objective and labels, candidate sources, ranker and features, re-ranking rules, cold start for new users and new products, position-bias handling, offline metrics with a time split, the online experiment and guardrails, and serving with fallback. Work the recall@k numbers in the example and explain what a low recall@500 would mean for the ranker.",
+  "starter": "objective: blended score = w1*p(click) + w2*p(purchase) ... guardrails: returns, latency\nretrieval: two-tower ANN (k=500) + co-purchase + trending + new-item exploration\nranking: model over ~1000 candidates, features: user, item, user x item, context\nre-rank: dedupe, category caps, out-of-stock filter, policy rules -> 20 slots\neval: time split, recall@500 for retrieval, NDCG@20 for ranking, A/B by user\nserving: latency budget per stage, cache, popularity fallback",
+  "hints": [
+    "Recall@k on retrieval caps what any ranker can achieve, so measure it separately.",
+    "Ask what label the model would see for a product that was never shown. Give each stage a latency budget and a candidate count, then check they fit 200 ms."
+  ],
+  "solution": "Objective: purchases per user, using a weighted blend of p(click) and p(purchase | click) with guardrails on returns and latency. Labels: impressions with clicks or purchases are positives, impressed but ignored items are negatives; unshown items are unknown. Retrieval: a two-tower model with content features in the item tower, served from an ANN index for about 500 candidates, merged with co-purchase neighbors of recent views, trending items, and a small new-item exploration pool, to about 1000 candidates in roughly 40 ms. Ranking: a GBDT or deep model with user history, item price, stock, popularity, and user-item affinity features, about 80 ms. Re-ranking: remove purchased and out-of-stock items, cap items per category, apply policy rules, select 20. Cold start: popularity by region and device plus session signals for new users; content-based vectors and exploration slots for new products. Bias: log positions and propensities, randomize a small slice to estimate examination probabilities, and use inverse propensity weights. In the example recall@2 = 0.5 and recall@4 = 1.0; a low recall@500 means relevant items never reach the ranker, so improve retrieval rather than ranking. Evaluate on a later week offline, then run a user-randomized A/B test for at least one full week, with a popularity fallback on timeouts.",
+  "checklist": [
+    "I compute the dot products, ranking, recall@2 = 0.5, and recall@4 = 1.0.",
+    "I give each stage a model, candidate count, and latency budget.",
+    "I treat unshown items as unknown and address position bias.",
+    "I handle new users and new items separately.",
+    "I separate offline metrics with a time split from an online A/B test with guardrails."
+  ],
+  "pitfalls": [
+    "Random train/test splits leak future interactions and inflate offline metrics.",
+    "Treating every non-click as a negative punishes items users never saw.",
+    "Optimizing click-through alone can raise clicks while lowering purchases or satisfaction.",
+    "Tuning only the ranker cannot recover relevant items retrieval never returned.",
+    "Skipping exploration lets popularity feedback loops starve new and niche items."
+  ],
+  "walkthrough": [
+    {
+      "title": "Size the funnel before choosing models",
+      "body": "Start from 10M items and a 200 ms budget. Allocate about 20 ms to fetch features and the user vector, 40 ms to ANN and other retrieval sources in parallel, 80 ms to rank about 1000 candidates in batched calls, 20 ms to re-rank, and keep the remainder for network overhead and tail variance. Then choose models that fit: a ranker that needs 1 ms per item sequentially would not fit, so batch scoring or a lighter model is mandatory."
+    },
+    {
+      "title": "Close the loop safely",
+      "body": "Every day the model trains on impressions its predecessor chose. Keep a small randomized or exploration slice for unbiased data, log the policy version and propensity with each impression, and monitor catalog coverage and the share of impressions going to the top 1% of items. If coverage collapses, the system is amplifying its own choices rather than learning preferences."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Recall and precision at k",
+      "prompt": "A user has 3 held-out relevant items. Retrieval returns 10 candidates; relevant items sit at ranks 2 and 7, and the third is missing. Compute recall@5, precision@5, and recall@10.",
+      "hints": [
+        "Recall divides by all relevant items, including the missing one.",
+        "Precision divides by k."
+      ],
+      "solution": "Top 5 contains one relevant item: recall@5 = 1/3, about 0.33, and precision@5 = 1/5 = 0.2. Top 10 contains two: recall@10 = 2/3, about 0.67. The missing item caps recall at 2/3 for any k up to 10, so the ranker cannot fix it.",
+      "checklist": [
+        "I obtain recall@5 = 1/3, precision@5 = 0.2, and recall@10 = 2/3.",
+        "I explain that missing retrieval candidates cap downstream quality."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Offline win, online flat",
+      "prompt": "A new two-tower model improves offline recall@500 by 8% over the current one, but a two-week A/B test shows no change in purchases per user. List the hypotheses you would check and the next step for each.",
+      "hints": [
+        "Ask whether the extra candidates survive the ranker and re-ranker.",
+        "Ask whether the offline data could reward agreement with the old policy."
+      ],
+      "solution": "Hypotheses: the ranker or re-ranking rules already filter the additional items, so check what fraction of the new candidates reach the final 20 slots; offline labels come from the old policy's impressions, so the gain may measure agreement with past exposure rather than true preference, which an exploration slice can test; the relevant items found may be ones users would buy anyway via search, so check incrementality and cannibalization; the experiment may lack power for the effect size, so compute the minimum detectable effect; and latency or freshness may differ in production, so compare serving logs. Act on what the evidence shows: retrain the ranker on the new candidate distribution, improve labels, or stop investing in retrieval.",
+      "checklist": [
+        "I check whether retrieval gains survive later stages.",
+        "I address logged-policy bias, incrementality, and statistical power."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why use two separate towers instead of one model with user-item cross features for retrieval?",
+      "answer": "Separate towers let item vectors be precomputed and indexed, so retrieval is one user-tower pass plus an ANN lookup. Cross features need a full model call per user-item pair, which is affordable only for the hundreds of candidates in the ranking stage."
+    },
+    {
+      "question": "How would you react to a user's interests changing within a session?",
+      "answer": "Feed recent in-session actions from a streaming store into the user tower and ranker features, weight recent events more, and add a source of neighbors of the last few viewed items. Monitor engagement by session position to verify the effect."
+    }
+  ],
+  "takeaways": [
+    "Use a multi-stage funnel; each stage trades model cost for candidate count.",
+    "Implicit feedback is biased by exposure and position; log propensities and explore.",
+    "Measure retrieval with recall@k and ranking with NDCG on a time-based split.",
+    "Confirm offline gains with a user-randomized A/B test and guardrails."
+  ]
+}

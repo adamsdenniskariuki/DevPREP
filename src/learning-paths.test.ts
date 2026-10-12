@@ -24,7 +24,7 @@ describe('curated learning paths', () => {
     expect(pathLessonIds(swe)).toHaveLength(29)
     expect(pathLessonIds(senior)).toHaveLength(30)
     expect(pathLessonIds(swe)).not.toEqual(pathLessonIds(senior))
-    expect(lessons).toHaveLength(46)
+    expect(lessons).toHaveLength(60)
     const counts = (path: typeof swe, track: string) => pathLessonIds(path).filter(id => lessons.find(lesson => lesson.id === id)?.track === track).length
     expect(counts(swe, 'dsa')).toBe(17)
     expect(counts(senior, 'dsa')).toBe(12)

@@ -1,0 +1,119 @@
+{
+  "id": "ml-fraud-detection",
+  "track": "ml",
+  "title": "ML system design: fraud and abuse detection",
+  "minutes": 60,
+  "summary": "Design real-time fraud scoring with streaming velocity features, extreme class imbalance, delayed and biased labels, cost-based thresholds, review queues, and defenses against adaptive adversaries.",
+  "prerequisites": [
+    "ml-imbalance-thresholds",
+    "ml-deployment-monitoring"
+  ],
+  "prerequisiteNotes": "Combines cost-based thresholds and capacity limits with delayed labels, monitoring, and rollback. Fraud adds a strict latency path, adversaries who adapt, and labels that only exist for transactions you allowed.",
+  "objectives": [
+    "Design a low-latency scoring path with streaming features, multiple actions, and a fallback.",
+    "Handle delayed, noisy, and selectively observed labels when training and evaluating.",
+    "Set approve, review, and decline thresholds from costs, calibration, and reviewer capacity.",
+    "Explain how rules, models, and feedback loops interact under adversarial drift."
+  ],
+  "concepts": [
+    {
+      "title": "Scoring in the transaction path",
+      "body": "The score must return while the payment authorization waits, typically within tens of milliseconds at p99. Actions are graded: approve, step-up authentication such as a one-time code, send to manual review, or decline. Only features available at decision time are allowed. Decide in advance what happens when the model or feature store times out: fail open (approve, with rule checks and amount limits) protects customer experience, fail closed protects against loss; this is a business decision to make explicitly, not a default."
+    },
+    {
+      "title": "Streaming velocity and link features",
+      "body": "The strongest signals are often aggregates over sliding windows per entity: transactions per card in the last 10 minutes, distinct cards per device in 24 hours, amount relative to the card's 30-day average, first use of a device or shipping address. Compute them in a stream processor with keyed windowed state and serve them from a low-latency store; backfill the same definitions point-in-time for training to avoid skew. Graph features such as accounts sharing a device or payment instrument expose fraud rings. Handle late and out-of-order events with event-time windows, and watch for hot keys such as a shared corporate IP."
+    },
+    {
+      "title": "Labels are delayed, noisy, and selective",
+      "body": "Chargebacks can arrive weeks or months after the transaction, so recent data looks cleaner than it is; train and evaluate on matured windows and treat immature labels as unknown. Labels are noisy: friendly fraud marks legitimate purchases as fraud, and undetected fraud stays labeled legitimate. Declined transactions never produce an outcome, so the training set over-represents what the old policy allowed. Mitigations: use review decisions and customer reports as faster but noisier labels, and approve a small random sample of would-be-declined, low-amount transactions to observe outcomes, weighting those labels by their inverse sampling rate."
+    },
+    {
+      "title": "Imbalance, costs, and thresholds",
+      "body": "At 0.1% fraud, approving everything is 99.9% accurate and useless. Evaluate with precision and recall at operating points, PR-AUC, and dollar-weighted recall, since missing a $5,000 fraud matters more than a $5 one. With calibrated probability p, fraud loss L, and false-decline cost C (lost margin plus churn risk), declining is cheaper when p*L > (1 - p)*C, that is p > C / (C + L). With L = $200 and C = $10 the decline threshold is 10/210, about 0.048. Use bands: decline above a high threshold, review a middle band sized to reviewer capacity, and approve below. Thresholds can vary by amount or merchant category because L varies."
+    },
+    {
+      "title": "Adversaries, rules, and feedback loops",
+      "body": "Fraudsters probe and adapt, so features that are easy to manipulate decay and attack patterns shift within days. Rules are fast to deploy and interpretable and encode blocklists and compliance requirements, but they are brittle and pile up; models generalize across weak signals. A hybrid uses rules as hard overrides and as model features, with owners and expiry dates for rules. Blocking a pattern removes its future labels, so a retrained model can forget it and the attack returns; keep labels from blocked attempts via review outcomes and the random holdout. Monitor approval rate, decline rate, rule hit rates, score distributions, and matured chargeback rate by cohort; retrain frequently with champion-challenger evaluation and add unsupervised anomaly signals for unseen attacks."
+    }
+  ],
+  "example": "1,000,000 transactions per day; fraud rate 0.1%, so 1,000 fraudulent and 999,000 legitimate.\nApprove-all baseline: accuracy 999,000 / 1,000,000 = 99.9%; fraud loss at an average $150 = 1,000 * $150 = $150,000 per day.\nModel at the review threshold: recall 70%, false-positive rate 0.5%.\nTP = 0.7 * 1,000 = 700; FP = 0.005 * 999,000 = 4,995; flagged = 5,695.\nPrecision = 700 / 5,695 = 12.3%.\nAssume review costs $4, catches every flagged fraud, and does not lose good customers.\nReview cost = 5,695 * $4 = $22,780; missed fraud = 300 * $150 = $45,000; total = $67,780 per day versus $150,000, a difference of $82,220 under these assumptions.\nCapacity at 2 minutes per review: 5,695 * 2 = 11,390 minutes = 189.8 hours, about 23.7 reviewer 8-hour shifts per day before breaks and peaks.\nAuto-decline boundary with fraud loss L = $200 and false-decline cost C = $10: p > 10 / (10 + 200) = 0.048, assuming calibrated probabilities.",
+  "task": "Design real-time fraud detection for card-not-present payments at 1M transactions per day with a 50 ms p99 scoring budget. Cover the decision path and fallback, streaming and graph features, label sources and maturity, handling declined transactions, model choice, approve/review/decline thresholds from costs and reviewer capacity, monitoring for adversarial drift, and retraining. Reproduce the example's precision, cost, and staffing numbers and state which assumptions would most change them.",
+  "starter": "on_authorization(txn):\n  feats = online_store.get(card, device, ip, merchant) + txn fields\n  rules = hard_rules(txn)            # blocklists, compliance\n  p = model(feats) within timeout else fallback_policy(txn)\n  action = decline if p > t_high else review if p > t_low else approve\n  log(txn_id, versions, feats, p, action)\nstream: update velocity windows per entity\nlabels: chargebacks (delayed), reviews, reports, random holdout of declines",
+  "hints": [
+    "Apply the false-positive rate to legitimate transactions, not to all transactions.",
+    "Size the review band from reviewer minutes, not just from model scores. Ask what labels you would have for transactions the system declined."
+  ],
+  "solution": "Path: on authorization, read velocity and graph features from the online store, apply hard rules, and score a gradient-boosted model, which is fast on CPU and strong on tabular features, within the budget; on timeout, fall back to rules plus an amount-limited approve policy agreed with the business. Features: per-card, device, IP, and email velocity windows, amount relative to history, new-device and new-address flags, and shared-entity counts, computed in a stream processor and backfilled point-in-time for training. Labels: matured chargebacks, review outcomes, and customer reports, with a small random approval holdout of low-amount would-be-declines weighted by inverse sampling rate. Thresholds: auto-decline above about 0.048 for an average $200 loss and $10 false-decline cost if calibrated, raising the threshold for low-amount transactions; review a middle band capped at reviewer capacity. In the example precision is 12.3%, daily cost $67,780 versus $150,000, and the queue needs about 190 reviewer-hours. These numbers are most sensitive to the false-positive rate, review accuracy, the cost of friction for good customers, and the average fraud amount. Monitor approval and decline rates, rule hits, feature freshness, score drift, and matured chargeback rate by cohort; retrain often under champion-challenger evaluation, keep rules with owners and expiry, and retain labels from blocked patterns so the model does not forget them.",
+  "checklist": [
+    "I compute TP 700, FP 4,995, precision 12.3%, and the $67,780 daily cost.",
+    "I size reviewer capacity, about 190 hours per day.",
+    "I handle delayed labels and the missing outcomes of declined transactions.",
+    "I derive the decline threshold C / (C + L) and state the calibration assumption.",
+    "I include rules, fallback, monitoring, and adversarial feedback loops."
+  ],
+  "pitfalls": [
+    "Treating recent transactions without chargebacks as legitimate understates fraud.",
+    "Training only on approved transactions bakes the old policy's blind spots into the model.",
+    "Reporting accuracy or ROC-AUC alone hides poor precision at 0.1% prevalence.",
+    "Velocity features computed differently offline and online create training/serving skew.",
+    "A review band larger than reviewer capacity creates backlogs that delay legitimate customers."
+  ],
+  "walkthrough": [
+    {
+      "title": "Respond to a new attack",
+      "body": "Decline rate is stable but customer fraud reports spike for one merchant category. Ship a targeted rule quickly with an owner and expiry, route the segment to review, and pull reported cases into labeling. Add features that capture the new pattern, retrain on matured and fast labels, compare challenger and champion on the affected cohort and overall, then retire the rule once the model covers it."
+    },
+    {
+      "title": "Measure what the model is really doing",
+      "body": "Report metrics by matured cohort with label coverage, slice by amount, region, and merchant, and use the random holdout to estimate fraud among declines. Track dollars saved, good-customer friction (false declines and step-ups), and reviewer load together; improving one while hiding another is a common failure in interviews and in production."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Higher precision, higher cost",
+      "prompt": "Using the example's volumes and costs, a tighter threshold gives recall 60% and false-positive rate 0.2%. Compute precision, review cost, missed-fraud cost, and total daily cost. Is it better?",
+      "hints": [
+        "FP = 0.002 * 999,000.",
+        "Missed fraud = 400 transactions at $150."
+      ],
+      "solution": "TP = 600, FP = 1,998, flagged = 2,598, precision = 600 / 2,598 = 23.1%. Review cost = 2,598 * $4 = $10,392; missed fraud = 400 * $150 = $60,000; total $70,392 per day, which is $2,612 worse than $67,780 despite almost double the precision. Optimize expected cost under capacity, not precision alone.",
+      "checklist": [
+        "I obtain precision 23.1% and total cost $70,392.",
+        "I conclude the higher-precision threshold costs more here."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Price the label holdout",
+      "prompt": "The system declines about 5,000 transactions per day. To observe outcomes, you approve a random 1% of would-be-declined transactions under $50. Assume 40% of those are fraud with an average loss of $30. Estimate the daily cost, how to use the labels, and the risks.",
+      "hints": [
+        "1% of 5,000 is 50 transactions.",
+        "Each holdout label stands in for 1 / 0.01 declined transactions in its stratum."
+      ],
+      "solution": "Expected cost is 50 * 0.4 * $30 = $600 per day, plus customer impact for the fraud victims, which may require reimbursement policies. Use the labels to estimate the precision of declines and to train with inverse sampling weight 100, restricted to the under-$50 stratum it represents. Risks: high-amount declines remain unobserved, so their precision must come from reviews or other evidence; fraudsters may probe for the randomly approved path; and 50 labels per day give noisy estimates, so aggregate over weeks and report confidence intervals. Get legal and compliance sign-off.",
+      "checklist": [
+        "I estimate $600 per day and weight labels by 100 within the stratum.",
+        "I note unobserved high-amount declines, probing risk, and small-sample noise."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Should scoring fail open or fail closed when the model times out?",
+      "answer": "It depends on cost and risk appetite: fail open with rules and amount caps for low-risk segments to protect revenue and customers, fail closed or step-up for high-risk ones. Agree on it in advance and alert on fallback rate."
+    },
+    {
+      "question": "Why not rely only on unsupervised anomaly detection?",
+      "answer": "Unusual is not the same as fraudulent: many anomalies are legitimate, and skilled fraud mimics normal behavior. Anomaly scores are useful features and early warnings for new attacks, but supervised models on matured labels drive most decisions."
+    }
+  ],
+  "takeaways": [
+    "Fraud scoring is a latency-bound, multi-action decision with an explicit fallback.",
+    "Velocity and link features from streaming aggregates carry much of the signal.",
+    "Labels are late, noisy, and missing for declines; plan maturity windows and holdouts.",
+    "Set thresholds from costs and reviewer capacity, not from accuracy or precision alone.",
+    "Adversaries adapt; combine rules and models and retain labels from blocked patterns."
+  ]
+}

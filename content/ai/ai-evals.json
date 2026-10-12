@@ -1,0 +1,120 @@
+{
+  "id": "ai-evals",
+  "track": "ai",
+  "title": "Evaluating LLM systems: golden sets, judges, and noise",
+  "minutes": 50,
+  "summary": "Build an eval suite that catches regressions before users do, calibrate LLM judges, and read pass rates with error bars.",
+  "prerequisites": [
+    "ai-rag"
+  ],
+  "prerequisiteNotes": "Assumes a retrieval-augmented assistant from the RAG lesson. Here you decide how to know whether a prompt, model, or retrieval change made it better or worse.",
+  "objectives": [
+    "Build a golden set from real traffic with deliberate slice and edge-case coverage.",
+    "Choose between reference-based metrics, rubric grading, and pairwise comparison for a given task.",
+    "Calibrate an LLM judge against human labels and name its known biases.",
+    "Wire offline regression evals into CI and connect them to online metrics and A/B tests.",
+    "Quantify sampling noise so a 2-point change is not mistaken for progress."
+  ],
+  "concepts": [
+    {
+      "title": "Golden sets come from traffic, not imagination",
+      "body": "Sample real (consented, redacted) requests, stratify by intent, language, document type, and user segment, then add hand-written edge cases: empty retrieval, conflicting sources, adversarial phrasing, long inputs. Label each case with an expected answer, required facts, or a rubric. Tag cases with slices so you can report per-slice pass rates; an overall average can hide a collapse on a small but critical slice. Version the set, keep a frozen holdout that prompt authors never tune against, and refresh it as traffic shifts, because a stale set measures last quarter's product."
+    },
+    {
+      "title": "Pick the grader that matches the output",
+      "body": "Reference-based checks (exact match, normalized match, schema validity, required-fact containment, retrieval recall@k) are cheap and deterministic, so use them wherever the answer is constrained. Overlap metrics against one reference answer penalize correct paraphrases in open-ended text. Rubric grading scores criteria such as grounded in sources, answers the question, follows policy, and correct tone, each on a small fixed scale with anchored descriptions. Pairwise comparison (A vs B on the same input) is often more reliable than absolute scores when deciding between two candidates, because relative judgments are easier for both humans and models."
+    },
+    {
+      "title": "LLM-as-judge is a model you must evaluate",
+      "body": "Judges scale rubric grading, but they have systematic biases: position bias (preferring the first or second answer), verbosity bias (preferring longer answers), and self-preference (favoring outputs that resemble their own style or model family). Mitigate by swapping order and counting only consistent verdicts, asking for criterion-level judgments before an overall score, constraining length in the rubric, and using a judge from a different family when possible. Calibrate on a human-labeled sample: report judge-human agreement (and human-human agreement as the ceiling) per criterion and per slice. Re-calibrate when the judge prompt or judge model changes; a judge upgrade is a measurement change, not a product change."
+    },
+    {
+      "title": "Offline gates, online truth, and noise",
+      "body": "Run the eval suite in CI on every prompt, model, retrieval, or tool change, with blocking thresholds on critical slices and hard checks (schema, safety) and non-blocking trend reports elsewhere. Pin model versions, temperatures, and seeds where possible, and log every output so diffs are reviewable. Offline sets cannot capture real user behavior, so follow with online metrics (task success, thumbs, escalation to a human, retries, abandonment) and an A/B test for material changes. Cost per request and latency (time to first token, p95 total) are eval dimensions too: a 1-point quality gain that doubles cost may be a bad trade. Every pass rate has sampling error; report intervals, not bare percentages.",
+      "code": "# normal-approximation 95% CI for a pass rate\nimport math\nk, n = 170, 200\np = k / n\nhalf = 1.96 * math.sqrt(p * (1 - p) / n)\nprint(f\"{p:.1%} +/- {half:.1%}\")  # 85.0% +/- 4.9%"
+    }
+  ],
+  "example": "A support assistant passes 170 of 200 golden cases under the rubric judge.\nPass rate p = 170/200 = 0.85.\nStandard error = sqrt(p*(1-p)/n) = sqrt(0.85*0.15/200) = sqrt(0.0006375) ~ 0.0252.\n95% CI half-width ~ 1.96*0.0252 ~ 0.049, so the interval is about 85% +/- 4.9 points, roughly [80.1%, 89.9%].\nA new prompt scores 176/200 = 88%. For two independent runs on different samples, the difference CI half-width is 1.96*sqrt(0.85*0.15/200 + 0.88*0.12/200) ~ 6.7 points, so +3 points is not distinguishable from noise.\nTo get a +/- 2-point half-width at p ~ 0.85: n = 1.96^2*0.85*0.15/0.02^2 ~ 1224.5, so about 1225 cases.\nBecause both prompts run on the same 200 cases, a paired analysis is tighter: count cases that flipped fail->pass versus pass->fail and test the discordant pairs, instead of comparing two independent proportions.\n(Normal approximation is reasonable here since n*p and n*(1-p) are both well above 10; near 0% or 100% prefer a Wilson interval.)",
+  "task": "You own quality for an internal RAG support assistant. The team wants to switch to a cheaper model and rewrite the system prompt in the same release. Design the evaluation plan: golden set construction, graders, judge calibration, CI gates, online rollout, and how you will decide go/no-go. Include how you handle noise and per-slice regressions.",
+  "starter": "golden_set:\n  sources, slices, edge cases, labels, holdout\ngraders:\n  deterministic checks | rubric judge | pairwise\njudge_calibration:\n  human sample, agreement, bias controls\nci_gate:\n  blocking thresholds, pinned configs, diff review\nonline:\n  metrics, guardrails, A/B design\ndecision:\n  quality, cost, latency, uncertainty",
+  "hints": [
+    "Changing the model and the prompt together confounds attribution; consider evaluating them separately or as a 2x2.",
+    "A judge that agrees with humans 90% overall can still be wrong on one slice that matters. Same cases under both variants lets you use a paired comparison."
+  ],
+  "solution": "Build roughly 500-1500 cases from consented, redacted traffic stratified by intent, product area, and language, plus curated edge cases (no relevant docs, conflicting docs, injection attempts, multi-part questions). Label required facts, citation expectations, and refusal-expected cases; freeze a holdout. Use deterministic checks for citation format, schema, and retrieval recall; a rubric judge for groundedness, completeness, and policy; and pairwise comparison for the final model choice. Calibrate the judge on ~200 human-labeled cases, report agreement per criterion and slice against the human-human ceiling, and control position and verbosity bias with order swapping and length guidance. Evaluate model and prompt as a 2x2 so you know which change caused what. In CI, block on safety and schema failures and on critical-slice drops beyond the noise band; report CIs and paired flip counts. Ship behind a flag: shadow, then a small A/B with task success, human escalation rate, thumbs-down, latency p95, and cost per resolved ticket, plus pre-agreed guardrail stop conditions. Go only if quality is non-inferior within an agreed margin on every critical slice and the cost saving is real after retries and escalations.",
+  "checklist": [
+    "I build the golden set from real traffic with slices, edge cases, and a frozen holdout.",
+    "I match graders to output types and calibrate the judge against humans.",
+    "I name position, verbosity, and self-preference bias and how I control them.",
+    "I compute the 85% +/- 4.9 point interval and avoid over-reading small deltas.",
+    "I include CI gates, online metrics, cost, and latency in the decision."
+  ],
+  "pitfalls": [
+    "Tuning prompts against the same cases used to report results, which inflates scores.",
+    "Trusting an uncalibrated judge, or silently upgrading the judge between runs.",
+    "Reporting one aggregate number that hides a regression on a critical slice.",
+    "Declaring a 2-point win on 200 cases without an interval or paired test.",
+    "Ignoring cost and latency, then shipping a 'better' model nobody can afford at peak."
+  ],
+  "walkthrough": [
+    {
+      "title": "Triage a judge disagreement",
+      "body": "Humans and the judge disagree on 18% of groundedness labels for multi-document answers. Read the disagreements: the judge rewards fluent answers that cite a source without checking the claim is in it. Fix the rubric to require quoting the supporting span, re-run calibration, and only then trust trend lines on that slice. Record the judge version with every score."
+    },
+    {
+      "title": "Turn a production incident into a test",
+      "body": "A user reports the assistant invented a refund policy. Reproduce it, add the case (and a few paraphrases) to the golden set under a 'policy questions' slice, confirm the current build fails it, fix retrieval or the prompt, and keep the case as a permanent regression test. Ownership signal: every incident class ends up with a test and an owner."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Is +3 points real?",
+      "prompt": "Prompt A scores 85% and prompt B scores 88%, each on its own independent random sample of 200 cases. Is the improvement significant at roughly 95% confidence? What would you change about the experiment?",
+      "hints": [
+        "Compute the CI of the difference of two independent proportions.",
+        "Running both prompts on the same cases enables a paired test."
+      ],
+      "solution": "Half-width ~ 1.96*sqrt(0.85*0.15/200 + 0.88*0.12/200) ~ 6.7 points, so a 3-point difference is within noise. Run both prompts on the same cases and analyze discordant pairs (fail->pass vs pass->fail), increase n, and pre-register the critical slices and decision rule.",
+      "checklist": [
+        "I compute a ~6.7-point half-width and conclude not significant.",
+        "I propose a paired design and larger sample."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Judge drift after an upgrade",
+      "prompt": "After upgrading the judge model, every candidate's score jumps 6 points overnight with no product change. Leadership wants to celebrate. Diagnose and design a process that prevents this confusion.",
+      "hints": [
+        "The measuring instrument changed, not the product.",
+        "Think about versioning and re-baselining."
+      ],
+      "solution": "Treat the judge as a versioned dependency. Re-score the previous baseline with the new judge to re-baseline; compare only scores from the same judge version. Re-run human calibration and check agreement per slice; the new judge may be more lenient or more verbosity-biased. Keep a small human-graded anchor set scored every release to detect judge drift. Communicate clearly that the jump is a measurement change.",
+      "checklist": [
+        "I identify a measurement change and re-baseline under one judge version.",
+        "I add human-anchored calibration and judge version tracking."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When is an LLM judge inappropriate?",
+      "answer": "When a deterministic check exists (schema, exact answer, retrieval recall), when the judge cannot verify facts it lacks, or for high-stakes decisions where judge-human agreement is low; use humans or programmatic checks there."
+    },
+    {
+      "question": "Offline evals improved but the A/B shows no change. Why?",
+      "answer": "The golden set may not match live traffic, the improved slices may be rare in production, the online metric may be insensitive or underpowered, or users may care about latency or tone the offline set ignores. Compare traffic mix and refresh the set."
+    },
+    {
+      "question": "How big should a golden set be?",
+      "answer": "Size it from the effect you need to detect: near 85% pass rate, +/- 2 points needs about 1225 cases overall, and each critical slice needs enough cases on its own to make its interval useful."
+    }
+  ],
+  "takeaways": [
+    "Build eval sets from real traffic, sliced, versioned, with a holdout.",
+    "Prefer deterministic checks; calibrate LLM judges against humans.",
+    "Report confidence intervals and paired comparisons, not bare percentages.",
+    "Gate releases in CI, then confirm with online metrics and A/B tests.",
+    "Cost and latency are part of quality."
+  ]
+}

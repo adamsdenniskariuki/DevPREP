@@ -1,0 +1,124 @@
+{
+  "id": "ai-fine-tuning-lora",
+  "track": "ai",
+  "title": "Fine-tuning and LoRA: changing behaviour efficiently",
+  "minutes": 50,
+  "summary": "Decide when fine-tuning is the right tool, explain the training stages behind assistant models, and compute what LoRA and QLoRA save compared with full fine-tuning.",
+  "prerequisites": [
+    "ai-rag"
+  ],
+  "prerequisiteNotes": "Use the RAG lesson's split between knowledge (retrieval) and behaviour (model changes). From the transformer lesson, recall that attention and MLP layers are large weight matrices; LoRA adds small trainable updates to them.",
+  "objectives": [
+    "Distinguish pretraining, instruction tuning, and preference tuning (RLHF and DPO at a high level).",
+    "Decide when fine-tuning helps and when prompting or RAG is the better fix.",
+    "Explain LoRA as W + (alpha / r) * B * A and compute trainable parameter counts.",
+    "Explain QLoRA and estimate memory savings at a high level.",
+    "Plan data quality, overfitting and forgetting checks, and before-and-after evaluation."
+  ],
+  "concepts": [
+    {
+      "title": "Training stages",
+      "body": "Pretraining learns general language and world patterns by predicting the next token over a very large corpus; it is by far the most expensive stage. Instruction tuning (supervised fine-tuning) trains on curated prompt-response pairs so the model follows instructions and adopts a response format. Preference tuning then shifts outputs toward responses people prefer. RLHF trains a reward model from human comparisons of responses and optimises the policy against it with reinforcement learning, usually with a penalty for drifting too far from the starting model. DPO uses the same preference pairs but optimises a direct classification-style objective that raises the likelihood of preferred over rejected responses relative to a reference model, avoiding a separate reward model and RL loop. Application teams usually start from an already instruction-tuned model and apply supervised fine-tuning for their task, sometimes followed by preference tuning."
+    },
+    {
+      "title": "When to fine-tune",
+      "body": "Fine-tune to change behaviour that prompting cannot reliably achieve: a strict output format, a house style, a narrow classification or extraction task, domain jargon, or matching a larger model's quality with a smaller, cheaper, faster model. It can also shorten prompts by removing long instructions and examples, reducing per-call cost at high volume. Do not fine-tune to inject facts that change or must be cited, deleted, or permission-filtered; use RAG. Do not fine-tune before establishing a prompted baseline and an evaluation set: without them you cannot show the fine-tune helped. Costs include data collection and labelling, training runs, hosting a custom model or adapter, and repeating the work when the base model is upgraded."
+    },
+    {
+      "title": "LoRA mechanics",
+      "body": "Full fine-tuning updates every weight and needs gradients and optimizer states for all of them. LoRA freezes the pretrained weight W (d_out x d_in) and learns a low-rank update: W' = W + (alpha / r) * B * A, where A is r x d_in, B is d_out x r, and r is much smaller than d. Trainable parameters per matrix are r * (d_in + d_out) instead of d_in * d_out. B is typically initialised to zero so training starts exactly at the base model. alpha / r scales the update so changing r does not require completely retuning the learning rate. Adapters are usually placed on attention projections and often MLP projections; more target modules and higher rank add capacity and cost. After training, B * A can be merged into W for zero extra inference latency, or kept separate so one base model can serve many task adapters swapped per request. Adapter files are small, which makes versioning and rollback cheap.",
+      "code": "# forward pass with a LoRA adapter on one linear layer\ndef lora_linear(x, W, A, B, alpha, r):\n    base = x @ W.T                     # frozen\n    update = (x @ A.T) @ B.T           # A: r x d_in, B: d_out x r (trainable)\n    return base + (alpha / r) * update"
+    },
+    {
+      "title": "QLoRA, data, and evaluation",
+      "body": "QLoRA stores the frozen base weights in 4-bit quantized form, dequantizing on the fly for computation, while training LoRA adapters in higher precision. This cuts the memory for base weights roughly fourfold versus 16-bit, letting larger models be adapted on smaller hardware, at the cost of some speed and a possible small quality difference that you should measure. Data quality dominates: a few thousand clean, consistent, representative examples often beat a large noisy set. Deduplicate, remove contradictions, balance classes, match the production input distribution and prompt template, and hold out a test set never used for training or tuning, split so near-duplicates do not cross it. Watch validation loss and task metrics per epoch to catch overfitting. Catastrophic forgetting means narrowing the model can degrade general abilities or safety behaviour; check a broad regression suite, not just the target task. Compare the fine-tuned model with the prompted baseline on the same held-out set, including latency and cost."
+    }
+  ],
+  "example": "LoRA on one 4096 x 4096 projection with rank r = 8:\nA is 8 x 4096 = 32,768 parameters; B is 4096 x 8 = 32,768 parameters.\nTrainable = 2 * d * r = 2 * 4096 * 8 = 65,536.\nFull matrix = 4096 * 4096 = 16,777,216.\nRatio = 65,536 / 16,777,216 = 0.39%, a 256x reduction for that matrix.\nWith alpha = 16, the scale alpha / r = 2, so W' = W + 2 * B * A.\nApplying the same adapter to two projections in each of 32 layers gives 32 * 2 * 65,536 = 4,194,304 trainable parameters.",
+  "task": "A company classifies support tickets into 30 categories and drafts a reply in the company's tone. A prompted general model with long instructions and 10 examples reaches 82% category accuracy on a 2,000-ticket held-out set, costs too much per call at volume, and drifts from the house style. Product managers also want the model to know current product prices, which change weekly.\nYou consider fine-tuning an open 7-billion-parameter model with 32 layers and d_model = 4096, adding LoRA with r = 16 to the four attention projections (query, key, value, output; each 4096 x 4096) in every layer.\nDeliver: (1) what to fine-tune for and what to solve another way; (2) the trainable LoRA parameter count and its share of 7 billion; (3) a rough memory comparison of full fine-tuning (about 16 bytes per parameter for 16-bit weights and gradients plus 32-bit Adam states and master weights, excluding activations) versus QLoRA (4-bit frozen base plus adapters with the same 16 bytes per trainable parameter); (4) a data plan; (5) an evaluation and launch plan, including how you detect overfitting and forgetting.",
+  "starter": "Fine-tune for: categories + tone. Not for: prices -> ?\nper matrix = 2 * 4096 * 16\nper layer = 4 * per matrix\ntotal = 32 * per layer; share = total / 7e9\nFull FT memory ~ 7e9 * 16 bytes\nQLoRA ~ 7e9 * 0.5 bytes + adapters * 16 bytes (+ overhead, activations)\nData: ...\nEval: same 2,000 held-out tickets, baseline 82%, plus general regression suite",
+  "hints": [
+    "Each 4096 x 4096 matrix with r = 16 gets 2 * 4096 * 16 = 131,072 trainable parameters.",
+    "4-bit storage is half a byte per weight; quantization constants add a little overhead. Weekly-changing facts point back to the RAG lesson."
+  ],
+  "solution": "(1) Fine-tune for category classification and the house reply style: stable behaviours that prompting handles expensively and inconsistently. Do not fine-tune prices; they change weekly and must be exact. Retrieve them from a price service or index at request time (RAG or a tool call) and instruct the model to quote only retrieved values.\n(2) Per matrix: 2 * 4096 * 16 = 131,072. Per layer (4 matrices): 524,288. Total: 32 * 524,288 = 16,777,216 trainable parameters, about 0.24% of 7 billion.\n(3) Full fine-tuning: 7e9 * 16 bytes = about 112 GB before activations, which typically means multiple large GPUs with sharding. QLoRA: the 4-bit base is about 7e9 * 0.5 = 3.5 GB plus quantization overhead; adapters and their training state are 16,777,216 * 16 bytes = about 268 MB. Activations, sequence length, and batch size add more, but the total fits on a single GPU with far less memory. The saved adapter in 16-bit is about 33.5 MB. Trade-offs: QLoRA is slower per step because of dequantization, and may differ slightly in quality, so measure against a 16-bit LoRA baseline if possible.\n(4) Start from historical tickets with human-verified categories and replies that support leads rate as on-brand. Deduplicate, drop contradictory labels, and audit a sample for label quality. Check class balance; add or upweight rare categories rather than letting the model ignore them. Remove personal data that should not be learned. Format training examples with exactly the prompt template used in production. Split by time or by customer so near-duplicate threads do not appear in both training and test, and keep the existing 2,000-ticket set untouched as the test set.\n(5) Compare against the prompted baseline (82%) on the same held-out set: overall and per-category accuracy, macro-averaged metrics for rare categories, style ratings by blinded reviewers, and latency and cost per ticket. Track validation loss and accuracy per epoch and stop when validation stops improving to avoid overfitting; tune rank, learning rate, and epochs on a validation split, not the test set. Detect forgetting with a general regression suite: instruction following, refusal and safety behaviour, and other languages if relevant. Launch in shadow mode, then to a small share of traffic with human review, monitor category distribution and escalation rates, and keep the prompted baseline as a fallback. Version the adapter with its data snapshot and base model; when the base model is upgraded, retrain and re-evaluate.",
+  "checklist": [
+    "I fine-tune for categories and tone and route weekly prices through retrieval or a tool.",
+    "I compute 131,072 per matrix and 16,777,216 total trainable parameters, about 0.24%.",
+    "I estimate about 112 GB for full fine-tuning versus about 3.5 GB base plus about 268 MB adapter state for QLoRA, excluding activations.",
+    "My data plan covers quality, balance, template consistency, and leakage-safe splits.",
+    "I compare against the 82% baseline and check overfitting, forgetting, cost, and latency."
+  ],
+  "pitfalls": [
+    "Fine-tuning to teach changing facts, which go stale and cannot be cited or deleted.",
+    "Skipping a prompted baseline, so the benefit of fine-tuning cannot be demonstrated.",
+    "Training on a prompt format that differs from the one used in production.",
+    "Measuring only the target task and missing degraded general or safety behaviour.",
+    "Tuning hyperparameters on the test set, which inflates the reported gain."
+  ],
+  "walkthrough": [
+    {
+      "title": "Split the requirement into knowledge and behaviour",
+      "body": "List each requirement and ask whether it is stable behaviour or changing knowledge. Categories and tone are stable behaviour learned from examples: fine-tune. Prices change weekly and must be exact: retrieve. Stating this split early shows the interviewer that you choose tools by failure mode rather than by fashion."
+    },
+    {
+      "title": "Count parameters from shapes",
+      "body": "For any adapted matrix of shape d_out x d_in, LoRA adds r * (d_in + d_out). For square 4096 matrices with r = 16 that is 131,072. Multiply by matrices per layer and by layers. Then compare with the base size, and convert to memory by multiplying by bytes per parameter for the parts that are trained versus frozen. Keeping weights, gradients, and optimizer states separate makes the QLoRA saving clear: the frozen base needs only weights, and only the small adapter needs gradients and optimizer state."
+    },
+    {
+      "title": "Evaluate like a model launch",
+      "body": "Use one fixed held-out set for baseline and candidate, report per-slice results, and include non-target regression checks. Add operational metrics: latency, throughput, cost per request, and the effort to retrain on base-model upgrades. A fine-tune that gains a few points of accuracy but adds a heavy maintenance burden may not be worth it; say how you would decide."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Square-matrix LoRA count",
+      "prompt": "A 4096 x 4096 projection gets a LoRA adapter with r = 8 and alpha = 16. Compute the trainable parameters, the fraction of the full matrix, and the scaling factor applied to B * A.",
+      "hints": [
+        "A is r x 4096 and B is 4096 x r.",
+        "Scale = alpha / r."
+      ],
+      "solution": "Trainable = 2 * 4096 * 8 = 65,536. Full matrix = 16,777,216. Fraction = 0.39% (256x fewer). Scale = 16 / 8 = 2, so W' = W + 2 * B * A. Because B starts at zero, the adapted model initially equals the base model.",
+      "checklist": [
+        "I compute 65,536 versus 16,777,216.",
+        "I state the scale of 2 and the zero initialisation of B."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Rectangular matrices and rank choice",
+      "prompt": "An MLP up-projection is 11008 x 4096. Compute LoRA parameters at r = 16 and compare with the full matrix. Then explain how you would choose rank and target modules, and what signals overfitting versus underfitting.",
+      "hints": [
+        "Use r * (d_in + d_out) for rectangular matrices.",
+        "Treat rank like any capacity hyperparameter tuned on validation data."
+      ],
+      "solution": "Trainable = 16 * (4096 + 11008) = 241,664 versus 45,088,768 full parameters, about 0.54%. Choose rank and targets by validation sweeps: start with attention projections at a small rank, then add MLP projections or raise rank if validation accuracy plateaus below target (underfitting). If training loss keeps falling while validation metrics stall or worsen, or outputs start copying training phrasing, that signals overfitting: reduce epochs or rank, add data, or increase regularisation such as dropout on the adapter. Prefer the smallest configuration that meets the target, since it trains faster and tends to forget less.",
+      "checklist": [
+        "I compute 241,664 versus 45,088,768.",
+        "I tie rank and target choices to validation evidence and name overfitting signals."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does LoRA work if the update is constrained to low rank?",
+      "answer": "Empirically, the weight changes needed to adapt a large pretrained model to a specific task can be captured well by a low-rank update, because the base model already contains most needed capabilities and the task mainly redirects them. It is not universal: tasks far from the pretraining distribution may need higher rank, more target modules, or full fine-tuning, which is why rank is validated rather than assumed."
+    },
+    {
+      "question": "How do you serve many customers each with their own fine-tune?",
+      "answer": "Keep one shared base model in memory and load small LoRA adapters per customer, selecting the adapter per request. Batching requests that use different adapters is possible with serving systems built for it. This is far cheaper than hosting a full model copy per customer. Merging adapters into the weights removes the small runtime overhead but gives up sharing, so merge only for single-tenant deployments."
+    },
+    {
+      "question": "What would make you choose DPO over RLHF for preference tuning?",
+      "answer": "DPO is simpler to run: no separate reward model and no RL loop, so it is more stable and cheaper, and works directly from preference pairs. RLHF can be more flexible, for example reusing a reward model to score new samples during training. Either way, preference data quality and evaluation matter more than the algorithm choice for most application teams."
+    }
+  ],
+  "takeaways": [
+    "Fine-tune for stable behaviour such as format, style, and narrow tasks; use RAG or tools for changing knowledge.",
+    "LoRA freezes W and trains W + (alpha / r) * B * A, costing r * (d_in + d_out) parameters per matrix.",
+    "QLoRA quantizes the frozen base to 4 bits, so memory is dominated by a small base footprint and tiny adapter state.",
+    "Data quality, production-matching templates, and leakage-safe splits matter more than the training trick.",
+    "Prove the gain against a prompted baseline and check overfitting and forgetting before launch."
+  ]
+}

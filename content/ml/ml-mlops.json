@@ -1,0 +1,117 @@
+{
+  "id": "ml-mlops",
+  "track": "ml",
+  "title": "MLOps: pipelines, feature stores, and safe model releases",
+  "minutes": 55,
+  "summary": "Build reproducible data and training pipelines, avoid training/serving skew with point-in-time feature stores, release models through registries, shadow, canary, and A/B tests, and monitor and retrain safely.",
+  "prerequisites": [
+    "ml-deployment-monitoring"
+  ],
+  "prerequisiteNotes": "Extends versioned pipelines, delayed labels, and guarded rollout into the platform that makes them repeatable: feature stores, registries, automated pipelines, and controlled experiments.",
+  "objectives": [
+    "Explain point-in-time correctness and design feature pipelines that avoid leakage and skew.",
+    "Describe experiment tracking, a model registry, and CI/CD/CT gates for model releases.",
+    "Choose between shadow, canary, and A/B testing and define rollback criteria.",
+    "Size an A/B test, pick the randomization unit and guardrails, and explain the peeking problem."
+  ],
+  "concepts": [
+    {
+      "title": "Feature stores and point-in-time correctness",
+      "body": "A feature store keeps one feature definition and materializes it to an offline store (full history for training) and an online store (latest values with low-latency reads for serving). Training rows must join the feature value as of the prediction timestamp, an as-of join, never a later value. If a churn label is defined at March 10, the purchases-in-last-30-days feature must use data available on March 10, not today's snapshot. Add time-to-live limits for stale values, version feature definitions, and backfill new features point-in-time before training on them."
+    },
+    {
+      "title": "Training/serving skew",
+      "body": "Skew means the model sees different inputs in production than in training. Causes: separate offline and online implementations (SQL versus service code), different freshness, different handling of missing values or units, preprocessing not shipped with the model, and library version changes. Detect it by logging served features and comparing them with offline recomputation for the same entities and timestamps. Prevent it with shared transformation code, preprocessing packaged inside the model artifact, and, where possible, training on logged serving features."
+    },
+    {
+      "title": "Tracking, registry, and CI/CD/CT",
+      "body": "Experiment tracking records code commit, data snapshot, parameters, metrics, and environment for every run so results are reproducible. A model registry stores versioned artifacts with lineage, input/output schema, evaluation reports, and stage (candidate, staging, production), plus approvals. CI tests feature code, validates data (schema, ranges, null rates, row counts), and runs a training smoke test. CD packages and deploys the model server. Continuous training retrains on a schedule or trigger and promotes a candidate only if it beats the current champion on the same holdout and passes slice, calibration, latency, and size gates; high-risk domains keep a human approval step."
+    },
+    {
+      "title": "Shadow, canary, A/B, and monitoring",
+      "body": "Shadow mode scores live traffic without acting, which checks latency, errors, feature availability, and score distribution versus the current model, but not user impact. A canary serves real decisions to a small share of traffic with automatic rollback on guardrail breaches. An A/B test measures causal impact on the business metric. Rollback must restore the previous registry version together with its feature transformations. In production, monitor data quality, feature and prediction drift, service health, and, once labels mature, model quality by slice; retrain when evidence shows decay, after ruling out broken data."
+    },
+    {
+      "title": "A/B testing essentials",
+      "body": "Randomize at the unit where effects occur and are analyzed: usually the user, not the request, so one person does not see both variants; marketplaces and social products may need cluster or time-based switchback designs to limit interference. For conversion rates, a common approximation for sample size per arm is n = (z_(1-alpha/2) + z_(1-beta))^2 * (p1*(1 - p1) + p2*(1 - p2)) / (p2 - p1)^2, so halving the detectable effect roughly quadruples n. Pre-register a primary metric and guardrails (latency, errors, revenue, complaints) and check sample ratio mismatch, a split that deviates from plan and signals a bug. Peeking, that is testing repeatedly and stopping at the first p < 0.05, inflates false positives; use a fixed horizon or a sequential method designed for repeated looks. Run whole weeks to cover weekday cycles and novelty effects."
+    }
+  ],
+  "example": "A/B sample size for a ranking change.\nBaseline conversion p1 = 5.0%; smallest effect worth detecting is +0.5 points, p2 = 5.5%; two-sided alpha = 0.05; power = 80%.\nz_(0.975) = 1.960, z_(0.80) = 0.842; (1.960 + 0.842)^2 = 7.849.\nVariance term: 0.05*0.95 + 0.055*0.945 = 0.0475 + 0.051975 = 0.099475.\nn per arm = 7.849 * 0.099475 / 0.005^2 = 0.78078 / 0.000025, about 31,231 users.\nWith 40,000 new eligible users per day split 50/50, each arm gains 20,000 per day, so about 1.6 days reaches the sample; still run at least 7 days for weekday effects.\nDetecting +0.25 points instead (p2 = 5.25%) needs about 122,121 per arm, roughly 3.9 times more.\nPeeking: in a simulation of 20,000 A/A tests with 10 equally spaced looks, stopping at the first |z| > 1.96 declared a difference in about 19% of tests, versus about 5% when testing only once at the end.",
+  "task": "Your team retrains a churn model weekly by hand from notebooks; serving uses features computed by a separate Java service, and last quarter a release silently degraded quality for two weeks. Design the MLOps setup: feature pipelines and point-in-time training data, skew prevention, experiment tracking and registry, CI/CD/CT gates, rollout (shadow, canary, A/B), monitoring, and rollback. Size the A/B test in the example and explain how you would avoid the peeking problem.",
+  "starter": "features: single definitions -> offline store (history) + online store (latest)\ntraining: as-of join on prediction timestamp; data validation gate\nregistry: version, lineage, schema, eval report, stage\ncontinuous training: schedule/trigger -> train -> evaluate vs champion -> approve\nrollout: shadow -> canary (auto-rollback) -> A/B (pre-registered metrics)\nmonitor: data quality, drift, latency, matured quality by slice",
+  "hints": [
+    "Ask where the two feature implementations could disagree and how you would detect it.",
+    "A promotion gate needs the same holdout for champion and challenger. Decide the sample size and stopping rule before the experiment starts."
+  ],
+  "solution": "Move feature logic into shared definitions in a feature store with offline and online materialization; build training sets with as-of joins at each prediction timestamp so no later information leaks. Retire the separate Java computation or wrap the shared transformation library, log served features, and alert when they differ from offline recomputation. Track every run with code, data snapshot, parameters, and metrics; register models with lineage, schema, and evaluation reports. CI runs unit tests on transforms, data validation, and a smoke train; continuous training retrains weekly and promotes only when the candidate beats the champion on the same matured holdout and passes slice, calibration, and latency gates. Roll out via shadow to check skew and latency, then a canary with automatic rollback on error rate, latency, or score-distribution guardrails, then a user-randomized A/B test of the retention action. Monitor feature freshness, null rates, drift, and matured quality by cohort, so the two-week silent degradation would trigger an alert. Rollback restores the previous registry version with its transformations. The A/B test needs about 31,231 users per arm for +0.5 points from 5%; fix that horizon in advance, run whole weeks, check sample ratio mismatch, and if early stopping is needed use a sequential design rather than repeated fixed-horizon tests.",
+  "checklist": [
+    "I enforce point-in-time joins and shared feature definitions.",
+    "I detect skew by comparing logged served features with offline values.",
+    "I describe registry, CI, and promotion gates against the champion.",
+    "I compute about 31,231 users per arm and explain the effect of halving the effect size.",
+    "I explain why peeking inflates false positives and how to avoid it."
+  ],
+  "pitfalls": [
+    "Joining the latest feature snapshot to historical labels leaks future information.",
+    "Shadow results are treated as proof of business impact.",
+    "Rollback restores weights but leaves a changed feature transformation in place.",
+    "Randomizing by request lets one user see both variants and contaminates results.",
+    "Stopping an experiment as soon as it looks significant inflates false positives."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace a silent degradation",
+      "body": "An upstream team changes a currency field from dollars to cents. Data validation on range should fail the training pipeline; in serving, a feature-distribution monitor fires within hours, long before churn labels mature. Response: pause continuous training, roll back if needed, fix or version the feature, backfill, and add a regression test for the unit."
+    },
+    {
+      "title": "Choose the release path by risk",
+      "body": "A model that only reorders low-stakes content can go shadow, short canary, then A/B. A model that blocks payments or affects credit needs longer shadow, human review of slices, staged canaries with conservative auto-rollback, and documented approvals. State the rollback time objective and test rollback before you need it."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Pick the point-in-time value",
+      "prompt": "Feature orders_30d for user U was materialized as 2 on March 1, 3 on March 8, and 5 on March 15. A training label is defined at March 10. Which value belongs in the training row, and what goes wrong if you use 5?",
+      "hints": [
+        "Use the latest value at or before the prediction timestamp.",
+        "Ask what the model will see at serving time."
+      ],
+      "solution": "Use 3, the latest value materialized at or before March 10. Using 5 includes orders after the prediction time, which may be caused by the outcome itself; offline metrics look better than production, where only past data exists.",
+      "checklist": [
+        "I select 3 via an as-of join.",
+        "I explain the leakage and the offline-online gap it causes."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Is the split broken?",
+      "prompt": "An experiment planned 50/50 assignment over 100,000 users and observed 50,600 in control and 49,400 in treatment. Test for sample ratio mismatch and say what you would do.",
+      "hints": [
+        "Chi-square with expected 50,000 per arm and one degree of freedom.",
+        "A significant mismatch means the assignment or logging is suspect, not that the treatment worked."
+      ],
+      "solution": "Chi-square = 600^2/50,000 + 600^2/50,000 = 7.2 + 7.2 = 14.4, p about 0.00015 with one degree of freedom, so the split is very unlikely under correct 50/50 assignment. Do not trust the effect estimate. Look for causes such as treatment crashes or slower loading that drop users before logging, bot filtering that differs by arm, or redirect and caching bugs. Fix the cause and rerun rather than adjusting the numbers.",
+      "checklist": [
+        "I obtain chi-square 14.4 and a very small p-value.",
+        "I treat the mismatch as a validity bug and investigate assignment and logging."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When should retraining be fully automatic?",
+      "answer": "When labels arrive reliably, data validation and champion comparison gates are strong, and a bad model is cheap to roll back. High-risk decisions keep human approval and slice review even with automated training."
+    },
+    {
+      "question": "What is the difference between a canary and an A/B test?",
+      "answer": "A canary protects reliability: small exposure, short duration, automatic rollback on health guardrails. An A/B test estimates causal impact with pre-planned randomization, sample size, and analysis."
+    }
+  ],
+  "takeaways": [
+    "Use one feature definition for training and serving and join it point-in-time.",
+    "Version data, code, model, and transformations together, and gate promotion on the champion.",
+    "Shadow checks compatibility, canaries protect reliability, and A/B tests measure impact.",
+    "Fix sample size and stopping rules up front and check sample ratio mismatch."
+  ]
+}

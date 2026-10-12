@@ -1,4 +1,4 @@
-export type Track = 'dsa' | 'system-design' | 'ml' | 'behavioral'
+export type Track = 'dsa' | 'system-design' | 'ml' | 'ai' | 'behavioral'
 
 export interface TeachingSection {
   title: string

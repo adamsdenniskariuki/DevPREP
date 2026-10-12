@@ -1,0 +1,123 @@
+{
+  "id": "ai-rag",
+  "track": "ai",
+  "title": "Retrieval-augmented generation that you can trust",
+  "minutes": 55,
+  "summary": "Design a RAG system end to end: when to use it, ingestion and chunking, hybrid retrieval and reranking, permission-aware filtering, grounded citations, evaluation, and freshness.",
+  "prerequisites": [
+    "ai-prompting"
+  ],
+  "prerequisiteNotes": "Use embeddings and ANN search from the tokenization and embeddings lesson, and context budgeting plus injection awareness from the prompting lesson. The metrics here need only fractions and reciprocals.",
+  "objectives": [
+    "Choose between RAG, fine-tuning, and long context for a given knowledge problem.",
+    "Design ingestion and chunking with explicit size and overlap trade-offs.",
+    "Combine lexical and dense retrieval, add a cross-encoder reranker, and enforce access control at retrieval time.",
+    "Compute recall@k and MRR, and evaluate generation faithfulness separately from retrieval.",
+    "Plan freshness, deletion, and re-indexing."
+  ],
+  "concepts": [
+    {
+      "title": "Why RAG, and when not",
+      "body": "RAG retrieves relevant passages at query time and puts them in the prompt so the model answers from supplied evidence. It suits knowledge that is large, private, frequently changing, or needs citations and per-user access control: updating an index is far cheaper and faster than retraining, and deleting a document removes it from answers. Fine-tuning suits changing behaviour, format, or style, and is a poor way to add facts that change, since knowledge baked into weights is hard to update, attribute, or remove. Putting everything into a long context works for a small, bounded set of documents per request but grows cost and latency with every token, weakens per-document access control, and can lose information in very long inputs. Many systems combine approaches: a fine-tuned or well-prompted model that follows citation rules, fed by retrieval."
+    },
+    {
+      "title": "Ingestion and chunking",
+      "body": "The pipeline: connect to sources, extract text (handling PDFs, tables, HTML), clean boilerplate, split into chunks, attach metadata (source id, title, section path, timestamps, owner, access control list, version), embed, and index in both a vector index and a lexical index. Chunk size is a trade-off. Small chunks give precise matches and fit more items in the prompt but can lose context, such as a pronoun whose referent is in the previous chunk. Large chunks preserve context but dilute the embedding with mixed topics and consume more prompt budget. Overlap between consecutive chunks reduces the chance of cutting an answer in half at the cost of more storage and near-duplicate results. Structure-aware chunking splits on headings, paragraphs, list items, code blocks, or table rows, and prepends the document title and section path so each chunk is self-describing. Keep the mapping from chunk to source span so you can cite and re-index."
+    },
+    {
+      "title": "Hybrid retrieval, reranking, and access control",
+      "body": "Dense retrieval matches meaning and paraphrase; lexical retrieval such as BM25 matches exact terms like error codes, product names, and identifiers that embeddings can blur. Hybrid retrieval runs both and fuses results, for example with reciprocal rank fusion, which sums 1 / (constant + rank) across lists and avoids calibrating incompatible scores. A cross-encoder reranker then scores each query-passage pair jointly, reading both texts together, which is more accurate than comparing independent embeddings but too slow for the whole corpus, so it reranks only the top tens of candidates. Reranking can reorder candidates but cannot recover a document that first-stage retrieval missed. Access control must be applied at retrieval time, using the caller's identity and group memberships as filters on the index. Filtering after generation is too late: the model has already seen restricted text and may leak it. Keep ACLs in sync with sources, and test that a user without permission never retrieves a restricted chunk."
+    },
+    {
+      "title": "Grounding, evaluation, and freshness",
+      "body": "Instruct the model to answer only from the provided passages, cite passage ids for each claim, and say it does not know when evidence is missing. Validate that cited ids exist in the supplied set, and render citations as links to the source. Evaluate the stages separately. Retrieval: recall@k is the fraction of a query's relevant items that appear in the top k, averaged over queries; MRR (mean reciprocal rank) is the mean over queries of 1 / rank of the first relevant item, counting 0 when none is retrieved. Generation: faithfulness (are claims supported by the passages?), answer correctness, citation accuracy, and appropriate refusal. A wrong answer can come from missed retrieval or from unfaithful generation; separate metrics tell you which to fix. For freshness, ingest changes incrementally using source change feeds or modification times, delete removed documents promptly, re-embed only changed chunks, and plan full re-indexing when the embedding model or chunking scheme changes, running old and new indexes side by side until the new one is verified."
+    }
+  ],
+  "example": "Chunking: a 10,000-token document, chunk size 500, overlap 100 tokens. The stride is 500 - 100 = 400 tokens. Chunks needed = ceil((10,000 - 500) / 400) + 1 = ceil(23.75) + 1 = 25. Stored tokens = 25 * 500 = 12,500, which is 1.25x the original (the last chunk may be shorter in practice).\n\nMRR over five queries where the first relevant result appears at ranks 2, 1, 4, not found, and 1:\nreciprocal ranks = 1/2, 1, 1/4, 0, 1 = 0.5, 1.0, 0.25, 0.0, 1.0.\nMRR = (0.5 + 1.0 + 0.25 + 0.0 + 1.0) / 5 = 2.75 / 5 = 0.55.\nThe single miss costs as much as moving a rank-1 hit to not found; MRR heavily rewards getting the first relevant result to the top.",
+  "task": "You are building an internal assistant that answers employee questions from company documents: HR policies, engineering runbooks, and team wikis. Some documents are restricted to specific groups. Documents change daily.\nAn offline evaluation on four queries, each with labelled relevant documents, gives these first-stage hybrid retrieval results (top 10):\nQ1 relevant {D3, D9}: D3 at rank 1, D9 at rank 6.\nQ2 relevant {D4}: D4 at rank 3.\nQ3 relevant {D7, D8}: neither in the top 10. Q3 asks about error code 'E-4172'.\nQ4 relevant {D2}: D2 at rank 2.\nAfter adding a cross-encoder reranker over the top 50 candidates: Q1 D3 rank 1, D9 rank 4; Q2 D4 rank 1; Q3 still neither; Q4 D2 rank 1.\nDeliver: (1) why RAG rather than fine-tuning for this product; (2) an ingestion and chunking plan for these document types; (3) recall@5 and MRR before and after reranking; (4) a diagnosis and fix for Q3; (5) how you enforce permissions; (6) how you would evaluate generation quality and citations; (7) a freshness and deletion plan.",
+  "starter": "Why RAG: changing, private, permissioned, citeable\nIngestion: connectors -> extract -> structure-aware chunks + metadata (ACL, version) -> dense + BM25\nrecall@5 per query: relevant in top 5 / relevant total\nRR per query: 1 / rank of first relevant (0 if none)\nQ3: reranker cannot fix ... -> check lexical match, tokenization of codes, ingestion\nPermissions: filter at query time by user groups\nGeneration eval: faithfulness, citation accuracy, refusals\nFreshness: change feed, tombstones, re-embed changed chunks",
+  "hints": [
+    "Before reranking, Q1 has one of its two relevant documents in the top 5.",
+    "A reranker only reorders candidates it receives. If a document is absent from the candidate list, look upstream. Exact identifiers such as error codes are a classic case where lexical matching beats dense retrieval, if the tokenizer and analyzer keep them intact."
+  ],
+  "solution": "(1) The knowledge is private, changes daily, needs per-group access control, and answers should cite sources. RAG updates by re-indexing, supports deletion, and filters by permission per request. Fine-tuning would bake facts into weights that go stale, cannot be filtered per user, and cannot cite. Fine-tuning could later help with answer style, on top of RAG.\n(2) Use connectors with change feeds per source. Extract text while preserving headings, lists, tables, and code blocks. Chunk structure-aware: split runbooks by step or section, policies by clause, wikis by heading, with a target of a few hundred tokens and modest overlap only where splits fall mid-section. Prepend title and section path to each chunk. Attach metadata: document id, version, last-modified time, owner, source system, and ACL groups. Index each chunk in a vector index and a BM25 index.\n(3) Before reranking: recall@5 = Q1 0.5, Q2 1, Q3 0, Q4 1, mean 0.625. Reciprocal ranks = 1, 1/3, 0, 1/2; MRR = 1.8333 / 4 = 0.458. After reranking: recall@5 = 1, 1, 0, 1, mean 0.75; reciprocal ranks = 1, 1, 0, 1; MRR = 0.75. The reranker helps ordering, but the ceiling is set by what first-stage retrieval returns.\n(4) Q3 fails in first-stage retrieval, so reranking cannot help. Check, in order: whether D7 and D8 were ingested and are visible to the test user; whether the lexical analyzer splits 'E-4172' into pieces such as 'e' and '4172' that match too broadly; whether the code appears in the extracted text (it may be inside an image or table that extraction dropped); and whether the dense model represents the code meaningfully. Fixes: index identifiers as exact keyword tokens, add an exact-match field for codes, give lexical results enough weight in fusion, and add an identifier-heavy query set to the evaluation.\n(5) Resolve the user's identity and group memberships at request time and pass them as a filter to both indexes, so restricted chunks are never candidates. Sync ACL changes from sources quickly and treat them as high-priority updates. Apply the filter in the ANN query (pre-filter or filtered search) so result counts stay adequate. Test with users in different groups and assert that restricted documents never appear in retrieval logs, prompts, or answers. Do not cache answers across users with different permissions.\n(6) Build a labelled set of questions with reference answers and supporting documents, including unanswerable questions. Measure faithfulness (claims supported by the supplied passages), correctness against references, citation accuracy (cited passage actually supports the claim), and correct refusal when evidence is missing. Use human grading on a sample and calibrated model-based grading at scale. Report retrieval and generation metrics separately so a failure is attributed to the right stage.\n(7) Ingest changes incrementally from change feeds or modification times; re-chunk and re-embed only changed documents; replace old chunks by document id and version atomically so stale and new versions are not both served. Process deletions as tombstones that remove chunks from all indexes promptly, and verify with a periodic reconciliation job against the source. Show last-updated dates with citations. When the embedding model or chunking scheme changes, build a new index in parallel, evaluate it, then switch over.",
+  "checklist": [
+    "I justify RAG with freshness, privacy, permissions, and citations.",
+    "I compute recall@5 0.625 to 0.75 and MRR 0.458 to 0.75.",
+    "I explain that the reranker cannot fix Q3 and propose lexical and ingestion fixes.",
+    "I enforce access control before retrieval results reach the model.",
+    "I evaluate retrieval and generation separately and plan incremental updates with deletions."
+  ],
+  "pitfalls": [
+    "Filtering restricted content after generation, when the model has already seen it.",
+    "Expecting a reranker to recover documents that first-stage retrieval never returned.",
+    "Tuning chunk size by intuition without measuring retrieval quality per document type.",
+    "Leaving deleted or superseded documents in the index so answers cite outdated policy.",
+    "Reporting only end-to-end answer quality, which hides whether retrieval or generation failed."
+  ],
+  "walkthrough": [
+    {
+      "title": "Compute metrics per query first",
+      "body": "Write each query on its own line with relevant items, their ranks, recall@k, and reciprocal rank. For Q1 before reranking, two relevant documents exist and one is in the top 5, so recall@5 is 0.5, while its reciprocal rank is 1 because the first relevant item is at rank 1. Averaging only after the per-query table avoids mixing up the two metrics and makes the Q3 failure obvious."
+    },
+    {
+      "title": "Localise failures by stage",
+      "body": "Ask where the right evidence was lost: never ingested, ingested but not retrieved, retrieved but ranked too low, ranked high but cut by the context budget, or present in the prompt but ignored or contradicted by the model. Each stage has a different fix: connectors, retrieval method, reranker, budget, or prompt and model. Logging the candidate list and final prompt for sampled requests makes this diagnosis possible in production."
+    },
+    {
+      "title": "Design permissions as a retrieval property",
+      "body": "Treat access control like a database row-level security rule: the query includes the caller's identity, and the index enforces it. This keeps restricted text out of the prompt, out of logs visible to other users, and out of shared caches. A senior answer also covers ACL sync latency, the risk of over-broad groups, and testing with negative cases."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Chunk counts and overlap cost",
+      "prompt": "A 10,000-token document is split into 500-token chunks. Compare the number of chunks and stored tokens with 0 overlap and with 100 tokens of overlap. What does the overlap buy?",
+      "hints": [
+        "With overlap o, consecutive chunks start every 500 - o tokens.",
+        "Count the first chunk, then how many more strides are needed to reach the end."
+      ],
+      "solution": "No overlap: 10,000 / 500 = 20 chunks, 10,000 stored tokens. With 100 overlap the stride is 400: ceil((10,000 - 500) / 400) + 1 = 25 chunks and 12,500 stored tokens, 25% more storage and embedding cost. Overlap reduces the chance that an answer spanning a boundary is split across chunks, but it also creates near-duplicate neighbours that can crowd out diverse results, so deduplicate or diversify retrieved chunks.",
+      "checklist": [
+        "I compute 20 versus 25 chunks.",
+        "I state the 25% cost and the boundary benefit."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Size a daily refresh",
+      "prompt": "A corpus has 2,000,000 documents averaging 8 chunks of 400 tokens. About 3% of documents change each day. Estimate daily re-embedding volume and describe how you keep the index consistent during updates and deletions.",
+      "hints": [
+        "Changed documents per day = 2,000,000 * 0.03.",
+        "Replace by document id and version rather than appending."
+      ],
+      "solution": "60,000 documents change per day, which is 480,000 chunks and 192,000,000 tokens to re-embed daily. That volume needs a batched, rate-limited pipeline with retries and backpressure. For consistency, write new chunks tagged with the new version, then atomically switch the document's active version and delete old chunks, so queries never see a half-updated document or both versions. Deletions arrive as tombstones and remove all chunks for the document. A nightly reconciliation compares source ids and versions with the index and repairs drift. Monitor ingestion lag as a freshness SLO.",
+      "checklist": [
+        "I compute 60,000 documents, 480,000 chunks, and 192 million tokens.",
+        "I describe versioned replacement, tombstones, and reconciliation."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How do you choose k, the number of passages to put in the prompt?",
+      "answer": "Measure answer quality and cost as k varies. More passages raise the chance the evidence is present but cost tokens, add latency, and add distracting text that can reduce faithfulness. A common pattern is to retrieve broadly, rerank, and include the top few within a token budget, sized by evaluation rather than intuition."
+    },
+    {
+      "question": "Why might a RAG system give a confident wrong answer even with perfect retrieval?",
+      "answer": "The model can ignore or misread the passages, combine them incorrectly, or prefer prior knowledge from training. Passages can also conflict, for example an old and a new policy version. Mitigate with explicit grounding and citation instructions, version metadata so only current documents are retrieved, faithfulness evaluation, and refusal behaviour when evidence is insufficient."
+    },
+    {
+      "question": "What is a risk of putting retrieved documents into the prompt?",
+      "answer": "Indirect prompt injection: a document can contain instructions that the model follows. Treat retrieved text as untrusted data, limit what tools the model can call, validate outputs, and control who can write to the indexed sources."
+    }
+  ],
+  "takeaways": [
+    "Use RAG for knowledge that is large, private, changing, permissioned, or needs citations; use fine-tuning for behaviour.",
+    "Chunking is a measured trade-off between precision, context, and cost; structure-aware splits help.",
+    "Hybrid retrieval catches exact terms; rerankers improve order but cannot recover missed documents.",
+    "Enforce access control inside retrieval, never after generation.",
+    "Evaluate retrieval (recall@k, MRR) and generation (faithfulness, citations) separately, and keep indexes fresh with versioned updates and deletions."
+  ]
+}

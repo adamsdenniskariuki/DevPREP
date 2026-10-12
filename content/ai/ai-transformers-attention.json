@@ -1,0 +1,121 @@
+{
+  "id": "ai-transformers-attention",
+  "track": "ai",
+  "title": "Transformers: attention, masking, and the KV cache",
+  "minutes": 50,
+  "summary": "Compute scaled dot-product attention by hand, explain the transformer block, and estimate the memory that makes long-context serving expensive.",
+  "prerequisites": [],
+  "prerequisiteNotes": "No earlier AI lesson is required. The ML track's neural-network lesson is useful background: matrix multiplication, softmax, and the idea of learned weight matrices are assumed. You only need a calculator for the worked numbers.",
+  "objectives": [
+    "Compute softmax(Q * K^T / sqrt(d_k)) * V for a tiny example and explain each step.",
+    "Explain multi-head attention, positional information, causal masking, and residual plus layer normalization.",
+    "Distinguish encoder-only, decoder-only, and encoder-decoder models by what each position may attend to.",
+    "Estimate attention cost and KV cache memory, and reason about how they limit batch size and context length."
+  ],
+  "concepts": [
+    {
+      "title": "Attention is a learned, content-based weighted average",
+      "body": "Each token's hidden vector is projected by three learned matrices into a query, a key, and a value. A query is compared with every key using a dot product; the scores are divided by sqrt(d_k), turned into weights by softmax, and used to average the value vectors. The result for that position is a mixture of information from the positions it found relevant. Dividing by sqrt(d_k) matters because dot products of d_k-dimensional vectors grow with d_k; without scaling, softmax saturates toward a one-hot distribution and gradients become tiny. In matrix form for a whole sequence: Attention(Q, K, V) = softmax(Q * K^T / sqrt(d_k)) * V, where softmax is applied to each row of scores.",
+      "code": "def attention(Q, K, V, mask=None):\n    # Q: n x d_k, K: n x d_k, V: n x d_v\n    scores = Q @ K.T / sqrt(d_k)          # n x n\n    if mask is not None:\n        scores = scores + mask            # -inf where attention is forbidden\n    weights = softmax(scores, axis=-1)    # each row sums to 1\n    return weights @ V                    # n x d_v"
+    },
+    {
+      "title": "Multi-head attention and positional information",
+      "body": "Instead of one attention with large vectors, the model runs h heads in parallel, each with its own smaller projections (head_dim = d_model / h is common). Different heads can specialise, for example on nearby syntax or on long-range references. Head outputs are concatenated and projected back to d_model. Attention itself is permutation-invariant: shuffling the tokens shuffles the outputs the same way, so order must be injected. Options include fixed sinusoidal position vectors added to embeddings, learned absolute position embeddings (simple but tied to the trained length), and rotary embeddings (RoPE), which rotate query and key vectors by position-dependent angles so their dot product depends on relative distance. Relative schemes generally extrapolate to longer inputs better than learned absolute positions, but long-context quality still has to be validated rather than assumed."
+    },
+    {
+      "title": "Block structure and the three architecture families",
+      "body": "A transformer block combines attention and a position-wise feed-forward network (MLP), each wrapped in a residual connection with layer normalization. Residuals give gradients a direct path through deep stacks; normalization keeps activation scales stable. Most modern stacks normalize before each sublayer (pre-norm), which tends to train more stably at depth. Encoder-only models let every position attend to every other position (bidirectional) and suit classification, tagging, and embeddings. Decoder-only models use a causal mask so position i sees only positions up to i; trained to predict the next token, they generate text autoregressively. Encoder-decoder models encode an input bidirectionally, then decode with causal self-attention plus cross-attention to the encoder output, a natural fit for translation or summarisation where input and output are distinct sequences."
+    },
+    {
+      "title": "Cost: quadratic attention and the KV cache",
+      "body": "For sequence length n, the score matrix is n x n per head per layer, so attention compute and naive memory grow as O(n^2) in sequence length (times d for the matrix products), while the MLP grows linearly in n. At n = 8192 one score matrix has 67,108,864 entries. Memory-efficient kernels avoid materialising the full matrix, but compute stays quadratic. During generation, each new token needs keys and values for all earlier tokens. Recomputing them every step is wasteful, so servers cache them: the KV cache. Its size per sequence is 2 (K and V) * layers * kv_heads * head_dim * seq_len * bytes_per_value. It grows linearly with context and batch, and it often limits how many concurrent requests a GPU can serve. Grouped-query attention (several query heads sharing one KV head) and multi-query attention (one shared KV head) shrink the cache; quantizing cached values, paging the cache in blocks, and limiting context are other levers."
+    }
+  ],
+  "example": "Tiny attention with d_k = 4 (so sqrt(d_k) = 2). One query q = [1, 0, 1, 0]. Three keys: k1 = [1, 0, 1, 0], k2 = [0, 1, 0, 1], k3 = [1, 1, 0, 0]. Values: v1 = [1, 0], v2 = [0, 1], v3 = [1, 1].\nDot products q.k = 2, 0, 1. Scaled by 1/2: 1.0, 0.0, 0.5.\nexp: e^1 = 2.7183, e^0 = 1.0000, e^0.5 = 1.6487; sum = 5.3670.\nWeights = 0.5065, 0.1863, 0.3072 (sum 1).\nOutput = 0.5065 * [1, 0] + 0.1863 * [0, 1] + 0.3072 * [1, 1] = [0.8137, 0.4935].\nThe query mostly copies value 1 because k1 matches it best, but still blends in the others.\n\nKV cache estimate for one sequence: 32 layers, 8 KV heads, head_dim 128, 4096 tokens, 16-bit values (2 bytes):\n2 * 32 * 8 * 128 * 4096 * 2 = 536,870,912 bytes = 512 MiB.\nPer token that is 2 * 32 * 8 * 128 * 2 = 131,072 bytes = 128 KiB. A batch of 16 such sequences needs 8 GiB of cache. If the same model used full multi-head attention with 32 KV heads, one sequence would need 2 GiB.",
+  "task": "You are sizing a single-GPU deployment of a decoder-only model for a chat product.\nModel: 40 layers, 40 query heads, 8 KV heads (grouped-query attention), head_dim 128, weights occupy 26 GiB in 16-bit precision. GPU memory is 80 GiB; reserve 6 GiB for activations, workspace, and fragmentation. The product promises contexts up to 8192 tokens, and the cache stores 16-bit values.\nDeliver: (1) KV cache bytes per token and per full-length sequence; (2) the maximum number of concurrent full-length sequences; (3) the same number if the model had used 40 KV heads; (4) how attention compute scales if the context limit doubles to 16,384; (5) three engineering options to serve more users, with their trade-offs; (6) a one-paragraph explanation of why a causal mask is needed during training even though generation is already left-to-right.",
+  "starter": "per_token = 2 * layers * kv_heads * head_dim * bytes\nper_seq   = per_token * seq_len\nfree      = gpu - weights - reserve\nmax_seqs  = floor(free / per_seq)\nRepeat with kv_heads = 40.\nScaling: score matrix entries ~ n^2.\nOptions: ...\nMask: what would training see without it?",
+  "hints": [
+    "Per token: 2 * 40 * 8 * 128 * 2 bytes. Multiply by 8192 and convert to GiB by dividing by 2^30.",
+    "Free memory is 80 - 26 - 6 = 48 GiB. Real requests are rarely all full length; mention why paging or dynamic allocation matters. In training, all positions are processed in parallel from the full target text. Ask what position i could read if it attended to i + 1."
+  ],
+  "solution": "(1) Per token: 2 * 40 * 8 * 128 * 2 = 163,840 bytes (160 KiB). Per 8192-token sequence: 163,840 * 8192 = 1,342,177,280 bytes = 1.25 GiB.\n(2) Free memory = 80 - 26 - 6 = 48 GiB. 48 / 1.25 = 38.4, so 38 concurrent full-length sequences.\n(3) With 40 KV heads the cache is 5x larger: 6.25 GiB per sequence, so floor(48 / 6.25) = 7 sequences. Grouped-query attention is what makes this deployment viable.\n(4) Doubling n doubles KV cache per sequence (linear) and roughly quadruples attention score computation for a full prefill (quadratic), while MLP work doubles. Per generated token, attention reads the whole cache, so decode cost per token grows linearly with current length. At 16,384 tokens only 19 full-length sequences fit (48 / 2.5 = 19.2).\n(5) Options: (a) allocate the cache in pages on demand so typical shorter conversations do not reserve 8192 slots; this raises effective concurrency but needs admission control or preemption when many conversations grow long. (b) Quantize the KV cache to 8 bits, halving its size, with a quality check on long-context tasks because errors accumulate across many cached tokens. (c) Cap or summarise conversation history, or use sliding-window attention, trading recall of early context for memory. Also: quantize weights to free memory, shard across GPUs with tensor parallelism (adds communication), or route long-context requests to a separate pool so they do not starve short requests. State that latency SLOs and throughput both depend on batch size, so measure tokens per second and p99 time to first token, not just fit.\n(6) Training uses teacher forcing: the entire target sequence is fed at once and every position predicts its next token in parallel. Without a mask, position i could attend to token i + 1, which is exactly the label it must predict, so the loss would be trivially low and the model would learn to copy rather than predict. The mask makes training conditions match inference, where future tokens do not exist yet.",
+  "checklist": [
+    "I compute 160 KiB per token, 1.25 GiB per sequence, and 38 sequences for 48 GiB free.",
+    "I show that 40 KV heads would cut capacity to 7 sequences.",
+    "I separate linear KV memory growth from quadratic prefill attention compute.",
+    "I offer at least three capacity levers and name a cost or risk for each.",
+    "I explain causal masking in terms of parallel teacher-forced training."
+  ],
+  "pitfalls": [
+    "Forgetting the factor of 2 for storing both keys and values.",
+    "Using query heads instead of KV heads when the model uses grouped-query or multi-query attention.",
+    "Mixing decimal GB and binary GiB mid-calculation, which shifts answers by about 7%.",
+    "Claiming memory-efficient attention kernels make attention linear; they reduce memory traffic, not the quadratic number of score computations.",
+    "Sizing for the average request only; a burst of long conversations can exhaust the cache and stall every request."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace one row of attention",
+      "body": "Pick a single query and write its scores against every key before touching matrices. In the worked example the raw dot products 2, 0, 1 become 1, 0, 0.5 after scaling. Softmax exaggerates differences exponentially, so the best match gets about half the weight even though its scaled score is only 0.5 higher than the next. Multiply the weights into the values last. An interviewer often probes what happens with no scaling: with large d_k the scores spread out, softmax becomes nearly one-hot, and learning slows."
+    },
+    {
+      "title": "Turn architecture into a memory budget",
+      "body": "Write the KV formula with units: 2 tensors * layers * KV heads * head_dim gives values per token; times bytes per value gives bytes per token; times tokens gives bytes per sequence; times concurrent sequences gives total. Then subtract weights and a reserve from GPU memory. This chain lets you answer follow-ups quickly: halving bytes per value doubles capacity, GQA divides the cache by the query-to-KV head ratio, and doubling context halves the number of full-length sessions."
+    },
+    {
+      "title": "Connect masks to model families",
+      "body": "Describe each family by its attention pattern. Encoder: full matrix, every token sees every token. Decoder: lower-triangular matrix, with -infinity added above the diagonal so softmax gives those entries zero weight. Encoder-decoder: a full encoder matrix, a causal decoder matrix, and a cross-attention matrix from decoder queries to encoder keys. Choosing a family is then a question of whether you need generation, bidirectional understanding, or both."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Attention for a second query, with and without a mask",
+      "prompt": "Using the same keys and values as the worked example, compute the attention output for q = [0, 1, 0, 1] with d_k = 4. Then suppose this query sits at position 2 under a causal mask, so it may only attend to keys 1 and 2. Recompute the weights and output.",
+      "hints": [
+        "Dot products with k1, k2, k3 are 0, 2, 1 before scaling.",
+        "Masked keys get a score of -infinity, so they receive exactly zero weight and the remaining weights renormalise."
+      ],
+      "solution": "Unmasked: scaled scores 0, 1, 0.5; weights 0.1863, 0.5065, 0.3072; output = [0.1863 + 0.3072, 0.5065 + 0.3072] = [0.4935, 0.8137]. Masked to keys 1 and 2: scores 0 and 1; weights 0.2689 and 0.7311; output = 0.2689 * [1, 0] + 0.7311 * [0, 1] = [0.2689, 0.7311]. The mask removes v3's contribution entirely rather than merely shrinking it.",
+      "checklist": [
+        "I scale by sqrt(4) = 2 before softmax.",
+        "I renormalise over only the visible keys under the mask."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Choose an attention variant for long context",
+      "prompt": "A team wants to raise context from 8K to 64K tokens for document Q&A on the model from the main task (40 layers, head_dim 128, 16-bit cache). Compare per-sequence KV cache for 40 KV heads, 8 KV heads, and 1 KV head at 64K tokens, and discuss quality, prefill latency, and an alternative that avoids 64K contexts altogether.",
+      "hints": [
+        "Per token per KV head per layer is 2 * 128 * 2 = 512 bytes.",
+        "Prefill attention compute grows with n^2; 64K is 8x the length of 8K."
+      ],
+      "solution": "Per sequence at 65,536 tokens: 40 KV heads -> 2 * 40 * 40 * 128 * 65,536 * 2 bytes = 50 GiB; 8 KV heads -> 10 GiB; 1 KV head -> 1.25 GiB. Even with GQA, only four such sequences fit in 48 GiB free memory. Multi-query attention is smallest but sharing one KV head can cost quality, so it must be evaluated; GQA is a common middle ground. Prefill attention compute rises about 64x versus 8K (8^2), so time to first token rises sharply unless the work is split across devices or processed in chunks. The positional scheme must also be validated at 64K. Alternative: retrieve the relevant passages (RAG) and keep the prompt small, accepting a retrieval-recall risk in exchange for much lower cost per query. A senior answer measures answer quality on long documents for both approaches before committing.",
+      "checklist": [
+        "I compute 50, 10, and 1.25 GiB per sequence.",
+        "I mention quadratic prefill cost and a retrieval-based alternative with its risk."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does generation speed often depend more on memory bandwidth than on compute?",
+      "answer": "Each decode step produces one token per sequence but must read all model weights and that sequence's KV cache from GPU memory. The arithmetic per byte read is low, so the GPU waits on memory. Batching many sequences reuses each weight read across requests, which is why batching raises throughput, but the KV cache read still scales with each sequence's length."
+    },
+    {
+      "question": "What is the difference between prefill and decode, and why do servers treat them differently?",
+      "answer": "Prefill processes the whole prompt in parallel, is compute-heavy, and determines time to first token. Decode generates one token at a time, is memory-bandwidth-bound, and determines tokens per second. Mixing a long prefill into a batch of decoding requests can stall them, so servers schedule prefill in chunks or on separate capacity to protect latency."
+    },
+    {
+      "question": "Does a longer context window guarantee the model uses all of it well?",
+      "answer": "No. Fitting tokens into the window is a capacity fact; using them is a quality property that depends on training and position handling. Information in the middle of long inputs can be used less reliably. Test with tasks that place the needed fact at varied positions before relying on long context."
+    }
+  ],
+  "takeaways": [
+    "Attention is softmax(Q * K^T / sqrt(d_k)) * V: a scaled, content-based weighted average of values.",
+    "Masks define model families: bidirectional encoders, causal decoders, and cross-attention between them.",
+    "Prefill attention compute grows quadratically with sequence length; KV cache memory grows linearly with length and batch.",
+    "KV cache bytes = 2 * layers * kv_heads * head_dim * seq_len * bytes_per_value; GQA, quantization, and paging are the main levers.",
+    "Validate long-context quality, not just whether the tokens fit."
+  ]
+}
