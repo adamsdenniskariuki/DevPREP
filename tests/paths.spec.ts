@@ -44,7 +44,7 @@ test('path selection is optional and old users keep their original state and nex
   await expect(await role(page)).toHaveValue('')
   expect(await saved(page)).toEqual(legacyBackup)
   await page.getByRole('link', { name: 'Tracks', exact: true }).click()
-  await expect(page.getByRole('article')).toHaveCount(46)
+  await expect(page.getByRole('article')).toHaveCount(lessons.length)
   await expect(page.getByRole('button', { name: 'Selected path', exact: true })).toHaveCount(0)
 })
 
@@ -76,9 +76,9 @@ test('selected roadmaps show curated phases and allow all curriculum and optiona
     for (const phase of path.phases) await expect(page.getByRole('heading', { name: phase.title, exact: true })).toBeVisible()
   }
   await page.getByRole('button', { name: 'All curriculum', exact: true }).click()
-  await expect(page.getByRole('article')).toHaveCount(46)
+  await expect(page.getByRole('article')).toHaveCount(lessons.length)
   await page.getByRole('button', { name: 'Machine learning', exact: true }).click()
-  await expect(page.getByRole('article')).toHaveCount(9)
+  await expect(page.getByRole('article')).toHaveCount(lessons.filter(lesson => lesson.track === 'ml').length)
   expect((await saved(page)).selectedPath).toBe('senior')
   await page.getByRole('article').first().getByRole('button', { name: 'Start lesson' }).click()
   await expect(page.getByText('Supplemental lesson outside your selected path', { exact: true })).toBeVisible()
@@ -145,7 +145,7 @@ test('path and overall progress use distinct denominators and shared completions
   await expect(page.getByRole('progressbar', { name: 'Software Engineer path progress', exact: true })).toHaveAttribute('max', '29')
   await expect(page.getByRole('progressbar', { name: 'Senior Software Engineer path progress', exact: true })).toHaveAttribute('value', '1')
   await expect(page.getByRole('progressbar', { name: 'Senior Software Engineer path progress', exact: true })).toHaveAttribute('max', '30')
-  await expect(page.locator('.summary-grid .card').first()).toContainText('2 / 46')
+  await expect(page.locator('.summary-grid .card').first()).toContainText(`2 / ${lessons.length}`)
 })
 
 test('path completion does not auto-enroll supplemental lessons and switching finds the next missing senior topic', async ({ page }) => {
@@ -156,7 +156,7 @@ test('path completion does not auto-enroll supplemental lessons and switching fi
   await page.goto('./')
   await expect(page.getByRole('heading', { name: 'Software Engineer path explored.', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Explore all lessons', exact: true }).click()
-  await expect(page.getByRole('article')).toHaveCount(46)
+  await expect(page.getByRole('article')).toHaveCount(lessons.length)
   await choose(page, 'senior')
   await page.getByRole('link', { name: 'Home', exact: true }).click()
   await expect(page.locator('.hero-copy h2')).toHaveText(lessons.find(lesson => lesson.id === 'design-replication-partitioning')!.title)
@@ -266,7 +266,7 @@ test('path selection and both roadmap scopes remain keyboard accessible and narr
     await page.goto('./#tracks')
     await page.getByRole('button', { name: 'All curriculum', exact: true }).focus()
     await page.keyboard.press('Enter')
-    await expect(page.getByRole('article')).toHaveCount(46)
+    await expect(page.getByRole('article')).toHaveCount(lessons.length)
     await page.getByRole('button', { name: 'Selected path', exact: true }).focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('article')).toHaveCount(pathLessonIds(getLearningPath(id)!).length)

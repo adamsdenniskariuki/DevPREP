@@ -24,11 +24,11 @@ class MemoryStorage implements StoragePort {
 }
 
 describe('expanded curriculum contract', () => {
-  it('has original, substantive content in all four tracks', () => {
+  it('has original, substantive content in all five tracks', () => {
     expect(lessons.length).toBeGreaterThanOrEqual(40)
     expect(new Set(lessons.map(lesson => lesson.id)).size).toBe(lessons.length)
     expect(lessons.filter(lesson => lesson.track === 'dsa').length).toBeGreaterThanOrEqual(18)
-    expect(tracks).toHaveLength(4)
+    expect(tracks.map(track => track.id)).toEqual(['dsa', 'system-design', 'ml', 'ai', 'behavioral'])
     for (const lesson of lessons) {
       expect(lesson.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
       expect(tracks.some(track => track.id === lesson.track)).toBe(true)
@@ -247,6 +247,13 @@ describe('optional study profile', () => {
     expect(upgraded.session).toEqual(parseBackup(JSON.stringify(legacyBackup)).session)
     const again = parseBackup(serializeBackup(upgraded))
     expect(again.profile).toEqual({ interviewDate: '2026-11-02', focusTracks: ['system-design', 'dsa'] })
+  })
+
+  it('accepts the AI track as a focus alongside every track an older backup could list', () => {
+    const older = updateProfile(emptyProgress(now), { focusTracks: ['dsa', 'system-design', 'ml', 'behavioral'] }, now)
+    expect(parseBackup(serializeBackup(older)).profile?.focusTracks).toEqual(['dsa', 'system-design', 'ml', 'behavioral'])
+    const all = updateProfile(older, { focusTracks: ['ai', 'dsa', 'system-design', 'ml', 'behavioral'] }, now)
+    expect(parseBackup(serializeBackup(all)).profile?.focusTracks).toEqual(['ai', 'dsa', 'system-design', 'ml', 'behavioral'])
   })
 
   it('drops empty values so a cleared profile disappears from backups', () => {

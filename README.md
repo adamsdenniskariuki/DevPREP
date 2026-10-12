@@ -20,7 +20,7 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 
 ## The study loop
 
-- **46 original lessons**: 19 DSA, 10 system design, 9 ML and 8 behavioral, ordered by prerequisites.
+- **60 original lessons**: 19 DSA, 10 system design, 14 ML, 9 AI/LLM and 8 behavioral, ordered by prerequisites.
 - Chunked reading, **warm-up → core → stretch** practice with progressive hints, worked answers and rubrics. Only the core task drives completion and review scheduling.
 - Resumable sessions: step, reading section, answer, hints, solution visibility and checklist are saved as you work.
 - Spaced reviews from your own confidence: first review after **1 / 3 / 7 days** (Needs practice / Getting there / Confident); later intervals reset to 1, ×1.5 or ×2, capped at 60 days.
@@ -73,7 +73,8 @@ Self-assessment uses prompts and rubrics, not automated grading. No AI at runtim
 | --- | --- |
 | Data structures & algorithms | Arrays and hash maps; two pointers and sliding windows; stacks, queues, and linked lists; binary search and sorting; recursion, trees/BSTs, and heaps; graph BFS/DFS and topological ordering; backtracking, greedy reasoning, and dynamic programming |
 | System design | Requirements and capacity; APIs/data modeling and databases/indexes; caching; replication/partitioning and consistency; queues/events and rate limiting; reliability/observability; worked end-to-end designs |
-| Machine learning | Data preparation/leakage and splitting/evaluation; regression/classification; optimization/regularization and bias/variance; trees/ensembles; clustering; imbalance/thresholds; deployment, monitoring, and practical design tradeoffs |
+| Machine learning | Data preparation/leakage and splitting/evaluation; regression/classification; optimization/regularization and bias/variance; trees/ensembles; neural-network basics; clustering; imbalance/thresholds; deployment and monitoring; ML system design for recommendations, search ranking and fraud; MLOps (feature stores, training/serving skew, CI/CD, A/B tests) |
+| AI and LLMs | Transformers and attention; tokenization and embeddings; prompting; RAG (chunking, hybrid retrieval, reranking); fine-tuning and LoRA; evals; agents and tool use; LLM system design (latency, cost, caching, guardrails); responsible AI and safety |
 | Behavioral/interview preparation | Truthful structured stories; ownership/impact; conflict; failure/learning; ambiguity/prioritization; collaboration/leadership; project deep dives; communication during technical interviews |
 
 Prerequisite links are advisory and remain within each track. Opening one asks before replacing an unfinished session. Warm-ups reduce problem size or focus on one idea; stretch tasks change assumptions or add constraints. Completing a lesson records your self-assessment, not mastery of every optional challenge.
@@ -92,9 +93,9 @@ Both paths include every selected lesson's prerequisites earlier in the sequence
 Senior extensions cover negotiating ambiguous scope, owning an index migration/rollback, and influencing across teams without inventing authority. They appear during practice and reflection on the relevant lessons, with prompts, reasoning rubrics, and a defensible discussion. They are optional: notes share the session notebook, and they do **not** create extra completions, alter the core exercise, or add review dates.
 
 - **Home:** the first unfinished lesson in the selected path is the next recommendation. An unfinished session takes priority, even if it is outside the path. A daily completed lesson from any track still counts as study for that day.
-- **Tracks:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 46 lessons remain open; ML and omitted coding/design topics are optional supplemental study.
-- **Progress:** the selected path has its own denominator (29 or 30); overall progress remains out of 46. Both path totals are shown separately. Supplemental work contributes to overall completion, not to a path that omits it.
-- **Practice:** the review queue always includes every due completed lesson, including supplemental ML and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
+- **Tracks:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 60 lessons remain open; ML, AI/LLM and omitted coding/design topics are optional supplemental study.
+- **Progress:** the selected path has its own denominator (29 or 30); overall progress remains out of 60. Both path totals are shown separately. Supplemental work contributes to overall completion, not to a path that omits it.
+- **Practice:** the review queue always includes every due completed lesson, including supplemental ML/AI and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
 - **Switching or clearing:** changing the selector updates only the path choice. Drafts, reading bookmarks, hints, checklist selections, completion records, and review dates stay intact. Choosing **All curriculum (no path selected)** restores the original recommendation behavior.
 - **Path completion:** Home says the path is explored and offers reviews or all-curriculum browsing; it does not silently enroll you in another path or supplemental track.
 
@@ -128,7 +129,7 @@ Open **App & offline** to see the actual preparation state and installation opti
 - **iPhone/iPad:** open the site in Safari, use **Share → Add to Home Screen**, and follow the OS instructions. Availability varies by browser/OS. If the option is absent, the website remains usable.
 - **Other/unsupported browsers:** use a bookmark or the online site. DevPREP cannot force browser installation, and this is not a native app-store package.
 
-After preparation, **all 46 bundled lessons**, their examples/solutions, scripts/styles, and required local assets are cached, including the split curriculum bundle. A cold offline reload can open previously unvisited lessons in any track. Local drafts, reading bookmarks, paths, reviews, and accents continue to work. JSON export/import can also work offline where the browser supports the relevant file actions; it does not add cloud synchronization.
+After preparation, **all 60 bundled lessons**, their examples/solutions, scripts/styles, and required local assets are cached, including the split curriculum bundle. A cold offline reload can open previously unvisited lessons in any track. Local drafts, reading bookmarks, paths, reviews, and accents continue to work. JSON export/import can also work offline where the browser supports the relevant file actions; it does not add cloud synchronization.
 
 Preparation checks every required file's SHA-256 before caching it and never treats failed/redirected/mismatched downloads as success. If preparation fails or cached files are missing, the panel shows a warning and **Retry offline preparation**. An interrupted or failed update does not discard the prior version's cache. Browser quota limits, private modes, eviction, or cleared site data can make offline data unavailable; offline readiness is checked, not assumed from registration alone.
 
@@ -295,7 +296,9 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 
 ### Adding content
 
-Add `content/<track>/<new-id>.json` and append its ID to that track's `track.json` and to `tests/fixtures/lesson-ids.json`. `npm test` validates the schema and regenerates the bundle.
+Add `content/<track>/<new-id>.json` and append its ID to that track's `track.json` and to `tests/fixtures/lesson-ids.json`. `npm test` validates the schema and regenerates the bundle. Prerequisites must be earlier lessons in the same track.
+
+To add a track, add its ID to `Track` (`src/curriculum-types.ts`), `TRACK_IDS` (`src/content-schema.ts`) and `TRACK_ORDER` (`scripts/build-content.mjs`), then create `content/<track>/track.json`. Older backups that list focus tracks keep loading. "Track done" badges are derived, so adding lessons to a track means finishing the new lessons to keep that badge.
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.
 

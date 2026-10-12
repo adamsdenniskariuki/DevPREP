@@ -192,7 +192,7 @@ test('all tracks offer substantive, refresh-safe lessons and prompts', async ({ 
   await page.goto('./#tracks')
   await expect(page.getByRole('heading', { level: 1, name: 'Tracks' })).toBeVisible()
   page.on('dialog', dialog => dialog.accept())
-  for (const track of ['dsa', 'system-design', 'ml', 'behavioral']) {
+  for (const track of ['dsa', 'system-design', 'ml', 'ai', 'behavioral']) {
     const lesson = lessons.find(item => item.track === track)!
     const row = page.getByRole('article').filter({ has: page.getByRole('heading', { name: lesson.title, exact: true }) })
     await row.getByRole('button', { name: 'Start lesson' }).click()

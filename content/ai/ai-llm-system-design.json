@@ -1,0 +1,116 @@
+{
+  "id": "ai-llm-system-design",
+  "track": "ai",
+  "title": "LLM system design: latency, cost, caching, and guardrails",
+  "minutes": 55,
+  "summary": "Design an LLM-powered support assistant end to end, with a defensible cost estimate, routing, caching, fallbacks, and eval-driven releases.",
+  "prerequisites": [
+    "ai-rag",
+    "ai-evals"
+  ],
+  "prerequisiteNotes": "Combines retrieval from the RAG lesson and the eval suite from the evals lesson. This lesson adds the serving concerns that decide whether the product is fast, affordable, and safe at scale.",
+  "objectives": [
+    "Break latency into time to first token and total generation time, and use streaming well.",
+    "Estimate cost from traffic, token counts, and prices, and reduce it with routing and caching.",
+    "Design rate-limit handling, fallbacks, and degradation modes.",
+    "Place input/output guardrails, PII redaction, and schema validation in the request path.",
+    "Ship changes through evals, staged rollout, and observability."
+  ],
+  "concepts": [
+    {
+      "title": "Latency has two clocks",
+      "body": "Time to first token (TTFT) is driven by queueing, retrieval, and processing the input (prefill), so long prompts raise it. Total time adds output tokens multiplied by per-token decode time, so long answers dominate. Streaming tokens improves perceived latency for chat but does not help when the caller needs complete structured output, for example JSON validated before acting. Reduce TTFT with shorter prompts, prefix caching, and parallel retrieval; reduce total time with smaller models, tighter output limits, and concise formats. Track p50 and p95 per step, not just averages."
+    },
+    {
+      "title": "Throughput, batching, and routing",
+      "body": "Self-hosted serving batches concurrent requests to keep accelerators busy: larger batches raise throughput but can raise per-request latency, so tune against the p95 SLO. Hosted APIs impose rate limits in requests and tokens per minute, so plan quota per region and per tenant. Model routing sends easy requests to a small, cheap model and hard ones to a large model. A router classifies upfront; a cascade tries the small model and escalates on low confidence or failed validation, paying both costs on escalation. Measure routing quality with the eval set, especially on the slices that get routed small."
+    },
+    {
+      "title": "Caching: exact, semantic, and prefix",
+      "body": "An exact-match response cache keyed on normalized input plus model, prompt version, and retrieval snapshot is safe and cheap but has low hit rates for free text. A semantic cache returns an answer for a 'similar' query; it raises hit rates but risks wrong answers when small wording changes meaning ('cancel' vs 'don't cancel'), leaking one user's answer to another, and serving stale content. Use it only for non-personalized content, with tenant scoping, a conservative threshold, TTLs, and eval coverage. Prompt or prefix caching reuses computation for a shared prompt prefix (system prompt, tool definitions, policy docs), lowering TTFT and often input cost; put stable content first and variable content last to benefit."
+    },
+    {
+      "title": "Guardrails, fallbacks, and observability",
+      "body": "Input side: authenticate, rate-limit per user, redact or tokenize PII before logging or sending to third parties, and screen for abuse. Output side: validate against a JSON schema, check citations point to retrieved sources, apply content policy filters, and repair or retry once on validation failure. Fallbacks: retry transient errors with backoff and jitter, fail over to a secondary model or region, and degrade gracefully (search results only, or a handoff to a human) rather than erroring. Observability: per-request traces with prompt version, model, tokens, cost, latency per stage, cache hit, guardrail outcomes, and user feedback, with privacy-aware retention. Every prompt or model change goes through offline evals, then a canary with guardrail metrics and automatic rollback."
+    }
+  ],
+  "example": "Cost estimate with clearly hypothetical prices (not real vendor pricing):\nTraffic: 50,000 requests/day; each uses 3,000 input tokens (system prompt + retrieved context + question) and 400 output tokens.\nDaily tokens: input 50,000*3,000 = 150M; output 50,000*400 = 20M.\nSmall model (hypothetical $0.50 per 1M input, $1.50 per 1M output): 150*0.50 + 20*1.50 = $75 + $30 = $105/day.\nLarge model (hypothetical $5.00 per 1M input, $15.00 per 1M output): 150*5 + 20*15 = $750 + $300 = $1,050/day.\nUpfront router, 80% small / 20% large: 0.8*105 + 0.2*1,050 = $84 + $210 = $294/day.\nCascade (all requests try small, 20% escalate and pay both): 105 + 0.2*1,050 = $315/day.\nMonthly (30 days): all-small $3,150; all-large $31,500; router $8,820; cascade $9,450.\nInput tokens are 150M of 170M daily, so trimming retrieved context and prefix-caching the stable system prompt are the biggest levers; also add router/classifier cost, retries, and judge-based monitoring before quoting a budget.",
+  "task": "Design an AI support assistant for a SaaS product: about 50,000 conversations/day, answers grounded in help docs and the customer's account data, p95 TTFT under 1.5 s, and a monthly model budget cap. Cover architecture, retrieval, model routing, cost estimate, caching, rate limits and fallbacks, guardrails and PII handling, observability, and how changes get released.",
+  "starter": "request -> auth + rate limit -> PII redaction -> intent/router\n  -> retrieval (docs + account tools) -> prompt assembly (stable prefix first)\n  -> model (small | large) -> output validation + policy checks -> stream to user\nside: cache, traces/metrics, feedback, eval pipeline, canary + rollback",
+  "hints": [
+    "Write the cost formula before picking numbers: requests * tokens * price per token, input and output separately.",
+    "Which answers are safe to cache across users, and which are personalized? What does the user see when the primary model is rate-limited or down?"
+  ],
+  "solution": "Front door: authenticate, per-tenant and per-user rate limits, PII redaction for logs and any third-party calls. Classify intent; route simple FAQ intents to a small model and account-specific or multi-step issues to a large model, validated on the eval set per slice. Retrieval runs in parallel: help-doc search plus read-only account tools scoped to the caller. Assemble the prompt with a stable prefix (system prompt, policies, tool schemas) to benefit from prefix caching, then variable context; cap retrieved tokens. Stream responses for chat; for actions, validate JSON before executing. Cost: with hypothetical prices, 50k requests * 3,000 in / 400 out tokens gives $105/day small, $1,050/day large, ~$294/day with an 80/20 router (~$8.8k/month); confirm against the budget with headroom for retries and growth. Caching: exact-match cache for public FAQ answers keyed by prompt and doc version; no cross-user semantic cache for account answers. Reliability: retries with backoff, secondary model/region failover, and degradation to doc search results or human handoff, with circuit breakers. Guardrails: output schema and citation checks, policy filters, refusal paths. Observability: traces with tokens, cost, latency per stage, cache hits, guardrail outcomes, feedback. Releases: offline eval gate, canary with quality, latency, and cost guardrails, automatic rollback, and per-slice dashboards owned by the team.",
+  "checklist": [
+    "I separate TTFT from total latency and explain when streaming helps.",
+    "I compute the hypothetical $105 / $1,050 / $294 per day estimates and name the biggest cost levers.",
+    "I distinguish exact, semantic, and prefix caching and their risks.",
+    "I design rate-limit handling, failover, and graceful degradation.",
+    "I place guardrails, PII handling, observability, and eval-gated releases in the design."
+  ],
+  "pitfalls": [
+    "Quoting cost from output tokens only when input context dominates.",
+    "A cross-user semantic cache that serves one customer's account answer to another.",
+    "Sending everything to the largest model without measuring whether a small model suffices on each slice.",
+    "No degraded mode, so a provider outage becomes a full product outage.",
+    "Logging raw prompts with PII forever 'for debugging'."
+  ],
+  "walkthrough": [
+    {
+      "title": "Hit the TTFT target",
+      "body": "Measured p95 TTFT is 2.4 s: 600 ms retrieval run sequentially after a 300 ms intent call, plus a long 6,000-token prompt. Run retrieval and intent in parallel, cap context to the top passages (about 3,000 tokens), move stable instructions into a cached prefix, and stream. Re-measure per stage and re-run evals to confirm shorter context did not hurt groundedness."
+    },
+    {
+      "title": "Handle a provider rate-limit storm",
+      "body": "During a launch, 429s spike. Clients retry immediately and amplify load. Fix with exponential backoff and jitter, a token-bucket per tenant, priority for paying tiers, failover of a share of traffic to a secondary model validated on the eval set, and a degraded 'here are relevant help articles' mode. Afterward, renegotiate quota and add a capacity forecast to the launch checklist."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Where does the money go?",
+      "prompt": "Using the example's hypothetical large-model prices, compute daily input and output cost separately for 50,000 requests with 3,000 input and 400 output tokens. Which change saves more: halving output tokens or cutting input tokens by a third?",
+      "hints": [
+        "Input: 150M tokens; output: 20M tokens.",
+        "Compare the dollar change of each option."
+      ],
+      "solution": "Input 150M * $5/1M = $750; output 20M * $15/1M = $300; total $1,050/day. Halving output saves $150/day; cutting input by a third (to 2,000 tokens) saves $250/day. Context trimming and prefix caching are the bigger lever here, provided evals show no quality loss.",
+      "checklist": [
+        "I compute $750 input and $300 output per day.",
+        "I conclude trimming input saves more ($250 vs $150) and check quality."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Should we add a semantic cache?",
+      "prompt": "A teammate proposes a semantic cache for all assistant responses, claiming a 40% hit rate and 40% cost savings. Evaluate the proposal and propose a safer version.",
+      "hints": [
+        "What makes two answers interchangeable: wording similarity, or identical context and permissions?",
+        "Cache hits still have a cost; misses add lookup latency."
+      ],
+      "solution": "Risks: near-duplicate questions with different meaning, personalized answers leaking across users or tenants, stale answers after doc updates, and lower quality that offline evals never see. Savings are below 40% because of embedding and lookup costs, and misses add latency. Safer: cache only non-personalized FAQ intents, scope by tenant, key on prompt and doc versions, set a strict similarity threshold and TTL, invalidate on doc changes, sample cache hits for judge-plus-human review, and A/B test the cache against no cache on quality and cost.",
+      "checklist": [
+        "I name meaning drift, cross-user leakage, and staleness risks.",
+        "I scope the cache and validate it with evals and an A/B test."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Router or cascade?",
+      "answer": "A router is cheaper and faster when intent is predictable upfront; a cascade is better when difficulty is only visible from an attempt, at the price of double cost and extra latency on escalations. Measure both on the eval set."
+    },
+    {
+      "question": "How would you set a budget alarm?",
+      "answer": "Track cost per request and per tenant in near real time from token counts, alert on deviation from forecast, and enforce per-tenant caps with graceful degradation rather than silent failure."
+    }
+  ],
+  "takeaways": [
+    "Separate TTFT and total latency; stream when the consumer is a human.",
+    "Estimate cost from input and output tokens separately; input context often dominates.",
+    "Routing and prefix caching are safe levers; semantic caching needs strict scoping.",
+    "Plan for rate limits and outages with backoff, failover, and degraded modes.",
+    "Guardrails, traces, and eval-gated canaries make LLM releases safe."
+  ]
+}

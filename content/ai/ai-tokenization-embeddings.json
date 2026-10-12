@@ -1,0 +1,119 @@
+{
+  "id": "ai-tokenization-embeddings",
+  "track": "ai",
+  "title": "Tokens and embeddings: the units of cost and meaning",
+  "minutes": 45,
+  "summary": "Explain how subword tokenizers shape cost and context, compute cosine similarity, and size a vector search system with explicit recall-versus-latency trade-offs.",
+  "prerequisites": [
+    "ai-transformers-attention"
+  ],
+  "prerequisiteNotes": "Use the previous lesson's idea that each token becomes a vector that attention mixes with its context. Dot products, vector length, and basic storage arithmetic are all the math required.",
+  "objectives": [
+    "Explain BPE, WordPiece, and unigram tokenization at an intuitive level and why token counts drive cost, latency, and context usage.",
+    "Compute cosine similarity and explain when dot product and cosine rank results differently.",
+    "Distinguish static, contextual, and sentence embeddings and choose dimension and precision with storage in mind.",
+    "Describe approximate nearest neighbour indexes such as HNSW and IVF and tune them against a recall and latency target."
+  ],
+  "concepts": [
+    {
+      "title": "Subword tokenization",
+      "body": "Models operate on integer token ids from a fixed vocabulary. Whole-word vocabularies cannot cover rare words, names, or typos; character vocabularies make sequences very long. Subword tokenizers sit in between. Byte-pair encoding (BPE) starts from characters or bytes and repeatedly merges the most frequent adjacent pair into a new symbol until the vocabulary reaches a target size. WordPiece is similar but chooses merges that most improve the likelihood of the training corpus. Unigram tokenization starts from a large candidate vocabulary and prunes pieces that contribute least under a probabilistic model, then segments text by the most likely split. Byte-level variants guarantee that any input can be encoded. Common words become one token; rare words split into several pieces."
+    },
+    {
+      "title": "Why token counts matter",
+      "body": "Pricing, context limits, latency, and KV cache memory are all measured in tokens, not characters or words. Token-per-word ratios depend on the tokenizer and the text: languages and scripts underrepresented in the tokenizer's training data, source code with unusual identifiers, long numbers, JSON with repeated keys, and whitespace-heavy formatting can all inflate counts. The same request can therefore cost more and leave less room for context in one language than another. Always measure with the exact tokenizer of the model you deploy, on representative samples per language and content type, and budget from those measurements rather than a single rule of thumb. Tokenization can also hurt tasks like character counting or arithmetic because the model never sees individual characters or digits consistently."
+    },
+    {
+      "title": "Embeddings and similarity",
+      "body": "An embedding is a dense vector in which geometric closeness approximates semantic similarity. Static embeddings give each word one vector regardless of context, so 'bank' is ambiguous. Contextual embeddings come from transformer hidden states and change with surrounding text. Sentence or passage embeddings pool those states, often with a model trained contrastively so that related pairs (a query and its answer) score higher than unrelated ones. Cosine similarity = (a . b) / (|a| * |b|) measures angle and ignores length. If vectors are normalised to unit length, the dot product equals cosine, which lets indexes use fast inner-product search. Only compare vectors produced by the same model and version; embeddings from different models live in unrelated spaces, so a model upgrade requires re-embedding the corpus.",
+      "code": "def cosine(a, b):\n    dot = sum(x * y for x, y in zip(a, b))\n    na = sqrt(sum(x * x for x in a))\n    nb = sqrt(sum(y * y for y in b))\n    return dot / (na * nb)"
+    },
+    {
+      "title": "Dimensions, precision, and approximate search",
+      "body": "Raw storage is vectors * dimensions * bytes per value. Higher dimensions can capture more nuance but cost memory, bandwidth, and latency; some models are trained so that a prefix of the vector can be used at reduced quality. Storing 16-bit or 8-bit values, or product quantization codes, shrinks memory with some recall loss. Exact search compares the query with every vector, which is too slow at tens of millions of items. Approximate nearest neighbour (ANN) indexes trade a little recall for large speedups. HNSW builds a layered proximity graph and greedily walks it; parameters control graph degree (memory, build time) and the search beam (recall versus latency). IVF clusters vectors and searches only the few clusters nearest the query; probing more clusters raises recall and latency. Measure ANN recall against exact search on held-out queries, and remember that ANN recall is separate from whether the embedding model finds truly relevant documents."
+    }
+  ],
+  "example": "Cosine similarity with three-dimensional vectors.\na = [1, 2, 2], b = [2, 1, 2], c = [-1, 0, 1].\n|a| = sqrt(1 + 4 + 4) = 3, |b| = 3, |c| = sqrt(2) = 1.4142.\na . b = 2 + 2 + 4 = 8, so cos(a, b) = 8 / 9 = 0.8889.\na . c = -1 + 0 + 2 = 1, so cos(a, c) = 1 / (3 * 1.4142) = 0.2357.\nb . c = -2 + 0 + 2 = 0, so cos(b, c) = 0 (orthogonal).\nIf a query is closest in angle to a, it retrieves b before c.\n\nStorage: 10,000,000 vectors * 768 dimensions * 4 bytes (32-bit float) = 30.72 GB. At 16-bit: 15.36 GB. A 384-dimension model at 32-bit also needs 15.36 GB, so halving dimension and halving precision save the same memory but lose different information.",
+  "task": "You are designing semantic search over a support knowledge base for a global product. After chunking, there are 20,000,000 chunks averaging 300 tokens. The candidate embedding model outputs 768-dimensional vectors.\nA tokenizer measurement shows that a 1000-word English sample becomes 1,350 tokens, while a translated version of the same content in another supported language becomes 2,100 tokens.\nDeliver: (1) raw vector memory at 32-bit, 16-bit, and 8-bit precision; (2) a rough estimate of extra memory for an HNSW graph storing about 32 neighbour ids of 4 bytes each per vector at the base layer; (3) the token count to re-embed the full corpus if you change embedding model; (4) what the tokenizer measurement implies for cost, chunking, and context budgets; (5) an index choice and a plan to verify recall and latency; (6) one reason to normalise vectors and one risk of mixing embeddings from different model versions.",
+  "starter": "memory = chunks * dims * bytes\ngraph ~= chunks * neighbours * 4 bytes\nreembed_tokens = chunks * avg_tokens\ninflation = 2100 / 1350\nIndex: HNSW vs IVF+PQ; measure recall@k vs exact on sample queries\nNormalise because ... ; version mixing breaks because ...",
+  "hints": [
+    "20,000,000 * 768 = 15.36 billion values; multiply by 4, 2, and 1 byte.",
+    "Token inflation means a fixed token-size chunk covers less source text in the inflated language, and the same answer costs more tokens. Recall of an ANN index is measured against exact nearest neighbours on the same vectors, not against human relevance labels; you need both evaluations."
+  ],
+  "solution": "(1) 20,000,000 * 768 = 15.36e9 values. 32-bit: 61.44 GB. 16-bit: 30.72 GB. 8-bit: 15.36 GB, with some recall loss to measure.\n(2) Graph: 20,000,000 * 32 * 4 bytes = 2.56 GB, plus upper layers and allocator overhead. This is an order-of-magnitude estimate; real overhead depends on the library and parameters.\n(3) Re-embedding: 20,000,000 * 300 = 6,000,000,000 tokens. That is a planned batch job with cost, throughput limits, and a period where old and new indexes must coexist, so plan a dual-write or shadow index and switch atomically.\n(4) 2,100 / 1,350 = 1.56, so the second language needs about 56% more tokens for the same content. Its embedding, generation, and context costs rise accordingly, and token-based chunk limits cover less text per chunk. Budget per language using measured ratios, consider chunk limits defined by tokens rather than characters, and evaluate retrieval quality per language because an embedding model can be weaker on languages it saw less of.\n(5) For 20M vectors with a latency target, HNSW on 16-bit vectors (about 31 GB plus graph) on memory-rich nodes is a reasonable default with high recall; IVF with product quantization is cheaper in memory at some recall cost, and can suit larger corpora. Shard by chunk id across nodes if one node is not enough, and merge per-shard top-k. Verify with a sample of real queries: compute exact top-10 by brute force offline, then sweep the search parameter and record recall@10 and p50/p99 latency under realistic concurrency. Separately, measure end-to-end relevance with labelled query-document pairs, because perfect ANN recall of a weak embedding still returns wrong documents. Also plan for metadata filters, which interact with ANN (filtering after search can return too few results).\n(6) Normalising to unit length makes dot product equal cosine, so a fast inner-product index ranks by angle and long or repetitive chunks do not win by magnitude. Mixing versions is unsafe because vectors from different models or versions are not in a shared space; similarities become meaningless and quality silently drops. Store the model version with each vector and query only the matching index.",
+  "checklist": [
+    "I compute 61.44, 30.72, and 15.36 GB for the three precisions.",
+    "I estimate about 2.56 GB for base-layer graph links and call it approximate.",
+    "I compute 6 billion tokens to re-embed and plan a side-by-side index migration.",
+    "I translate the 1.56x token ratio into per-language cost, chunking, and evaluation consequences.",
+    "I separate ANN recall against exact search from relevance against human labels."
+  ],
+  "pitfalls": [
+    "Estimating cost from word or character counts instead of measuring with the deployed tokenizer.",
+    "Comparing embeddings produced by different models or versions.",
+    "Using dot product on unnormalised vectors when the model was trained for cosine, letting vector length dominate ranking.",
+    "Reporting ANN recall as if it were retrieval relevance.",
+    "Applying a restrictive metadata filter after ANN search and returning far fewer than k results."
+  ],
+  "walkthrough": [
+    {
+      "title": "Size before you choose",
+      "body": "Write memory as items * dimensions * bytes and evaluate it at each precision. In the task, 61 GB at full precision forces either multiple nodes or compression, while 31 GB at 16-bit fits on one large-memory node. Add the index structure and replication for availability, then ask whether the budget favours HNSW in memory or a compressed IVF index. The arithmetic frames the design discussion instead of ending it."
+    },
+    {
+      "title": "Turn token measurements into product decisions",
+      "body": "A tokenizer ratio is a multiplier on cost and a divisor on how much text fits. If one language uses 1.56x the tokens, a 2,000-token context budget holds about 64% as much of that language's text. Decide whether to accept the cost, adjust chunk sizes per language, or pick a model whose tokenizer handles the language better, and include each language in the evaluation set so quality regressions are visible."
+    },
+    {
+      "title": "Tune ANN with a sweep",
+      "body": "Build the index once, then vary only the search-time parameter, such as the HNSW beam width or the number of IVF clusters probed. For each value record recall@k against exact search and p99 latency at expected load. Pick the smallest setting that meets the recall target within the latency budget, and re-run the sweep when corpus size or hardware changes."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Dot product versus cosine",
+      "prompt": "Query q = [1, 0]. Document d1 = [3, 3], document d2 = [0.9, 0.1]. Rank the documents by dot product and by cosine similarity. Which ranking reflects direction, and what would normalisation change?",
+      "hints": [
+        "Dot product rewards both alignment and length.",
+        "Divide each dot product by both vector norms for cosine."
+      ],
+      "solution": "Dot product: q . d1 = 3, q . d2 = 0.9, so d1 ranks first. Cosine: d1 = 3 / (1 * sqrt(18)) = 0.7071; d2 = 0.9 / (1 * sqrt(0.82)) = 0.9939, so d2 ranks first. Cosine reflects direction. After normalising all vectors to unit length the two rankings agree, because dot product then equals cosine.",
+      "checklist": [
+        "I show the rankings disagree.",
+        "I explain that normalisation makes dot product equal cosine."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Choose an ANN operating point",
+      "prompt": "On 1,000 sampled queries, an HNSW index produced these results against exact top-10 neighbours at production load: search beam 32 -> recall@10 0.90, p99 4 ms; beam 64 -> 0.95, 7 ms; beam 128 -> 0.98, 13 ms. The retrieval stage must meet p99 <= 10 ms and recall@10 >= 0.95. Choose a setting and describe what you would monitor afterwards.",
+      "hints": [
+        "Filter to settings meeting both constraints, then prefer the cheaper one.",
+        "Corpus growth and filter usage can move both numbers."
+      ],
+      "solution": "Beam 64 is the only setting meeting both constraints (0.95 recall, 7 ms). Beam 128 breaks latency and beam 32 misses recall. It leaves 3 ms of headroom, so monitor p99 as the corpus grows, re-run the recall sweep after major ingestions or index rebuilds, and watch filtered queries separately because restrictive filters can lower effective recall. If future growth erodes headroom, consider sharding or vector compression rather than silently lowering the beam.",
+      "checklist": [
+        "I choose beam 64 with reasons tied to both constraints.",
+        "I name ongoing checks for recall and latency drift."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not just use a larger vocabulary to reduce token counts?",
+      "answer": "A larger vocabulary shortens sequences but enlarges the embedding and output layers, spreads training data across more rare tokens that are learned less well, and makes the softmax over the vocabulary more expensive. Vocabulary size is a trade-off between sequence length and per-token cost and quality, chosen at pretraining time; you cannot change it for an existing model without retraining."
+    },
+    {
+      "question": "When would you prefer a smaller embedding dimension?",
+      "answer": "When memory, latency, or cost dominate and evaluation shows the quality drop is acceptable, for example a very large corpus on a tight budget or a first-stage retriever followed by a stronger reranker. Measure retrieval quality at each candidate dimension on your own queries rather than assuming bigger is better."
+    }
+  ],
+  "takeaways": [
+    "Tokens are the unit of cost, context, and latency; measure them with the deployed tokenizer per language and content type.",
+    "Cosine similarity compares direction; normalised vectors make dot product equal cosine.",
+    "Embeddings are only comparable within one model version, so model changes mean re-embedding.",
+    "Vector memory is items * dimensions * bytes; precision and dimension are the main levers.",
+    "ANN indexes trade recall for latency; tune with a sweep against exact search and evaluate relevance separately."
+  ]
+}

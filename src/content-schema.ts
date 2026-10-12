@@ -2,7 +2,7 @@ import type { Track } from './curriculum-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 
-export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'behavioral']
+export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral']
 
 type Rec = Record<string, unknown>
 const isRec = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value)

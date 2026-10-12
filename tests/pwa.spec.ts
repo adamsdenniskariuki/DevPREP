@@ -186,7 +186,7 @@ for (const mount of mounts) {
       offline.on('dialog', dialog => dialog.accept())
       await offline.goto(`${mount}#tracks`)
       await ready(offline)
-      for (const track of ['dsa', 'system-design', 'ml', 'behavioral']) {
+      for (const track of ['dsa', 'system-design', 'ml', 'ai', 'behavioral']) {
         const lesson = lessons.filter(item => item.track === track).at(-1)!
         await offline.goto(`${mount}#tracks`)
         const row = offline.getByRole('article').filter({ has: offline.getByRole('heading', { name: lesson.title, exact: true }) })

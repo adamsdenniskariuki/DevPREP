@@ -1,0 +1,121 @@
+{
+  "id": "ml-neural-networks",
+  "track": "ml",
+  "title": "Neural networks: forward pass, backprop, and when to go deep",
+  "minutes": 55,
+  "summary": "Trace a small network through a forward pass, cross-entropy loss, and backpropagation, then reason about training stability and when deep learning beats gradient-boosted trees.",
+  "prerequisites": [
+    "ml-optimization-regularization"
+  ],
+  "prerequisiteNotes": "Builds on gradient descent, loss functions, and regularization. A network is a composition of layers, so gradients flow through the chain rule and keeping them well-scaled becomes a design concern of its own.",
+  "objectives": [
+    "Compute a forward pass, softmax probabilities, and cross-entropy loss for a small network by hand.",
+    "Explain backpropagation as the chain rule and use the softmax plus cross-entropy gradient p - y.",
+    "Diagnose vanishing or exploding gradients and choose initialization, normalization, and dropout deliberately.",
+    "Recommend a neural network or gradient-boosted trees from data modality, size, and serving constraints."
+  ],
+  "concepts": [
+    {
+      "title": "Layers are affine maps plus nonlinearities",
+      "body": "A dense layer computes a = W*x + b and then an elementwise activation h = f(a). Without nonlinearities, stacked layers collapse into one affine map, so depth adds nothing. ReLU, max(0, a), is cheap and does not saturate for positive inputs, but a unit whose pre-activation stays negative outputs zero and receives zero gradient (a dead unit). Sigmoid squashes to (0, 1) and suits a single binary output; tanh is zero-centered. Softmax turns a logit vector into a distribution, p_i = exp(z_i) / sum_j exp(z_j); subtract max(z) first for numerical stability. A dense layer has inputs*outputs + outputs parameters, so a 784-128-10 MLP has 784*128 + 128 + 128*10 + 10 = 101,770.",
+      "code": "a1 = W1 @ x + b1\nh1 = np.maximum(a1, 0)          # ReLU\nz = W2 @ h1 + b2                 # logits\np = np.exp(z - z.max()); p /= p.sum()\nloss = -np.log(p[label])         # cross-entropy"
+    },
+    {
+      "title": "Loss and backpropagation are the chain rule with caching",
+      "body": "Cross-entropy for one example with true class c is -log(p_c), the negative log-likelihood of a categorical model. Combined with softmax, its gradient with respect to the logits is simply p - y for one-hot y, which stays large when the model is confidently wrong. Backprop walks from the loss to the inputs, reusing values cached in the forward pass: for a layer with incoming signal delta, dL/dW = delta * input^T, dL/dinput = W^T * delta, then multiply elementwise by f'(a) to cross the activation. The backward pass costs a small constant multiple of the forward pass. Minibatch SGD averages gradients over a batch and steps W = W - lr * grad; momentum and Adam adjust direction and per-parameter step size. Frameworks autodiff this, but a senior candidate can derive one layer by hand and spot shape bugs."
+    },
+    {
+      "title": "Keep gradients well-scaled",
+      "body": "The backward signal is multiplied by each layer's weights and activation derivative. Sigmoid's derivative is at most 0.25, so ten sigmoid layers shrink the gradient by up to 0.25^10, about 9.5e-7, from activation derivatives alone and early layers stop learning. Large weights cause the opposite: exploding gradients and NaN losses. Remedies: ReLU-family activations; variance-preserving initialization (Xavier/Glorot for tanh or sigmoid, He with variance 2/fan_in for ReLU); residual connections that give gradients an identity path; normalization; and gradient clipping, common for recurrent nets. Never initialize all weights to the same value: symmetric units get identical gradients and stay identical. Batch norm normalizes each feature over the minibatch and learns a scale and shift, then uses running statistics at inference; layer norm normalizes within each example, so it works for small batches and sequences."
+    },
+    {
+      "title": "Regularization and architecture families",
+      "body": "Dropout zeroes activations at random during training; inverted dropout scales survivors by 1/(1 - rate) so inference uses the full network unchanged. Weight decay, early stopping on validation loss, and data augmentation also curb overfitting. Architecture encodes assumptions. CNNs share small filters across positions: a 3x3 convolution from 64 to 128 channels has 3*3*64*128 + 128 = 73,856 parameters regardless of image size. RNNs and LSTMs process sequences step by step, which limits parallelism and long-range memory; transformers use attention and dominate modern language work. Embedding layers map categorical ids to learned dense vectors; 1M ids at 64 dimensions is 64M parameters, often the bulk of a recommender model."
+    },
+    {
+      "title": "Deep learning versus gradient-boosted trees",
+      "body": "For tabular data with heterogeneous columns and up to millions of rows, gradient-boosted trees are a strong default: little preprocessing, native handling of missing values and mixed scales, fast CPU training, and easier explanation. Neural networks earn their cost on unstructured inputs (images, audio, text), very large datasets, high-cardinality ids learned through embeddings, multi-task or multimodal objectives, and when pretrained models enable transfer learning. The costs are more tuning, accelerator hardware, higher inference latency, and weaker interpretability. A senior answer benchmarks both against a simple baseline on the same split and serving budget, and considers hybrids such as feeding learned embeddings into a tree model."
+    }
+  ],
+  "example": "One example, input x = [1, 2], true class 0 of 3.\nHidden layer: W1 = [[1, -1], [0.5, 1]], b1 = [0, -1].\na = W1*x + b1 = [1 - 2 + 0, 0.5 + 2 - 1] = [-1, 1.5]; ReLU gives h = [0, 1.5].\nOutput layer: W2 = [[1, 1], [0, 0.5], [2, 0]], b2 = [0.5, 0.25, 0].\nz = W2*h + b2 = [1.5 + 0.5, 0.75 + 0.25, 0 + 0] = [2, 1, 0].\nSoftmax: exp(z) = [7.389, 2.718, 1.000], sum 11.107, p = [0.665, 0.245, 0.090].\nLoss = -ln(0.665) = 0.408.\nBackward: dL/dz = p - y = [-0.335, 0.245, 0.090].\ndL/dW2 = (p - y) * h^T: the column for h1 is all zero because h1 = 0; the column for h2 is 1.5*(p - y) = [-0.502, 0.367, 0.135].\ndL/dh = W2^T*(p - y) = [1*(-0.335) + 0*0.245 + 2*0.090, 1*(-0.335) + 0.5*0.245 + 0*0.090] = [-0.155, -0.212].\nReLU gate: unit 1 was inactive (a = -1), so its delta is 0; unit 2 passes -0.212.\ndL/dW1 row 2 = -0.212*[1, 2] = [-0.212, -0.425]; row 1 is all zero.\nOne gradient step on b2 alone with learning rate 0.1: b2 = [0.533, 0.226, -0.009], p_0 rises to 0.677 and the loss falls to 0.390.",
+  "task": "Reproduce the forward and backward pass in the example by hand. Then: (a) explain why hidden unit 1 receives no weight update and what happens if that holds for every training example; (b) propose initialization, normalization, and activation choices for a 20-layer version of this network and say what you would monitor during training; (c) a team asks whether to replace a gradient-boosted model trained on 50 tabular features and 200k rows with a deep network. Give a recommendation and the experiment that would change your mind.",
+  "starter": "forward:  a1 = W1 x + b1; h = relu(a1); z = W2 h + b2; p = softmax(z); loss = -log p[y]\nbackward: dz = p - onehot(y)\n          dW2 = outer(dz, h); db2 = dz\n          dh = W2^T dz; da1 = dh * (a1 > 0)\n          dW1 = outer(da1, x); db1 = da1\n# (b) list init, norm, activation, residuals, what to log per layer\n# (c) baseline, split, metric, latency budget, decision rule",
+  "hints": [
+    "Start the backward pass from p - y instead of differentiating softmax and log separately.",
+    "ReLU passes gradient only where its pre-activation was positive. For the model choice, weigh data modality and row count, and name the evidence that would flip your decision."
+  ],
+  "solution": "Forward: a = [-1, 1.5], h = [0, 1.5], z = [2, 1, 0], p = [0.665, 0.245, 0.090], loss 0.408. Backward: dz = [-0.335, 0.245, 0.090], dW2 column 2 = [-0.502, 0.367, 0.135], dh = [-0.155, -0.212], and only W1 row 2 gets gradient [-0.212, -0.425]. (a) Unit 1's pre-activation is negative, so ReLU's derivative is zero and nothing reaches W1 row 1 or b1[0]. If it is negative for every input, the unit is dead and never recovers; fixes include He initialization, a lower learning rate, small positive bias init, or leaky ReLU. (b) Use ReLU or GELU, He initialization, residual connections, batch norm or layer norm, Adam with warmup, and gradient clipping as a safety net. Log loss, per-layer gradient and activation norms, fraction of dead units, and validation metrics. (c) On 200k tabular rows, keep gradient-boosted trees as the default: they are typically competitive here at lower cost and latency. Run a fair bake-off with the same time-based split, metric, and latency budget, include a tuned MLP with embeddings for high-cardinality ids, and switch only if it beats trees by a margin that matters after serving cost. More data, unstructured inputs such as text or images, or transfer from pretrained models would change the answer.",
+  "checklist": [
+    "I compute p = [0.665, 0.245, 0.090], loss 0.408, and dz = p - y correctly.",
+    "I show why the inactive ReLU unit gets zero gradient and how dead units arise.",
+    "I name concrete initialization, normalization, and monitoring choices for a deep stack.",
+    "I justify DL versus GBDT with data modality, size, cost, and a fair experiment."
+  ],
+  "pitfalls": [
+    "Applying softmax and then a framework loss that already includes softmax double-squashes the logits.",
+    "Identical weight initialization keeps units symmetric, so they never learn different features.",
+    "Leaving batch norm in training mode at inference makes predictions depend on the other items in the batch.",
+    "A falling training loss with rising validation loss is overfitting, not progress.",
+    "Assuming deeper is better on small tabular data often adds cost without accuracy."
+  ],
+  "walkthrough": [
+    {
+      "title": "Debug a model that will not train",
+      "body": "First overfit a tiny batch of 10 to 100 examples; if loss will not approach zero, the bug is in code, labels, or the learning rate, not capacity. Check input normalization, label alignment, and that the loss receives logits or probabilities as it expects. Plot loss on a log scale, sweep learning rate by factors of 3 to 10, and inspect per-layer gradient norms for vanishing or exploding layers. Only then add capacity or regularization."
+    },
+    {
+      "title": "Defend the architecture choice in an interview",
+      "body": "State the data modality, label volume, and latency budget, then propose the simplest strong baseline. Explain which inductive bias the architecture adds: locality for CNNs, order for sequence models, learned similarity for embeddings. Close with serving cost: parameters, FLOPs per request, batching, and whether distillation or quantization is needed to meet latency."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Count parameters and shrinking gradients",
+      "prompt": "Count the parameters of a 100-64-64-1 MLP with biases. Then bound how much five sigmoid layers can scale a gradient through their activation derivatives alone.",
+      "hints": [
+        "Each dense layer has inputs*outputs weights plus outputs biases.",
+        "The sigmoid derivative peaks at 0.25 when its input is 0."
+      ],
+      "solution": "Parameters: 100*64 + 64 = 6,464; 64*64 + 64 = 4,160; 64*1 + 1 = 65; total 10,689. Five sigmoid derivatives multiply to at most 0.25^5 = 0.000977, roughly a thousandfold shrink before weights are even considered. ReLU's derivative is exactly 1 on active units, which is one reason it trains deep stacks more easily.",
+      "checklist": [
+        "I obtain 10,689 parameters.",
+        "I obtain 0.25^5, about 9.8e-4, and connect it to vanishing gradients."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "NaN loss after a few hundred steps",
+      "prompt": "A 30-layer network trains normally for 200 steps and then the loss becomes NaN. Batch size is 4 because of memory limits and the network uses batch norm. Diagnose likely causes and propose fixes in priority order.",
+      "hints": [
+        "Consider what batch statistics look like with only four examples.",
+        "NaN often follows an overflow in exp or log, or a single huge gradient step."
+      ],
+      "solution": "Likely causes: exploding gradients from a learning rate that is too high or no warmup; numerically unstable loss, for example log of a probability that underflowed to 0 because softmax and log were computed separately; and noisy batch-norm statistics with batch size 4, where a near-constant feature gives a tiny variance. Fixes in order: use a fused log-softmax cross-entropy on logits; add gradient clipping and lower the learning rate with warmup; replace batch norm with layer norm or group norm, or use gradient accumulation (which helps the optimizer but does not enlarge batch-norm statistics); check inputs for infinities; and enable anomaly detection to find the first layer producing NaN. Log gradient norms so the next spike is visible before it diverges.",
+      "checklist": [
+        "I identify unstable loss computation, exploding gradients, and small-batch normalization.",
+        "I propose ordered, testable fixes and the monitoring that would confirm them."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why use cross-entropy rather than squared error for classification?",
+      "answer": "Cross-entropy is the negative log-likelihood of a categorical model, and with softmax its logit gradient is p - y, which stays large for confident mistakes. Squared error on saturating outputs multiplies by the activation derivative, so badly wrong predictions can learn slowly."
+    },
+    {
+      "question": "Why does batch norm behave differently at training and inference time?",
+      "answer": "Training uses the current minibatch's mean and variance; inference uses running averages collected during training so predictions do not depend on batch composition. Mismatched modes or shifted serving data make those running statistics wrong."
+    },
+    {
+      "question": "When would you put embeddings into a tree model instead of serving a deep network?",
+      "answer": "When most features are tabular but a few inputs are text or high-cardinality ids. Precomputed embeddings capture similarity while the tree model keeps fast CPU inference, robustness to mixed features, and easier debugging."
+    }
+  ],
+  "takeaways": [
+    "A network is affine layers plus nonlinearities; without them depth adds nothing.",
+    "Softmax plus cross-entropy gives the clean logit gradient p - y.",
+    "Initialization, normalization, residuals, and activation choice keep gradients usable.",
+    "Prefer trees for moderate tabular data and deep models for unstructured or very large data, then prove it with a fair benchmark."
+  ]
+}
