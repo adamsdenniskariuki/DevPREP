@@ -1,0 +1,179 @@
+{
+  "id": "job-scheduler",
+  "title": "Distributed job scheduler",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Durable schedules, leases, retries and exactly-once effects.",
+  "prompt": "Design a scheduler that runs millions of jobs: one-off delayed jobs and recurring cron-style jobs submitted by other teams, executed by a pool of workers, with retries and visibility into each run.",
+  "lessons": [
+    "design-queues-events",
+    "design-consistency",
+    "design-reliability-observability",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: create, update and cancel jobs (one-off at a time, or a cron expression), run them on workers, retry failures, show run history.",
+      "Non-functional: jobs start within seconds of their due time, no scheduled run is lost, at most one active execution per run, scales to millions of jobs."
+    ],
+    "estimation": [
+      "10M scheduled jobs, 100M runs a day ≈ 1,150 runs/s average, with spikes at the top of each hour when many cron jobs align.",
+      "Run history ~500 bytes × 100M a day ≈ 50 GB a day; keep 30 days hot."
+    ],
+    "api": [
+      "POST /jobs {schedule, target, payload, timeout, retryPolicy, idempotencyKey} → {jobId}.",
+      "DELETE /jobs/{id}; GET /jobs/{id}/runs?cursor= → run states and logs.",
+      "Worker protocol: lease(n) → runs; heartbeat(runId); complete(runId, result)."
+    ],
+    "data": [
+      "jobs(id, owner, schedule, next_run_at, target, payload, enabled, version), indexed on next_run_at and sharded by job ID.",
+      "runs(run_id, job_id, scheduled_for, attempt, status, lease_owner, lease_expires_at), unique on (job_id, scheduled_for)."
+    ],
+    "design": [
+      "Scheduler shards scan their partition for due jobs, create a run row (the unique key prevents duplicates), advance next_run_at, and enqueue the run.",
+      "Workers lease runs with a timeout and heartbeat; if a worker dies, the lease expires and another worker takes the run.",
+      "On failure, retries are rescheduled with exponential backoff and jitter; after max attempts the run is marked failed and the owner alerted."
+    ],
+    "deepDives": [
+      "At-least-once execution is the realistic guarantee: a worker can finish the side effect then crash before reporting. Pass a run ID so targets can be idempotent, which gives exactly-once effects.",
+      "Fencing: each lease carries an increasing token; targets or storage reject writes from an older token, so a paused “zombie” worker cannot overwrite a newer attempt.",
+      "Hot minutes: add a small deterministic jitter to cron jobs that allow it, and pre-load due jobs a few seconds early into a time-bucketed queue."
+    ],
+    "bottlenecks": [
+      "Scanning a huge next_run_at index: partition by shard and by time bucket, and claim shards via leader leases.",
+      "Noisy tenants: per-tenant concurrency limits and fair queues.",
+      "Long-running jobs: heartbeats extend leases; set a hard timeout."
+    ],
+    "tradeoffs": [
+      "Exactly-once execution is not achievable across failures; at-least-once plus idempotent targets is the practical answer.",
+      "Polling the database is simple but adds latency and load; a time-wheel or delay queue is faster but harder to make durable.",
+      "Strict start-time accuracy vs smoothing spikes with jitter."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "teams",
+        "kind": "client",
+        "label": "Client teams",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Job API",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "jobs",
+        "kind": "db",
+        "label": "Jobs & runs",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "sched",
+        "kind": "worker",
+        "label": "Scheduler shards",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "Due runs",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "workers",
+        "kind": "worker",
+        "label": "Workers",
+        "col": 4,
+        "row": 0
+      },
+      {
+        "id": "target",
+        "kind": "external",
+        "label": "Job targets",
+        "col": 5,
+        "row": 0
+      },
+      {
+        "id": "coord",
+        "kind": "service",
+        "label": "Lease/leader",
+        "col": 3,
+        "row": 1
+      }
+    ],
+    "edges": [
+      {
+        "from": "teams",
+        "to": "api"
+      },
+      {
+        "from": "api",
+        "to": "jobs"
+      },
+      {
+        "from": "sched",
+        "to": "jobs",
+        "label": "scan due"
+      },
+      {
+        "from": "sched",
+        "to": "q"
+      },
+      {
+        "from": "sched",
+        "to": "coord",
+        "label": "shard lease"
+      },
+      {
+        "from": "q",
+        "to": "workers"
+      },
+      {
+        "from": "workers",
+        "to": "jobs",
+        "label": "lease/heartbeat"
+      },
+      {
+        "from": "workers",
+        "to": "target",
+        "label": "run id"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Stored schedules durably with an index on next run time."
+    },
+    {
+      "text": "Prevented duplicate runs with a unique run key."
+    },
+    {
+      "text": "Used leases with heartbeats and expiry for worker failures."
+    },
+    {
+      "text": "Retried with backoff and capped attempts, with alerting."
+    },
+    {
+      "text": "Stated at-least-once execution and required idempotent targets."
+    },
+    {
+      "text": "Partitioned scheduling work across shards."
+    },
+    {
+      "text": "Used fencing tokens against zombie workers.",
+      "sse": true
+    },
+    {
+      "text": "Smoothed hot-minute spikes and isolated noisy tenants.",
+      "sse": true
+    }
+  ]
+}

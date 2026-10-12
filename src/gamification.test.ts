@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { lessons } from './curriculum'
-import { activityXp, daysUntil, gameStats, solveXp, streakFrom, weakAreas } from './gamification'
-import { emptyProgress, parseBackup, recordSolve, serializeBackup, updateProfile } from './progress'
+import { activityXp, daysUntil, designXp, gameStats, solveXp, streakFrom, weakAreas } from './gamification'
+import { emptyProgress, parseBackup, recordDesign, recordSolve, serializeBackup, updateProfile } from './progress'
 import { problemIndex } from './problems'
+import { caseIndex } from './cases'
 import type { Progress } from './progress'
 
 describe('streakFrom', () => {
@@ -74,6 +75,25 @@ describe('gameStats', () => {
     expect(earned).not.toContain('solves-15')
     for (const problem of problemIndex.slice(0, 15)) progress = recordSolve(progress, problem.id, 'js', now)
     expect(gameStats(progress, now).badges.find(badge => badge.id === 'solves-15')?.earned).toBe(true)
+  })
+
+  it('awards design XP, design days and design badges', () => {
+    const now = new Date(2025, 0, 10, 12)
+    const se = caseIndex.find(item => item.level === 'se')!
+    const sse = caseIndex.find(item => item.level === 'sse')!
+    const earned = (progress: Progress) => gameStats(progress, now).badges.filter(badge => badge.earned).map(badge => badge.id)
+    let progress = recordDesign(emptyProgress(), se.id, 60, now)
+    expect(designXp(progress)).toBe(25)
+    expect(earned(progress)).toEqual(['first-design'])
+    expect(gameStats(progress, now).streak).toMatchObject({ current: 1, activeToday: true })
+    progress = recordDesign(progress, se.id, 95, now)
+    expect(designXp(progress)).toBe(35)
+    expect(earned(progress)).not.toContain('senior-design')
+    progress = recordDesign(progress, sse.id, 80, now)
+    expect(designXp(progress)).toBe(70)
+    expect(earned(progress)).toContain('senior-design')
+    for (const item of caseIndex.slice(0, 10)) progress = recordDesign(progress, item.id, 50, now)
+    expect(earned(progress)).toContain('designs-10')
   })
 })
 

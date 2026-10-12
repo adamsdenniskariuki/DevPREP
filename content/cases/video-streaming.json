@@ -1,0 +1,200 @@
+{
+  "id": "video-streaming",
+  "title": "Video streaming",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Transcoding pipelines, adaptive bitrate and CDN economics.",
+  "prompt": "Design a video platform: creators upload videos, which are processed for playback on phones, laptops and TVs; viewers watch on demand with quick start and little buffering.",
+  "lessons": [
+    "design-cache-data-flow",
+    "design-queues-events",
+    "design-requirements-capacity"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: upload, transcode, publish, watch with adaptive quality, resume position, view counts.",
+      "Non-functional: playback starts in ~2 s and rarely stalls; global audience; storage and egress cost matter a lot."
+    ],
+    "estimation": [
+      "100M hours watched a day at ~3 Mbit/s: 100M × 3,600 s × 3 Mbit ÷ 86,400 s ≈ 12.5 Tbit/s average egress.",
+      "500 hours uploaded per minute; a ladder of ~6 renditions roughly doubles to triples source storage.",
+      "Egress dominates cost, so cache hit rate at the edge is the key lever."
+    ],
+    "api": [
+      "POST /uploads → resumable upload session; POST /videos {uploadId, title} → {videoId, status}.",
+      "GET /videos/{id}/manifest → an HLS or DASH manifest listing renditions and segment URLs on the CDN.",
+      "POST /videos/{id}/progress {position} for resume; view events go to analytics."
+    ],
+    "data": [
+      "videos(id, owner, title, status, duration, renditions) metadata.",
+      "Object storage: source files, and segments per rendition (2–6 s chunks) under immutable paths.",
+      "View events stream into an aggregation pipeline, not a per-view database write."
+    ],
+    "design": [
+      "Upload to object storage; a pipeline splits the source into chunks and transcodes them in parallel into a ladder (e.g. 240p–4K) and codecs.",
+      "Publish writes manifests; the CDN caches segments close to viewers, pulling from an origin shield in front of storage.",
+      "The player measures throughput and buffer level and switches renditions between segments (adaptive bitrate)."
+    ],
+    "deepDives": [
+      "Parallel transcoding: chunk-level jobs make a long video finish in minutes; a DAG of tasks handles thumbnails, captions and checks.",
+      "Start-up time: start with a low rendition, keep the first segments short, and prefetch the manifest.",
+      "Long tail: most views go to a small share of videos; popular content sits in edge caches while rarely watched videos may only exist at origin, or in fewer renditions."
+    ],
+    "bottlenecks": [
+      "Transcoding cost: transcode popular videos into more renditions and codecs; give long-tail uploads a basic ladder first.",
+      "Origin overload on a viral video: an origin shield collapses many edge misses into one fetch.",
+      "View counting at scale: aggregate events in streams; show approximate counts live."
+    ],
+    "tradeoffs": [
+      "More renditions = smoother playback but more storage and transcode compute.",
+      "Newer codecs cut bandwidth substantially but cost more CPU to encode and are not supported on every device.",
+      "Own CDN vs commercial CDN: control and unit cost vs time to market and global reach."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "creator",
+        "kind": "client",
+        "label": "Creators",
+        "col": 0,
+        "row": 0
+      },
+      {
+        "id": "up",
+        "kind": "service",
+        "label": "Upload service",
+        "col": 1,
+        "row": 0
+      },
+      {
+        "id": "src",
+        "kind": "storage",
+        "label": "Source storage",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "Transcode jobs",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "tx",
+        "kind": "worker",
+        "label": "Transcoders",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "seg",
+        "kind": "storage",
+        "label": "Segments",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "shield",
+        "kind": "cdn",
+        "label": "Origin shield",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "cdn",
+        "kind": "cdn",
+        "label": "Edge CDN",
+        "col": 3,
+        "row": 3
+      },
+      {
+        "id": "viewer",
+        "kind": "client",
+        "label": "Viewers",
+        "col": 0,
+        "row": 3
+      },
+      {
+        "id": "meta",
+        "kind": "service",
+        "label": "Video API",
+        "col": 1,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "creator",
+        "to": "up"
+      },
+      {
+        "from": "up",
+        "to": "src"
+      },
+      {
+        "from": "up",
+        "to": "q"
+      },
+      {
+        "from": "q",
+        "to": "tx"
+      },
+      {
+        "from": "tx",
+        "to": "src"
+      },
+      {
+        "from": "tx",
+        "to": "seg"
+      },
+      {
+        "from": "viewer",
+        "to": "meta",
+        "label": "manifest"
+      },
+      {
+        "from": "viewer",
+        "to": "cdn",
+        "label": "segments"
+      },
+      {
+        "from": "cdn",
+        "to": "shield"
+      },
+      {
+        "from": "shield",
+        "to": "seg"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Estimated egress bandwidth and identified it as the main cost."
+    },
+    {
+      "text": "Designed a parallel transcoding pipeline into a bitrate ladder."
+    },
+    {
+      "text": "Explained segmented streaming with manifests and adaptive bitrate."
+    },
+    {
+      "text": "Used a CDN with an origin shield."
+    },
+    {
+      "text": "Handled resumable uploads and processing status."
+    },
+    {
+      "text": "Aggregated view events instead of writing per view."
+    },
+    {
+      "text": "Treated popular and long-tail content differently.",
+      "sse": true
+    },
+    {
+      "text": "Weighed codec, rendition and CDN cost trade-offs.",
+      "sse": true
+    }
+  ]
+}

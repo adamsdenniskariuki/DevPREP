@@ -1,4 +1,6 @@
 import type { Track } from './curriculum-types'
+import { NODE_KINDS, STEP_KEYS } from './case-types'
+import type { NodeKind } from './case-types'
 
 export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'behavioral']
 
@@ -135,5 +137,70 @@ export function validateTrack(value: unknown, where = 'track'): string[] {
   check.text(value.description, 'description')
   check.texts(value.lessons, 'lessons')
   if (Array.isArray(value.lessons) && new Set(value.lessons).size !== value.lessons.length) check.fail('lessons', 'duplicate lesson id')
+  return check.errors
+}
+
+const CASE_REQUIRED = ['id', 'title', 'level', 'minutes', 'summary', 'prompt', 'lessons', 'steps', 'diagram', 'rubric']
+export const DIAGRAM_COLS = 6
+export const DIAGRAM_ROWS = 5
+export const MODEL_LABEL_MAX = 18
+
+/** Validates one content/cases/<id>.json system design case study. `lessonIds` checks cross-links. */
+export function validateCase(value: unknown, where = 'case', lessonIds?: Set<string>): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', CASE_REQUIRED)
+  if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
+  for (const key of ['title', 'summary', 'prompt']) check.text(value[key], key)
+  if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+  if (!Number.isInteger(value.minutes) || (value.minutes as number) < 15 || (value.minutes as number) > 90) check.fail('minutes', 'expected integer 15–90')
+  check.texts(value.lessons, 'lessons')
+  if (lessonIds && Array.isArray(value.lessons)) value.lessons.forEach((id, index) => { if (!lessonIds.has(id as string)) check.fail(`lessons[${index}]`, `unknown lesson ${String(id)}`) })
+  if (!isRec(value.steps)) check.fail('steps', 'expected object')
+  else {
+    check.keys(value.steps, 'steps', [...STEP_KEYS])
+    for (const key of STEP_KEYS) check.texts(value.steps[key], `steps.${key}`, 2)
+  }
+  const diagram = value.diagram
+  if (!isRec(diagram)) check.fail('diagram', 'expected object')
+  else {
+    check.keys(diagram, 'diagram', ['nodes', 'edges'])
+    const ids = new Set<string>()
+    const cells = new Set<string>()
+    if (!Array.isArray(diagram.nodes) || diagram.nodes.length < 3) check.fail('diagram.nodes', 'expected at least 3 nodes')
+    else diagram.nodes.forEach((node, index) => {
+      const path = `diagram.nodes[${index}]`
+      if (!isRec(node)) return check.fail(path, 'expected object')
+      check.keys(node, path, ['id', 'kind', 'label', 'col', 'row'])
+      if (typeof node.id !== 'string' || ids.has(node.id)) check.fail(`${path}.id`, 'expected unique id')
+      else ids.add(node.id)
+      if (!NODE_KINDS.includes(node.kind as NodeKind)) check.fail(`${path}.kind`, 'unknown node kind')
+      check.text(node.label, `${path}.label`)
+      if (typeof node.label === 'string' && node.label.length > MODEL_LABEL_MAX) check.fail(`${path}.label`, `expected at most ${MODEL_LABEL_MAX} characters`)
+      const col = node.col as number, row = node.row as number
+      if (!Number.isInteger(col) || col < 0 || col >= DIAGRAM_COLS || !Number.isInteger(row) || row < 0 || row >= DIAGRAM_ROWS) check.fail(path, 'position outside the grid')
+      else if (cells.has(`${col},${row}`)) check.fail(path, 'two nodes share a grid cell')
+      else cells.add(`${col},${row}`)
+    })
+    if (!Array.isArray(diagram.edges) || diagram.edges.length < 2) check.fail('diagram.edges', 'expected at least 2 edges')
+    else diagram.edges.forEach((edge, index) => {
+      const path = `diagram.edges[${index}]`
+      if (!isRec(edge)) return check.fail(path, 'expected object')
+      check.keys(edge, path, ['from', 'to'], ['label'])
+      if (!ids.has(edge.from as string) || !ids.has(edge.to as string) || edge.from === edge.to) check.fail(path, 'edge must join two different nodes')
+      if ('label' in edge) check.text(edge.label, `${path}.label`)
+    })
+  }
+  if (!Array.isArray(value.rubric) || value.rubric.length < 5 || value.rubric.length > 10) check.fail('rubric', 'expected 5–10 items')
+  else {
+    value.rubric.forEach((item, index) => {
+      const path = `rubric[${index}]`
+      if (!isRec(item)) return check.fail(path, 'expected object')
+      check.keys(item, path, ['text'], ['sse'])
+      check.text(item.text, `${path}.text`)
+      if ('sse' in item && item.sse !== true) check.fail(`${path}.sse`, 'expected true when present')
+    })
+    if (!value.rubric.some(item => isRec(item) && item.sse)) check.fail('rubric', 'expected at least one SSE item')
+  }
   return check.errors
 }

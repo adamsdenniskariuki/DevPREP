@@ -40,6 +40,22 @@ export function buildProblems(root = 'content') {
   return { problems, index }
 }
 
+export const CASES_OUTPUT = 'src/generated/cases.json'
+export const CASE_INDEX_OUTPUT = 'src/generated/case-index.json'
+
+export function buildCases(root = 'content') {
+  const dir = join(root, 'cases')
+  const { cases: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const cases = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/cases/index.json lists ${id} but the file is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/cases has cases not listed in index.json: ${[...files].join(', ')}`)
+  const index = cases.map(({ id, title, level, minutes, summary }) => ({ id, title, level, minutes, summary }))
+  return { cases, index }
+}
+
 function writeIfChanged(path, value) {
   const text = JSON.stringify(value) + '\n'
   if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
@@ -53,4 +69,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const { problems, index } = buildProblems()
   writeIfChanged(PROBLEMS_OUTPUT, problems)
   writeIfChanged(PROBLEM_INDEX_OUTPUT, index)
+  const designs = buildCases()
+  writeIfChanged(CASES_OUTPUT, designs.cases)
+  writeIfChanged(CASE_INDEX_OUTPUT, designs.index)
 }

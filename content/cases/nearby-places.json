@@ -1,0 +1,188 @@
+{
+  "id": "nearby-places",
+  "title": "Nearby places",
+  "level": "se",
+  "minutes": 35,
+  "summary": "Geospatial indexing with geohash or quadtrees.",
+  "prompt": "Design “find places near me”: given a location and radius, return nearby businesses (restaurants, shops) ranked by distance and rating. Business owners can add and edit listings.",
+  "lessons": [
+    "design-databases-indexes",
+    "design-cache-data-flow",
+    "design-replication-partitioning"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: search by location, radius and optional category; view a business; owners create and update listings.",
+      "Non-functional: search in ~100 ms at p99; read-heavy; edits may take minutes to appear."
+    ],
+    "estimation": [
+      "200M businesses × ~1 KB of metadata ≈ 200 GB; the geo index needs only (id, lat, lng, category) ≈ tens of bytes each, so ~10 GB.",
+      "100M daily users × 5 searches ≈ 500M a day ≈ 6,000/s average.",
+      "Writes (edits) are tiny by comparison: thousands per day."
+    ],
+    "api": [
+      "GET /search?lat=&lng=&radius=&category=&cursor= → [{id, name, distance, rating}].",
+      "GET /businesses/{id}; POST and PUT /businesses for owners."
+    ],
+    "data": [
+      "businesses(id, name, lat, lng, category, rating, …) as the source of truth.",
+      "geo_index(geohash prefix → business ids) or a quadtree held in memory by the search service.",
+      "Geohash precision 6 cells are roughly 1.2 km × 0.6 km, a reasonable bucket for city searches."
+    ],
+    "design": [
+      "Search service: compute the geohash of the user location at a precision matching the radius, query that cell and its 8 neighbours, then filter by exact distance and rank.",
+      "Writes go to the business DB; a change stream updates the geo index within minutes.",
+      "Business details are cached; the read-only geo index is replicated for read throughput."
+    ],
+    "deepDives": [
+      "Why neighbours: a point near a cell edge has close businesses in the adjacent cell, so always search the 3×3 block.",
+      "Geohash vs quadtree: geohash prefixes map well onto ordinary key-value or B-tree indexes; a quadtree adapts cell size to density (dense cities split more).",
+      "Ranking blends distance with rating and relevance; apply exact haversine distance only to the small candidate set."
+    ],
+    "bottlenecks": [
+      "Dense areas return too many candidates: use finer precision or cap and rank.",
+      "Sparse areas return too few: widen the radius step by step.",
+      "Hot cells (city centres): cache popular cell results briefly."
+    ],
+    "tradeoffs": [
+      "A periodically rebuilt index is simpler but staler than real-time updates; listings rarely move.",
+      "Fixed geohash cells are simple; adaptive quadtrees balance load at the cost of more complex rebuilds.",
+      "A specialised geo database is less work but less control than an in-memory index."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "lb",
+        "kind": "lb",
+        "label": "Load balancer",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "search",
+        "kind": "service",
+        "label": "Search service",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "geo",
+        "kind": "cache",
+        "label": "Geo index",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "biz",
+        "kind": "service",
+        "label": "Business service",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "db",
+        "kind": "db",
+        "label": "Business DB",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "cdc",
+        "kind": "worker",
+        "label": "Index updater",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "dc",
+        "kind": "cache",
+        "label": "Details cache",
+        "col": 3,
+        "row": 3
+      },
+      {
+        "id": "owner",
+        "kind": "client",
+        "label": "Owners",
+        "col": 0,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "lb"
+      },
+      {
+        "from": "lb",
+        "to": "search"
+      },
+      {
+        "from": "search",
+        "to": "geo",
+        "label": "3×3 cells"
+      },
+      {
+        "from": "search",
+        "to": "dc"
+      },
+      {
+        "from": "owner",
+        "to": "biz"
+      },
+      {
+        "from": "biz",
+        "to": "db"
+      },
+      {
+        "from": "db",
+        "to": "cdc",
+        "label": "changes"
+      },
+      {
+        "from": "cdc",
+        "to": "geo"
+      },
+      {
+        "from": "biz",
+        "to": "dc"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Chose a spatial index (geohash, quadtree or similar) and explained the lookup."
+    },
+    {
+      "text": "Searched neighbouring cells to handle boundary cases."
+    },
+    {
+      "text": "Filtered candidates by exact distance and ranked them."
+    },
+    {
+      "text": "Separated the read-optimised index from the write path."
+    },
+    {
+      "text": "Estimated index size and query rate."
+    },
+    {
+      "text": "Handled dense and sparse areas."
+    },
+    {
+      "text": "Compared geohash and quadtree trade-offs.",
+      "sse": true
+    },
+    {
+      "text": "Planned replication or sharding of the index by region.",
+      "sse": true
+    }
+  ]
+}

@@ -1,0 +1,188 @@
+{
+  "id": "photo-sharing",
+  "title": "Photo sharing",
+  "level": "se",
+  "minutes": 40,
+  "summary": "Direct uploads, media processing and CDN delivery.",
+  "prompt": "Design a photo-sharing service: users upload photos, which are resized and shown to followers in a profile grid and on a photo page. Focus on upload and delivery, not the feed ranking.",
+  "lessons": [
+    "design-cache-data-flow",
+    "design-queues-events",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: upload a photo with a caption, view it in several sizes, list a user’s photos newest first, delete.",
+      "Non-functional: uploads succeed on flaky mobile networks; viewing is fast worldwide; photos are never lost once acknowledged."
+    ],
+    "estimation": [
+      "10M uploads a day ≈ 115/s average; peaks of ~500/s.",
+      "Original ~3 MB plus ~4 resized variants totalling ~1 MB ≈ 4 MB per photo ≈ 40 TB a day ≈ 14.6 PB a year.",
+      "Views outnumber uploads by orders of magnitude, so delivery is a CDN problem."
+    ],
+    "api": [
+      "POST /uploads → {uploadId, presignedUrl}: the client uploads bytes directly to object storage, in parts if large.",
+      "POST /photos {uploadId, caption} → 202 {photoId, status: processing}.",
+      "GET /users/{id}/photos?cursor= and GET /photos/{id} → metadata plus CDN URLs per size."
+    ],
+    "data": [
+      "photos(photo_id, owner_id, caption, status, created_at, variants) keyed for “by owner, newest first”.",
+      "Object storage keys like originals/{photoId} and variants/{photoId}/{size}.webp; objects are immutable.",
+      "Use time-sortable IDs (for example a timestamp-prefixed ID) so pagination is a cursor on the ID."
+    ],
+    "design": [
+      "Upload: API issues a presigned URL → client uploads straight to object storage → client confirms → a processing job is queued.",
+      "Workers strip EXIF location data, generate variants, and mark the photo ready.",
+      "Delivery: clients load variants from a CDN that pulls from object storage; metadata comes from the API, with a cache for hot profiles."
+    ],
+    "deepDives": [
+      "Presigned direct uploads keep large bodies off the app servers; multipart uploads allow resuming after a dropped connection.",
+      "Immutable, content-addressed or versioned URLs allow very long CDN cache lifetimes; deletion removes the metadata and purges or lets objects expire.",
+      "Durability: acknowledge only after storage confirms the write; object storage replicates across zones."
+    ],
+    "bottlenecks": [
+      "Processing backlog during peaks: autoscale workers on queue depth; show the original until variants are ready.",
+      "Storage cost: move cold originals to cheaper tiers and serve resized variants.",
+      "Abuse: scan uploads for prohibited content before they become public."
+    ],
+    "tradeoffs": [
+      "Generating variants eagerly costs storage; resizing on demand at the edge saves storage but adds first-view latency.",
+      "Eventual readiness (processing state) in exchange for fast uploads.",
+      "Stripping location metadata protects privacy but loses data some users want."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "app",
+        "kind": "client",
+        "label": "Mobile app",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "cdn",
+        "kind": "cdn",
+        "label": "CDN",
+        "col": 1,
+        "row": 0
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Photo API",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "meta",
+        "kind": "db",
+        "label": "Photo metadata",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "obj",
+        "kind": "storage",
+        "label": "Object storage",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "Process queue",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "w",
+        "kind": "worker",
+        "label": "Resizers",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "mc",
+        "kind": "cache",
+        "label": "Metadata cache",
+        "col": 1,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "app",
+        "to": "api"
+      },
+      {
+        "from": "app",
+        "to": "obj",
+        "label": "presigned upload"
+      },
+      {
+        "from": "app",
+        "to": "cdn",
+        "label": "view"
+      },
+      {
+        "from": "cdn",
+        "to": "obj"
+      },
+      {
+        "from": "api",
+        "to": "meta"
+      },
+      {
+        "from": "api",
+        "to": "mc"
+      },
+      {
+        "from": "api",
+        "to": "q"
+      },
+      {
+        "from": "q",
+        "to": "w"
+      },
+      {
+        "from": "w",
+        "to": "obj",
+        "label": "variants"
+      },
+      {
+        "from": "w",
+        "to": "meta",
+        "label": "ready"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Uploaded bytes directly to object storage rather than through app servers."
+    },
+    {
+      "text": "Processed media asynchronously with a queue and workers."
+    },
+    {
+      "text": "Served images from a CDN with long-lived immutable URLs."
+    },
+    {
+      "text": "Separated metadata storage from blob storage."
+    },
+    {
+      "text": "Estimated storage growth and named cost controls."
+    },
+    {
+      "text": "Supported resumable uploads and acknowledged only durable writes."
+    },
+    {
+      "text": "Weighed eager vs on-demand variants.",
+      "sse": true
+    },
+    {
+      "text": "Covered privacy (EXIF) and content moderation.",
+      "sse": true
+    }
+  ]
+}

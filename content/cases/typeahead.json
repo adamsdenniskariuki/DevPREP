@@ -1,0 +1,177 @@
+{
+  "id": "typeahead",
+  "title": "Search autocomplete",
+  "level": "se",
+  "minutes": 35,
+  "summary": "Precomputed prefix index with a strict latency budget.",
+  "prompt": "Design search autocomplete: as a user types, show the top 10 suggested queries for the prefix, fast enough to feel instant.",
+  "lessons": [
+    "design-cache-data-flow",
+    "design-requirements-capacity"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: return ranked completions for a prefix, reflecting popularity and recency, and suppress offensive suggestions.",
+      "Non-functional: a server latency of a few tens of ms at p99, very high read volume; suggestions may lag reality by minutes or hours.",
+      "Clarify: personalisation and languages (assume global popularity in one language)."
+    ],
+    "estimation": [
+      "100M daily users × 10 searches × ~6 requests after debouncing ≈ 6B prefix requests a day ≈ 70,000/s average, a few times that at peak.",
+      "Keep the top ~100M distinct queries; with a precomputed top-10 list per prefix node, the serving index is tens of GB, so shard it or index only frequent prefixes."
+    ],
+    "api": [
+      "GET /suggest?q=<prefix>&limit=10 → [{text, score}], cacheable by prefix.",
+      "Clients debounce (~100–150 ms), cancel in-flight requests and cache recent prefixes locally."
+    ],
+    "data": [
+      "Query log events (query, time, locale) feed an aggregation job.",
+      "Serving structure: a trie whose nodes store a precomputed top-k list, or a prefix → top-k key-value map.",
+      "A blocklist applied when the index is built and re-checked when serving."
+    ],
+    "design": [
+      "Read path: client → edge cache → suggest service → in-memory prefix index shard.",
+      "Write path: query logs → aggregation with time-decayed counts → periodic index builder → snapshot pushed to servers.",
+      "Servers load immutable snapshots and swap them atomically; the read path never writes."
+    ],
+    "deepDives": [
+      "Precomputing top-k at each node makes a lookup O(prefix length), with no subtree walk at query time.",
+      "Ranking: exponentially decayed frequency lets trends rise and fade; personalisation can re-rank the top 50 using recent history.",
+      "Sharding by prefix range; very short prefixes are so hot they are served from cache or replicated everywhere."
+    ],
+    "bottlenecks": [
+      "One- and two-character prefixes are the hottest keys: edge-cache them with short TTLs.",
+      "Rebuild time grows with vocabulary: build incrementally, or only index prefixes above a frequency threshold.",
+      "Breaking news needs faster freshness: merge a small real-time layer with the batch index."
+    ],
+    "tradeoffs": [
+      "Top-k lists use much more memory than a plain trie in exchange for predictable latency.",
+      "Batch rebuilds are simple and safe but stale; a streaming layer adds freshness at a complexity cost.",
+      "Edge caching cuts load but slows the removal of a bad suggestion: keep TTLs short and support purges."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Search box",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "edge",
+        "kind": "cdn",
+        "label": "Edge cache",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "svc",
+        "kind": "service",
+        "label": "Suggest service",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "idx",
+        "kind": "cache",
+        "label": "Prefix index",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "logs",
+        "kind": "queue",
+        "label": "Query logs",
+        "col": 1,
+        "row": 3
+      },
+      {
+        "id": "agg",
+        "kind": "worker",
+        "label": "Aggregator",
+        "col": 2,
+        "row": 3
+      },
+      {
+        "id": "build",
+        "kind": "worker",
+        "label": "Index builder",
+        "col": 3,
+        "row": 3
+      },
+      {
+        "id": "snap",
+        "kind": "storage",
+        "label": "Index snapshots",
+        "col": 3,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "edge"
+      },
+      {
+        "from": "edge",
+        "to": "svc"
+      },
+      {
+        "from": "svc",
+        "to": "idx"
+      },
+      {
+        "from": "client",
+        "to": "logs",
+        "label": "searches"
+      },
+      {
+        "from": "logs",
+        "to": "agg"
+      },
+      {
+        "from": "agg",
+        "to": "build",
+        "label": "decayed counts"
+      },
+      {
+        "from": "build",
+        "to": "snap"
+      },
+      {
+        "from": "snap",
+        "to": "idx",
+        "label": "load"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Set a latency budget and showed how the design meets it."
+    },
+    {
+      "text": "Used precomputed top-k per prefix, or justified an alternative."
+    },
+    {
+      "text": "Separated the offline build path from the online read path."
+    },
+    {
+      "text": "Ranked by popularity with recency decay."
+    },
+    {
+      "text": "Used client debouncing and caching to cut load."
+    },
+    {
+      "text": "Filtered offensive or blocked suggestions."
+    },
+    {
+      "text": "Handled hot short prefixes and shard skew.",
+      "sse": true
+    },
+    {
+      "text": "Added a freshness path for trending queries and weighed its cost.",
+      "sse": true
+    }
+  ]
+}

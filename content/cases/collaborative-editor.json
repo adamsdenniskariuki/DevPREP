@@ -1,0 +1,183 @@
+{
+  "id": "collaborative-editor",
+  "title": "Collaborative editor",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Real-time co-editing with OT or CRDTs, presence and history.",
+  "prompt": "Design a collaborative document editor where several people edit the same document at once, see each other’s cursors, work offline briefly, and can view version history.",
+  "lessons": [
+    "design-consistency",
+    "design-queues-events",
+    "design-replication-partitioning"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: concurrent editing, live cursors and presence, comments, version history, offline edits that merge on reconnect.",
+      "Non-functional: local edits feel instant; remote edits appear within ~100s of ms; all replicas converge to the same document; edits are never lost."
+    ],
+    "estimation": [
+      "Most documents have 1–5 concurrent editors; popular ones may have hundreds of viewers.",
+      "A fast typist produces ~10 operations/s; batching per 50–100 ms keeps message rates low.",
+      "Operation logs grow without bound, so snapshot periodically and compact old operations."
+    ],
+    "api": [
+      "WebSocket per open document: client sends ops {baseRevision, ops}; server broadcasts accepted ops with the new revision.",
+      "GET /docs/{id}?revision= → snapshot plus ops after it; GET /docs/{id}/history for named versions."
+    ],
+    "data": [
+      "Operation log per document: (doc_id, revision, author, ops, timestamp).",
+      "Snapshots every N revisions: (doc_id, revision, content).",
+      "Presence (cursors, selections) is ephemeral and kept only in memory."
+    ],
+    "design": [
+      "Each document has one owning session server (routed by doc ID) that orders operations and persists them.",
+      "Clients apply edits locally at once and send them; the server transforms concurrent ops (OT) or merges them (CRDT), assigns revisions and broadcasts.",
+      "Offline clients queue ops and send them on reconnect with their base revision."
+    ],
+    "deepDives": [
+      "Operational transformation: the server rewrites an op against concurrent ops it has already applied, so intent is kept (an insert after a deleted range shifts correctly). A central server keeps OT tractable.",
+      "CRDTs: each character gets a unique, ordered ID, so merges are commutative and need no central transform; the cost is metadata overhead and tombstones.",
+      "Version history: snapshots plus op ranges give any past version; named versions are pinned snapshots."
+    ],
+    "bottlenecks": [
+      "A very popular document on one server: separate viewers (read-only broadcast fan-out) from editors.",
+      "Session server failure: clients reconnect; the new owner loads the latest snapshot and ops from the log.",
+      "Large documents: load and render incrementally; compact op logs."
+    ],
+    "tradeoffs": [
+      "OT with a central server is efficient and well understood but needs that server; CRDTs support offline and peer-to-peer at a memory cost.",
+      "Persist every op for durability vs batch for throughput (risking a short window of loss).",
+      "Rich formatting and tables make transformation rules much more complex than plain text."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "ed",
+        "kind": "client",
+        "label": "Editors",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "lb",
+        "kind": "lb",
+        "label": "Doc router",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "sess",
+        "kind": "service",
+        "label": "Session server",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "pres",
+        "kind": "cache",
+        "label": "Presence",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "log",
+        "kind": "db",
+        "label": "Op log",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "snap",
+        "kind": "worker",
+        "label": "Snapshotter",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "store",
+        "kind": "storage",
+        "label": "Snapshots",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "docs",
+        "kind": "service",
+        "label": "Docs API",
+        "col": 1,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "ed",
+        "to": "lb",
+        "label": "WebSocket"
+      },
+      {
+        "from": "lb",
+        "to": "sess",
+        "label": "by doc id"
+      },
+      {
+        "from": "sess",
+        "to": "pres"
+      },
+      {
+        "from": "sess",
+        "to": "log",
+        "label": "append"
+      },
+      {
+        "from": "log",
+        "to": "snap"
+      },
+      {
+        "from": "snap",
+        "to": "store"
+      },
+      {
+        "from": "ed",
+        "to": "docs",
+        "label": "load"
+      },
+      {
+        "from": "docs",
+        "to": "store"
+      },
+      {
+        "from": "docs",
+        "to": "log"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Applied edits optimistically on the client."
+    },
+    {
+      "text": "Resolved concurrent edits with OT or CRDTs and explained convergence."
+    },
+    {
+      "text": "Routed each document to an owner for ordering."
+    },
+    {
+      "text": "Persisted an operation log with periodic snapshots."
+    },
+    {
+      "text": "Handled presence as ephemeral state."
+    },
+    {
+      "text": "Supported offline edits and reconnect."
+    },
+    {
+      "text": "Compared OT and CRDT trade-offs with concrete costs.",
+      "sse": true
+    },
+    {
+      "text": "Handled session server failover and hot documents.",
+      "sse": true
+    }
+  ]
+}

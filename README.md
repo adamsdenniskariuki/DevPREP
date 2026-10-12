@@ -10,6 +10,8 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Tracks** (`#tracks`) | Your selected path, or all curriculum by track |
 | **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
+| **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
+| **Whiteboard** (`#board`) | A free diagram board saved on this device |
 | **Progress** (`#progress`) | Per-track completion, streak and freezes, badges, weak areas |
 | **Settings** (`#settings`) | Target role, interview date, focus tracks, appearance, About your data (backup/import), welcome tour |
 | **Study** (`#study`) | Chunked lesson → warm-up/core/stretch practice → explanation & confidence → scheduled review |
@@ -34,11 +36,21 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 - Drafts are saved per problem and language in `devprep.code.v1` (20,000 characters each). They are not part of backups.
 - Passing every test records a first-solve time per language in the backup (`solved`), worth 15 XP, plus 5 XP for the second language. Badges: Green tests, Bilingual, Pattern spotter.
 
+## System design practice
+
+**20 original case studies** (12 SE, 8 SSE): URL shortener, notifications, web crawler, typeahead, ticket booking, leaderboard, photo sharing, nearby places, rate limiter, chat, news feed, ride hailing, payments, video streaming, key-value store, file sync, metrics, job scheduler, collaborative editor and ad-click aggregation.
+
+- Each follows one **8-step framework** (requirements, estimation, API, data model, high-level design, deep dives, bottlenecks, trade-offs), roughly 45 minutes in total.
+- **Timed mode**: start, pause and resume a countdown. Screen readers hear a notice at 5 minutes left and at time up.
+- **Whiteboard**: add, rename, drag and connect components with labelled arrows. It works by keyboard too (arrow keys move, Delete removes) and has a text description.
+- **Review** puts your notes beside the model answer and model diagram. You then self-score each rubric item as Missed, Partly or Covered. SSE items count on SSE cases or for the Senior role; otherwise they show as stretch goals.
+- Notes, boards and timers are saved per case in `devprep.design.v1` and are not part of backups. Saving a score records the best percentage (`designs`): 25 XP per case, plus 10 at 80% or more. Badges: Architect, Blueprint pro, Staff-ready.
+
 ## Gamification (light)
 
 Derived entirely from saved activity and solves, so old backups get credit automatically.
 
-- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language). A level every 200 XP.
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 25 per scored design case (+10 at 80%+). A level every 200 XP.
 - **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
 - **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths). No lives, no leaderboards.
 
@@ -173,7 +185,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, and the latest 5,000 activity events. Code drafts are not included.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -192,6 +204,8 @@ The optional root field `selectedPath` accepts only `"swe"` or `"senior"`. An ab
 The optional root field `profile` holds `interviewDate` (`YYYY-MM-DD`) and `focusTracks` (known track IDs, no duplicates). Empty values are omitted, so backups without it are unchanged.
 
 The optional root field `solved` maps a problem ID to `{ "js"?: ISO time, "py"?: ISO time }`, the first time every test passed in that language. Unknown problem IDs, empty entries, other languages and malformed times are rejected. Like lesson IDs, problem IDs are part of the backup format (`tests/fixtures/problem-ids.json` is append-only).
+
+The optional root field `designs` maps a case ID to `{ "best": 0–100 integer, "at": ISO time }`. Unknown case IDs, extra keys, out-of-range or fractional scores and malformed times are rejected. Case IDs are append-only too (`tests/fixtures/case-ids.json`).
 
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
@@ -261,6 +275,11 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/runner/` | Test harness (`core.ts`), JS and Pyodide workers, timeouts and the Pyodide version |
 | `src/screens/CodeScreen.tsx`, `src/components/CodeEditor.tsx`, `src/code-drafts.ts` | Code runner UI, keyboard-friendly editor, local drafts |
 | `tests/code.spec.ts` | Browser solves in both languages, drafts, timeout recovery, errors and narrow layouts |
+| `content/cases/` | One JSON file per system design case plus `index.json`; bundled to `src/generated/cases.json` (lazy chunk) and `case-index.json` |
+| `src/cases.ts`, `src/case-types.ts`, `src/design-framework.ts` | Case index, lazy loader, node kinds and the 8-step framework |
+| `src/cases.test.ts`, `tests/fixtures/case-ids.json` | Case schema, diagram and rubric checks, append-only IDs |
+| `src/screens/DesignScreen.tsx`, `src/components/Whiteboard.tsx`, `src/design-drafts.ts`, `src/design-score.ts` | Case list, timed workspace, review and rubric, SVG whiteboard, local drafts |
+| `tests/design.spec.ts` | Timer, persisted notes and board, keyboard whiteboard, scoring, backups and narrow layouts |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
 | `src/App.tsx` | Shell, routing, storage alerts, and backup flows |
@@ -283,5 +302,9 @@ Lesson IDs are part of the backup format. Renaming or removing one requires an e
 ### Adding a coding problem
 
 Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern`, `level`, `difficulty`, optional `lessonId`, `prompt`, `function` and `starter`/`solution` for `js` and `py`, `tests`, `hiddenTests`, `hints`, `complexity`, `followUps`), append the ID to `content/problems/index.json` and `tests/fixtures/problem-ids.json`, then run `npm test`. Arguments and expected values are JSON; results are compared by value, ignoring object key order. Write problems yourself; don't copy text from problem sites.
+
+### Adding a system design case
+
+Add `content/cases/<id>.json` with `id`, `title`, `level` (`se`/`sse`), `minutes`, `summary`, `prompt`, `lessons` (system-design lesson IDs), `steps` (2 or more bullets for each of the 8 framework keys), `diagram` (`nodes` with `kind`, `label` of up to 18 characters, and a unique `col` 0–5 and `row` 0–4; `edges` with an optional `label`) and `rubric` (5–10 items, at least one marked `"sse": true`). Then append the ID to `content/cases/index.json` and `tests/fixtures/case-ids.json`, and run `npm test`.
 
 **Pyodide upgrades:** bump `pyodide` in `package.json` and `PYODIDE_VERSION` in `src/runner/pyodide-version.ts` together (a test checks they match). Files are served from `pyodide/<version>/`; the service worker drops older Pyodide caches on activation.
