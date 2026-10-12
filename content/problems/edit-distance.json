@@ -1,0 +1,113 @@
+{
+  "id": "edit-distance",
+  "title": "Fewest keystrokes to fix a typo",
+  "pattern": "Dynamic programming",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "dp-grid-paths",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "Return the fewest keystrokes (insert a character, delete one, or overwrite one) that turn string a into string b.\n\n- a and b each have 0 to 500 lowercase letters.\n- Each insert, delete, or overwrite costs 1; matching characters cost nothing.\n- Return a single integer.",
+  "function": {
+    "js": "editDistance",
+    "py": "edit_distance"
+  },
+  "starter": {
+    "js": "function editDistance(a, b) {\n  // Your code here\n}\n",
+    "py": "def edit_distance(a, b):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "horse",
+        "ros"
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "intention",
+        "execution"
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        "same",
+        "same"
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        "",
+        ""
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        "",
+        "abc"
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "abcd",
+        ""
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "a",
+        "b"
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "abc",
+        "cab"
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        "kitten",
+        "sitting"
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "acaaagccgggatgcgcgttggtagaatacgatccaccgggtgaatttacatgaaacaggtaccgtttgagtaccctgtgctgttacacttaatccacccgacgagtatctttagattatccttcgcctgttcagagccaggcatctcaaatagaacgaagcgctgtagtttcaacaaattccggcaaatttgagtccaaactatacacgaggattcgaggttggcgaataggtcatatctaaggtagcccgagcatggcactgatactcccactatgctttgagccgctctcctgagaataggtctcatgtgggactccaggtttggcgtcgaagtctgcaaaactatggtagtgccaccacgaccaatgacttcgtttcgctactacaggtgctaatt",
+        "aaggcgctctctacttccctcgtctttcgtattgtagatttctgcctgactcccacagtttcccgcgcttttcaccagttttgccctagcggcaaccgacttgtatcctcttcaagctaattgtgggggataccttaaccgttatacattagtttggcgcacagatgccaaataatgacatcacagctcctattgccaggatacgaggcgaatccctatcgcgaatgtctcccttccactcagaagtttttacggtagtgccgtgtcaatctccttggtctccactaacgtgggagaactgctaaagtttcataaacagctggaattctaggtgaggcaggacgtagtaa"
+      ],
+      "expected": 205
+    }
+  ],
+  "hints": [
+    "Compare prefixes. If you knew the cost for every shorter pair of prefixes, how would you deal with the last characters?",
+    "Let d[i][j] be the cost to turn the first i letters of a into the first j letters of b. d[i][0] = i and d[0][j] = j.",
+    "If a[i-1] == b[j-1], d[i][j] = d[i-1][j-1]; otherwise 1 + min(d[i-1][j] (delete), d[i][j-1] (insert), d[i-1][j-1] (overwrite)). Each row only needs the previous row."
+  ],
+  "solution": {
+    "js": "function editDistance(a, b) {\n  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)\n  for (let i = 1; i <= a.length; i++) {\n    const cur = new Array(b.length + 1)\n    cur[0] = i\n    for (let j = 1; j <= b.length; j++) {\n      if (a[i - 1] === b[j - 1]) cur[j] = prev[j - 1]\n      else cur[j] = 1 + Math.min(prev[j], cur[j - 1], prev[j - 1])\n    }\n    prev = cur\n  }\n  return prev[b.length]\n}\n",
+    "py": "def edit_distance(a, b):\n    prev = list(range(len(b) + 1))\n    for i in range(1, len(a) + 1):\n        cur = [i] + [0] * len(b)\n        for j in range(1, len(b) + 1):\n            if a[i - 1] == b[j - 1]:\n                cur[j] = prev[j - 1]\n            else:\n                cur[j] = 1 + min(prev[j], cur[j - 1], prev[j - 1])\n        prev = cur\n    return prev[len(b)]\n",
+    "explanation": "The table d[i][j] is a grid walk from (0, 0) to (len(a), len(b)): a diagonal step is free on matching letters or costs 1 as an overwrite, while the other two directions are inserts and deletes costing 1. Filling it row by row, each cell depends only on its left, upper and upper-left neighbours, so two rows are enough."
+  },
+  "complexity": {
+    "time": "O(m · n)",
+    "space": "O(n)",
+    "notes": "m and n are the two lengths. Keeping the full table (O(m · n) space) lets you trace back the actual sequence of edits."
+  },
+  "followUps": [
+    "How would you output the list of edits, not just the count?",
+    "If you only care whether the answer is at most k, how can you restrict the work to a band around the diagonal?"
+  ]
+}
