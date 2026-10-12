@@ -1,0 +1,285 @@
+{
+  "id": "best-window-sum",
+  "title": "Best fixed window",
+  "pattern": "Sliding window",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sliding-window-distinct",
+  "prompt": "Return the largest sum of any k consecutive values.\n\n- values has 1 to 100,000 integers between -10^4 and 10^4.\n- 1 <= k <= values.length.",
+  "function": {
+    "js": "maxWindowSum",
+    "py": "max_window_sum"
+  },
+  "starter": {
+    "js": "function maxWindowSum(values, k) {\n  // Your code here\n}\n",
+    "py": "def max_window_sum(values, k):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          2,
+          1,
+          5,
+          1,
+          3,
+          2
+        ],
+        3
+      ],
+      "expected": 9
+    },
+    {
+      "args": [
+        [
+          -1,
+          -2,
+          -3
+        ],
+        2
+      ],
+      "expected": -3
+    },
+    {
+      "args": [
+        [
+          4
+        ],
+        1
+      ],
+      "expected": 4
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        3
+      ],
+      "expected": 6
+    },
+    {
+      "args": [
+        [
+          5,
+          -10,
+          6,
+          7,
+          -1
+        ],
+        2
+      ],
+      "expected": 13
+    },
+    {
+      "args": [
+        [
+          0,
+          0,
+          0,
+          0
+        ],
+        1
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          31,
+          -35,
+          42,
+          44,
+          48,
+          -22,
+          -18,
+          -26,
+          -49,
+          35,
+          0,
+          11,
+          -39,
+          -12,
+          42,
+          -7,
+          48,
+          34,
+          18,
+          6,
+          -35,
+          32,
+          -24,
+          -28,
+          -23,
+          -35,
+          15,
+          5,
+          -18,
+          -3,
+          25,
+          17,
+          -26,
+          3,
+          -9,
+          26,
+          -42,
+          -27,
+          20,
+          -10,
+          31,
+          -34,
+          19,
+          -36,
+          31,
+          -7,
+          -18,
+          -33,
+          -23,
+          7,
+          -3,
+          -35,
+          15,
+          -44,
+          7,
+          21,
+          -22,
+          46,
+          8,
+          47,
+          -8,
+          -32,
+          -26,
+          -17,
+          1,
+          -26,
+          -31,
+          46,
+          -45,
+          -34,
+          0,
+          17,
+          8,
+          -14,
+          40,
+          29,
+          3,
+          -8,
+          -41,
+          -50,
+          -43,
+          6,
+          24,
+          38,
+          -47,
+          -1,
+          46,
+          18,
+          21,
+          38,
+          -47,
+          43,
+          14,
+          47,
+          5,
+          30,
+          46,
+          47,
+          -46,
+          -10
+        ],
+        7
+      ],
+      "expected": 232
+    },
+    {
+      "args": [
+        [
+          -9,
+          4,
+          3,
+          -9,
+          -9,
+          6,
+          -9,
+          5,
+          -2,
+          -8,
+          1,
+          -2,
+          9,
+          -8,
+          -5,
+          1,
+          -8,
+          -3,
+          5,
+          -1,
+          -8,
+          3,
+          -8,
+          9,
+          1,
+          1,
+          4,
+          -7,
+          -6,
+          -3,
+          4,
+          -6,
+          -8,
+          8,
+          4,
+          5,
+          6,
+          -9,
+          2,
+          0,
+          4,
+          -7,
+          0,
+          0,
+          -6,
+          7,
+          -8,
+          -6,
+          -5,
+          2,
+          -3,
+          7,
+          -4,
+          1,
+          2,
+          -6,
+          1,
+          4,
+          6,
+          -6
+        ],
+        60
+      ],
+      "expected": -64
+    }
+  ],
+  "hints": [
+    "Recomputing each window's sum costs O(k). What changes between neighbouring windows?",
+    "Sliding right adds one value and removes one value.",
+    "Start with the sum of the first k values; for each i >= k, add values[i] and subtract values[i - k], tracking the best."
+  ],
+  "solution": {
+    "js": "function maxWindowSum(values, k) {\n  let sum = 0\n  for (let i = 0; i < k; i++) sum += values[i]\n  let best = sum\n  for (let i = k; i < values.length; i++) {\n    sum += values[i] - values[i - k]\n    best = Math.max(best, sum)\n  }\n  return best\n}\n",
+    "py": "def max_window_sum(values, k):\n    total = sum(values[:k])\n    best = total\n    for i in range(k, len(values)):\n        total += values[i] - values[i - k]\n        best = max(best, total)\n    return best\n",
+    "explanation": "Keep the running sum of the current window. Each slide adds the entering value and subtracts the leaving one, so every window costs O(1). Initialise best with the first window, not 0, because all sums may be negative."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "A prefix-sum array also works in O(n) time but uses O(n) extra space."
+  },
+  "followUps": [
+    "How would you report the maximum for every window on a live metrics stream?"
+  ]
+}

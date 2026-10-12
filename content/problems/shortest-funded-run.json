@@ -1,0 +1,317 @@
+{
+  "id": "shortest-funded-run",
+  "title": "Shortest run reaching a target",
+  "pattern": "Sliding window",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sliding-window-distinct",
+  "prompt": "values holds positive daily donations. Return the length of the shortest run of consecutive days whose total is at least target, or 0 if no run reaches it.\n\n- values has 0 to 100,000 integers between 1 and 10^4.\n- 1 <= target <= 10^9.",
+  "function": {
+    "js": "shortestRun",
+    "py": "shortest_run"
+  },
+  "starter": {
+    "js": "function shortestRun(values, target) {\n  // Your code here\n}\n",
+    "py": "def shortest_run(values, target):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          2,
+          3,
+          1,
+          2,
+          4,
+          3
+        ],
+        7
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          1,
+          4,
+          4
+        ],
+        4
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          1,
+          1,
+          1
+        ],
+        5
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [],
+        1
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          10
+        ],
+        10
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          10
+        ],
+        11
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        11
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [
+          5,
+          1,
+          3,
+          5,
+          10,
+          7,
+          4,
+          9,
+          2,
+          8
+        ],
+        15
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          3,
+          12,
+          2,
+          13,
+          13,
+          9,
+          16,
+          11,
+          7,
+          6,
+          1,
+          18,
+          17,
+          12,
+          14,
+          16,
+          7,
+          6,
+          10,
+          4,
+          14,
+          17,
+          18,
+          2,
+          12,
+          7,
+          2,
+          12,
+          5,
+          12,
+          2,
+          8,
+          2,
+          12,
+          3,
+          16,
+          18,
+          17,
+          19,
+          4,
+          11,
+          20,
+          10,
+          16,
+          9,
+          9,
+          19,
+          10,
+          15,
+          15,
+          11,
+          16,
+          8,
+          8,
+          15,
+          15,
+          18,
+          1,
+          10,
+          11,
+          5,
+          5,
+          10,
+          7,
+          15,
+          1,
+          15,
+          14,
+          8,
+          11,
+          16,
+          13,
+          15,
+          11,
+          11,
+          9,
+          7,
+          20,
+          14,
+          13,
+          4,
+          18,
+          16,
+          4,
+          5,
+          7,
+          5,
+          9,
+          5,
+          17,
+          10,
+          11,
+          9,
+          5,
+          6,
+          14,
+          2,
+          17,
+          19,
+          16,
+          8,
+          13,
+          4,
+          20,
+          11,
+          1,
+          6,
+          8,
+          17,
+          10,
+          16,
+          1,
+          10,
+          3,
+          3,
+          3,
+          17,
+          11,
+          3,
+          17
+        ],
+        60
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        [
+          3,
+          4,
+          4,
+          1,
+          2,
+          3,
+          5,
+          2,
+          3,
+          5,
+          2,
+          4,
+          1,
+          1,
+          3,
+          2,
+          2,
+          4,
+          3,
+          3,
+          3,
+          2,
+          1,
+          1,
+          3,
+          5,
+          1,
+          4,
+          5,
+          5,
+          2,
+          1,
+          1,
+          3,
+          1,
+          3,
+          2,
+          4,
+          3,
+          4,
+          3,
+          5,
+          2,
+          1,
+          5,
+          1,
+          1,
+          5,
+          2,
+          1
+        ],
+        1000
+      ],
+      "expected": 0
+    }
+  ],
+  "hints": [
+    "All values are positive. What happens to a window's sum when you extend it, or shrink it from the left?",
+    "Grow the window to the right; once the sum reaches target, shrink from the left as long as it still does.",
+    "Record right - left + 1 every time the window is valid, then drop values[left] and move left forward."
+  ],
+  "solution": {
+    "js": "function shortestRun(values, target) {\n  let best = Infinity\n  let sum = 0\n  let left = 0\n  for (let right = 0; right < values.length; right++) {\n    sum += values[right]\n    while (sum >= target) {\n      best = Math.min(best, right - left + 1)\n      sum -= values[left++]\n    }\n  }\n  return best === Infinity ? 0 : best\n}\n",
+    "py": "def shortest_run(values, target):\n    best = float(\"inf\")\n    total = 0\n    left = 0\n    for right, value in enumerate(values):\n        total += value\n        while total >= target:\n            best = min(best, right - left + 1)\n            total -= values[left]\n            left += 1\n    return 0 if best == float(\"inf\") else best\n",
+    "explanation": "Because every value is positive, sums grow when the window grows and shrink when it shrinks. That monotonic behaviour makes a variable-size window correct: extend right, and while the window meets the target, record its length and contract from the left."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "Each index enters and leaves the window at most once. With negative values the window trick breaks; use prefix sums with a monotonic deque instead."
+  },
+  "followUps": [
+    "Why does this approach fail with negative values, and what replaces it?"
+  ]
+}

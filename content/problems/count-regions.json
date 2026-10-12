@@ -1,0 +1,155 @@
+{
+  "id": "count-regions",
+  "title": "Count land regions",
+  "pattern": "Graphs",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "graph-dfs-components",
+  "prompt": "grid is a map made of equal-length strings: \"#\" is land and \".\" is water. Land cells that touch up, down, left or right belong to the same region (diagonals do not connect). Return the number of regions.\n\n- 0 to 300 rows and 1 to 300 columns.\n- Use an explicit stack or queue: a recursive search can exceed the call stack on a 300×300 map.",
+  "function": {
+    "js": "countRegions",
+    "py": "count_regions"
+  },
+  "starter": {
+    "js": "function countRegions(grid) {\n  // Your code here\n}\n",
+    "py": "def count_regions(grid):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "##..",
+          "##..",
+          "..#.",
+          "...#"
+        ]
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [
+          "#.#",
+          ".#.",
+          "#.#"
+        ]
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        []
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "."
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          "#"
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          "####",
+          "#..#",
+          "####"
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          "#.#.#",
+          "#####"
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          ".#..##.#...#######.#",
+          "..##.###...#.##.#...",
+          "..##........#..#####",
+          "##..#..##.....#.....",
+          "..###.###....##..#..",
+          "##.#.#.#.#.###.#....",
+          ".#...#.###.#.#.#.#..",
+          "##.....#..#.##..####",
+          "........#..#.##.#.#.",
+          ".#####..####..##...#",
+          "#.###...#...#.#..#..",
+          "#..#..#.#...##.###.#",
+          "...###.#....#.#.#..#",
+          ".#.#...#.#.#..##.#..",
+          "##.#...#.#####...#.."
+        ]
+      ],
+      "expected": 29
+    },
+    {
+      "args": [
+        [
+          "###...##.#",
+          "....###.#.",
+          "##.####.#.",
+          ".###.#.###",
+          ".#...#..#.",
+          "#...###..#",
+          ".#..#..#.#",
+          "#..#.#..#.",
+          ".#...#.#.#",
+          "..#.#.#.#.",
+          ".########.",
+          ".###..#.##",
+          "###.##..##",
+          ".###.##..#",
+          "###..####.",
+          "#.#####.##",
+          "#...#.####",
+          ".##.##..#.",
+          ".#.#..###.",
+          ".######.##",
+          "#....#....",
+          "##.##.###.",
+          "###..##..#",
+          "....#.##..",
+          "#######.##"
+        ]
+      ],
+      "expected": 21
+    }
+  ],
+  "hints": [
+    "Each region is a connected component of land cells. How do you count components?",
+    "Scan every cell. When you find unvisited land, you have found a new region.",
+    "Flood-fill from that cell with a stack, marking every connected land cell visited, so later scans skip it."
+  ],
+  "solution": {
+    "js": "function countRegions(grid) {\n  const rows = grid.length\n  if (rows === 0) return 0\n  const cols = grid[0].length\n  const seen = new Uint8Array(rows * cols)\n  let regions = 0\n  for (let r = 0; r < rows; r++) {\n    for (let c = 0; c < cols; c++) {\n      if (grid[r][c] !== '#' || seen[r * cols + c]) continue\n      regions++\n      seen[r * cols + c] = 1\n      const stack = [[r, c]]\n      while (stack.length) {\n        const [y, x] = stack.pop()\n        for (const [ny, nx] of [[y + 1, x], [y - 1, x], [y, x + 1], [y, x - 1]]) {\n          if (ny < 0 || nx < 0 || ny >= rows || nx >= cols) continue\n          if (grid[ny][nx] !== '#' || seen[ny * cols + nx]) continue\n          seen[ny * cols + nx] = 1\n          stack.push([ny, nx])\n        }\n      }\n    }\n  }\n  return regions\n}\n",
+    "py": "def count_regions(grid):\n    rows = len(grid)\n    if rows == 0:\n        return 0\n    cols = len(grid[0])\n    seen = [[False] * cols for _ in range(rows)]\n    regions = 0\n    for r in range(rows):\n        for c in range(cols):\n            if grid[r][c] != \"#\" or seen[r][c]:\n                continue\n            regions += 1\n            seen[r][c] = True\n            stack = [(r, c)]\n            while stack:\n                y, x = stack.pop()\n                for ny, nx in ((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)):\n                    if 0 <= ny < rows and 0 <= nx < cols and grid[ny][nx] == \"#\" and not seen[ny][nx]:\n                        seen[ny][nx] = True\n                        stack.append((ny, nx))\n    return regions\n",
+    "explanation": "Every unvisited land cell found by the outer scan starts a new region; an iterative DFS then marks its whole component. Each cell is marked once, so total work is linear in the grid size."
+  },
+  "complexity": {
+    "time": "O(R · C)",
+    "space": "O(R · C)",
+    "notes": "Union-find gives the same count and also supports adding land cells one at a time."
+  },
+  "followUps": [
+    "Land is added one cell at a time; report the region count after each addition."
+  ]
+}

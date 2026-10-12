@@ -1,0 +1,269 @@
+{
+  "id": "group-by-letters",
+  "title": "Group words by letters",
+  "pattern": "Arrays & hashing",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "Two words belong together when one is a rearrangement of the other's letters (same letters, same counts). Group the words.\n\n- words has 0 to 10,000 strings of lowercase English letters, each 0 to 50 long. Duplicates are allowed and stay in the same group.\n- Sort the words inside each group alphabetically, then sort the groups by their first word.\n- Return a list of groups.",
+  "function": {
+    "js": "groupByLetters",
+    "py": "group_by_letters"
+  },
+  "starter": {
+    "js": "function groupByLetters(words) {\n  // Your code here\n}\n",
+    "py": "def group_by_letters(words):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "tea",
+          "eat",
+          "ant",
+          "tan",
+          "ate",
+          "bat"
+        ]
+      ],
+      "expected": [
+        [
+          "ant",
+          "tan"
+        ],
+        [
+          "ate",
+          "eat",
+          "tea"
+        ],
+        [
+          "bat"
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          "",
+          ""
+        ]
+      ],
+      "expected": [
+        [
+          "",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        []
+      ],
+      "expected": []
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "a"
+        ]
+      ],
+      "expected": [
+        [
+          "a"
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          "abc",
+          "cab",
+          "bca",
+          "abd"
+        ]
+      ],
+      "expected": [
+        [
+          "abc",
+          "bca",
+          "cab"
+        ],
+        [
+          "abd"
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          "zz",
+          "z",
+          "zz"
+        ]
+      ],
+      "expected": [
+        [
+          "z"
+        ],
+        [
+          "zz",
+          "zz"
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          "stop",
+          "pots",
+          "tops",
+          "opts",
+          "post",
+          "spot",
+          "x"
+        ]
+      ],
+      "expected": [
+        [
+          "opts",
+          "post",
+          "pots",
+          "spot",
+          "stop",
+          "tops"
+        ],
+        [
+          "x"
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          "bca",
+          "cac",
+          "cca",
+          "bac",
+          "aac",
+          "bab",
+          "cba",
+          "acc",
+          "cbb",
+          "aab",
+          "bac",
+          "aca",
+          "aba",
+          "bac",
+          "bbb",
+          "cbb",
+          "baa",
+          "bcb",
+          "cac",
+          "bab",
+          "bba",
+          "cca",
+          "cbc",
+          "bbb",
+          "bab",
+          "cbb",
+          "cbb",
+          "ccc",
+          "cba",
+          "cca",
+          "aaa",
+          "acc",
+          "bca",
+          "bbc",
+          "acb",
+          "cba",
+          "aac",
+          "aba",
+          "aba",
+          "acc"
+        ]
+      ],
+      "expected": [
+        [
+          "aaa"
+        ],
+        [
+          "aab",
+          "aba",
+          "aba",
+          "aba",
+          "baa"
+        ],
+        [
+          "aac",
+          "aac",
+          "aca"
+        ],
+        [
+          "acb",
+          "bac",
+          "bac",
+          "bac",
+          "bca",
+          "bca",
+          "cba",
+          "cba",
+          "cba"
+        ],
+        [
+          "acc",
+          "acc",
+          "acc",
+          "cac",
+          "cac",
+          "cca",
+          "cca",
+          "cca"
+        ],
+        [
+          "bab",
+          "bab",
+          "bab",
+          "bba"
+        ],
+        [
+          "bbb",
+          "bbb"
+        ],
+        [
+          "bbc",
+          "bcb",
+          "cbb",
+          "cbb",
+          "cbb",
+          "cbb"
+        ],
+        [
+          "cbc"
+        ],
+        [
+          "ccc"
+        ]
+      ]
+    }
+  ],
+  "hints": [
+    "Words in one group share something that ignores letter order. What canonical form could act as a key?",
+    "Sorting a word's letters gives the same key for every rearrangement. Map key → list of words.",
+    "After grouping, sort each group, then sort the groups by first element so the output order is deterministic."
+  ],
+  "solution": {
+    "js": "function groupByLetters(words) {\n  const groups = new Map()\n  for (const word of words) {\n    const key = [...word].sort().join('')\n    if (!groups.has(key)) groups.set(key, [])\n    groups.get(key).push(word)\n  }\n  const result = [...groups.values()].map(group => group.sort())\n  return result.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))\n}\n",
+    "py": "def group_by_letters(words):\n    groups = {}\n    for word in words:\n        groups.setdefault(\"\".join(sorted(word)), []).append(word)\n    return sorted(sorted(group) for group in groups.values())\n",
+    "explanation": "Rearrangements share the same multiset of letters, so the sorted letters form a canonical key. Bucket words by key in a hash map, then sort for a deterministic answer. Distinct groups never share a word, so sorting groups by their first word is well defined."
+  },
+  "complexity": {
+    "time": "O(n · k log k + n log n · k)",
+    "space": "O(n · k)",
+    "notes": "k is the word length. A 26-slot letter count as the key gives O(n · k) grouping; the final sorts dominate when the output order is required."
+  },
+  "followUps": [
+    "Compare a sorted-letters key with a letter-count key. When does each win?",
+    "How would you shard this across machines for a billion words?"
+  ]
+}

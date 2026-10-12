@@ -5,13 +5,21 @@ import { localDay } from './progress'
 import type { Activity, Progress } from './progress'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5 } as const
 export const LEVEL_XP = 200
 export const FREEZE_EVERY = 7
 export const MAX_FREEZES = 2
 
 export function activityXp(item: Pick<Activity, 'mode' | 'rating'>): number {
   return XP_RULES[item.mode] + (item.rating === 'confident' ? XP_RULES.confidentBonus : 0)
+}
+
+/** XP from runnable problems: the first passing language earns a solve, the other language a bonus. */
+export function solveXp(progress: Pick<Progress, 'solved'>): number {
+  return Object.values(progress.solved ?? {}).reduce((sum, langs) => {
+    const count = Object.keys(langs).length
+    return sum + (count ? XP_RULES.solve + (count - 1) * XP_RULES.secondLanguage : 0)
+  }, 0)
 }
 
 function dayNumber(day: string): number {
@@ -75,8 +83,10 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0)
-  const streak = streakFrom(progress.activity.map(item => localDay(new Date(item.at))), localDay(now))
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress)
+  const solves = Object.values(progress.solved ?? {})
+  const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
+  const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
   const confident = progress.activity.filter(item => item.rating === 'confident').length
@@ -87,6 +97,9 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'first-review', title: 'Recall', description: 'Complete a spaced review.', earned: reviews >= 1 },
     { id: 'reviews-25', title: 'Memory keeper', description: 'Complete 25 reviews.', earned: reviews >= 25 },
     { id: 'confident-10', title: 'Sure-footed', description: 'Rate 10 sessions Confident.', earned: confident >= 10 },
+    { id: 'first-solve', title: 'Green tests', description: 'Pass every test on a coding problem.', earned: solves.length >= 1 },
+    { id: 'bilingual', title: 'Bilingual', description: 'Solve a problem in both JavaScript and Python.', earned: solves.some(langs => langs.js && langs.py) },
+    { id: 'solves-15', title: 'Pattern spotter', description: 'Solve 15 coding problems.', earned: solves.length >= 15 },
     { id: 'streak-3', title: 'Warming up', description: 'Reach a 3-day streak.', earned: streak.best >= 3 },
     { id: 'streak-7', title: 'Full week', description: 'Reach a 7-day streak.', earned: streak.best >= 7 },
     { id: 'streak-30', title: 'Habit formed', description: 'Reach a 30-day streak.', earned: streak.best >= 30 },

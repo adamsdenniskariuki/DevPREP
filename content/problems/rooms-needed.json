@@ -1,0 +1,411 @@
+{
+  "id": "rooms-needed",
+  "title": "Meeting rooms needed",
+  "pattern": "Intervals",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "greedy-interval-selection",
+  "prompt": "Each meeting is [start, end) with start < end: it occupies a room from start up to, but not including, end. A meeting ending at time t frees its room for one starting at t. Return the minimum number of rooms needed.\n\n- 0 to 100,000 meetings; times are integers between 0 and 10^9.",
+  "function": {
+    "js": "roomsNeeded",
+    "py": "rooms_needed"
+  },
+  "starter": {
+    "js": "function roomsNeeded(meetings) {\n  // Your code here\n}\n",
+    "py": "def rooms_needed(meetings):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            0,
+            30
+          ],
+          [
+            5,
+            10
+          ],
+          [
+            15,
+            20
+          ]
+        ]
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          [
+            7,
+            10
+          ],
+          [
+            2,
+            4
+          ]
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            5
+          ],
+          [
+            5,
+            9
+          ]
+        ]
+      ],
+      "expected": 1
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        []
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            10
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            5
+          ]
+        ]
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          [
+            0,
+            5
+          ],
+          [
+            1,
+            6
+          ],
+          [
+            2,
+            7
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            6,
+            9
+          ]
+        ]
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [
+          [
+            77,
+            83
+          ],
+          [
+            89,
+            90
+          ],
+          [
+            96,
+            103
+          ],
+          [
+            70,
+            82
+          ],
+          [
+            7,
+            22
+          ],
+          [
+            62,
+            75
+          ],
+          [
+            94,
+            99
+          ],
+          [
+            64,
+            74
+          ],
+          [
+            43,
+            46
+          ],
+          [
+            7,
+            13
+          ],
+          [
+            45,
+            55
+          ],
+          [
+            21,
+            31
+          ],
+          [
+            97,
+            104
+          ],
+          [
+            37,
+            50
+          ],
+          [
+            62,
+            68
+          ],
+          [
+            71,
+            73
+          ],
+          [
+            80,
+            95
+          ],
+          [
+            77,
+            79
+          ],
+          [
+            61,
+            68
+          ],
+          [
+            59,
+            72
+          ],
+          [
+            46,
+            59
+          ],
+          [
+            98,
+            105
+          ],
+          [
+            0,
+            11
+          ],
+          [
+            91,
+            97
+          ],
+          [
+            82,
+            89
+          ],
+          [
+            24,
+            37
+          ],
+          [
+            47,
+            60
+          ],
+          [
+            41,
+            46
+          ],
+          [
+            12,
+            20
+          ],
+          [
+            13,
+            28
+          ],
+          [
+            50,
+            53
+          ],
+          [
+            68,
+            69
+          ],
+          [
+            5,
+            11
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            24,
+            36
+          ],
+          [
+            52,
+            56
+          ],
+          [
+            23,
+            25
+          ],
+          [
+            57,
+            59
+          ],
+          [
+            28,
+            41
+          ],
+          [
+            64,
+            69
+          ],
+          [
+            31,
+            45
+          ],
+          [
+            25,
+            32
+          ],
+          [
+            27,
+            34
+          ],
+          [
+            67,
+            74
+          ],
+          [
+            80,
+            85
+          ],
+          [
+            60,
+            65
+          ],
+          [
+            47,
+            52
+          ],
+          [
+            90,
+            98
+          ],
+          [
+            89,
+            92
+          ],
+          [
+            60,
+            65
+          ],
+          [
+            78,
+            82
+          ],
+          [
+            84,
+            85
+          ],
+          [
+            29,
+            36
+          ],
+          [
+            81,
+            84
+          ],
+          [
+            44,
+            50
+          ],
+          [
+            80,
+            87
+          ],
+          [
+            38,
+            49
+          ],
+          [
+            12,
+            14
+          ],
+          [
+            59,
+            62
+          ],
+          [
+            91,
+            100
+          ]
+        ]
+      ],
+      "expected": 8
+    }
+  ],
+  "hints": [
+    "The answer is the largest number of meetings in progress at the same moment.",
+    "Sort start times and end times separately and sweep through the starts in order.",
+    "With a pointer e into the sorted ends: if start >= ends[e], a room frees up (e++); otherwise you need another room."
+  ],
+  "solution": {
+    "js": "function roomsNeeded(meetings) {\n  const starts = meetings.map(m => m[0]).sort((a, b) => a - b)\n  const ends = meetings.map(m => m[1]).sort((a, b) => a - b)\n  let rooms = 0\n  let e = 0\n  for (const start of starts) {\n    if (start >= ends[e]) e++\n    else rooms++\n  }\n  return rooms\n}\n",
+    "py": "def rooms_needed(meetings):\n    starts = sorted(m[0] for m in meetings)\n    ends = sorted(m[1] for m in meetings)\n    rooms = e = 0\n    for start in starts:\n        if start >= ends[e]:\n            e += 1\n        else:\n            rooms += 1\n    return rooms\n",
+    "explanation": "Only the order of start and end events matters, not which meeting they belong to. Sweeping starts in order: if the earliest unused end time is at or before this start, that room is reused; otherwise a new room is opened. Rooms only ever grow, so the final count is the peak overlap."
+  },
+  "complexity": {
+    "time": "O(n log n)",
+    "space": "O(n)",
+    "notes": "A min-heap of end times gives the same bound and also tells you which room each meeting gets. JavaScript's default sort is lexicographic, so a numeric comparator is required."
+  },
+  "followUps": [
+    "Assign a concrete room number to each meeting. Which data structure do you need now?",
+    "At SSE level: how would a booking service enforce this across concurrent requests?"
+  ]
+}

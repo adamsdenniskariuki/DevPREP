@@ -1,6 +1,7 @@
 import { appDocument, cachePrefix, precacheEntries, sha256 } from './pwa-cache'
 import type { PrecacheEntry } from './pwa-cache'
 import type { WorkerReply } from './pwa-types'
+import { PYODIDE_VERSION } from './runner/pyodide-version'
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: PrecacheEntry[] }
 
@@ -11,6 +12,9 @@ const urls = new Set(entries.map(entry => entry.url))
 const version = sha256(new TextEncoder().encode(JSON.stringify(entries)).buffer)
 const cacheName = version.then(hash => prefix + hash)
 let preparing: Promise<void> | undefined
+// The Python runtime (~13 MB) is fetched only when someone first runs Python, then kept for offline use.
+const pyodideCachePrefix = `devprep-runtime-pyodide:${encodeURIComponent(scope)}:`
+const pyodideCache = pyodideCachePrefix + PYODIDE_VERSION
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Browser offline storage is unavailable.'
@@ -61,7 +65,23 @@ self.addEventListener('install', event => {
 })
 
 // Never remove old build caches during activation: other windows can still need their hashed chunks.
-self.addEventListener('activate', event => { event.waitUntil(self.clients.claim()) })
+// Only superseded Python runtimes are pruned, since every build loads exactly one pinned version.
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const stale = (await caches.keys()).filter(name => name.startsWith(pyodideCachePrefix) && name !== pyodideCache)
+    await Promise.all(stale.map(name => caches.delete(name)))
+    await self.clients.claim()
+  })())
+})
+
+async function pyodideAsset(request: Request) {
+  const cache = await caches.open(pyodideCache)
+  const hit = await cache.match(request.url)
+  if (hit) return hit
+  const response = await fetch(request.url, { credentials: 'same-origin' })
+  if (response.ok && !response.redirected) await cache.put(request.url, response.clone())
+  return response
+}
 
 async function cached(url: string) {
   const current = await cacheName
@@ -84,6 +104,10 @@ self.addEventListener('fetch', event => {
       const response = await (await caches.open(await cacheName)).match(new URL('index.html', scope).href)
       return response?.ok ? response : fetch(event.request)
     })())
+    return
+  }
+  if (url.pathname.startsWith(`${base.pathname}pyodide/${PYODIDE_VERSION}/`)) {
+    event.respondWith(pyodideAsset(event.request))
     return
   }
   if (urls.has(url.href) || url.pathname.startsWith(`${base.pathname}assets/`) || url.pathname.startsWith(`${base.pathname}icons/`)) {

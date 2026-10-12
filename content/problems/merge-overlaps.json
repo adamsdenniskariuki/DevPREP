@@ -1,0 +1,393 @@
+{
+  "id": "merge-overlaps",
+  "title": "Merge overlapping ranges",
+  "pattern": "Intervals",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "greedy-interval-selection",
+  "prompt": "Each range is [start, end] with start <= end, inclusive at both ends. Merge every pair of ranges that share at least one point (so [1, 3] and [3, 5] merge) and return the result sorted by start.\n\n- 0 to 100,000 ranges with integer endpoints between -10^9 and 10^9, in any order.\n- Return new pairs; do not rely on mutating the input.",
+  "function": {
+    "js": "mergeRanges",
+    "py": "merge_ranges"
+  },
+  "starter": {
+    "js": "function mergeRanges(ranges) {\n  // Your code here\n}\n",
+    "py": "def merge_ranges(ranges):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            3
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            8,
+            10
+          ],
+          [
+            15,
+            18
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          1,
+          6
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          15,
+          18
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            4
+          ],
+          [
+            4,
+            5
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          1,
+          5
+        ]
+      ]
+    },
+    {
+      "args": [
+        []
+      ],
+      "expected": []
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            5,
+            5
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          5,
+          5
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            6,
+            8
+          ],
+          [
+            1,
+            9
+          ],
+          [
+            2,
+            4
+          ],
+          [
+            4,
+            7
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          1,
+          9
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            -5,
+            -1
+          ],
+          [
+            -3,
+            0
+          ],
+          [
+            10,
+            10
+          ],
+          [
+            10,
+            11
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          -5,
+          0
+        ],
+        [
+          10,
+          11
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            44,
+            48
+          ],
+          [
+            0,
+            6
+          ],
+          [
+            72,
+            74
+          ],
+          [
+            74,
+            79
+          ],
+          [
+            17,
+            18
+          ],
+          [
+            74,
+            79
+          ],
+          [
+            48,
+            49
+          ],
+          [
+            57,
+            59
+          ],
+          [
+            43,
+            48
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            11,
+            11
+          ],
+          [
+            31,
+            31
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            28,
+            33
+          ],
+          [
+            12,
+            16
+          ],
+          [
+            25,
+            25
+          ],
+          [
+            15,
+            18
+          ],
+          [
+            61,
+            65
+          ],
+          [
+            24,
+            27
+          ],
+          [
+            10,
+            13
+          ],
+          [
+            73,
+            73
+          ],
+          [
+            58,
+            61
+          ],
+          [
+            32,
+            38
+          ],
+          [
+            11,
+            17
+          ],
+          [
+            77,
+            79
+          ],
+          [
+            67,
+            72
+          ],
+          [
+            75,
+            75
+          ],
+          [
+            68,
+            69
+          ],
+          [
+            65,
+            68
+          ],
+          [
+            51,
+            52
+          ],
+          [
+            24,
+            30
+          ],
+          [
+            28,
+            32
+          ],
+          [
+            60,
+            63
+          ],
+          [
+            39,
+            39
+          ],
+          [
+            59,
+            63
+          ],
+          [
+            35,
+            41
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            52,
+            53
+          ],
+          [
+            34,
+            40
+          ],
+          [
+            68,
+            74
+          ]
+        ]
+      ],
+      "expected": [
+        [
+          0,
+          8
+        ],
+        [
+          10,
+          18
+        ],
+        [
+          24,
+          41
+        ],
+        [
+          43,
+          49
+        ],
+        [
+          51,
+          53
+        ],
+        [
+          57,
+          79
+        ]
+      ]
+    }
+  ],
+  "hints": [
+    "Overlap checks against every other range are O(n²). What ordering makes overlapping ranges neighbours?",
+    "Sort by start. Then a range can only overlap the last merged range.",
+    "If start <= last.end, extend last.end to max(last.end, end); otherwise start a new merged range."
+  ],
+  "solution": {
+    "js": "function mergeRanges(ranges) {\n  const sorted = ranges.map(([start, end]) => [start, end]).sort((a, b) => a[0] - b[0])\n  const merged = []\n  for (const [start, end] of sorted) {\n    const last = merged[merged.length - 1]\n    if (last && start <= last[1]) last[1] = Math.max(last[1], end)\n    else merged.push([start, end])\n  }\n  return merged\n}\n",
+    "py": "def merge_ranges(ranges):\n    merged = []\n    for start, end in sorted(ranges):\n        if merged and start <= merged[-1][1]:\n            merged[-1][1] = max(merged[-1][1], end)\n        else:\n            merged.append([start, end])\n    return merged\n",
+    "explanation": "After sorting by start, every range that could overlap the current merged block starts inside it. One sweep either extends the last block or opens a new one. Taking max(end) handles ranges nested inside earlier ones."
+  },
+  "complexity": {
+    "time": "O(n log n)",
+    "space": "O(n)",
+    "notes": "Sorting dominates. Copying pairs before sorting keeps the caller's input unchanged."
+  },
+  "followUps": [
+    "Insert one new range into an already merged, sorted list in O(n) without re-sorting."
+  ]
+}

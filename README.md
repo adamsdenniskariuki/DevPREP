@@ -9,6 +9,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Home** (`#home`) | Target role, interview countdown, today's plan (next lesson + due reviews), XP/streak |
 | **Tracks** (`#tracks`) | Your selected path, or all curriculum by track |
 | **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
+| **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
 | **Progress** (`#progress`) | Per-track completion, streak and freezes, badges, weak areas |
 | **Settings** (`#settings`) | Target role, interview date, focus tracks, appearance, About your data (backup/import), welcome tour |
 | **Study** (`#study`) | Chunked lesson → warm-up/core/stretch practice → explanation & confidence → scheduled review |
@@ -23,11 +24,21 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 - Spaced reviews from your own confidence: first review after **1 / 3 / 7 days** (Needs practice / Getting there / Confident); later intervals reset to 1, ×1.5 or ×2, capped at 60 days.
 - Optional **Software Engineer** / **Senior Software Engineer** paths, chosen once as **Target role** in Settings.
 
+## Code runner
+
+**32 original problems** across 15 DSA patterns (arrays/hashing to bit manipulation), tagged SE or SSE and linked to their lessons. Each has a prompt, examples, progressive hints, a JS and Python solution with explanation, Big-O notes and follow-ups. Lesson pseudocode stays as it was; the runner sits alongside it.
+
+- Code runs **on your device** in a Web Worker: JavaScript is stopped after 5 s, Python after 10 s (the worker is terminated, so infinite loops can't freeze the page).
+- Python uses **Pyodide** (WebAssembly CPython). It is fetched only on the first Python run (about 13 MB), then cached by the service worker for offline use. JavaScript works offline straight away.
+- Visible tests show expected vs actual; hidden tests report only pass counts. `console.log`/`print` output is shown.
+- Drafts are saved per problem and language in `devprep.code.v1` (20,000 characters each). They are not part of backups.
+- Passing every test records a first-solve time per language in the backup (`solved`), worth 15 XP, plus 5 XP for the second language. Badges: Green tests, Bilingual, Pattern spotter.
+
 ## Gamification (light)
 
-Derived entirely from saved activity, so it needs no new stored data and old backups get credit automatically.
+Derived entirely from saved activity and solves, so old backups get credit automatically.
 
-- **XP**: 20 per lesson, 10 per review, +5 when rated Confident. A level every 200 XP.
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language). A level every 200 XP.
 - **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
 - **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths). No lives, no leaderboards.
 
@@ -162,7 +173,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), and the latest 5,000 activity events.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, and the latest 5,000 activity events. Code drafts are not included.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -179,6 +190,8 @@ The storage key and backup schema version remain **v1**. A validated optional `s
 The optional root field `selectedPath` accepts only `"swe"` or `"senior"`. An absent field means no selected path; clearing the choice removes the field. Unknown values (including `null`) are rejected before import can replace data. Import confirmation states which path the backup will restore. Importing an old backup with no path clears the current choice, as part of the explicitly confirmed replacement, without assigning a level. Old payloads round-trip without newly inserted fields.
 
 The optional root field `profile` holds `interviewDate` (`YYYY-MM-DD`) and `focusTracks` (known track IDs, no duplicates). Empty values are omitted, so backups without it are unchanged.
+
+The optional root field `solved` maps a problem ID to `{ "js"?: ISO time, "py"?: ISO time }`, the first time every test passed in that language. Unknown problem IDs, empty entries, other languages and malformed times are rejected. Like lesson IDs, problem IDs are part of the backup format (`tests/fixtures/problem-ids.json` is append-only).
 
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
@@ -242,6 +255,12 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `public/icons/`, `scripts/generate-pwa-icons.mjs` | Original install icons and reproducible PNG generation |
 | `playwright.pwa.config.ts`, `tests/pwa*` | Dedicated production offline/failure/two-release lifecycle tests |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |
+| `content/problems/` | One JSON file per coding problem plus `index.json` (order); bundled to `src/generated/problems.json` (lazy chunk) and `problem-index.json` |
+| `src/problems.ts`, `src/problem-types.ts` | Problem index and lazy loader |
+| `src/problems.test.ts`, `tests/fixtures/problem-ids.json` | Schema, append-only IDs, and every JS **and** Python solution against visible and hidden tests (starters must fail) |
+| `src/runner/` | Test harness (`core.ts`), JS and Pyodide workers, timeouts and the Pyodide version |
+| `src/screens/CodeScreen.tsx`, `src/components/CodeEditor.tsx`, `src/code-drafts.ts` | Code runner UI, keyboard-friendly editor, local drafts |
+| `tests/code.spec.ts` | Browser solves in both languages, drafts, timeout recovery, errors and narrow layouts |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
 | `src/App.tsx` | Shell, routing, storage alerts, and backup flows |
@@ -260,3 +279,9 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 Add `content/<track>/<new-id>.json` and append its ID to that track's `track.json` and to `tests/fixtures/lesson-ids.json`. `npm test` validates the schema and regenerates the bundle.
 
 Lesson IDs are part of the backup format. Renaming or removing one requires an explicit migration and a versioning plan; do not silently discard unknown progress.
+
+### Adding a coding problem
+
+Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern`, `level`, `difficulty`, optional `lessonId`, `prompt`, `function` and `starter`/`solution` for `js` and `py`, `tests`, `hiddenTests`, `hints`, `complexity`, `followUps`), append the ID to `content/problems/index.json` and `tests/fixtures/problem-ids.json`, then run `npm test`. Arguments and expected values are JSON; results are compared by value, ignoring object key order. Write problems yourself; don't copy text from problem sites.
+
+**Pyodide upgrades:** bump `pyodide` in `package.json` and `PYODIDE_VERSION` in `src/runner/pyodide-version.ts` together (a test checks they match). Files are served from `pyodide/<version>/`; the service worker drops older Pyodide caches on activation.

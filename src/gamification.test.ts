@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { lessons } from './curriculum'
-import { activityXp, daysUntil, gameStats, streakFrom, weakAreas } from './gamification'
-import { emptyProgress, parseBackup, serializeBackup, updateProfile } from './progress'
+import { activityXp, daysUntil, gameStats, solveXp, streakFrom, weakAreas } from './gamification'
+import { emptyProgress, parseBackup, recordSolve, serializeBackup, updateProfile } from './progress'
+import { problemIndex } from './problems'
 import type { Progress } from './progress'
 
 describe('streakFrom', () => {
@@ -55,6 +56,24 @@ describe('gameStats', () => {
     const earned = stats.badges.filter(badge => badge.earned).map(badge => badge.id)
     expect(earned).toEqual(expect.arrayContaining(['first-lesson', 'first-review']))
     expect(earned).not.toContain('all-lessons')
+  })
+
+  it('awards solve XP, solve days and solve badges', () => {
+    const now = new Date(2025, 0, 10, 12)
+    const [a, b] = problemIndex
+    let progress = recordSolve(emptyProgress(), a.id, 'js', now)
+    expect(solveXp(progress)).toBe(15)
+    expect(gameStats(progress, now).badges.filter(badge => badge.earned).map(badge => badge.id)).toEqual(['first-solve'])
+    expect(gameStats(progress, now).streak).toMatchObject({ current: 1, activeToday: true })
+    progress = recordSolve(progress, a.id, 'py', now)
+    progress = recordSolve(progress, b.id, 'js', now)
+    expect(solveXp(progress)).toBe(15 + 5 + 15)
+    expect(gameStats(progress, now).xp).toBe(35)
+    const earned = gameStats(progress, now).badges.filter(badge => badge.earned).map(badge => badge.id)
+    expect(earned).toEqual(expect.arrayContaining(['first-solve', 'bilingual']))
+    expect(earned).not.toContain('solves-15')
+    for (const problem of problemIndex.slice(0, 15)) progress = recordSolve(progress, problem.id, 'js', now)
+    expect(gameStats(progress, now).badges.find(badge => badge.id === 'solves-15')?.earned).toBe(true)
   })
 })
 

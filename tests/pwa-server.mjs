@@ -6,7 +6,8 @@ const port = Number(process.argv[2] ?? process.env.PWA_TEST_PORT ?? 4383)
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PWA test port')
 const origin = `http://127.0.0.1:${port}`
 const types = {
-  '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
+  '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
+  '.wasm': 'application/wasm', '.zip': 'application/zip',
   '.webmanifest': 'application/manifest+json', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
 }

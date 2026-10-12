@@ -1,0 +1,102 @@
+{
+  "id": "common-subsequence",
+  "title": "Longest common subsequence",
+  "pattern": "Dynamic programming",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "dp-grid-paths",
+  "prompt": "A subsequence keeps some characters of a string in their original order (not necessarily adjacent). Return the length of the longest subsequence shared by a and b.\n\n- Each string has 0 to 1,000 lowercase English letters.",
+  "function": {
+    "js": "commonSubsequence",
+    "py": "common_subsequence"
+  },
+  "starter": {
+    "js": "function commonSubsequence(a, b) {\n  // Your code here\n}\n",
+    "py": "def common_subsequence(a, b):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "abcde",
+        "ace"
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "abc",
+        "def"
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        "",
+        "abc"
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        "a",
+        "a"
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "abc",
+        "abc"
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        "aggtab",
+        "gxtxayb"
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "bsbininm",
+        "jmjkbkjkv"
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "adbcdddcbdabbbdcdaaadbcbbdadadcadaabcdbd",
+        "dcbdcbcbadccbdddcddcbdcabdcddbbcbbc"
+      ],
+      "expected": 21
+    },
+    {
+      "args": [
+        "xyzzzzzzyzzxzzyyxxyxyzxxyyyyxxzxyyxxzzxzyxzzxyzzxzzxyxxzyzxx",
+        "xyyzzzxxzyzxxyxxzzzzxzyzxyyxxxxzzzzyzxxxxzyxxxxzzyzxyxyxyzzzzxzyyyzzyx"
+      ],
+      "expected": 44
+    }
+  ],
+  "hints": [
+    "Compare the last characters of the two prefixes. What happens when they match, and when they don't?",
+    "Let L[i][j] be the answer for a[:i] and b[:j]. If a[i-1] == b[j-1], L[i][j] = L[i-1][j-1] + 1.",
+    "Otherwise L[i][j] = max(L[i-1][j], L[i][j-1]). Keep only the previous row to use O(min(n, m)) memory."
+  ],
+  "solution": {
+    "js": "function commonSubsequence(a, b) {\n  let previous = new Array(b.length + 1).fill(0)\n  for (let i = 1; i <= a.length; i++) {\n    const current = new Array(b.length + 1).fill(0)\n    for (let j = 1; j <= b.length; j++) {\n      current[j] = a[i - 1] === b[j - 1]\n        ? previous[j - 1] + 1\n        : Math.max(previous[j], current[j - 1])\n    }\n    previous = current\n  }\n  return previous[b.length]\n}\n",
+    "py": "def common_subsequence(a, b):\n    previous = [0] * (len(b) + 1)\n    for i in range(1, len(a) + 1):\n        current = [0] * (len(b) + 1)\n        for j in range(1, len(b) + 1):\n            if a[i - 1] == b[j - 1]:\n                current[j] = previous[j - 1] + 1\n            else:\n                current[j] = max(previous[j], current[j - 1])\n        previous = current\n    return previous[len(b)]\n",
+    "explanation": "If the last characters match, using both of them is never worse. If they differ, at least one of them is not in the common subsequence, so drop one or the other and take the better result. Each row depends only on the previous row."
+  },
+  "complexity": {
+    "time": "O(n · m)",
+    "space": "O(m)",
+    "notes": "Recovering the subsequence itself needs the full table (or Hirschberg's algorithm for linear space)."
+  },
+  "followUps": [
+    "How does this relate to the edit distance used by diff tools?"
+  ]
+}

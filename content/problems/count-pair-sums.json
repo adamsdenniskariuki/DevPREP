@@ -1,0 +1,313 @@
+{
+  "id": "count-pair-sums",
+  "title": "Count pair sums",
+  "pattern": "Arrays & hashing",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "hash-map-complements",
+  "prompt": "A ticket system logs integer badge numbers. Return how many index pairs (i, j) with i < j satisfy values[i] + values[j] == target.\n\n- values has 0 to 100,000 integers between -10^9 and 10^9; target is in the same range.\n- Equal values at different indices form different pairs.\n- Return an integer. Do not modify values.",
+  "function": {
+    "js": "countPairs",
+    "py": "count_pairs"
+  },
+  "starter": {
+    "js": "function countPairs(values, target) {\n  // Your code here\n}\n",
+    "py": "def count_pairs(values, target):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          1,
+          5,
+          3,
+          3,
+          4
+        ],
+        6
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          2,
+          2,
+          2
+        ],
+        4
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [],
+        7
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          0
+        ],
+        0
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          -3,
+          3,
+          0,
+          0
+        ],
+        0
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        100
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          5,
+          -1,
+          6,
+          0,
+          5,
+          0
+        ],
+        5
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        [
+          4,
+          0,
+          -1,
+          -3,
+          0,
+          0,
+          0,
+          -5,
+          -2,
+          5,
+          -1,
+          4,
+          -4,
+          -5,
+          1,
+          0,
+          -1,
+          5,
+          4,
+          -4,
+          -3,
+          -4,
+          -5,
+          -2,
+          0,
+          -5,
+          -2,
+          -1,
+          -1,
+          1,
+          1,
+          -2,
+          2,
+          4,
+          5,
+          5,
+          0,
+          1,
+          -2,
+          -5,
+          4,
+          -1,
+          0,
+          -1,
+          1,
+          -2,
+          -2,
+          3,
+          -3,
+          1,
+          5,
+          -5,
+          5,
+          1,
+          -5,
+          0,
+          3,
+          1,
+          0,
+          -4
+        ],
+        2
+      ],
+      "expected": 105
+    },
+    {
+      "args": [
+        [
+          6,
+          8,
+          1,
+          -17,
+          -13,
+          16,
+          18,
+          -9,
+          -17,
+          -2,
+          0,
+          -7,
+          13,
+          -20,
+          1,
+          14,
+          -19,
+          -5,
+          -5,
+          3,
+          3,
+          13,
+          7,
+          -18,
+          15,
+          -11,
+          -16,
+          -4,
+          -4,
+          -20,
+          19,
+          9,
+          -4,
+          19,
+          19,
+          -12,
+          -15,
+          -5,
+          0,
+          2,
+          8,
+          9,
+          4,
+          -17,
+          -16,
+          -2,
+          -6,
+          -10,
+          11,
+          19,
+          6,
+          -9,
+          -9,
+          -2,
+          19,
+          -17,
+          15,
+          -17,
+          8,
+          1,
+          -16,
+          4,
+          3,
+          6,
+          -14,
+          -2,
+          -20,
+          3,
+          -8,
+          -10,
+          -7,
+          0,
+          -11,
+          6,
+          18,
+          -16,
+          2,
+          18,
+          0,
+          7,
+          -3,
+          -15,
+          19,
+          -18,
+          6,
+          16,
+          10,
+          14,
+          20,
+          -1,
+          -1,
+          -5,
+          6,
+          14,
+          -10,
+          -15,
+          -1,
+          -1,
+          12,
+          -6,
+          -9,
+          7,
+          4,
+          3,
+          -8,
+          7,
+          9,
+          -19,
+          -5,
+          -20,
+          -14,
+          3,
+          16,
+          -12,
+          0,
+          18,
+          2,
+          -5,
+          13,
+          9
+        ],
+        -4
+      ],
+      "expected": 149
+    }
+  ],
+  "hints": [
+    "A brute-force double loop is O(n²). What would you need to know, at index j, to count its partners instantly?",
+    "Partners of values[j] are earlier values equal to target - values[j]. Keep a count of every value seen so far.",
+    "For each value: add count[target - value] to the answer, then increment count[value]. Updating after the lookup stops a value pairing with itself."
+  ],
+  "solution": {
+    "js": "function countPairs(values, target) {\n  const seen = new Map()\n  let pairs = 0\n  for (const value of values) {\n    pairs += seen.get(target - value) ?? 0\n    seen.set(value, (seen.get(value) ?? 0) + 1)\n  }\n  return pairs\n}\n",
+    "py": "def count_pairs(values, target):\n    seen = {}\n    pairs = 0\n    for value in values:\n        pairs += seen.get(target - value, 0)\n        seen[value] = seen.get(value, 0) + 1\n    return pairs\n",
+    "explanation": "Scan left to right with a frequency map of values already seen. Every earlier value equal to target - value completes a pair with the current index, so add that count before recording the current value. Each pair is counted exactly once, at its right-hand index."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "notes": "One pass with expected O(1) hash operations. The answer can reach n(n-1)/2 (about 5·10^9), which still fits exactly in a JavaScript number."
+  },
+  "followUps": [
+    "How would you count pairs if values arrived as a stream too large to keep in memory?",
+    "What changes if the question asks for pairs with a difference of exactly target?"
+  ]
+}

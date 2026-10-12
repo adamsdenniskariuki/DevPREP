@@ -1,0 +1,265 @@
+{
+  "id": "bit-counts",
+  "title": "Count set bits for 0 to n",
+  "pattern": "Bit manipulation",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "Return a list of length n + 1 whose i-th entry is the number of 1 bits in the binary form of i.\n\n- 0 <= n <= 100,000. Aim for O(n) total: reuse earlier answers instead of counting each number's bits from scratch.",
+  "function": {
+    "js": "bitCounts",
+    "py": "bit_counts"
+  },
+  "starter": {
+    "js": "function bitCounts(n) {\n  // Your code here\n}\n",
+    "py": "def bit_counts(n):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        2
+      ],
+      "expected": [
+        0,
+        1,
+        1
+      ]
+    },
+    {
+      "args": [
+        5
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "expected": [
+        0
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        1
+      ],
+      "expected": [
+        0,
+        1
+      ]
+    },
+    {
+      "args": [
+        8
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        2,
+        2,
+        3,
+        1
+      ]
+    },
+    {
+      "args": [
+        16
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        2,
+        2,
+        3,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        1
+      ]
+    },
+    {
+      "args": [
+        31
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        2,
+        2,
+        3,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5
+      ]
+    },
+    {
+      "args": [
+        100
+      ],
+      "expected": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        2,
+        2,
+        3,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5,
+        3,
+        4,
+        4,
+        5,
+        4,
+        5,
+        5,
+        6,
+        1,
+        2,
+        2,
+        3,
+        2,
+        3,
+        3,
+        4,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5,
+        2,
+        3,
+        3,
+        4,
+        3,
+        4,
+        4,
+        5,
+        3,
+        4,
+        4,
+        5,
+        4,
+        5,
+        5,
+        6,
+        2,
+        3,
+        3,
+        4,
+        3
+      ]
+    }
+  ],
+  "hints": [
+    "How does the binary form of i relate to the binary form of i >> 1 (i halved)?",
+    "i >> 1 drops the lowest bit; that bit is i & 1.",
+    "counts[i] = counts[i >> 1] + (i & 1), filled from 1 upwards."
+  ],
+  "solution": {
+    "js": "function bitCounts(n) {\n  const counts = new Array(n + 1).fill(0)\n  for (let i = 1; i <= n; i++) counts[i] = counts[i >> 1] + (i & 1)\n  return counts\n}\n",
+    "py": "def bit_counts(n):\n    counts = [0] * (n + 1)\n    for i in range(1, n + 1):\n        counts[i] = counts[i >> 1] + (i & 1)\n    return counts\n",
+    "explanation": "Shifting right by one removes exactly the lowest bit, so i has the same number of 1 bits as i >> 1, plus one if its lowest bit is set. Since i >> 1 < i, that answer is already known."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n) for the output",
+    "notes": "Another recurrence: counts[i] = counts[i & (i - 1)] + 1, because i & (i - 1) clears the lowest set bit."
+  },
+  "followUps": [
+    "Explain why i & (i - 1) clears the lowest set bit, and where else that trick is useful."
+  ]
+}

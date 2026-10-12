@@ -3,6 +3,8 @@ import type { Track } from './curriculum'
 import { lessonSections } from './lesson-sections'
 import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
+import { problemIds } from './problems'
+import type { CodeLanguage } from './problem-types'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -42,7 +44,10 @@ export interface Progress {
   activity: Activity[]
   selectedPath?: PathId
   profile?: Profile
+  /** Runnable problems whose tests all passed, with the first passing time per language. */
+  solved?: Record<string, SolvedProblem>
 }
+export type SolvedProblem = Partial<Record<CodeLanguage, string>>
 /** Optional study profile used by Home and the planner. Omitted when empty. */
 export interface Profile {
   interviewDate?: string
@@ -108,7 +113,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -158,10 +163,34 @@ export function parseBackup(text: string): Progress {
     return { lessonId: lesson.id, at: timestamp(raw.at), mode: mode(raw.mode), rating: rating(raw.rating) }
   })
   const profile = Object.hasOwn(root, 'profile') ? parseProfile(root.profile) : undefined
+  const solved = Object.hasOwn(root, 'solved') ? parseSolved(root.solved) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
     ...(profile ? { profile } : {}),
+    ...(solved ? { solved } : {}),
+  }
+}
+
+function parseSolved(value: unknown): Record<string, SolvedProblem> {
+  const raw = object(value)
+  const solved: Record<string, SolvedProblem> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!problemIds.has(id)) invalid('unknown coding problem. This backup may need a newer app version.')
+    const langs = object(entry, [], ['js', 'py'])
+    if (!Object.keys(langs).length) invalid('solved problem has no language.')
+    solved[id] = Object.fromEntries(Object.entries(langs).map(([lang, at]) => [lang, timestamp(at)]))
+  }
+  return solved
+}
+
+/** Records the first time a problem's tests all pass in a language. Later passes keep the original time. */
+export function recordSolve(progress: Progress, problemId: string, lang: CodeLanguage, now = new Date()): Progress {
+  if (!problemIds.has(problemId)) throw new Error('Unknown coding problem.')
+  if (progress.solved?.[problemId]?.[lang]) return progress
+  return {
+    ...progress, updatedAt: now.toISOString(),
+    solved: { ...progress.solved, [problemId]: { ...progress.solved?.[problemId], [lang]: now.toISOString() } },
   }
 }
 

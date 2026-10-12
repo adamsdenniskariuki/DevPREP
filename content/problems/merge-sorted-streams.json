@@ -1,0 +1,359 @@
+{
+  "id": "merge-sorted-streams",
+  "title": "Merge k sorted streams",
+  "pattern": "Heaps",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "heaps-top-k",
+  "prompt": "streams is a list of k lists, each sorted in nondecreasing order. Return one sorted list containing every value.\n\n- 0 to 1,000 streams; at most 100,000 values in total, each between -10^9 and 10^9.\n- Aim for O(N log k) time, where N is the total number of values. Do not concatenate and sort.",
+  "function": {
+    "js": "mergeStreams",
+    "py": "merge_streams"
+  },
+  "starter": {
+    "js": "function mergeStreams(streams) {\n  // Your code here\n}\n",
+    "py": "def merge_streams(streams):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            4,
+            5
+          ],
+          [
+            1,
+            3,
+            4
+          ],
+          [
+            2,
+            6
+          ]
+        ]
+      ],
+      "expected": [
+        1,
+        1,
+        2,
+        3,
+        4,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "args": [
+        []
+      ],
+      "expected": []
+    },
+    {
+      "args": [
+        [
+          [],
+          [
+            3
+          ],
+          []
+        ]
+      ],
+      "expected": [
+        3
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            -1,
+            0,
+            0,
+            7
+          ]
+        ]
+      ],
+      "expected": [
+        -1,
+        0,
+        0,
+        7
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            5,
+            5
+          ],
+          [
+            5
+          ],
+          [
+            5,
+            5,
+            5
+          ]
+        ]
+      ],
+      "expected": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            2
+          ],
+          [
+            -10,
+            100
+          ]
+        ]
+      ],
+      "expected": [
+        -10,
+        1,
+        2,
+        100
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            2,
+            86
+          ],
+          [
+            -29,
+            30
+          ],
+          [
+            -99,
+            -26,
+            -6,
+            2,
+            29,
+            56,
+            59,
+            63,
+            78,
+            78,
+            82,
+            100
+          ],
+          [],
+          [
+            -92,
+            -48,
+            -8,
+            15,
+            39
+          ],
+          [
+            -87,
+            -76,
+            -72,
+            -38,
+            -34,
+            -34,
+            15,
+            27,
+            50,
+            61,
+            74,
+            77
+          ],
+          [
+            -47,
+            -21
+          ],
+          [
+            -99,
+            27,
+            70
+          ],
+          [
+            -96,
+            -73,
+            -56
+          ],
+          [
+            -41,
+            -19,
+            58
+          ],
+          [
+            -58,
+            -47,
+            2,
+            38,
+            74
+          ],
+          [
+            -94,
+            16
+          ],
+          [
+            -92,
+            -80,
+            -69,
+            -54,
+            -38,
+            -27,
+            10,
+            11,
+            41,
+            56
+          ],
+          [
+            -92,
+            -86,
+            -60,
+            -52,
+            -48,
+            -38,
+            -29,
+            -8,
+            15,
+            92,
+            93
+          ],
+          [
+            -94,
+            -85,
+            -80,
+            -63,
+            -56,
+            -8,
+            21,
+            41,
+            54,
+            67,
+            88,
+            100
+          ]
+        ]
+      ],
+      "expected": [
+        -99,
+        -99,
+        -96,
+        -94,
+        -94,
+        -92,
+        -92,
+        -92,
+        -87,
+        -86,
+        -85,
+        -80,
+        -80,
+        -76,
+        -73,
+        -72,
+        -69,
+        -63,
+        -60,
+        -58,
+        -56,
+        -56,
+        -54,
+        -52,
+        -48,
+        -48,
+        -47,
+        -47,
+        -41,
+        -38,
+        -38,
+        -38,
+        -34,
+        -34,
+        -29,
+        -29,
+        -27,
+        -26,
+        -21,
+        -19,
+        -8,
+        -8,
+        -8,
+        -6,
+        2,
+        2,
+        2,
+        10,
+        11,
+        15,
+        15,
+        15,
+        16,
+        21,
+        27,
+        27,
+        29,
+        30,
+        38,
+        39,
+        41,
+        41,
+        50,
+        54,
+        56,
+        56,
+        58,
+        59,
+        61,
+        63,
+        67,
+        70,
+        74,
+        74,
+        77,
+        78,
+        78,
+        82,
+        86,
+        88,
+        92,
+        93,
+        100,
+        100
+      ]
+    }
+  ],
+  "hints": [
+    "The next output value is the smallest current head among the k streams. How can you find it faster than scanning all k heads?",
+    "Keep one entry per stream in a min-heap, keyed by that stream's current value.",
+    "Pop the smallest (value, stream, index), output it, and push that stream's next value if there is one. In JavaScript, write a small binary heap."
+  ],
+  "solution": {
+    "js": "function mergeStreams(streams) {\n  const heap = []\n  const less = (a, b) => a[0] < b[0]\n  const push = item => {\n    heap.push(item)\n    let i = heap.length - 1\n    while (i > 0) {\n      const parent = (i - 1) >> 1\n      if (!less(heap[i], heap[parent])) break\n      ;[heap[i], heap[parent]] = [heap[parent], heap[i]]\n      i = parent\n    }\n  }\n  const pop = () => {\n    const top = heap[0]\n    const last = heap.pop()\n    if (heap.length) {\n      heap[0] = last\n      let i = 0\n      for (;;) {\n        const l = 2 * i + 1\n        const r = l + 1\n        let m = i\n        if (l < heap.length && less(heap[l], heap[m])) m = l\n        if (r < heap.length && less(heap[r], heap[m])) m = r\n        if (m === i) break\n        ;[heap[i], heap[m]] = [heap[m], heap[i]]\n        i = m\n      }\n    }\n    return top\n  }\n  streams.forEach((stream, s) => { if (stream.length) push([stream[0], s, 0]) })\n  const merged = []\n  while (heap.length) {\n    const [value, s, i] = pop()\n    merged.push(value)\n    if (i + 1 < streams[s].length) push([streams[s][i + 1], s, i + 1])\n  }\n  return merged\n}\n",
+    "py": "import heapq\n\ndef merge_streams(streams):\n    heap = [(stream[0], s, 0) for s, stream in enumerate(streams) if stream]\n    heapq.heapify(heap)\n    merged = []\n    while heap:\n        value, s, i = heapq.heappop(heap)\n        merged.append(value)\n        if i + 1 < len(streams[s]):\n            heapq.heappush(heap, (streams[s][i + 1], s, i + 1))\n    return merged\n",
+    "explanation": "The heap holds at most one candidate per stream: its smallest unused value. The global minimum is always one of those heads, so popping the heap yields values in sorted order. Each value is pushed and popped once, at O(log k) per operation."
+  },
+  "complexity": {
+    "time": "O(N log k)",
+    "space": "O(k) plus the output",
+    "notes": "Python's heapq compares tuples; the stream index breaks ties so values never compare against lists. Python also offers heapq.merge."
+  },
+  "followUps": [
+    "The streams are files too large for memory on different machines. How do you run an external k-way merge?",
+    "How does this relate to the merge step in LSM-tree compaction?"
+  ]
+}

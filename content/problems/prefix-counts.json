@@ -1,0 +1,213 @@
+{
+  "id": "prefix-counts",
+  "title": "Count words by prefix",
+  "pattern": "Tries",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "For each query, return how many entries of words start with that query. Duplicate words count separately. The empty query matches every word.\n\n- words: 0 to 20,000 lowercase strings, total length at most 200,000.\n- queries: 0 to 20,000 lowercase strings, total length at most 200,000.",
+  "function": {
+    "js": "prefixCounts",
+    "py": "prefix_counts"
+  },
+  "starter": {
+    "js": "function prefixCounts(words, queries) {\n  // Your code here\n}\n",
+    "py": "def prefix_counts(words, queries):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "apple",
+          "app",
+          "apt",
+          "bat"
+        ],
+        [
+          "ap",
+          "app",
+          "b",
+          "c"
+        ]
+      ],
+      "expected": [
+        3,
+        2,
+        1,
+        0
+      ]
+    },
+    {
+      "args": [
+        [
+          "a",
+          "a"
+        ],
+        [
+          "",
+          "a",
+          "aa"
+        ]
+      ],
+      "expected": [
+        2,
+        2,
+        0
+      ]
+    },
+    {
+      "args": [
+        [],
+        [
+          "x"
+        ]
+      ],
+      "expected": [
+        0
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "car",
+          "cart",
+          "carbon",
+          "care",
+          "cat"
+        ],
+        [
+          "car",
+          "ca",
+          "cart",
+          "carts",
+          ""
+        ]
+      ],
+      "expected": [
+        4,
+        5,
+        1,
+        0,
+        5
+      ]
+    },
+    {
+      "args": [
+        [
+          ""
+        ],
+        [
+          "",
+          "a"
+        ]
+      ],
+      "expected": [
+        1,
+        0
+      ]
+    },
+    {
+      "args": [
+        [
+          "",
+          "abaa",
+          "aaab",
+          "abaa",
+          "bbbb",
+          "",
+          "babab",
+          "baa",
+          "bb",
+          "aa",
+          "bbbba",
+          "a",
+          "bbaba",
+          "bb",
+          "abb",
+          "babbb",
+          "ba",
+          "baaa",
+          "babab",
+          "bbbbb",
+          "aaa",
+          "ab",
+          "abba",
+          "baab",
+          "bb",
+          "aabb",
+          "abbb",
+          "bb",
+          "bbaba",
+          "",
+          "aabb",
+          "bbabb",
+          "bbab",
+          "bbbba",
+          "",
+          "ba",
+          "ba",
+          "bbaaa",
+          "bab",
+          "",
+          "bbbbb",
+          "",
+          "babbb",
+          "baabb",
+          "aabba",
+          "abaa",
+          "",
+          "abba",
+          "a",
+          "b",
+          "a",
+          "babba",
+          "bbba",
+          "",
+          "",
+          "bba",
+          "",
+          "aba",
+          "a",
+          "abaa"
+        ],
+        [
+          "",
+          "a",
+          "b",
+          "ab",
+          "ba",
+          "aab",
+          "bbbb"
+        ]
+      ],
+      "expected": [
+        60,
+        20,
+        30,
+        10,
+        13,
+        3,
+        5
+      ]
+    }
+  ],
+  "hints": [
+    "Checking every word against every query is O(words × queries). How can words that share a prefix share work?",
+    "Insert every word into a trie. Each node represents one prefix.",
+    "Store a counter on each node and increment it for every word passing through. A query walks down the trie and returns the counter where it stops, or 0 if it falls off."
+  ],
+  "solution": {
+    "js": "function prefixCounts(words, queries) {\n  const root = { count: 0, next: new Map() }\n  for (const word of words) {\n    let node = root\n    node.count++\n    for (const ch of word) {\n      if (!node.next.has(ch)) node.next.set(ch, { count: 0, next: new Map() })\n      node = node.next.get(ch)\n      node.count++\n    }\n  }\n  return queries.map(query => {\n    let node = root\n    for (const ch of query) {\n      node = node.next.get(ch)\n      if (!node) return 0\n    }\n    return node.count\n  })\n}\n",
+    "py": "def prefix_counts(words, queries):\n    root = {\"count\": 0, \"next\": {}}\n    for word in words:\n        node = root\n        node[\"count\"] += 1\n        for ch in word:\n            node = node[\"next\"].setdefault(ch, {\"count\": 0, \"next\": {}})\n            node[\"count\"] += 1\n\n    def lookup(query):\n        node = root\n        for ch in query:\n            node = node[\"next\"].get(ch)\n            if node is None:\n                return 0\n        return node[\"count\"]\n\n    return [lookup(query) for query in queries]\n",
+    "explanation": "A trie stores shared prefixes once. Counting how many words pass through each node turns every prefix query into a single walk from the root, independent of the number of words."
+  },
+  "complexity": {
+    "time": "O(W + Q)",
+    "space": "O(W)",
+    "notes": "W and Q are the total characters in words and queries. Sorting words and binary-searching each prefix range is an O((W + Q) log n) alternative with less memory."
+  },
+  "followUps": [
+    "How would you return the top 3 most frequent completions for each prefix, as in autocomplete?"
+  ]
+}

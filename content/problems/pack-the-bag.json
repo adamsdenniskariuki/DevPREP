@@ -1,0 +1,219 @@
+{
+  "id": "pack-the-bag",
+  "title": "Pack the bag (0/1 knapsack)",
+  "pattern": "Dynamic programming",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "dp-grid-paths",
+  "prompt": "Item i has weight weights[i] and value values[i]. Each item can be packed at most once. Return the largest total value whose total weight is at most capacity.\n\n- 0 to 200 items; weights between 1 and 1,000; values between 0 and 10^6; 0 <= capacity <= 10,000.",
+  "function": {
+    "js": "bestPack",
+    "py": "best_pack"
+  },
+  "starter": {
+    "js": "function bestPack(weights, values, capacity) {\n  // Your code here\n}\n",
+    "py": "def best_pack(weights, values, capacity):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          1,
+          3,
+          4,
+          5
+        ],
+        [
+          1,
+          4,
+          5,
+          7
+        ],
+        7
+      ],
+      "expected": 9
+    },
+    {
+      "args": [
+        [
+          5
+        ],
+        [
+          10
+        ],
+        4
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [],
+        [],
+        10
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          2,
+          2,
+          2
+        ],
+        [
+          3,
+          3,
+          3
+        ],
+        5
+      ],
+      "expected": 6
+    },
+    {
+      "args": [
+        [
+          10,
+          20,
+          30
+        ],
+        [
+          60,
+          100,
+          120
+        ],
+        50
+      ],
+      "expected": 220
+    },
+    {
+      "args": [
+        [
+          1,
+          1,
+          1
+        ],
+        [
+          0,
+          0,
+          0
+        ],
+        3
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          5,
+          1,
+          10,
+          13,
+          18,
+          18,
+          14,
+          6,
+          3,
+          10,
+          4,
+          17
+        ],
+        [
+          42,
+          41,
+          14,
+          36,
+          43,
+          4,
+          46,
+          41,
+          8,
+          4,
+          46,
+          12
+        ],
+        40
+      ],
+      "expected": 230
+    },
+    {
+      "args": [
+        [
+          16,
+          6,
+          18,
+          6,
+          11,
+          16,
+          1,
+          17,
+          16,
+          9
+        ],
+        [
+          20,
+          39,
+          10,
+          16,
+          18,
+          4,
+          45,
+          34,
+          44,
+          48
+        ],
+        0
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          16,
+          6,
+          18,
+          6,
+          11,
+          16,
+          1,
+          17,
+          16,
+          9
+        ],
+        [
+          20,
+          39,
+          10,
+          16,
+          18,
+          4,
+          45,
+          34,
+          44,
+          48
+        ],
+        1000
+      ],
+      "expected": 278
+    }
+  ],
+  "hints": [
+    "For each item you either take it or skip it. Trying every subset is 2^n.",
+    "Let best[c] be the best value using capacity c with the items considered so far.",
+    "For each item, update c from capacity down to its weight: best[c] = max(best[c], best[c - w] + v). Going downward stops an item being used twice."
+  ],
+  "solution": {
+    "js": "function bestPack(weights, values, capacity) {\n  const best = new Array(capacity + 1).fill(0)\n  for (let i = 0; i < weights.length; i++) {\n    for (let c = capacity; c >= weights[i]; c--) {\n      best[c] = Math.max(best[c], best[c - weights[i]] + values[i])\n    }\n  }\n  return best[capacity]\n}\n",
+    "py": "def best_pack(weights, values, capacity):\n    best = [0] * (capacity + 1)\n    for weight, value in zip(weights, values):\n        for c in range(capacity, weight - 1, -1):\n            best[c] = max(best[c], best[c - weight] + value)\n    return best[capacity]\n",
+    "explanation": "The 2D table best[i][c] (first i items, capacity c) compresses to one row. Iterating capacity downward means best[c - w] still refers to the row before this item, so each item is used at most once. Iterating upward would give the unbounded knapsack."
+  },
+  "complexity": {
+    "time": "O(n · capacity)",
+    "space": "O(capacity)",
+    "notes": "This is pseudo-polynomial: it is polynomial in the numeric value of capacity, not in its number of bits. 0/1 knapsack is NP-hard in general."
+  },
+  "followUps": [
+    "Which items were chosen? What extra state do you need to reconstruct them?"
+  ]
+}

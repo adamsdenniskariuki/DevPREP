@@ -1,0 +1,93 @@
+{
+  "id": "queen-placements",
+  "title": "Count queen placements",
+  "pattern": "Backtracking",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "backtracking-subsets",
+  "prompt": "Return the number of ways to place n queens on an n×n chessboard so that no two share a row, column or diagonal.\n\n- 1 <= n <= 9.",
+  "function": {
+    "js": "queenPlacements",
+    "py": "queen_placements"
+  },
+  "starter": {
+    "js": "function queenPlacements(n) {\n  // Your code here\n}\n",
+    "py": "def queen_placements(n):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        4
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        1
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        3
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        2
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        5
+      ],
+      "expected": 10
+    },
+    {
+      "args": [
+        6
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        7
+      ],
+      "expected": 40
+    },
+    {
+      "args": [
+        8
+      ],
+      "expected": 92
+    },
+    {
+      "args": [
+        9
+      ],
+      "expected": 352
+    }
+  ],
+  "hints": [
+    "Each row holds exactly one queen. Place them row by row.",
+    "Track which columns and diagonals are taken. On one diagonal, row - col is constant; on the other, row + col is.",
+    "Recurse on the row: try each free column, mark it, recurse, then unmark (backtrack). Count arrivals at row n."
+  ],
+  "solution": {
+    "js": "function queenPlacements(n) {\n  const cols = new Set()\n  const down = new Set()\n  const up = new Set()\n  const place = row => {\n    if (row === n) return 1\n    let count = 0\n    for (let col = 0; col < n; col++) {\n      if (cols.has(col) || down.has(row - col) || up.has(row + col)) continue\n      cols.add(col); down.add(row - col); up.add(row + col)\n      count += place(row + 1)\n      cols.delete(col); down.delete(row - col); up.delete(row + col)\n    }\n    return count\n  }\n  return place(0)\n}\n",
+    "py": "def queen_placements(n):\n    cols, down, up = set(), set(), set()\n\n    def place(row):\n        if row == n:\n            return 1\n        count = 0\n        for col in range(n):\n            if col in cols or row - col in down or row + col in up:\n                continue\n            cols.add(col); down.add(row - col); up.add(row + col)\n            count += place(row + 1)\n            cols.remove(col); down.remove(row - col); up.remove(row + col)\n        return count\n\n    return place(0)\n",
+    "explanation": "Placing one queen per row removes row conflicts by construction. Sets of used columns and diagonal identifiers make each safety check O(1), and undoing the marks after recursion restores the state for the next column."
+  },
+  "complexity": {
+    "time": "O(n!)",
+    "space": "O(n)",
+    "notes": "Pruning keeps the real search far below n!. Bitmasks for columns and diagonals make it several times faster."
+  },
+  "followUps": [
+    "Rewrite the state with three integers used as bitmasks. Why is it faster?"
+  ]
+}

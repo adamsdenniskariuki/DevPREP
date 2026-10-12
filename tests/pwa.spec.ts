@@ -82,7 +82,7 @@ async function inventory(release: 'v1' | 'v2') {
     for (const item of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, item.name)
       const relative = `${prefix}${item.name}`
-      if (item.isDirectory()) await visit(path, `${relative}/`)
+      if (item.isDirectory()) { if (relative !== 'pyodide') await visit(path, `${relative}/`) }
       else if (/\.(html|js|css|png|svg|webmanifest)$/.test(item.name) && relative !== 'sw.js') {
         files.push({ path: relative, sha256: createHash('sha256').update(await readFile(path)).digest('hex') })
       }
@@ -537,4 +537,42 @@ test('synthetic standalone display mode and iOS guidance remain usable at 320px'
   } finally {
     await context.close()
   }
+})
+
+test('code runner works offline: JavaScript from the precache, Python after its first online load', async ({ page, context }) => {
+  test.setTimeout(240_000)
+  const problem = JSON.parse(await readFile('content/problems/count-pair-sums.json', 'utf8'))
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await context.setOffline(true)
+  await page.goto(`/DevPREP/#code/${problem.id}`)
+  const editor = page.getByRole('textbox', { name: 'JavaScript code' })
+  await editor.fill(problem.solution.js)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toContainText('tests passed')
+
+  await page.getByRole('radio', { name: 'Python' }).check()
+  await page.getByRole('textbox', { name: 'Python code' }).fill(problem.solution.py)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toContainText('Python could not start.', { timeout: 60_000 })
+
+  await context.setOffline(false)
+  await page.reload()
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toContainText(/All \d+ tests passed/, { timeout: 180_000 })
+  const cached = await page.evaluate(async () => {
+    const names = (await caches.keys()).filter(name => name.startsWith('devprep-runtime-pyodide:'))
+    const urls = (await Promise.all(names.map(async name => (await (await caches.open(name)).keys()).map(request => request.url)))).flat()
+    return { names, urls }
+  })
+  expect(cached.names).toHaveLength(1)
+  expect(cached.urls.some(url => url.endsWith('/pyodide.asm.wasm'))).toBe(true)
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto(`/DevPREP/#code/${problem.id}`)
+  await expect(offline.getByRole('textbox', { name: 'Python code' })).toHaveValue(problem.solution.py)
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-summary')).toContainText(/All \d+ tests passed/, { timeout: 120_000 })
 })
