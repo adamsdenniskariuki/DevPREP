@@ -1,0 +1,201 @@
+{
+  "id": "metrics-monitoring",
+  "title": "Metrics and alerting",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Time-series ingestion, compression, downsampling and alerts.",
+  "prompt": "Design a metrics platform: thousands of services emit counters, gauges and histograms; engineers build dashboards and alert rules; alerts must fire reliably even when parts of the platform are struggling.",
+  "lessons": [
+    "design-reliability-observability",
+    "design-queues-events",
+    "design-databases-indexes",
+    "design-replication-partitioning"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: ingest labelled time series, query by metric and label filters with aggregation over time ranges, evaluate alert rules, notify on-call.",
+      "Non-functional: ingest without loss at peak, recent queries in ~1 s, retain raw data for 2 weeks and downsampled data for a year, alerting more available than dashboards."
+    ],
+    "estimation": [
+      "20M active series sampled every 10 s ⇒ 2M samples/s.",
+      "With delta-of-delta timestamps and XOR-compressed values, samples average roughly 1–2 bytes: ~170–350 GB a day raw.",
+      "Cardinality is the real risk: one label with user IDs can create millions of new series."
+    ],
+    "api": [
+      "Ingest: agents push batches {series labels, timestamp, value} (or the platform scrapes endpoints).",
+      "Query: a range query like sum by (service)(rate(http_requests_total[5m])) over a time range and step.",
+      "Alert rules: {expression, for: duration, severity, routing}."
+    ],
+    "data": [
+      "Series identified by metric name + sorted labels, hashed to a series ID; an inverted index maps label=value to series IDs.",
+      "Samples stored in compressed blocks per series covering fixed time windows (e.g. 2 h), then compacted into larger blocks.",
+      "Downsampled rollups (5 min, 1 h) with min, max, sum and count, so averages stay correct."
+    ],
+    "design": [
+      "Agents → ingestion gateways → a durable log partitioned by series hash → storage nodes that build in-memory head blocks and flush to object storage.",
+      "Query service fans out to storage nodes (recent data) and to object storage (older blocks), then merges.",
+      "The alert evaluator runs rules on a schedule against recent data and sends firing alerts to a notifier that deduplicates, groups and routes them."
+    ],
+    "deepDives": [
+      "Cardinality control: per-tenant limits on active series, reject or drop new label values beyond the limit, and report the worst offenders.",
+      "Histograms: store bucket counts so percentiles can be aggregated across instances; averaging per-instance p99s is wrong.",
+      "Alerting reliability: run evaluators redundantly in pairs with deduplication, keep them close to fresh data, and alert when metrics go missing (the absence of data is a signal)."
+    ],
+    "bottlenecks": [
+      "Expensive queries over long ranges and many series: query limits, caching of results per step, and automatic use of rollups.",
+      "Ingestion spikes from deploys or restarts: the log buffers bursts; storage catches up.",
+      "Meta-monitoring: monitor the monitoring system from an independent, simpler stack."
+    ],
+    "tradeoffs": [
+      "Push vs pull: pull simplifies health detection and rate control; push suits short-lived jobs and serverless functions.",
+      "Long retention at full resolution is expensive; rollups lose detail for old data.",
+      "Strict cardinality limits protect the platform but can drop data teams expected to keep."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "svcs",
+        "kind": "client",
+        "label": "Services/agents",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "ing",
+        "kind": "service",
+        "label": "Ingest gateway",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "log",
+        "kind": "queue",
+        "label": "Ingest log",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "tsdb",
+        "kind": "db",
+        "label": "TSDB nodes",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "obj",
+        "kind": "storage",
+        "label": "Block storage",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "qry",
+        "kind": "service",
+        "label": "Query service",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "dash",
+        "kind": "client",
+        "label": "Dashboards",
+        "col": 4,
+        "row": 0
+      },
+      {
+        "id": "alert",
+        "kind": "worker",
+        "label": "Rule evaluators",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "notif",
+        "kind": "service",
+        "label": "Alert notifier",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "oncall",
+        "kind": "external",
+        "label": "Pager/chat",
+        "col": 5,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "svcs",
+        "to": "ing"
+      },
+      {
+        "from": "ing",
+        "to": "log"
+      },
+      {
+        "from": "log",
+        "to": "tsdb"
+      },
+      {
+        "from": "tsdb",
+        "to": "obj",
+        "label": "flush blocks"
+      },
+      {
+        "from": "dash",
+        "to": "qry"
+      },
+      {
+        "from": "qry",
+        "to": "tsdb"
+      },
+      {
+        "from": "qry",
+        "to": "obj"
+      },
+      {
+        "from": "alert",
+        "to": "tsdb"
+      },
+      {
+        "from": "alert",
+        "to": "notif",
+        "label": "firing"
+      },
+      {
+        "from": "notif",
+        "to": "oncall"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Sized samples per second and storage with compression."
+    },
+    {
+      "text": "Modelled series with labels and an inverted index."
+    },
+    {
+      "text": "Buffered ingestion with a durable log."
+    },
+    {
+      "text": "Used downsampled rollups for long retention."
+    },
+    {
+      "text": "Designed alert evaluation, deduplication and routing."
+    },
+    {
+      "text": "Aggregated percentiles from histograms correctly."
+    },
+    {
+      "text": "Controlled cardinality with limits and visibility.",
+      "sse": true
+    },
+    {
+      "text": "Made alerting more reliable than dashboards, including meta-monitoring.",
+      "sse": true
+    }
+  ]
+}

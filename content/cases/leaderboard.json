@@ -1,0 +1,164 @@
+{
+  "id": "leaderboard",
+  "title": "Game leaderboard",
+  "level": "se",
+  "minutes": 30,
+  "summary": "Real-time ranking with sorted sets and sharded scores.",
+  "prompt": "Design a leaderboard for a mobile game with 50M players. Show the global top 100, a player’s own rank, and the players just above and below them, updated within seconds of a new score.",
+  "lessons": [
+    "design-cache-data-flow",
+    "design-databases-indexes",
+    "design-replication-partitioning"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: submit a score, keep each player’s best score, read the top N, a player’s rank, and nearby players.",
+      "Non-functional: rank reads in milliseconds; updates visible within seconds; scores must survive a cache loss.",
+      "Clarify: per-season or daily boards, friends-only boards, tie-breaking (assume the earlier score wins)."
+    ],
+    "estimation": [
+      "50M players, 5M daily; 10 games a day each ≈ 50M score writes a day ≈ 600/s average, a few thousand per second at peak.",
+      "A sorted set entry is roughly 50–100 bytes, so 50M entries is ~2.5–5 GB: fits in memory on one node, with a replica.",
+      "Reads (opening the board) may be 10× writes; the top 100 is identical for everyone, so cache it for a second."
+    ],
+    "api": [
+      "POST /scores {playerId, matchId, score} → {best, rank}; matchId makes the submission idempotent.",
+      "GET /leaderboard/top?n=100 and GET /leaderboard/players/{id}?around=5 → {rank, score, neighbours}."
+    ],
+    "data": [
+      "scores(player_id, season, best_score, achieved_at) in a durable database: the source of truth.",
+      "matches(match_id PK, player_id, score) to verify and deduplicate submissions.",
+      "In-memory sorted set per season: member player_id, score best_score (with a tie-break folded into the score)."
+    ],
+    "design": [
+      "Game servers report results to the score service, which validates them, writes the database, then updates the sorted set.",
+      "ZADD with the GT flag only raises a member’s score, so out-of-order updates cannot lower a best.",
+      "ZREVRANK gives a player’s rank in O(log N); ZREVRANGE serves the top N and a window around a rank."
+    ],
+    "deepDives": [
+      "Ties: fold time into one numeric key, such as score × 2³² + (MAX_SECONDS − seconds), so earlier achievements rank higher. Sorted-set scores are 64-bit floats, so keep the combined value below 2⁵³.",
+      "Rebuild: if the sorted set is lost, rebuild it by streaming the scores table; the database stays authoritative.",
+      "Scaling past one node: shard by score range or keep approximate ranks (percentile buckets) for players far from the top, where exact rank matters less."
+    ],
+    "bottlenecks": [
+      "Top-100 reads all hit one key: cache the rendered list for a second at the API layer.",
+      "Cheating: trust only server-reported results; flag impossible scores for review.",
+      "Season resets: create a new key per season instead of deleting a huge set in place."
+    ],
+    "tradeoffs": [
+      "An in-memory sorted set gives exact live ranks at memory cost; a database ORDER BY with an index cannot answer “what is my rank” cheaply at this size.",
+      "Exact global rank for everyone vs approximate ranks for the long tail.",
+      "Writing the database before the cache means a crash between the two leaves the cache stale until rebuilt or re-sent; acceptable for seconds."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "game",
+        "kind": "client",
+        "label": "Game servers",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "app",
+        "kind": "client",
+        "label": "Players",
+        "col": 0,
+        "row": 2
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Score service",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "db",
+        "kind": "db",
+        "label": "Scores DB",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "zset",
+        "kind": "cache",
+        "label": "Sorted set",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "read",
+        "kind": "service",
+        "label": "Board API",
+        "col": 1,
+        "row": 2
+      },
+      {
+        "id": "top",
+        "kind": "cache",
+        "label": "Top-100 cache",
+        "col": 2,
+        "row": 3
+      }
+    ],
+    "edges": [
+      {
+        "from": "game",
+        "to": "api",
+        "label": "results"
+      },
+      {
+        "from": "api",
+        "to": "db"
+      },
+      {
+        "from": "api",
+        "to": "zset",
+        "label": "ZADD GT"
+      },
+      {
+        "from": "app",
+        "to": "read"
+      },
+      {
+        "from": "read",
+        "to": "zset",
+        "label": "rank/range"
+      },
+      {
+        "from": "read",
+        "to": "top"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Used a structure that answers rank queries in logarithmic time."
+    },
+    {
+      "text": "Kept a durable source of truth and a rebuild path for the in-memory index."
+    },
+    {
+      "text": "Handled ties and only-increase best-score semantics."
+    },
+    {
+      "text": "Made score submission idempotent and server-trusted."
+    },
+    {
+      "text": "Cached the hot top-N read."
+    },
+    {
+      "text": "Sized memory for the player count."
+    },
+    {
+      "text": "Discussed scaling past one node: score-range sharding or approximate ranks.",
+      "sse": true
+    },
+    {
+      "text": "Covered anti-cheat and season lifecycle.",
+      "sse": true
+    }
+  ]
+}

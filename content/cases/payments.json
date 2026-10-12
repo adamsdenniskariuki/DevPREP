@@ -1,0 +1,204 @@
+{
+  "id": "payments",
+  "title": "Payment system",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Idempotency, double-entry ledgers and reconciliation.",
+  "prompt": "Design the payment backend for a marketplace: buyers pay by card through an external processor, sellers are paid out weekly, and finance needs an accurate ledger.",
+  "lessons": [
+    "design-consistency",
+    "design-databases-indexes",
+    "design-queues-events",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: charge a buyer, record fees, refund, pay out sellers, and show balances.",
+      "Correctness first: never charge twice, never lose money, every movement is traceable; latency matters less than accuracy.",
+      "Clarify: currencies, compliance (avoid storing raw card numbers: use the processor’s tokens)."
+    ],
+    "estimation": [
+      "1M payments a day ≈ 12/s average; peaks of a few hundred per second on sale days. Volume is modest; correctness is the challenge.",
+      "Each payment creates several ledger entries (buyer, seller, fees), so a few million rows a day, kept for years."
+    ],
+    "api": [
+      "POST /payments {orderId, amount, currency, paymentMethodToken} with an Idempotency-Key → {paymentId, status}.",
+      "POST /payments/{id}/refunds {amount} with an Idempotency-Key.",
+      "Processor webhooks: POST /webhooks/processor, signed and deduplicated by event ID."
+    ],
+    "data": [
+      "Amounts as integers in minor units (cents) plus currency; never floating point.",
+      "payments(id, order_id, idempotency_key UNIQUE, amount, status, processor_ref, version) as a state machine.",
+      "ledger_entries(id, transaction_id, account_id, amount, direction) append-only; each transaction’s debits equal its credits (double-entry).",
+      "outbox(id, event, created_at) written in the same transaction as state changes."
+    ],
+    "design": [
+      "Payment service records a pending payment, then calls the processor with the same idempotency key.",
+      "On success it updates status and writes balanced ledger entries in one transaction; an outbox relay publishes events (receipt, order paid).",
+      "Webhooks confirm final states; a nightly reconciliation compares internal records with processor settlement reports.",
+      "Payout jobs read seller balances from the ledger and initiate bank transfers, also idempotently."
+    ],
+    "deepDives": [
+      "Unknown outcomes: if the processor call times out, do not blindly retry with a new key; query by idempotency key or wait for the webhook, then resolve.",
+      "Double-entry: every transaction sums to zero across accounts, so errors show up as imbalances; corrections are new reversing entries, never edits.",
+      "Transactional outbox: avoids the “database committed but event lost” failure that a separate publish call would have."
+    ],
+    "bottlenecks": [
+      "Hot accounts (the platform fee account) see every transaction: shard with sub-accounts and sum them, or compute balances asynchronously.",
+      "Processor outages: queue and retry with the same keys, show “processing” to buyers, fail over to a second processor where contracts allow.",
+      "Audit and access: restrict who can write ledger data; log every change."
+    ],
+    "tradeoffs": [
+      "Strong consistency and immutable ledgers cost throughput, but money demands them.",
+      "Synchronous charge gives instant answers; asynchronous with webhooks is more robust to timeouts. Most systems combine them.",
+      "A second processor improves availability but doubles integration and reconciliation work."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "buyer",
+        "kind": "client",
+        "label": "Checkout",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "pay",
+        "kind": "service",
+        "label": "Payment service",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "db",
+        "kind": "db",
+        "label": "Payments+ledger",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "proc",
+        "kind": "external",
+        "label": "Card processor",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "hook",
+        "kind": "service",
+        "label": "Webhook handler",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "relay",
+        "kind": "worker",
+        "label": "Outbox relay",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "bus",
+        "kind": "queue",
+        "label": "Payment events",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "recon",
+        "kind": "worker",
+        "label": "Reconciliation",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "payout",
+        "kind": "worker",
+        "label": "Payouts",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "bank",
+        "kind": "external",
+        "label": "Bank transfers",
+        "col": 1,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "buyer",
+        "to": "pay"
+      },
+      {
+        "from": "pay",
+        "to": "proc",
+        "label": "charge (idem key)"
+      },
+      {
+        "from": "pay",
+        "to": "db"
+      },
+      {
+        "from": "proc",
+        "to": "hook",
+        "label": "webhook"
+      },
+      {
+        "from": "hook",
+        "to": "db"
+      },
+      {
+        "from": "relay",
+        "to": "db",
+        "label": "poll outbox"
+      },
+      {
+        "from": "relay",
+        "to": "bus"
+      },
+      {
+        "from": "recon",
+        "to": "db"
+      },
+      {
+        "from": "payout",
+        "to": "db"
+      },
+      {
+        "from": "payout",
+        "to": "bank"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Used idempotency keys end to end, including with the processor."
+    },
+    {
+      "text": "Stored money as integer minor units with currency."
+    },
+    {
+      "text": "Designed a double-entry, append-only ledger."
+    },
+    {
+      "text": "Modelled payment state transitions and handled unknown outcomes."
+    },
+    {
+      "text": "Published events reliably (transactional outbox or equivalent)."
+    },
+    {
+      "text": "Reconciled internal records against the processor."
+    },
+    {
+      "text": "Handled hot accounts and processor failover.",
+      "sse": true
+    },
+    {
+      "text": "Covered compliance: tokenisation, audit trails and access control.",
+      "sse": true
+    }
+  ]
+}

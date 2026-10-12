@@ -4,6 +4,7 @@ import { lessonSections } from './lesson-sections'
 import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
 import { problemIds } from './problems'
+import { caseIds } from './cases'
 import type { CodeLanguage } from './problem-types'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
@@ -46,8 +47,14 @@ export interface Progress {
   profile?: Profile
   /** Runnable problems whose tests all passed, with the first passing time per language. */
   solved?: Record<string, SolvedProblem>
+  /** Best self-scored rubric percentage per system design case study. */
+  designs?: Record<string, DesignScore>
 }
 export type SolvedProblem = Partial<Record<CodeLanguage, string>>
+export interface DesignScore {
+  best: number
+  at: string
+}
 /** Optional study profile used by Home and the planner. Omitted when empty. */
 export interface Profile {
   interviewDate?: string
@@ -113,7 +120,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -164,12 +171,33 @@ export function parseBackup(text: string): Progress {
   })
   const profile = Object.hasOwn(root, 'profile') ? parseProfile(root.profile) : undefined
   const solved = Object.hasOwn(root, 'solved') ? parseSolved(root.solved) : undefined
+  const designs = Object.hasOwn(root, 'designs') ? parseDesigns(root.designs) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
     ...(profile ? { profile } : {}),
     ...(solved ? { solved } : {}),
+    ...(designs ? { designs } : {}),
   }
+}
+
+function parseDesigns(value: unknown): Record<string, DesignScore> {
+  const raw = object(value)
+  const designs: Record<string, DesignScore> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!caseIds.has(id)) invalid('unknown design case. This backup may need a newer app version.')
+    const score = object(entry, ['best', 'at'])
+    designs[id] = { best: integer(score.best, 0, 100), at: timestamp(score.at) }
+  }
+  return designs
+}
+
+/** Saves a self-scored design attempt, keeping the best score and the time it was last scored. */
+export function recordDesign(progress: Progress, caseId: string, score: number, now = new Date()): Progress {
+  if (!caseIds.has(caseId)) throw new Error('Unknown design case.')
+  if (!Number.isInteger(score) || score < 0 || score > 100) throw new Error('Score must be a whole percentage.')
+  const best = Math.max(progress.designs?.[caseId]?.best ?? 0, score)
+  return { ...progress, updatedAt: now.toISOString(), designs: { ...progress.designs, [caseId]: { best, at: now.toISOString() } } }
 }
 
 function parseSolved(value: unknown): Record<string, SolvedProblem> {

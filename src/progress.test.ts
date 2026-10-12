@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { lessons, tracks } from './curriculum'
 import {
   beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES,
-  MAX_DRAFT_LENGTH, parseBackup, readProgress, recordSolve, serializeBackup, STORAGE_KEY, updateProfile, writeProgress,
+  MAX_DRAFT_LENGTH, parseBackup, readProgress, recordDesign, recordSolve, serializeBackup, STORAGE_KEY, updateProfile, writeProgress,
 } from './progress'
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import type { Progress, Rating, StoragePort } from './progress'
 import { problemIndex } from './problems'
+import { caseIndex } from './cases'
 
 const now = new Date('2026-09-17T12:00:00.000Z')
 const first = lessons[0]
@@ -300,5 +301,40 @@ describe('solved coding problems', () => {
     ['array', []],
   ])('rejects a backup whose solved map has an %s', (_, solved) => {
     expect(() => parseBackup(JSON.stringify({ ...legacyBackup, solved }))).toThrow()
+  })
+})
+
+describe('scored design cases', () => {
+  const id = caseIndex[0].id
+
+  it('keeps the best score and the latest attempt time', () => {
+    const later = new Date('2026-09-18T12:00:00.000Z')
+    const first = recordDesign(emptyProgress(now), id, 70, now)
+    expect(first.designs).toEqual({ [id]: { best: 70, at: now.toISOString() } })
+    expect(recordDesign(first, id, 40, later).designs?.[id]).toEqual({ best: 70, at: later.toISOString() })
+    expect(recordDesign(first, id, 90, later).designs?.[id]?.best).toBe(90)
+    expect(() => recordDesign(first, 'not-a-case', 50, now)).toThrow()
+    expect(() => recordDesign(first, id, 50.5, now)).toThrow()
+    expect(() => recordDesign(first, id, 101, now)).toThrow()
+  })
+
+  it('upgrades a v1 export with design scores and round-trips it without touching lessons', () => {
+    const legacy = parseBackup(JSON.stringify(legacyBackup))
+    expect(legacy.designs).toBeUndefined()
+    const again = parseBackup(serializeBackup(recordDesign(legacy, id, 85, now)))
+    expect(again.designs).toEqual({ [id]: { best: 85, at: now.toISOString() } })
+    expect(again.records).toEqual(legacy.records)
+    expect(again.session).toEqual(legacy.session)
+  })
+
+  it.each([
+    ['unknown case', { 'not-a-case': { best: 50, at: '2026-09-17T12:00:00.000Z' } }],
+    ['fractional score', { [caseIndex[0].id]: { best: 50.5, at: '2026-09-17T12:00:00.000Z' } }],
+    ['out-of-range score', { [caseIndex[0].id]: { best: 120, at: '2026-09-17T12:00:00.000Z' } }],
+    ['bad timestamp', { [caseIndex[0].id]: { best: 50, at: 'yesterday' } }],
+    ['extra key', { [caseIndex[0].id]: { best: 50, at: '2026-09-17T12:00:00.000Z', notes: 'x' } }],
+    ['array', []],
+  ])('rejects a backup whose designs map has an %s', (_, designs) => {
+    expect(() => parseBackup(JSON.stringify({ ...legacyBackup, designs }))).toThrow()
   })
 })

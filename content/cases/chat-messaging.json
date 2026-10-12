@@ -1,0 +1,195 @@
+{
+  "id": "chat-messaging",
+  "title": "Chat messaging",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Persistent connections, ordering, delivery receipts and offline sync.",
+  "prompt": "Design a chat app with one-to-one and small group conversations (up to 500 members), online presence, delivery and read receipts, and history that syncs across a user’s devices.",
+  "lessons": [
+    "design-queues-events",
+    "design-replication-partitioning",
+    "design-consistency",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: send and receive messages in real time, sync history on every device, receipts, presence, push notifications when offline.",
+      "Non-functional: low delivery latency (~100s of ms), no lost acknowledged messages, per-conversation ordering, highly available.",
+      "Clarify: end-to-end encryption, media (assume uploaded separately and sent as links), retention."
+    ],
+    "estimation": [
+      "200M daily users × 20 messages ≈ 4B messages a day ≈ 46,000/s average; peaks 2–3×.",
+      "~200 bytes per message ≈ 800 GB a day of new history before replication.",
+      "30M concurrent connections ÷ ~100k per gateway ≈ 300 gateway servers, plus headroom."
+    ],
+    "api": [
+      "A WebSocket per device: send {clientMsgId, conversationId, body}; server replies ack {messageId, seq}.",
+      "Server pushes message, receipt and presence events; clients ack up to a sequence number.",
+      "GET /conversations/{id}/messages?after=<seq> for catch-up after reconnecting."
+    ],
+    "data": [
+      "messages partitioned by conversation_id, clustered by seq: (conversation_id, seq, message_id, sender, body, sent_at).",
+      "Per-conversation sequence numbers give a total order inside each conversation; there is no global order.",
+      "inbox_state(user_id, conversation_id, last_delivered_seq, last_read_seq) drives unread counts and receipts.",
+      "Connection registry: user_id/device → gateway, in an in-memory store with TTL heartbeats."
+    ],
+    "design": [
+      "Devices connect to gateways through a layer-4 load balancer. Gateways hold connections only; chat services hold logic.",
+      "Send: the gateway forwards to the chat service, which deduplicates by clientMsgId, assigns the next seq, persists, acks the sender, then publishes for fan-out.",
+      "Fan-out: look up each member’s connected devices in the registry and route to their gateways; offline devices get a push notification and sync later."
+    ],
+    "deepDives": [
+      "Ordering: one writer per conversation (route by conversation ID) assigns seq; alternatively use the database’s conditional insert on (conversation, seq).",
+      "Exactly-once display from at-least-once delivery: clients deduplicate by message_id and fill gaps by fetching after their last seq.",
+      "Reconnect storms after a gateway dies: clients reconnect with jittered backoff and catch up from their last acknowledged seq.",
+      "Groups: write the message once and fan out on read, or write per-member inbox pointers; at 500 members, fan-out of notifications (not copies of the message) is fine."
+    ],
+    "bottlenecks": [
+      "Presence is chatty: send it only to contacts with an open chat view, batch updates, and tolerate staleness.",
+      "Hot group conversations: one sequencer per conversation limits throughput; that is fine at 500 members.",
+      "Cross-region users: home each conversation in one region and replicate."
+    ],
+    "tradeoffs": [
+      "Per-conversation ordering instead of a global order keeps sequencing scalable.",
+      "Storing one copy per conversation saves space; per-user inbox copies make reads faster but multiply writes.",
+      "End-to-end encryption protects users but moves search and multi-device key management to clients."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "dev",
+        "kind": "client",
+        "label": "Devices",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "lb",
+        "kind": "lb",
+        "label": "L4 balancer",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "gw",
+        "kind": "service",
+        "label": "WS gateways",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "reg",
+        "kind": "cache",
+        "label": "Connection map",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "chat",
+        "kind": "service",
+        "label": "Chat service",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "msgs",
+        "kind": "db",
+        "label": "Message store",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "bus",
+        "kind": "queue",
+        "label": "Fan-out stream",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "push",
+        "kind": "worker",
+        "label": "Push sender",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "apns",
+        "kind": "external",
+        "label": "APNs / FCM",
+        "col": 5,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "dev",
+        "to": "lb"
+      },
+      {
+        "from": "lb",
+        "to": "gw"
+      },
+      {
+        "from": "gw",
+        "to": "reg",
+        "label": "register"
+      },
+      {
+        "from": "gw",
+        "to": "chat"
+      },
+      {
+        "from": "chat",
+        "to": "msgs",
+        "label": "append seq"
+      },
+      {
+        "from": "chat",
+        "to": "bus"
+      },
+      {
+        "from": "bus",
+        "to": "gw",
+        "label": "deliver"
+      },
+      {
+        "from": "bus",
+        "to": "push",
+        "label": "offline"
+      },
+      {
+        "from": "push",
+        "to": "apns"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Used persistent connections with a gateway layer and a connection registry."
+    },
+    {
+      "text": "Defined per-conversation ordering with sequence numbers."
+    },
+    {
+      "text": "Acknowledged only after persisting; deduplicated by client message ID."
+    },
+    {
+      "text": "Designed offline delivery: push plus catch-up sync by sequence."
+    },
+    {
+      "text": "Modelled receipts and unread state per user and conversation."
+    },
+    {
+      "text": "Sized connections, message rate and storage."
+    },
+    {
+      "text": "Handled gateway failure and reconnect storms.",
+      "sse": true
+    },
+    {
+      "text": "Discussed multi-region homing and encryption trade-offs.",
+      "sse": true
+    }
+  ]
+}

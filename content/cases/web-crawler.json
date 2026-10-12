@@ -1,0 +1,202 @@
+{
+  "id": "web-crawler",
+  "title": "Web crawler",
+  "level": "se",
+  "minutes": 40,
+  "summary": "Frontier scheduling, politeness and deduplication.",
+  "prompt": "Design a crawler that fetches about a billion web pages a month to feed a search index, re-crawling pages that change often.",
+  "lessons": [
+    "design-queues-events",
+    "design-replication-partitioning",
+    "design-requirements-capacity"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: start from seed URLs, fetch pages, extract links, store content for indexing, and re-crawl according to how often pages change.",
+      "Politeness: obey robots.txt and keep the request rate to any single host low.",
+      "Non-functional: scales horizontally and is robust to crawler traps (endless calendars, session IDs in URLs), slow servers and duplicate content."
+    ],
+    "estimation": [
+      "1B pages a month ≈ 385 pages/s on average (1B ÷ 2.6M seconds); design for ~1,000/s.",
+      "At ~100 KB per page that is ~100 TB of raw HTML a month before compression.",
+      "Bandwidth: 385 pages/s × 100 KB ≈ 38.5 MB/s ≈ 300 Mbit/s on average.",
+      "Seen-URL set: 10B URLs × 8-byte fingerprints ≈ 80 GB, shardable in memory or on SSD; a Bloom filter needs far less at a small false-positive rate."
+    ],
+    "api": [
+      "Internal, not public: addSeeds(urls) and an admin view of crawl stats per host.",
+      "Frontier: enqueue(url, priority, notBefore) and next(worker) → a URL whose host may be fetched now.",
+      "Output: write (url, fetchedAt, status, contentHash, body) to the page store and emit an event for the indexer."
+    ],
+    "data": [
+      "Frontier: a queue per host plus a priority structure ordered by each host’s next allowed fetch time.",
+      "url_state(fingerprint, last_fetched, last_changed, content_hash, next_due) drives re-crawls.",
+      "Page bodies in blob storage keyed by URL hash and fetch time; robots.txt cached per host with a TTL."
+    ],
+    "design": [
+      "Scheduler → URL frontier → fetchers (async I/O, caching DNS resolver) → parser → URL filter and dedup → back into the frontier.",
+      "Fetched pages go to the page store and onto an index stream.",
+      "Partition the frontier by host hash, so one worker group owns each host and politeness is a local decision."
+    ],
+    "deepDives": [
+      "Politeness: each host queue has a next-allowed time (a few seconds apart, or robots.txt crawl-delay). Workers only take hosts whose time has passed.",
+      "Dedup: normalise URLs (lowercase host, drop fragments, strip known tracking parameters) before fingerprinting; hash content to skip exact copies and use SimHash for near-duplicates.",
+      "Re-crawl: estimate each page’s change rate from history; pages that changed recently get shorter intervals, within caps."
+    ],
+    "bottlenecks": [
+      "DNS lookups can dominate latency: run a local caching resolver.",
+      "Traps: cap URL length, path depth and pages per host per cycle.",
+      "A big host cannot be crawled faster without breaking politeness, so throughput comes from crawling many hosts in parallel."
+    ],
+    "tradeoffs": [
+      "A Bloom-filter seen-set saves memory, but false positives skip a few new URLs; acceptable for a crawler.",
+      "Freshness vs coverage: re-crawl budget competes with discovering new pages.",
+      "Host partitioning simplifies politeness but creates skew; rebalance with consistent hashing."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "sched",
+        "kind": "service",
+        "label": "Scheduler",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "frontier",
+        "kind": "queue",
+        "label": "URL frontier",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "fetch",
+        "kind": "worker",
+        "label": "Fetchers",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "dns",
+        "kind": "cache",
+        "label": "DNS & robots.txt",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "web",
+        "kind": "external",
+        "label": "Web servers",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "store",
+        "kind": "storage",
+        "label": "Page store",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "parse",
+        "kind": "worker",
+        "label": "Parser",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "filter",
+        "kind": "service",
+        "label": "URL filter/dedup",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "seen",
+        "kind": "cache",
+        "label": "Seen URLs",
+        "col": 2,
+        "row": 3
+      },
+      {
+        "id": "index",
+        "kind": "queue",
+        "label": "Index stream",
+        "col": 4,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "sched",
+        "to": "frontier"
+      },
+      {
+        "from": "frontier",
+        "to": "fetch"
+      },
+      {
+        "from": "fetch",
+        "to": "dns"
+      },
+      {
+        "from": "fetch",
+        "to": "web"
+      },
+      {
+        "from": "fetch",
+        "to": "store"
+      },
+      {
+        "from": "fetch",
+        "to": "parse"
+      },
+      {
+        "from": "parse",
+        "to": "filter",
+        "label": "links"
+      },
+      {
+        "from": "filter",
+        "to": "seen"
+      },
+      {
+        "from": "filter",
+        "to": "frontier",
+        "label": "new URLs"
+      },
+      {
+        "from": "parse",
+        "to": "index"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Estimated pages per second, bandwidth and storage."
+    },
+    {
+      "text": "Enforced robots.txt and per-host politeness."
+    },
+    {
+      "text": "Designed a frontier that schedules by host and priority."
+    },
+    {
+      "text": "Deduplicated URLs (normalisation, fingerprints) and content (hashes)."
+    },
+    {
+      "text": "Handled traps and slow or failing servers."
+    },
+    {
+      "text": "Explained a re-crawl policy driven by change rate."
+    },
+    {
+      "text": "Partitioned work across machines and handled host skew.",
+      "sse": true
+    },
+    {
+      "text": "Quantified Bloom filter or SimHash error trade-offs.",
+      "sse": true
+    }
+  ]
+}

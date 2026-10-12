@@ -1,0 +1,169 @@
+{
+  "id": "file-sync",
+  "title": "File sync and sharing",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Chunking, deduplication, metadata sync and conflicts.",
+  "prompt": "Design a file sync service: a desktop client keeps a folder in sync across a user’s devices, files can be shared with others, and large files sync efficiently over slow connections.",
+  "lessons": [
+    "design-consistency",
+    "design-databases-indexes",
+    "design-queues-events",
+    "design-cache-data-flow"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: upload changes, download changes from other devices, share folders, version history and restore.",
+      "Non-functional: small edits to large files upload only what changed; no silent data loss on conflicts; clients sync within seconds when online."
+    ],
+    "estimation": [
+      "100M users × 10 GB average quota usage ≈ 1 EB logical; dedup and compression reduce physical storage substantially.",
+      "Metadata: 100M users × 10,000 files × ~500 bytes ≈ 500 TB, so the metadata store must be sharded (by user or namespace)."
+    ],
+    "api": [
+      "POST /chunks/check {hashes} → which are missing; PUT /chunks/{hash} uploads one.",
+      "POST /files/commit {path, chunkHashes, baseVersion} → {version} or 409 conflict.",
+      "GET /changes?cursor= → changes since the cursor, with long-polling or a push channel for notifications."
+    ],
+    "data": [
+      "Chunks: content-addressed blobs keyed by SHA-256, stored once in object storage.",
+      "File versions: (namespace, path, version, chunk list, size, modified_by) in the metadata DB.",
+      "A per-namespace change journal with increasing cursors that clients sync from."
+    ],
+    "design": [
+      "The client watches the folder, splits changed files into chunks with content-defined chunking, and asks which chunks the server lacks.",
+      "It uploads only missing chunks, then commits the new chunk list against the base version it last saw.",
+      "Commits append to the journal; a notification service tells other devices to pull changes after their cursor."
+    ],
+    "deepDives": [
+      "Content-defined chunking (rolling hash boundaries) keeps most chunks unchanged when bytes are inserted early in a file; fixed-size chunks would all shift.",
+      "Conflicts: a commit with a stale base version fails; the client keeps both copies (“conflicted copy”) rather than overwriting.",
+      "Dedup across users saves storage but reveals whether a file already exists (an upload that “skips” leaks information); limit dedup to within a user or require proof of possession."
+    ],
+    "bottlenecks": [
+      "Large shared folders produce many notifications: batch and coalesce them.",
+      "Metadata hot spots for huge namespaces: shard journals and use pagination.",
+      "Initial sync of a large account: prioritise recent files, download lazily (placeholders) on demand."
+    ],
+    "tradeoffs": [
+      "Smaller chunks = better dedup and smaller re-uploads, but more metadata and requests.",
+      "Strong consistency for metadata commits; eventual for the notifications that trigger sync.",
+      "Keeping conflicted copies is safe but annoying; automatic merges are only safe for specific file types."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "desk",
+        "kind": "client",
+        "label": "Desktop client",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Sync API",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "meta",
+        "kind": "db",
+        "label": "Metadata+journal",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "blob",
+        "kind": "storage",
+        "label": "Chunk storage",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "notif",
+        "kind": "service",
+        "label": "Notifier",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "dev2",
+        "kind": "client",
+        "label": "Other devices",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "Change events",
+        "col": 3,
+        "row": 1
+      }
+    ],
+    "edges": [
+      {
+        "from": "desk",
+        "to": "api",
+        "label": "check/commit"
+      },
+      {
+        "from": "desk",
+        "to": "blob",
+        "label": "missing chunks"
+      },
+      {
+        "from": "api",
+        "to": "meta"
+      },
+      {
+        "from": "api",
+        "to": "q"
+      },
+      {
+        "from": "q",
+        "to": "notif"
+      },
+      {
+        "from": "notif",
+        "to": "dev2",
+        "label": "changed"
+      },
+      {
+        "from": "dev2",
+        "to": "api",
+        "label": "pull changes"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Split files into chunks and uploaded only missing ones."
+    },
+    {
+      "text": "Separated metadata (versions, journal) from content storage."
+    },
+    {
+      "text": "Synced via a change journal with cursors and notifications."
+    },
+    {
+      "text": "Detected conflicts with base versions and never silently overwrote."
+    },
+    {
+      "text": "Estimated storage and metadata size; sharded metadata."
+    },
+    {
+      "text": "Supported version history and restore."
+    },
+    {
+      "text": "Explained content-defined chunking and its benefit.",
+      "sse": true
+    },
+    {
+      "text": "Identified the cross-user dedup privacy leak.",
+      "sse": true
+    }
+  ]
+}

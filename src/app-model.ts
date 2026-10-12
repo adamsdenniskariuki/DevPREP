@@ -5,7 +5,7 @@ import type { LearningPath, PathId } from './learning-paths'
 import type { CodeLanguage } from './problem-types'
 import type { Activity, Mode, Profile, Progress } from './progress'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -39,6 +39,8 @@ export interface AppModel {
   changeProfile: (patch: Partial<Profile>) => void
   /** Records a passing run and returns the XP it earned (0 if already solved in that language). */
   solveProblem: (problemId: string, lang: CodeLanguage) => number
+  /** Saves a self-scored case study and returns the XP it added (0 if the best score did not improve the total). */
+  scoreDesign: (caseId: string, percent: number) => number
   tourOpen: boolean
   closeTour: () => void
   replayTour: () => void

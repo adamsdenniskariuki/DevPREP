@@ -1,0 +1,202 @@
+{
+  "id": "ride-hailing",
+  "title": "Ride hailing",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "High-rate location updates, matching and trip state.",
+  "prompt": "Design the core of a ride-hailing service: drivers stream their location, riders request a ride and are matched with a nearby driver, and both follow the trip live.",
+  "lessons": [
+    "design-replication-partitioning",
+    "design-consistency",
+    "design-queues-events",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: driver location updates, ride request, matching and offer/accept, live trip tracking, fare at trip end.",
+      "Non-functional: matching within seconds; a driver is never assigned two trips; location data can be slightly stale; city-level failure isolation."
+    ],
+    "estimation": [
+      "1M active drivers sending a location every 4 s ⇒ 250,000 updates/s.",
+      "Each update ~100 bytes ⇒ 25 MB/s; keep only the latest position hot and sample history to cold storage.",
+      "10M trips a day ≈ 115 requests/s average, with strong peaks by city and time."
+    ],
+    "api": [
+      "Driver: a persistent connection sending {lat, lng, heading, status}; receives offers.",
+      "Rider: POST /rides {pickup, dropoff} → {rideId, status}; subscribe to ride updates.",
+      "POST /rides/{id}/accept by driver; conditional on the ride still being unassigned."
+    ],
+    "data": [
+      "Driver locations: in-memory geo index (geohash or S2 cells) partitioned by city, entries expire if updates stop.",
+      "rides(ride_id, rider_id, driver_id, status, version, …) in a strongly consistent store, with a state machine requested → offered → accepted → started → completed.",
+      "Location history sampled into a stream for ETAs, fraud and disputes."
+    ],
+    "design": [
+      "Location service ingests updates, updates the city’s geo index and publishes to trip subscribers.",
+      "Matching service queries nearby available drivers, ranks by ETA (not straight-line distance), and offers to one driver at a time with a short timeout.",
+      "Trip service owns ride state with conditional updates; riders get pushed updates of the driver’s position."
+    ],
+    "deepDives": [
+      "No double assignment: accept is a conditional update on both the ride (status = offered to this driver) and the driver (status = available), in one transaction or with a driver-level lock.",
+      "Offer strategy: sequential offers avoid conflicts but are slower; parallel offers to a few drivers are faster but need the conditional accept to pick a winner.",
+      "Partition by city or region: matching is local, failures are contained, and hot cities can be split into zones."
+    ],
+    "bottlenecks": [
+      "Update rate: keep latest locations only in memory, batch writes to history, and drop updates when overloaded rather than queueing them.",
+      "Dense hotspots (airports, events): queue-based dispatch zones with first-in-first-out drivers.",
+      "Region boundaries: query neighbouring partitions near borders."
+    ],
+    "tradeoffs": [
+      "Stale locations are acceptable; stale ride state is not, so the two use different stores.",
+      "Best ETA matching vs global optimisation over many rides (batch matching every few seconds can improve total wait).",
+      "City partitioning simplifies scaling but complicates trips that cross boundaries."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "drv",
+        "kind": "client",
+        "label": "Driver app",
+        "col": 0,
+        "row": 0
+      },
+      {
+        "id": "rider",
+        "kind": "client",
+        "label": "Rider app",
+        "col": 0,
+        "row": 2
+      },
+      {
+        "id": "gw",
+        "kind": "service",
+        "label": "Gateway",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "loc",
+        "kind": "service",
+        "label": "Location svc",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "geo",
+        "kind": "cache",
+        "label": "Driver geo index",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "match",
+        "kind": "service",
+        "label": "Matching",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "trip",
+        "kind": "service",
+        "label": "Trip service",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "rides",
+        "kind": "db",
+        "label": "Rides DB",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "hist",
+        "kind": "queue",
+        "label": "Location stream",
+        "col": 4,
+        "row": 0
+      },
+      {
+        "id": "eta",
+        "kind": "service",
+        "label": "ETA service",
+        "col": 4,
+        "row": 1
+      }
+    ],
+    "edges": [
+      {
+        "from": "drv",
+        "to": "gw"
+      },
+      {
+        "from": "rider",
+        "to": "gw"
+      },
+      {
+        "from": "gw",
+        "to": "loc",
+        "label": "updates"
+      },
+      {
+        "from": "loc",
+        "to": "geo"
+      },
+      {
+        "from": "loc",
+        "to": "hist"
+      },
+      {
+        "from": "gw",
+        "to": "trip"
+      },
+      {
+        "from": "trip",
+        "to": "match"
+      },
+      {
+        "from": "match",
+        "to": "geo",
+        "label": "nearby"
+      },
+      {
+        "from": "match",
+        "to": "eta"
+      },
+      {
+        "from": "trip",
+        "to": "rides",
+        "label": "conditional"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Sized the location update rate and kept hot locations in memory."
+    },
+    {
+      "text": "Used a geospatial index to find nearby drivers."
+    },
+    {
+      "text": "Prevented double assignment with conditional updates or locks."
+    },
+    {
+      "text": "Modelled the ride as an explicit state machine."
+    },
+    {
+      "text": "Ranked by ETA rather than straight-line distance."
+    },
+    {
+      "text": "Pushed live trip updates to both parties."
+    },
+    {
+      "text": "Partitioned by city and handled boundaries and hotspots.",
+      "sse": true
+    },
+    {
+      "text": "Discussed batch vs greedy matching and load shedding.",
+      "sse": true
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "id": "kv-store",
+  "title": "Distributed key-value store",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Partitioning, replication, quorums and repair.",
+  "prompt": "Design a distributed key-value store with get(key) and put(key, value) that stays available when machines fail, scales to petabytes, and lets callers tune consistency.",
+  "lessons": [
+    "design-replication-partitioning",
+    "design-consistency",
+    "design-databases-indexes",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: get, put and delete for keys up to ~1 KB and values up to ~1 MB; optional TTL.",
+      "Non-functional: single-digit ms p99 inside a region, horizontal scaling, survives node and rack failures, tunable consistency."
+    ],
+    "estimation": [
+      "1 PB of data ÷ ~4 TB usable per node × replication factor 3 ≈ 750 nodes.",
+      "1M ops/s across 750 nodes ≈ 1,300 ops/s per node before replication; comfortable for SSD-backed nodes."
+    ],
+    "api": [
+      "get(key, consistency=ONE|QUORUM|ALL) → value(s) with version metadata.",
+      "put(key, value, context?, consistency) where context carries the version read, for conflict handling."
+    ],
+    "data": [
+      "Consistent hashing ring with many virtual nodes per machine: smoother balance and faster rebalancing.",
+      "Each key is stored on N replicas (the next N distinct nodes on the ring), placed across racks or zones.",
+      "Per node: an LSM tree (write-ahead log + memtable → sorted SSTables, Bloom filters per table, background compaction)."
+    ],
+    "design": [
+      "Any node can coordinate a request: it hashes the key, sends to the N replicas and waits for W acks (writes) or R responses (reads).",
+      "With R + W > N, every read quorum overlaps the latest write quorum, so a read sees the latest acknowledged write in the absence of concurrent writes and sloppy quorum.",
+      "Membership and failure detection by gossip; hinted handoff stores writes for a down replica on another node and replays them later."
+    ],
+    "deepDives": [
+      "Conflicts: last-write-wins by timestamp is simple but can silently drop concurrent writes; version vectors detect concurrency and return siblings for the client to merge.",
+      "Anti-entropy: read repair fixes stale replicas on reads; Merkle trees per key range let replicas find differences by exchanging hashes instead of data.",
+      "Deletes need tombstones kept long enough for every replica to see them, or deleted data can return during repair."
+    ],
+    "bottlenecks": [
+      "Hot keys: replicate reads, cache at clients, or split a value across keys.",
+      "Compaction and garbage collection pauses hurt p99; throttle compaction and route around slow replicas.",
+      "Rebalancing when nodes join moves data; stream it with rate limits."
+    ],
+    "tradeoffs": [
+      "CAP during partitions: this design favours availability (sloppy quorum, hinted handoff) over linearisability.",
+      "Lower R or W = lower latency but staler reads; R = W = QUORUM is the usual balance.",
+      "LSM trees favour write throughput; B-trees favour read latency and in-place updates."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Clients",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "coord",
+        "kind": "service",
+        "label": "Coordinator",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "n1",
+        "kind": "db",
+        "label": "Replica A",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "n2",
+        "kind": "db",
+        "label": "Replica B",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "n3",
+        "kind": "db",
+        "label": "Replica C",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "gossip",
+        "kind": "service",
+        "label": "Gossip membership",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "hint",
+        "kind": "storage",
+        "label": "Hinted handoff",
+        "col": 1,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "coord"
+      },
+      {
+        "from": "coord",
+        "to": "n1",
+        "label": "W/R"
+      },
+      {
+        "from": "coord",
+        "to": "n2"
+      },
+      {
+        "from": "coord",
+        "to": "n3"
+      },
+      {
+        "from": "coord",
+        "to": "hint",
+        "label": "if down"
+      },
+      {
+        "from": "n1",
+        "to": "gossip"
+      },
+      {
+        "from": "n2",
+        "to": "gossip"
+      },
+      {
+        "from": "n3",
+        "to": "gossip"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Partitioned with consistent hashing and virtual nodes."
+    },
+    {
+      "text": "Replicated N ways across failure domains."
+    },
+    {
+      "text": "Explained quorum reads and writes (R + W > N) and the tunable trade-off."
+    },
+    {
+      "text": "Described a storage engine (LSM or B-tree) and why."
+    },
+    {
+      "text": "Covered failure detection, hinted handoff and repair."
+    },
+    {
+      "text": "Handled conflicts with versioning or last-write-wins, stating the cost."
+    },
+    {
+      "text": "Explained tombstones, compaction and their p99 impact.",
+      "sse": true
+    },
+    {
+      "text": "Positioned the design on CAP/PACELC with justification.",
+      "sse": true
+    }
+  ]
+}

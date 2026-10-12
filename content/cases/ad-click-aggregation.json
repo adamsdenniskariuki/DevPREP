@@ -1,0 +1,190 @@
+{
+  "id": "ad-click-aggregation",
+  "title": "Ad click aggregation",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Streaming aggregation with event time, dedup and reconciliation.",
+  "prompt": "Design a system that counts ad clicks per ad per minute for advertiser dashboards and billing. Counts must be near real time for dashboards and exact for invoices.",
+  "lessons": [
+    "design-queues-events",
+    "design-consistency",
+    "design-databases-indexes",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: record clicks, aggregate per ad per minute (and other dimensions), query recent and historical counts, filter invalid clicks.",
+      "Non-functional: dashboards within a minute or two; billing counts exact and auditable; tolerate late and duplicate events."
+    ],
+    "estimation": [
+      "1B clicks a day ≈ 11,600/s average, peaks ~50,000/s.",
+      "Raw events ~200 bytes ⇒ 200 GB a day; aggregates (ads × minutes) are much smaller.",
+      "2M active ads × 1,440 minutes ≈ 2.9B potential rows a day, but most ad-minutes are empty, so store only non-zero ones."
+    ],
+    "api": [
+      "Click redirect endpoint records {clickId, adId, userHash, timestamp, ip} then redirects to the advertiser.",
+      "GET /ads/{id}/clicks?from=&to=&granularity=minute → counts."
+    ],
+    "data": [
+      "Raw click log in a durable, partitioned stream and archived to object storage (source of truth for audits).",
+      "Aggregates: (ad_id, minute) → count in an OLAP or wide-column store; rolled up to hours and days."
+    ],
+    "design": [
+      "Click service writes events to a partitioned stream (keyed by ad ID) and redirects immediately.",
+      "A stream processor deduplicates by click ID, filters invalid clicks, and aggregates into event-time tumbling windows of one minute, writing results to the aggregate store.",
+      "A daily batch job recomputes counts from the archived raw log; billing uses the batch result and reconciles it with the streaming totals."
+    ],
+    "deepDives": [
+      "Event time vs processing time: windows use the click timestamp; watermarks decide when a window is complete; late events within an allowed lateness update the window, later ones go to the batch correction.",
+      "Exactly-once counts: checkpoint processor state together with stream offsets, and make sink writes idempotent (upsert by ad and minute) so replays do not double count.",
+      "Hot ads: pre-aggregate within each partition or add a random sub-key then combine."
+    ],
+    "bottlenecks": [
+      "Bot and fraud traffic: rules and models filter clicks; invalid clicks are kept but flagged.",
+      "Backpressure when sinks slow: the stream buffers; scale processors by partitions.",
+      "Query load on dashboards: precomputed rollups and caching."
+    ],
+    "tradeoffs": [
+      "Lambda-style (stream + batch) gives fast and exact results at the cost of two code paths; a single streaming path is simpler if it can be made exact.",
+      "Longer allowed lateness = more accurate streaming counts but later finalisation.",
+      "Keeping raw logs is expensive but essential for audits and recomputation."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "user",
+        "kind": "client",
+        "label": "Ad viewers",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "click",
+        "kind": "service",
+        "label": "Click service",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "stream",
+        "kind": "queue",
+        "label": "Click stream",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "proc",
+        "kind": "worker",
+        "label": "Stream aggregator",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "olap",
+        "kind": "db",
+        "label": "Aggregates",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "arch",
+        "kind": "storage",
+        "label": "Raw archive",
+        "col": 3,
+        "row": 2
+      },
+      {
+        "id": "batch",
+        "kind": "worker",
+        "label": "Batch recompute",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "dash",
+        "kind": "client",
+        "label": "Dashboards",
+        "col": 5,
+        "row": 0
+      },
+      {
+        "id": "adv",
+        "kind": "external",
+        "label": "Advertiser site",
+        "col": 1,
+        "row": 0
+      }
+    ],
+    "edges": [
+      {
+        "from": "user",
+        "to": "click"
+      },
+      {
+        "from": "click",
+        "to": "adv",
+        "label": "redirect"
+      },
+      {
+        "from": "click",
+        "to": "stream"
+      },
+      {
+        "from": "stream",
+        "to": "proc",
+        "label": "dedup+window"
+      },
+      {
+        "from": "proc",
+        "to": "olap",
+        "label": "upsert"
+      },
+      {
+        "from": "stream",
+        "to": "arch"
+      },
+      {
+        "from": "arch",
+        "to": "batch"
+      },
+      {
+        "from": "batch",
+        "to": "olap",
+        "label": "reconcile"
+      },
+      {
+        "from": "dash",
+        "to": "olap"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Logged raw clicks durably before redirecting."
+    },
+    {
+      "text": "Aggregated in event-time windows with watermarks and late-event handling."
+    },
+    {
+      "text": "Deduplicated clicks and made sink writes idempotent."
+    },
+    {
+      "text": "Separated near-real-time dashboards from exact billing counts."
+    },
+    {
+      "text": "Kept raw data for recomputation and audits."
+    },
+    {
+      "text": "Estimated event rates and aggregate sizes."
+    },
+    {
+      "text": "Handled hot ads and backpressure.",
+      "sse": true
+    },
+    {
+      "text": "Addressed click fraud and explained lambda vs kappa trade-offs.",
+      "sse": true
+    }
+  ]
+}

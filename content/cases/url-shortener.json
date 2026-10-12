@@ -1,0 +1,199 @@
+{
+  "id": "url-shortener",
+  "title": "URL shortener",
+  "level": "se",
+  "minutes": 35,
+  "summary": "Key generation, read-heavy caching and redirects.",
+  "prompt": "Design a URL shortener. Users paste a long URL and get a short link; anyone opening the short link is redirected. Support optional custom aliases, link expiry and basic click counts for the owner.",
+  "lessons": [
+    "design-requirements-capacity",
+    "design-cache-data-flow",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: create a short link (optional custom alias and expiry), redirect, and show click counts to the owner.",
+      "Non-functional: redirects are read-heavy and latency-sensitive (tens of ms server-side), highly available, and a code never silently changes target.",
+      "Out of scope unless asked: rich analytics dashboards, link editing, full account management."
+    ],
+    "estimation": [
+      "100M new links a month ≈ 40 writes/s on average (100M ÷ 2.6M seconds); plan for 5× peaks.",
+      "At 100 reads per write, redirects average ~4,000/s and peak near 20,000/s.",
+      "5 years × 1.2B links/year = 6B links; at ~500 bytes each that is about 3 TB.",
+      "Seven base62 characters give 62⁷ ≈ 3.5 trillion codes, far more than 6B."
+    ],
+    "api": [
+      "POST /links {url, alias?, expiresAt?} with an Idempotency-Key → 201 {code, shortUrl}; 409 if the alias is taken.",
+      "GET /{code} → 302 with Location header; 404 for unknown and 410 for expired codes.",
+      "GET /links/{code}/stats → {clicks, lastClickAt} for the owner."
+    ],
+    "data": [
+      "links(code PK, long_url, owner_id, created_at, expires_at): a pure key-value access pattern.",
+      "A secondary index on owner_id serves “my links”; nothing on the redirect path needs a join.",
+      "Click counts live in a separate counter table fed by events, so redirects never write to the links row."
+    ],
+    "design": [
+      "Clients → CDN/edge → load balancer → stateless link service → cache → links store.",
+      "Create: the service takes the next ID from a block it leased from an ID allocator, base62-encodes it and inserts the row.",
+      "Redirect: cache lookup, then store on a miss; each redirect emits a click event to a queue that a counter worker aggregates in batches."
+    ],
+    "deepDives": [
+      "Key generation: each server leases blocks of, say, 10,000 IDs, so creating a link needs no coordination. Random codes with insert-if-absent also work but need collision retries.",
+      "Sequential IDs make codes guessable; apply a reversible permutation to the ID before encoding if enumeration matters.",
+      "301 vs 302: a 301 is cached by browsers, which cuts load but hides clicks and makes expiry unreliable; a 302 keeps every click visible.",
+      "Popularity is heavily skewed, so caching the hottest few percent of codes serves most redirects. Briefly cache “not found” too, to absorb scans of invalid codes."
+    ],
+    "bottlenecks": [
+      "Viral links: edge caching with a short max-age plus an in-process cache on each server.",
+      "Abuse: rate-limit creation per user and IP, check targets against malware and phishing lists, and disable (not delete) flagged codes.",
+      "Allocator outage only blocks new links once leased blocks run out; run it replicated."
+    ],
+    "tradeoffs": [
+      "Leased ID blocks waste IDs when a server crashes. That is harmless with trillions of codes and buys coordination-free writes.",
+      "Click counts lag by seconds, which keeps the redirect path read-only.",
+      "Custom aliases share the keyspace with generated codes; a conditional insert settles races either way."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Browsers",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "cdn",
+        "kind": "cdn",
+        "label": "Edge / CDN",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "lb",
+        "kind": "lb",
+        "label": "Load balancer",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "svc",
+        "kind": "service",
+        "label": "Link service",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "alloc",
+        "kind": "service",
+        "label": "ID allocator",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "cache",
+        "kind": "cache",
+        "label": "Hot codes",
+        "col": 4,
+        "row": 0
+      },
+      {
+        "id": "db",
+        "kind": "db",
+        "label": "Links store",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "Click events",
+        "col": 4,
+        "row": 2
+      },
+      {
+        "id": "w",
+        "kind": "worker",
+        "label": "Click counter",
+        "col": 5,
+        "row": 2
+      },
+      {
+        "id": "counts",
+        "kind": "db",
+        "label": "Click counts",
+        "col": 5,
+        "row": 3
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "cdn"
+      },
+      {
+        "from": "cdn",
+        "to": "lb"
+      },
+      {
+        "from": "lb",
+        "to": "svc"
+      },
+      {
+        "from": "svc",
+        "to": "alloc",
+        "label": "lease IDs"
+      },
+      {
+        "from": "svc",
+        "to": "cache"
+      },
+      {
+        "from": "svc",
+        "to": "db"
+      },
+      {
+        "from": "svc",
+        "to": "q",
+        "label": "click"
+      },
+      {
+        "from": "q",
+        "to": "w"
+      },
+      {
+        "from": "w",
+        "to": "counts"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Quantified read and write rates and storage, and sized the code space."
+    },
+    {
+      "text": "Chose a key-generation scheme and explained how it avoids collisions."
+    },
+    {
+      "text": "Cached the read-heavy redirect path."
+    },
+    {
+      "text": "Explained 301 vs 302 and the effect on click counts."
+    },
+    {
+      "text": "Kept click counting off the redirect write path."
+    },
+    {
+      "text": "Handled custom-alias races and expiry."
+    },
+    {
+      "text": "Addressed abuse: malicious targets and enumeration of sequential codes.",
+      "sse": true
+    },
+    {
+      "text": "Named failure modes (allocator outage, cache loss) and their blast radius.",
+      "sse": true
+    }
+  ]
+}

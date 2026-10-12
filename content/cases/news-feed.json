@@ -1,0 +1,202 @@
+{
+  "id": "news-feed",
+  "title": "News feed",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Fan-out on write vs read, celebrity handling and ranking.",
+  "prompt": "Design the home feed for a social network: users follow others and see a ranked feed of recent posts from people they follow. Some accounts have tens of millions of followers.",
+  "lessons": [
+    "design-cache-data-flow",
+    "design-queues-events",
+    "design-replication-partitioning",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: publish a post; read a paginated, ranked home feed; follow and unfollow.",
+      "Non-functional: feed loads in ~200 ms; a new post reaches followers within seconds to a minute; highly available, eventually consistent."
+    ],
+    "estimation": [
+      "300M daily users; 30M posts a day; average 200 followers ⇒ 6B feed inserts a day ≈ 70,000/s if every post fans out.",
+      "Feed reads: 300M × 10 opens ≈ 3B a day ≈ 35,000/s.",
+      "Keep ~500 post IDs per active feed: 300M × 500 × 8 bytes ≈ 1.2 TB of feed cache before overhead."
+    ],
+    "api": [
+      "POST /posts {text, mediaIds} → {postId}.",
+      "GET /feed?cursor=&limit=20 → posts with authors, counts and next cursor.",
+      "POST /follows/{userId} and DELETE /follows/{userId}."
+    ],
+    "data": [
+      "posts(post_id, author_id, created_at, body, media) keyed by post_id; author timelines by (author_id, created_at).",
+      "follows(follower_id, followee_id) with indexes in both directions.",
+      "feed cache: user_id → list of recent (post_id, score) entries."
+    ],
+    "design": [
+      "Publish: store the post, then emit an event. Fan-out workers append the post ID to each follower’s cached feed.",
+      "Celebrities (above a follower threshold) skip fan-out; their recent posts are merged in at read time.",
+      "Read: get the precomputed feed, merge celebrity posts, rank, hydrate post and author details from caches."
+    ],
+    "deepDives": [
+      "Hybrid fan-out: push for typical accounts (cheap reads), pull for huge accounts (avoids millions of writes per post).",
+      "Inactive users: do not fan out to users who have not visited in weeks; rebuild their feed on next login from followees’ timelines.",
+      "Ranking: a light model scores candidates using recency, affinity and engagement; candidate generation stays simple and fast.",
+      "Deletes and unfollows: filter at read time by checking post status and the follow graph, then clean caches lazily."
+    ],
+    "bottlenecks": [
+      "Fan-out backlog during spikes: queue it; freshness slips by seconds while reads stay fast.",
+      "Hot posts: cache counters and hydrate from a shared cache.",
+      "Feed cache memory: cap entries per user and expire inactive users."
+    ],
+    "tradeoffs": [
+      "Fan-out on write = fast reads, expensive writes; on read = cheap writes, slow reads. The hybrid uses each where it is cheap.",
+      "Eventual consistency: a follower may see a post a few seconds late.",
+      "Ranked feeds raise engagement but are harder to debug and explain than chronological ones."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Apps",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Feed API",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "feed",
+        "kind": "cache",
+        "label": "Feed cache",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "rank",
+        "kind": "service",
+        "label": "Ranker",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "post",
+        "kind": "service",
+        "label": "Post service",
+        "col": 1,
+        "row": 2
+      },
+      {
+        "id": "pdb",
+        "kind": "db",
+        "label": "Posts",
+        "col": 2,
+        "row": 2
+      },
+      {
+        "id": "ev",
+        "kind": "queue",
+        "label": "Post events",
+        "col": 2,
+        "row": 3
+      },
+      {
+        "id": "fan",
+        "kind": "worker",
+        "label": "Fan-out",
+        "col": 3,
+        "row": 3
+      },
+      {
+        "id": "graph",
+        "kind": "db",
+        "label": "Follow graph",
+        "col": 4,
+        "row": 3
+      },
+      {
+        "id": "pc",
+        "kind": "cache",
+        "label": "Post cache",
+        "col": 3,
+        "row": 1
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "api"
+      },
+      {
+        "from": "api",
+        "to": "feed"
+      },
+      {
+        "from": "api",
+        "to": "rank"
+      },
+      {
+        "from": "rank",
+        "to": "pc",
+        "label": "hydrate"
+      },
+      {
+        "from": "client",
+        "to": "post"
+      },
+      {
+        "from": "post",
+        "to": "pdb"
+      },
+      {
+        "from": "post",
+        "to": "ev"
+      },
+      {
+        "from": "ev",
+        "to": "fan"
+      },
+      {
+        "from": "fan",
+        "to": "graph"
+      },
+      {
+        "from": "fan",
+        "to": "feed",
+        "label": "append"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Compared fan-out on write and on read with numbers."
+    },
+    {
+      "text": "Handled celebrity accounts with a hybrid approach."
+    },
+    {
+      "text": "Precomputed feeds in a cache with bounded size."
+    },
+    {
+      "text": "Separated candidate generation, ranking and hydration."
+    },
+    {
+      "text": "Handled deletes, unfollows and privacy at read time."
+    },
+    {
+      "text": "Estimated write amplification and cache memory."
+    },
+    {
+      "text": "Skipped fan-out to inactive users and planned rebuilds.",
+      "sse": true
+    },
+    {
+      "text": "Discussed ranking trade-offs and how to measure feed quality.",
+      "sse": true
+    }
+  ]
+}

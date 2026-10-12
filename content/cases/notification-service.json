@@ -1,0 +1,195 @@
+{
+  "id": "notification-service",
+  "title": "Notification service",
+  "level": "se",
+  "minutes": 35,
+  "summary": "Fan-out to push, email and SMS with priorities and retries.",
+  "prompt": "Design a service other teams call to notify users by push, email and SMS. It must respect user preferences and quiet hours, keep one-time login codes fast during marketing blasts, and survive provider outages.",
+  "lessons": [
+    "design-queues-events",
+    "design-reliability-observability",
+    "design-api-data-model"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: accept a send request (user, template, data, priority), apply opt-outs and quiet hours, deliver by push, email or SMS, and report status per channel.",
+      "Non-functional: at-least-once delivery with few duplicates, absorbs bursts, and transactional messages stay fast regardless of bulk load.",
+      "Clarify: scheduled sends, localisation, and whether marketing and transactional traffic share capacity."
+    ],
+    "estimation": [
+      "50M daily users × 5 notifications ≈ 250M a day ≈ 3,000/s on average.",
+      "A campaign of 10M messages released over a few minutes is ~50,000/s, so queue it and drain at provider-safe rates.",
+      "At ~1 KB of delivery log per message: 250 GB a day, about 7.5 TB for 30 days of history."
+    ],
+    "api": [
+      "POST /notifications {idempotencyKey, userId, template, data, priority, channels?, sendAt?} → 202 {notificationId}.",
+      "GET /notifications/{id} → status per channel: queued, sent, delivered, failed or suppressed.",
+      "GET and PUT /users/{id}/preferences: per category and channel, plus quiet hours and time zone."
+    ],
+    "data": [
+      "notifications(id, caller, idempotency_key, user_id, template, payload, priority, created_at), unique on (caller, idempotency_key).",
+      "deliveries(notification_id, channel, attempt, provider_message_id, status, updated_at) as an append-only log.",
+      "preferences(user_id, category, channel, enabled) and devices(user_id, push_token, platform, last_seen)."
+    ],
+    "design": [
+      "The API validates and stores the request, then publishes to a queue for its priority (transactional or bulk).",
+      "Router workers load preferences, render the template, delay messages that fall in quiet hours, and fan out to per-channel queues.",
+      "Channel senders call providers with timeouts and retries (exponential backoff with jitter); provider callbacks update delivered and bounced status."
+    ],
+    "deepDives": [
+      "Duplicates: the idempotency key makes the API safe to retry. Senders record each attempt and pass a provider idempotency key where supported. A crash between sending and recording can still duplicate, so keep that window small; exactly-once to a phone is not achievable.",
+      "Isolation: separate queues and worker pools per priority and channel, so a marketing blast can never delay login codes.",
+      "Provider failover: a circuit breaker per provider; on sustained errors, route email or SMS to a secondary provider."
+    ],
+    "bottlenecks": [
+      "Preference lookups on every message: cache them with a short TTL and invalidate on update.",
+      "Dead push tokens: delete tokens that providers report as invalid.",
+      "Poison messages: after N attempts move them to a dead-letter queue and alert, instead of retrying forever."
+    ],
+    "tradeoffs": [
+      "At-least-once delivery with deduplication is cheaper and more available than chasing exactly-once.",
+      "Quiet hours trade timeliness for user trust; security codes bypass them.",
+      "Per-channel queues add moving parts but give independent scaling and failure isolation."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "callers",
+        "kind": "client",
+        "label": "Calling services",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Notify API",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "req",
+        "kind": "db",
+        "label": "Requests",
+        "col": 1,
+        "row": 2
+      },
+      {
+        "id": "pq",
+        "kind": "queue",
+        "label": "Priority queues",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "router",
+        "kind": "worker",
+        "label": "Router",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "prefs",
+        "kind": "cache",
+        "label": "Preferences",
+        "col": 3,
+        "row": 0
+      },
+      {
+        "id": "cq",
+        "kind": "queue",
+        "label": "Channel queues",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "send",
+        "kind": "worker",
+        "label": "Channel senders",
+        "col": 5,
+        "row": 1
+      },
+      {
+        "id": "prov",
+        "kind": "external",
+        "label": "Push/email/SMS",
+        "col": 5,
+        "row": 2
+      },
+      {
+        "id": "log",
+        "kind": "db",
+        "label": "Delivery log",
+        "col": 4,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "callers",
+        "to": "api"
+      },
+      {
+        "from": "api",
+        "to": "req"
+      },
+      {
+        "from": "api",
+        "to": "pq"
+      },
+      {
+        "from": "pq",
+        "to": "router"
+      },
+      {
+        "from": "router",
+        "to": "prefs"
+      },
+      {
+        "from": "router",
+        "to": "cq"
+      },
+      {
+        "from": "cq",
+        "to": "send"
+      },
+      {
+        "from": "send",
+        "to": "prov"
+      },
+      {
+        "from": "send",
+        "to": "log"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Applied preferences, opt-outs and quiet hours before sending."
+    },
+    {
+      "text": "Separated transactional from bulk traffic so bursts cannot starve critical messages."
+    },
+    {
+      "text": "Used retries with backoff and a dead-letter queue."
+    },
+    {
+      "text": "Designed for at-least-once delivery with idempotency to limit duplicates."
+    },
+    {
+      "text": "Tracked per-channel status, including provider callbacks."
+    },
+    {
+      "text": "Sized throughput for campaign bursts."
+    },
+    {
+      "text": "Planned provider failover and per-provider rate limits.",
+      "sse": true
+    },
+    {
+      "text": "Defined metrics and alerts: delivery rate, latency by priority, dead-letter depth.",
+      "sse": true
+    }
+  ]
+}

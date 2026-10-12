@@ -1,0 +1,152 @@
+{
+  "id": "api-rate-limiter",
+  "title": "API rate limiter",
+  "level": "se",
+  "minutes": 30,
+  "summary": "Distributed counters with token buckets at the gateway.",
+  "prompt": "Design a rate limiter for a public API: each API key gets a quota (for example 100 requests per second and 1M per day). Over-limit requests are rejected quickly and clearly.",
+  "lessons": [
+    "design-rate-limiting",
+    "design-cache-data-flow",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: enforce per-key limits over several windows, return 429 with Retry-After, and let operators change limits without deploys.",
+      "Non-functional: add under a few milliseconds per request; work across many gateway instances; degrade safely if the limiter store fails."
+    ],
+    "estimation": [
+      "1M requests/s across 100 gateways; each request needs one counter operation.",
+      "10M API keys × a few counters × ~100 bytes ≈ a few GB in a shared in-memory store."
+    ],
+    "api": [
+      "Internal: check(key, cost=1) → {allowed, remaining, resetAt}.",
+      "Response headers: RateLimit-Limit, RateLimit-Remaining, and Retry-After on 429.",
+      "Admin: PUT /limits/{plan} to change a plan’s quotas."
+    ],
+    "data": [
+      "Token bucket per key: (tokens, last_refill) in a shared in-memory store, with a TTL so idle keys disappear.",
+      "Limit configuration per plan, cached on gateways and refreshed every few seconds."
+    ],
+    "design": [
+      "The gateway authenticates the key, looks up its plan, and calls check() before forwarding.",
+      "check() runs an atomic script in the store: refill tokens by elapsed time × rate, then take one if available.",
+      "The store is sharded by API key, so each key’s state lives on one shard."
+    ],
+    "deepDives": [
+      "Algorithms: a fixed window is cheap but lets twice the limit through at window edges; a sliding-window counter weights the previous window to approximate a true sliding window; a token bucket allows controlled bursts.",
+      "Atomicity: separate read and write calls race across gateways; do the read-modify-write in one atomic operation or script.",
+      "Latency: for very high rates, gateways can take small token batches locally and sync periodically, trading exactness for speed."
+    ],
+    "bottlenecks": [
+      "One very hot key overloads one shard: use local pre-allocation for that key.",
+      "Store outage: fail open for most traffic (availability) but fail closed for sensitive endpoints such as login.",
+      "Clock differences: use the store’s time, not each gateway’s."
+    ],
+    "tradeoffs": [
+      "Exact global counting costs a network hop per request; local approximations are faster but can overshoot briefly.",
+      "Fail open risks overload; fail closed risks an outage caused by the limiter itself.",
+      "Token buckets are friendly to bursty clients; fixed windows are easier to explain to customers."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "API clients",
+        "col": 0,
+        "row": 1
+      },
+      {
+        "id": "gw",
+        "kind": "lb",
+        "label": "API gateways",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "rl",
+        "kind": "cache",
+        "label": "Limiter store",
+        "col": 2,
+        "row": 0
+      },
+      {
+        "id": "cfg",
+        "kind": "db",
+        "label": "Limit config",
+        "col": 1,
+        "row": 0
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Backend APIs",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "obs",
+        "kind": "service",
+        "label": "Metrics",
+        "col": 2,
+        "row": 2
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "gw"
+      },
+      {
+        "from": "gw",
+        "to": "rl",
+        "label": "atomic check"
+      },
+      {
+        "from": "gw",
+        "to": "cfg",
+        "label": "cached"
+      },
+      {
+        "from": "gw",
+        "to": "api",
+        "label": "allowed"
+      },
+      {
+        "from": "gw",
+        "to": "obs",
+        "label": "429 counts"
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "text": "Chose an algorithm and explained its burst behaviour."
+    },
+    {
+      "text": "Kept counters in a shared store and made updates atomic."
+    },
+    {
+      "text": "Returned 429 with Retry-After and rate-limit headers."
+    },
+    {
+      "text": "Kept added latency within a stated budget."
+    },
+    {
+      "text": "Decided fail-open vs fail-closed per endpoint."
+    },
+    {
+      "text": "Supported configurable limits per plan."
+    },
+    {
+      "text": "Handled hot keys and local token pre-allocation.",
+      "sse": true
+    },
+    {
+      "text": "Explained clock and multi-region considerations.",
+      "sse": true
+    }
+  ]
+}
