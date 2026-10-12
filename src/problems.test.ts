@@ -6,7 +6,7 @@ import knownIds from '../tests/fixtures/problem-ids.json' with { type: 'json' }
 import { validateProblem } from './content-schema'
 import { lessons } from './curriculum'
 import { loadProblems, problemIndex } from './problems'
-import type { Problem } from './problem-types'
+import { PROBLEM_PATTERNS, type Problem } from './problem-types'
 import { deepEqual, formatArgs, formatValue, PY_HARNESS, pythonMessage, runJs, runPython } from './runner/core'
 import { PYODIDE_VERSION } from './runner/pyodide-version'
 
@@ -37,6 +37,13 @@ describe('problem content', () => {
   it('covers every core DSA pattern at both levels', () => {
     expect(new Set(problems.map(problem => problem.pattern)).size).toBeGreaterThanOrEqual(15)
     expect(problems.some(problem => problem.level === 'sse')).toBe(true)
+  })
+
+  it('gives every pattern Easy, Medium and Hard problems', () => {
+    for (const pattern of PROBLEM_PATTERNS) {
+      const tiers = new Set(problems.filter(problem => problem.pattern === pattern).map(problem => problem.difficulty))
+      expect([...tiers].sort(), pattern).toEqual(['core', 'stretch', 'warm-up'])
+    }
   })
 
   it('marks path-core problems so the SE path only needs SE-level problems', () => {

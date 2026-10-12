@@ -1,0 +1,138 @@
+{
+  "id": "letter-blocks",
+  "title": "Letter-disjoint blocks",
+  "pattern": "Greedy",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "Cut a lowercase string into as many consecutive blocks as possible so that every letter appears in only one block, and return the block lengths in order.\n\n- text has 0 to 100,000 characters, each from 'a' to 'z'.\n- Blocks must cover the whole string, in order, without gaps; no letter may appear in two different blocks.\n- The split with the most blocks is unique. Return its block lengths from left to right ([] for an empty string).",
+  "function": {
+    "js": "blockSizes",
+    "py": "block_sizes"
+  },
+  "starter": {
+    "js": "function blockSizes(text) {\n  // Your code here\n}\n",
+    "py": "def block_sizes(text):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "abacbdeffe"
+      ],
+      "expected": [
+        5,
+        1,
+        4
+      ]
+    },
+    {
+      "args": [
+        "xyzzyxwvvw"
+      ],
+      "expected": [
+        6,
+        4
+      ]
+    },
+    {
+      "args": [
+        "abc"
+      ],
+      "expected": [
+        1,
+        1,
+        1
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        ""
+      ],
+      "expected": []
+    },
+    {
+      "args": [
+        "q"
+      ],
+      "expected": [
+        1
+      ]
+    },
+    {
+      "args": [
+        "aaaa"
+      ],
+      "expected": [
+        4
+      ]
+    },
+    {
+      "args": [
+        "abca"
+      ],
+      "expected": [
+        4
+      ]
+    },
+    {
+      "args": [
+        "abcbcdeae"
+      ],
+      "expected": [
+        9
+      ]
+    },
+    {
+      "args": [
+        "mmnnoopp"
+      ],
+      "expected": [
+        2,
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "args": [
+        "ccbbbccccbcacbbbcbbcaccaaacaababcbcbacabccccbaacbcbcaccabacefefecddcdfdfcdfdefceecfefcdfecfcefdcedfdeedcecefefcddefedfeeddffeedfddedeeedeedddfddfdfeeddeefdfeeeefeeffgfggfhhfhfgffggfhfggghhfghgfffhijijijijijjiijjiiijijijiiiiiijjiijiiijijiijiiiiiijiilommmnllmmnmlmnlolommommoolmlnonommlonnlnmmlolmooomomolooooooooooooooooooooooooooopppqqqqqqqqqpqpqqqpqsssssssssssssssssssssssssssssssssssssssvxvwwvvwxyyyyxwvwyxxxvxywxxyyw"
+      ],
+      "expected": [
+        196,
+        52,
+        82,
+        20,
+        39,
+        30
+      ]
+    },
+    {
+      "args": [
+        "jbypujatnamywkerysfbvapyffbgyawirbuvdkgvyidilsjwjjtdcyxpoyksfyruehywuqwukcbypmesqbcdofnvewwyxdaxvlxbvvdslyayycvrisnpvunefyfqjkireigrfckiieuovphyimamfjgusyyywciisilhshhoiulhamehfqsrsmboowlcxeqjvpoppgsilgqnyndgfqnblsuypbtnlptqwptyauusdclsivkgvtpfknxpenwqskegnoxvjfmjvsamnspmcjcwfghtrlmhomqbmquwyhdkvxujbugyaduyxohrfhfivuqrlsfefloypfywhdyotlkwiccnqvyjliyjndlgkalrmxlbitoumfttasmcnlydufcbjciepllymmmmuroqaqasvdasxlpyncgwpetvyexhggmerqpdlqtsufgphkmpbgtyadapfhytiajjxmgivdrhuqvvooydgxyjskfggplwhosynamtqoudxynorkhycadahqlxvoaeqbxmyailpqwcwrerfheilwaombtjghjocoiaybvdkoysyxsjovndqlhuylsxybbntikfaofviajhjlsczzzz"
+      ],
+      "expected": [
+        600,
+        4
+      ]
+    }
+  ],
+  "hints": [
+    "A block can't end while some letter inside it still appears later in the string.",
+    "Record the last index of every letter. While scanning, track the farthest last-index of the letters seen in the current block.",
+    "When the scan index equals that farthest index, close the block: record its length and start a new one at the next index."
+  ],
+  "solution": {
+    "js": "function blockSizes(text) {\n  const last = {}\n  for (let i = 0; i < text.length; i++) last[text[i]] = i\n  const sizes = []\n  let start = 0\n  let end = 0\n  for (let i = 0; i < text.length; i++) {\n    end = Math.max(end, last[text[i]])\n    if (i === end) {\n      sizes.push(i - start + 1)\n      start = i + 1\n    }\n  }\n  return sizes\n}\n",
+    "py": "def block_sizes(text):\n    last = {ch: i for i, ch in enumerate(text)}\n    sizes = []\n    start = end = 0\n    for i, ch in enumerate(text):\n        end = max(end, last[ch])\n        if i == end:\n            sizes.append(i - start + 1)\n            start = i + 1\n    return sizes\n",
+    "explanation": "The current block must stretch at least to the last occurrence of every letter it already contains, so its end only grows as you scan. Closing the block the moment the scan reaches that end makes it as short as possible, which leaves the most room for later blocks. Each cut chosen this way is forced or free, so the result has the maximum number of blocks."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "The last-index table has at most 26 entries, so extra space is constant apart from the output list."
+  },
+  "followUps": [
+    "Return the blocks themselves as strings instead of their lengths. What if the alphabet were all of Unicode?"
+  ]
+}
