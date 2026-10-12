@@ -1,4 +1,5 @@
-import { lessons } from './curriculum'
+import { lessons, tracks } from './curriculum'
+import type { Track } from './curriculum'
 import { lessonSections } from './lesson-sections'
 import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
@@ -40,6 +41,12 @@ export interface Progress {
   session: StudySession | null
   activity: Activity[]
   selectedPath?: PathId
+  profile?: Profile
+}
+/** Optional study profile used by Home and the planner. Omitted when empty. */
+export interface Profile {
+  interviewDate?: string
+  focusTracks?: Track[]
 }
 
 export function emptyProgress(now = new Date()): Progress {
@@ -101,7 +108,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -150,7 +157,38 @@ export function parseBackup(text: string): Progress {
     if (!Object.hasOwn(records, lesson.id)) invalid('activity has no completed lesson.')
     return { lessonId: lesson.id, at: timestamp(raw.at), mode: mode(raw.mode), rating: rating(raw.rating) }
   })
-  return { version: 1, updatedAt, records, session, activity, ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}) }
+  const profile = Object.hasOwn(root, 'profile') ? parseProfile(root.profile) : undefined
+  return {
+    version: 1, updatedAt, records, session, activity,
+    ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
+    ...(profile ? { profile } : {}),
+  }
+}
+
+function parseProfile(value: unknown): Profile {
+  const raw = object(value, [], ['interviewDate', 'focusTracks'])
+  const profile: Profile = {}
+  if (Object.hasOwn(raw, 'interviewDate')) {
+    try { profile.interviewDate = day(raw.interviewDate) } catch { invalid('invalid interview date.') }
+  }
+  if (Object.hasOwn(raw, 'focusTracks')) {
+    const list = raw.focusTracks
+    if (!Array.isArray(list) || list.length > tracks.length || new Set(list).size !== list.length ||
+      list.some(item => !tracks.some(track => track.id === item))) invalid('unknown focus track.')
+    profile.focusTracks = list as Track[]
+  }
+  return profile
+}
+
+/** Merges profile changes; empty values are removed so backups stay minimal. */
+export function updateProfile(progress: Progress, patch: { interviewDate?: string; focusTracks?: Track[] }, now = new Date()): Progress {
+  const profile: Profile = { ...progress.profile, ...patch }
+  if (!profile.interviewDate) delete profile.interviewDate
+  if (!profile.focusTracks?.length) delete profile.focusTracks
+  const next: Progress = { ...progress, updatedAt: now.toISOString() }
+  if (Object.keys(profile).length) next.profile = profile
+  else delete next.profile
+  return next
 }
 
 export function beginSession(progress: Progress, lessonId: string, sessionMode: Mode, now = new Date()): Progress {

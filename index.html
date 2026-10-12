@@ -4,11 +4,17 @@
     <meta charset="UTF-8" />
     <script>
       (() => {
+        let look = {};
+        try { look = JSON.parse(window.localStorage.getItem("devprep.appearance.v1") || "{}") || {}; } catch {}
         const param = new URLSearchParams(window.location.search).get("scoutTheme");
         const theme = param === "light" || param === "dark"
           ? param
-          : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+          : look.mode === "light" || look.mode === "dark"
+            ? look.mode
+            : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
         document.documentElement.setAttribute("data-theme", theme);
+        document.documentElement.dataset.palette = ["blueprint", "paper", "sepia", "contrast"].includes(look.palette) ? look.palette : "blueprint";
+        document.documentElement.dataset.font = ["atkinson", "inter", "serif", "dyslexic", "system"].includes(look.font) ? look.font : "atkinson";
         let accent = "purple";
         try {
           const saved = window.localStorage.getItem("devprep.accent.v1");
@@ -27,8 +33,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
-    <meta name="description" content="A little practice. A stronger interview. Build lasting skills with guided lessons, deliberate practice, and spaced reviews." />
-    <title>DevPREP — A little better, every day</title>
+    <meta name="description" content="Interview prep for software engineers and senior engineers: DSA, system design, ML and behavioural practice with spaced review. Works offline." />
+    <title>DevPREP — Interview prep for SE &amp; SSE</title>
   </head>
   <body>
     <div id="root"></div>

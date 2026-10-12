@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { lessons, tracks } from './curriculum'
 import {
   beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES,
-  MAX_DRAFT_LENGTH, parseBackup, readProgress, serializeBackup, STORAGE_KEY, writeProgress,
+  MAX_DRAFT_LENGTH, parseBackup, readProgress, serializeBackup, STORAGE_KEY, updateProfile, writeProgress,
 } from './progress'
+import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import type { Progress, Rating, StoragePort } from './progress'
 
 const now = new Date('2026-09-17T12:00:00.000Z')
@@ -227,5 +228,42 @@ describe('storage failures', () => {
     raw.session!.hintsRevealed = 100
     expect(() => writeProgress(storage, raw)).toThrow()
     expect(storage.data).toBeNull()
+  })
+})
+
+describe('optional study profile', () => {
+  it('loads the original v1 export unchanged, with no profile inserted', () => {
+    const text = JSON.stringify(legacyBackup)
+    const parsed = parseBackup(text)
+    expect(parsed.profile).toBeUndefined()
+    expect(JSON.parse(serializeBackup(parsed))).toEqual(legacyBackup)
+  })
+
+  it('upgrades a v1 export with a profile and round-trips it', () => {
+    const upgraded = updateProfile(parseBackup(JSON.stringify(legacyBackup)), { interviewDate: '2026-11-02', focusTracks: ['system-design', 'dsa'] }, now)
+    expect(upgraded.records).toEqual(parseBackup(JSON.stringify(legacyBackup)).records)
+    expect(upgraded.session).toEqual(parseBackup(JSON.stringify(legacyBackup)).session)
+    const again = parseBackup(serializeBackup(upgraded))
+    expect(again.profile).toEqual({ interviewDate: '2026-11-02', focusTracks: ['system-design', 'dsa'] })
+  })
+
+  it('drops empty values so a cleared profile disappears from backups', () => {
+    const withDate = updateProfile(emptyProgress(now), { interviewDate: '2026-11-02' }, now)
+    const cleared = updateProfile(withDate, { interviewDate: undefined }, now)
+    expect(cleared.profile).toBeUndefined()
+    expect(JSON.parse(serializeBackup(cleared))).not.toHaveProperty('profile')
+    expect(updateProfile(emptyProgress(now), { focusTracks: [] }, now).profile).toBeUndefined()
+  })
+
+  it.each([
+    ['unknown field', { interviewDate: '2026-11-02', level: 'senior' }],
+    ['malformed date', { interviewDate: '02/11/2026' }],
+    ['impossible date', { interviewDate: '2026-02-30' }],
+    ['unknown track', { focusTracks: ['frontend'] }],
+    ['duplicate track', { focusTracks: ['dsa', 'dsa'] }],
+    ['non-array tracks', { focusTracks: 'dsa' }],
+    ['null profile', null],
+  ])('rejects a backup whose profile has an %s', (_, profile) => {
+    expect(() => parseBackup(JSON.stringify({ ...legacyBackup, profile }))).toThrow()
   })
 })

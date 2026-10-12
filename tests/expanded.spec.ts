@@ -98,7 +98,7 @@ test('prerequisites are reachable but cannot discard an unfinished notebook with
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(prerequisite.title)
 })
 
-test('Today suggests added material without resetting a completed original roadmap', async ({ page }) => {
+test('Home suggests added material without resetting a completed original roadmap', async ({ page }) => {
   let seed = emptyProgress()
   const originalIds = [
     'hash-map-complements', 'two-pointers-sorted-pairs', 'sliding-window-distinct',
@@ -141,7 +141,7 @@ for (const track of tracks) {
   test(`${track.title}: every lesson has reachable, narrow-screen-safe learning and practice`, async ({ page }) => {
     test.setTimeout(120_000)
     await page.setViewportSize({ width: 320, height: 780 })
-    await page.goto('./#roadmap')
+    await page.goto('./#tracks')
     await page.getByRole('button', { name: track.title, exact: true }).click()
     const trackLessons = lessons.filter(lesson => lesson.track === track.id)
     await expect(page.getByRole('article')).toHaveCount(trackLessons.length)
@@ -165,7 +165,7 @@ for (const track of tracks) {
       await expect(page.getByText(lesson.extraPractice[1].prompt, { exact: true })).toBeVisible()
       await page.getByText('Stretch worked answer & rubric', { exact: true }).click()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-      await page.getByRole('link', { name: 'Roadmap', exact: true }).click()
+      await page.getByRole('link', { name: 'Tracks', exact: true }).click()
     }
   })
 }

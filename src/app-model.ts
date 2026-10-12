@@ -1,9 +1,10 @@
 import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
 import type { Lesson, Track } from './curriculum'
-import type { LearningPath } from './learning-paths'
-import type { Activity, Mode, Progress } from './progress'
+import type { GameStats, WeakArea } from './gamification'
+import type { LearningPath, PathId } from './learning-paths'
+import type { Activity, Mode, Profile, Progress } from './progress'
 
-export type Route = 'today' | 'roadmap' | 'review' | 'progress' | 'study'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -21,6 +22,9 @@ export interface AppModel {
   outsidePath: boolean | undefined
   clock: Date
   today: string
+  game: GameStats
+  weak: WeakArea[]
+  daysLeft: number | undefined
   heading: RefObject<HTMLHeadingElement | null>
   backupControls: ReactNode
   roadmapScope: 'path' | 'all'
@@ -30,4 +34,9 @@ export interface AppModel {
   navigate: (next: Route) => void
   start: (lesson: Lesson, mode?: Mode) => void
   browseAll: (track?: Track | 'all') => void
+  changePath: (id: PathId | undefined) => void
+  changeProfile: (patch: Partial<Profile>) => void
+  tourOpen: boolean
+  closeTour: () => void
+  replayTour: () => void
 }

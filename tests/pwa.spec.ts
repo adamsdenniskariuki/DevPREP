@@ -184,11 +184,11 @@ for (const mount of mounts) {
       await page.close()
       const offline = await context.newPage()
       offline.on('dialog', dialog => dialog.accept())
-      await offline.goto(`${mount}#roadmap`)
+      await offline.goto(`${mount}#tracks`)
       await ready(offline)
       for (const track of ['dsa', 'system-design', 'ml', 'behavioral']) {
         const lesson = lessons.filter(item => item.track === track).at(-1)!
-        await offline.goto(`${mount}#roadmap`)
+        await offline.goto(`${mount}#tracks`)
         const row = offline.getByRole('article').filter({ has: offline.getByRole('heading', { name: lesson.title, exact: true }) })
         await row.getByRole('button', { name: 'Start lesson', exact: true }).click()
         await expect(offline.getByRole('heading', { name: lesson.title, exact: true })).toBeVisible()
@@ -200,7 +200,7 @@ for (const mount of mounts) {
         await offline.reload()
         await expect(offline.getByLabel('Your approach & answer')).toHaveValue(`Offline answer for ${track}`)
       }
-      await offline.goto(`${mount}#progress`)
+      await offline.goto(`${mount}#settings`)
       const before = await offline.evaluate(key => localStorage.getItem(key), STORAGE_KEY)
       const downloaded = offline.waitForEvent('download')
       await offline.getByRole('button', { name: 'Export backup' }).click()
@@ -467,6 +467,7 @@ for (const blocker of ['recovery', 'conflict', 'accent'] as const) {
           return original.call(this, name, value)
         }
       }, ACCENT_KEY)
+      await page.evaluate(() => { location.hash = 'settings' })
       await page.getByLabel('Accent', { exact: true }).selectOption('forest')
       await expect(page.getByRole('alert').filter({ hasText: 'Accent preference needs attention.' })).toBeVisible()
     }

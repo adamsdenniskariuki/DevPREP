@@ -50,7 +50,7 @@ test('learn, practice, hint, resume, reflect, schedule, and daily completion', a
   expect(progress.session).toBeNull()
   expect(progress.records[first.id].intervalDays).toBe(3)
   expect(progress.activity).toHaveLength(1)
-  await page.getByRole('link', { name: 'Review', exact: true }).click()
+  await page.getByRole('link', { name: 'Practice', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'You’re all caught up.' })).toBeVisible()
   await expect(page.getByText(first.title, { exact: true })).toBeVisible()
 })
@@ -60,12 +60,12 @@ test('due review is recall-first, resumable, and rescheduled without duplicate c
   await page.addInitScript(({ key, seed }) => {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(seed))
   }, { key: STORAGE_KEY, seed })
-  await page.goto('./#review')
+  await page.goto('./#practice')
   await page.getByRole('button', { name: 'Review now' }).click()
   await expect(page.getByLabel('Your approach & answer')).toHaveValue('')
   await page.getByLabel('Your approach & answer').fill('Explain the invariant from memory, and why it handles duplicate values.')
   await page.getByRole('link', { name: 'Pause session' }).click()
-  await page.goto('./#review')
+  await page.goto('./#practice')
   await page.getByRole('button', { name: 'Resume review' }).click()
   await page.getByRole('button', { name: 'Compare & reflect' }).click()
   await page.getByRole('button', { name: 'Confident', exact: false }).click()
@@ -80,7 +80,7 @@ test('due review is recall-first, resumable, and rescheduled without duplicate c
 test('export and confirmed import restore draft, progress, and review dates', async ({ page }) => {
   await startPractice(page)
   await page.getByLabel('Your approach & answer').fill('Backup this unfinished answer.')
-  await page.goto('./#progress')
+  await page.goto('./#settings')
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export backup' }).click()
   const download = await downloadPromise
@@ -104,7 +104,7 @@ test('invalid and oversized imports leave existing progress untouched', async ({
   await startPractice(page)
   await page.getByLabel('Your approach & answer').fill('Keep me safe.')
   const before = await saved(page)
-  await page.goto('./#progress')
+  await page.goto('./#settings')
   await page.getByLabel('Import progress JSON').setInputFiles({ name: 'bad.json', mimeType: 'application/json', buffer: Buffer.from('{"version":100}') })
   await expect(page.getByRole('alert')).toContainText('Existing progress was not changed')
   expect(await saved(page)).toEqual(before)
@@ -161,7 +161,7 @@ test('corrupted saved data enters non-destructive recovery and can restore a bac
   expect((await downloadPromise).suggestedFilename()).toContain('recovery')
   await page.getByLabel('Import progress JSON').setInputFiles({ name: 'valid.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(completedYesterday())) })
   await page.getByRole('button', { name: 'Replace progress' }).click()
-  await expect(page.getByRole('heading', { name: 'A little better, every day.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Let’s get interview-ready.' })).toBeVisible()
   expect(Object.keys((await saved(page)).records)).toEqual([first.id])
 })
 
@@ -189,8 +189,8 @@ test('another tab cannot silently overwrite this tab’s progress', async ({ pag
 })
 
 test('all tracks offer substantive, refresh-safe lessons and prompts', async ({ page }) => {
-  await page.goto('./#roadmap')
-  await expect(page.getByRole('heading', { name: 'Your learning roadmap' })).toBeVisible()
+  await page.goto('./#tracks')
+  await expect(page.getByRole('heading', { level: 1, name: 'Tracks' })).toBeVisible()
   page.on('dialog', dialog => dialog.accept())
   for (const track of ['dsa', 'system-design', 'ml', 'behavioral']) {
     const lesson = lessons.find(item => item.track === track)!
@@ -203,14 +203,14 @@ test('all tracks offer substantive, refresh-safe lessons and prompts', async ({ 
     await page.getByRole('button', { name: 'Continue to practice' }).click()
     await expect(page.getByText(lesson.task, { exact: true })).toBeVisible()
     await expect(page.getByText('Nothing is executed or automatically graded.', { exact: false })).toBeVisible()
-    await page.goto('./#roadmap')
+    await page.goto('./#tracks')
   }
 })
 
 test('session replacement can be cancelled without losing an answer', async ({ page }) => {
   await startPractice(page)
   await page.getByLabel('Your approach & answer').fill('Do not lose my work.')
-  await page.goto('./#roadmap')
+  await page.goto('./#tracks')
   page.once('dialog', dialog => dialog.dismiss())
   const next = page.getByRole('article').filter({ has: page.getByRole('heading', { name: lessons[1].title, exact: true }) })
   await next.getByRole('button', { name: 'Start lesson' }).click()
@@ -239,16 +239,16 @@ test('keyboard skip link and navigation reach focused content', async ({ page })
   await page.getByRole('link', { name: 'Skip to content' }).focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('main')).toBeFocused()
-  await page.getByRole('link', { name: 'Roadmap', exact: true }).focus()
+  await page.getByRole('link', { name: 'Tracks', exact: true }).focus()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { level: 1 })).toBeFocused()
-  await expect(page).toHaveURL(/#roadmap$/)
+  await expect(page).toHaveURL(/#tracks$/)
 })
 
 test('narrow screens have no horizontal overflow and a single focused study step', async ({ page }) => {
   for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 900 })
-    for (const route of ['today', 'roadmap', 'review', 'progress']) {
+    for (const route of ['home', 'tracks', 'practice', 'progress', 'settings']) {
       await page.goto(`./#${route}`)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
     }
@@ -274,16 +274,16 @@ test('GitHub Pages base and unknown hashes stay on the app shell', async ({ page
   page.on('pageerror', error => errors.push(error.message))
   await page.goto('./#not-a-page')
   await expect(page.getByRole('heading', { name: 'This page isn’t on the roadmap.' })).toBeVisible()
-  await page.getByRole('button', { name: 'Back to Today' }).click()
+  await page.getByRole('button', { name: 'Back to Home' }).click()
   await page.reload()
-  await expect(page.getByRole('heading', { level: 1 })).toHaveText('A little better, every day.')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Let’s get interview-ready.')
   expect(errors).toEqual([])
   expect(await page.locator('script[src]').getAttribute('src')).toMatch(/^\.\/assets\//)
 })
 
 test('capture key screens for visual inspection', async ({ page }, testInfo) => {
   await page.goto('./?scoutTheme=light')
-  await page.screenshot({ path: testInfo.outputPath('today-light.png'), fullPage: true })
+  await page.screenshot({ path: testInfo.outputPath('home-light.png'), fullPage: true })
   await startPractice(page)
   await page.getByLabel('Your approach & answer').fill('Keep a map from value to index. Before inserting each number, look up its complement.\nThis prevents reusing the same position.')
   await page.evaluate(() => window.scrollTo(0, 0))
@@ -291,6 +291,6 @@ test('capture key screens for visual inspection', async ({ page }, testInfo) => 
   await page.getByRole('button', { name: 'Compare & reflect' }).click()
   await page.evaluate(() => window.scrollTo(0, 0))
   await page.screenshot({ path: testInfo.outputPath('reflect-light.png'), fullPage: true })
-  await page.goto('./?scoutTheme=dark#roadmap')
-  await page.screenshot({ path: testInfo.outputPath('roadmap-dark.png'), fullPage: true })
+  await page.goto('./?scoutTheme=dark#tracks')
+  await page.screenshot({ path: testInfo.outputPath('tracks-dark.png'), fullPage: true })
 })

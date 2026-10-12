@@ -36,14 +36,14 @@ for (const mount of ['/', '/DevPREP/']) {
         assets.add(response.url())
       }
     })
-    for (const route of ['today', 'roadmap', 'review', 'progress', 'study']) {
+    for (const route of ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'today', 'roadmap', 'review']) {
       await page.goto(`${origin}${mount}?scoutTheme=light#${route}`)
       await page.reload()
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       expect(new URL(page.url()).pathname).toBe(mount)
       expect(new URL(page.url()).hash).toBe(`#${route}`)
     }
-    await page.getByRole('link', { name: 'Today', exact: true }).click()
+    await page.getByRole('link', { name: 'Home', exact: true }).click()
     await page.getByRole('button', { name: 'Start today’s lesson' }).click()
     await page.getByRole('button', { name: 'Continue to practice' }).click()
     await page.getByLabel('Your approach & answer').fill('A refresh-safe domain draft.')
@@ -66,7 +66,7 @@ test('a new origin starts empty and restores progress only through explicit back
   await page.getByRole('button', { name: 'Start today’s lesson' }).click()
   await page.getByRole('button', { name: 'Continue to practice' }).click()
   await page.getByLabel('Your approach & answer').fill('Transfer this unfinished answer explicitly.')
-  await page.goto('./#progress')
+  await page.goto('./#settings')
   const before = await page.evaluate(key => localStorage.getItem(key), STORAGE_KEY)
   const downloadPromise = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export backup' }).click()
