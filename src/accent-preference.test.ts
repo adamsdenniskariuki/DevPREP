@@ -2,11 +2,21 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 import { ACCENT_KEY, accents, parseAccent, writeAccent } from './accent-preference'
+import { APPEARANCE_KEY } from './appearance'
 import { color, contrast, over } from '../tests/contrast'
 
 const initialization = readFileSync(new URL('../index.html', import.meta.url), 'utf8').match(/<script>([\s\S]*?)<\/script>/)![1]
 
-function initialize(saved: string | null, search = '', systemDark = false, denied = false) {
+function initialize(saved: string | null, search = '', systemDark = false, denied = false, appearance: string | null = null) {
+  return pick(initializeAll(saved, search, systemDark, denied, appearance))
+}
+
+function pick(dataset: Record<string, string>) {
+  const { palette: _palette, font: _font, ...rest } = dataset
+  return rest
+}
+
+function initializeAll(saved: string | null, search = '', systemDark = false, denied = false, appearance: string | null = null) {
   const dataset: Record<string, string> = {}
   const setItem = vi.fn()
   runInNewContext(initialization, {
@@ -16,9 +26,9 @@ function initialize(saved: string | null, search = '', systemDark = false, denie
       matchMedia: () => ({ matches: systemDark }),
       localStorage: {
         getItem: (key: string) => {
-          expect(key).toBe(ACCENT_KEY)
+          expect([ACCENT_KEY, APPEARANCE_KEY]).toContain(key)
           if (denied) throw new Error('Access denied')
-          return saved
+          return key === ACCENT_KEY ? saved : appearance
         },
         setItem,
       },
@@ -83,5 +93,20 @@ describe('pre-paint appearance initialization', () => {
   it('records invalid/unreadable preferences for a visible React error rather than silently deleting them', () => {
     expect(initialize('amber')).toEqual({ theme: 'light', accent: 'purple', accentError: 'invalid' })
     expect(initialize(null, '?scoutTheme=light', true, true)).toEqual({ theme: 'light', accent: 'purple', accentError: 'unavailable' })
+  })
+})
+
+describe('pre-paint palette, font and saved mode', () => {
+  it('defaults to blueprint and Atkinson', () => {
+    expect(initializeAll(null)).toMatchObject({ palette: 'blueprint', font: 'atkinson', theme: 'light' })
+  })
+  it('applies a saved appearance, with the URL theme still winning', () => {
+    const saved = JSON.stringify({ mode: 'dark', palette: 'sepia', font: 'dyslexic' })
+    expect(initializeAll(null, '', false, false, saved)).toMatchObject({ theme: 'dark', palette: 'sepia', font: 'dyslexic' })
+    expect(initializeAll(null, '?scoutTheme=light', false, false, saved)).toMatchObject({ theme: 'light' })
+  })
+  it('falls back per field for damaged appearance data', () => {
+    expect(initializeAll(null, '', true, false, '{"palette":"neon","font":"inter"')).toMatchObject({ theme: 'dark', palette: 'blueprint', font: 'atkinson' })
+    expect(initializeAll(null, '', false, false, '{"palette":"neon","font":"inter"}')).toMatchObject({ palette: 'blueprint', font: 'inter' })
   })
 })

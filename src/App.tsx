@@ -1,62 +1,90 @@
 import { useEffect, useRef, useState } from 'react'
-import { lessons } from './curriculum'
+import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, serializeBackup, STORAGE_KEY } from './progress'
-import type { Mode, Rating, StudySession } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import type { Mode, Profile, Rating, StudySession } from './progress'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
 import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
+import { activityXp, daysUntil, gameStats, weakAreas } from './gamification'
+import { TOUR_KEY } from './appearance'
 import Icon from './components/Icon'
-import PathPicker from './components/PathPicker'
-import AccentPicker from './components/AccentPicker'
 import PwaPanel from './components/PwaPanel'
 import { useAccent } from './useAccent'
-import TodayScreen from './screens/TodayScreen'
-import RoadmapScreen from './screens/RoadmapScreen'
-import ReviewScreen from './screens/ReviewScreen'
+import { useAppearance } from './useAppearance'
+import { usePwa } from './usePwa'
+import HomeScreen from './screens/HomeScreen'
+import TracksScreen from './screens/TracksScreen'
+import PracticeScreen from './screens/PracticeScreen'
 import ProgressScreen from './screens/ProgressScreen'
+import SettingsScreen from './screens/SettingsScreen'
 import Study from './screens/Study'
 import type { AppModel, Route } from './app-model'
 
 const navigation = [
-  { id: 'today', label: 'Today', icon: 'sun' },
-  { id: 'roadmap', label: 'Roadmap', icon: 'map' },
-  { id: 'review', label: 'Review', icon: 'repeat' },
+  { id: 'home', label: 'Home', icon: 'home' },
+  { id: 'tracks', label: 'Tracks', icon: 'map' },
+  { id: 'practice', label: 'Practice', icon: 'repeat' },
   { id: 'progress', label: 'Progress', icon: 'chart' },
+  { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-function routeFromHash(): Route | 'unknown' {
-  const value = window.location.hash.slice(1) || 'today'
-  return ['today', 'roadmap', 'review', 'progress', 'study'].includes(value) ? value as Route : 'unknown'
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study']
+/** Hashes from earlier releases keep working as bookmarks. */
+const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
+
+function parseHash(): { route: Route | 'unknown'; track?: Track } {
+  const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
+  const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
+  if (!route || rest.length) return { route: 'unknown' }
+  if (sub === undefined) return { route }
+  const track = tracks.find(item => item.id === sub)?.id
+  return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
+}
+
+function tourSeen() {
+  try { return window.localStorage.getItem(TOUR_KEY) !== null } catch { return true }
 }
 
 export default function App() {
   const store = useProgress()
   const accent = useAccent()
+  const look = useAppearance()
   const { progress } = store
-  const [route, setRoute] = useState(routeFromHash)
+  const [route, setRoute] = useState(() => parseHash().route)
   const [track, setTrack] = useState<Track | 'all'>('all')
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
   const [backupError, setBackupError] = useState('')
   const [pendingImport, setPendingImport] = useState<ReturnType<typeof parseBackup> | null>(null)
   const [clock, setClock] = useState(() => new Date())
+  const [tour, setTour] = useState<'auto' | 'replay' | 'off'>(() => tourSeen() ? 'off' : 'auto')
   const importInput = useRef<HTMLInputElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const importDialog = useRef<HTMLDialogElement>(null)
+  const reloadBlocked = !!(store.error || store.unsaved || store.conflict || accent.error)
+  const pwa = usePwa(() => {
+    if (store.recovery || store.error || store.unsaved || store.conflict || accent.error) return false
+    return store.retry()
+  })
 
-  useEffect(() => {
-    const change = () => setRoute(routeFromHash())
-    const timer = window.setInterval(() => setClock(new Date()), 60_000)
-    window.addEventListener('hashchange', change)
-    return () => { window.removeEventListener('hashchange', change); window.clearInterval(timer) }
-  }, [])
-  useEffect(() => { heading.current?.focus() }, [route])
   useEffect(() => {
     setRoadmapScope(progress.selectedPath ? 'path' : 'all')
     setTrack('all')
   }, [progress.selectedPath])
+  useEffect(() => {
+    const apply = () => {
+      const parsed = parseHash()
+      setRoute(parsed.route)
+      if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
+    }
+    apply()
+    const timer = window.setInterval(() => setClock(new Date()), 60_000)
+    window.addEventListener('hashchange', apply)
+    return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
+  }, [])
+  useEffect(() => { heading.current?.focus() }, [route])
   useEffect(() => {
     if (pendingImport) importDialog.current?.showModal()
     else importDialog.current?.close()
@@ -75,6 +103,8 @@ export default function App() {
   const activeLesson = lessons.find(item => item.id === progress.session?.lessonId)
   const percent = Math.round(completed / lessons.length * 100)
   const outsidePath = selectedPath && activeLesson && !selectedIds.includes(activeLesson.id)
+  const game = gameStats(progress, clock)
+  const tourOpen = tour === 'replay' || (tour === 'auto' && completed === 0 && !progress.session)
 
   function navigate(next: Route) {
     window.location.hash = next
@@ -83,13 +113,22 @@ export default function App() {
 
   function changePath(id: PathId | undefined) {
     store.update(value => selectPath(value, id))
-    setNotice(`${getLearningPath(id)?.title ?? 'All curriculum'} selected. Your completed lessons, unfinished session, and all reviews are unchanged.`)
+    setNotice(`${getLearningPath(id)?.title ?? 'All curriculum'} selected. Your progress is unchanged.`)
+  }
+
+  function changeProfile(patch: Partial<Profile>) {
+    store.update(value => updateProfile(value, patch))
+  }
+
+  function closeTour() {
+    setTour('off')
+    try { window.localStorage.setItem(TOUR_KEY, 'seen') } catch { /* The tour simply reappears next visit. */ }
   }
 
   function browseAll(nextTrack: Track | 'all' = 'all') {
     setRoadmapScope('all')
     setTrack(nextTrack)
-    navigate('roadmap')
+    navigate('tracks')
   }
 
   function start(lesson: Lesson, mode: Mode = 'learn') {
@@ -108,14 +147,16 @@ export default function App() {
     const title = activeLesson?.title
     const next = completeSession(progress, rating)
     store.update(() => next)
-    setNotice(`${title} completed. Next review: ${displayDate(next.records[progress.session!.lessonId].due)}.`)
-    navigate('today')
+    const last = next.activity.at(-1)
+    const gained = last && last !== progress.activity.at(-1) ? activityXp(last) : 0
+    setNotice(`${title} completed${gained ? ` · +${gained} XP` : ''}. Next review: ${displayDate(next.records[progress.session!.lessonId].due)}.`)
+    navigate('home')
   }
 
   function exportBackup() {
     try {
       download(serializeBackup(progress), `devprep-backup-${today}.json`)
-      setNotice('Backup downloaded. Keep it somewhere safe; it includes your written answers.')
+      setNotice('Backup downloaded. It includes your written answers.')
       setBackupError('')
     } catch (error) {
       setBackupError(`The backup could not be downloaded. ${error instanceof Error ? error.message : 'Please allow downloads in your browser and try again.'}`)
@@ -154,39 +195,45 @@ export default function App() {
 
   const app: AppModel = {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
-    activeLesson, percent, outsidePath, clock, today, heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll,
+    activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
+    heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
+    navigate, start, browseAll, changePath, changeProfile, tourOpen, closeTour,
+    replayTour: () => { setTour('replay'); navigate('home') },
   }
+  const activeNav = route === 'study' ? 'home' : route
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
     <aside className="sidebar">
-      <a className="brand" href="#today" aria-label="DevPREP home"><span className="brand-mark"><Icon name="code" size={24} /></span><span>Dev<span className="brand-accent">PREP</span></span></a>
-      <p className="brand-tagline">Build skill. Find your stride.</p>
-      <div className="nav-label">YOUR WORKSPACE</div>
+      <a className="brand" href="#home" aria-label="DevPREP home"><span className="brand-mark"><Icon name="code" size={24} /></span><span>Dev<span className="brand-accent">PREP</span></span></a>
+      <p className="brand-tagline">Interview prep for SE &amp; SSE.</p>
       <nav aria-label="Main navigation">
-        {navigation.map(item => <a key={item.id} href={`#${item.id}`} className={route === item.id || (route === 'study' && item.id === 'today') ? 'nav-item active' : 'nav-item'} aria-current={route === item.id ? 'page' : undefined}>
-          <Icon name={item.icon} /><span>{item.label}</span>{item.id === 'review' && due.length > 0 && <span className="nav-badge">{due.length}</span>}
+        {navigation.map(item => <a key={item.id} href={`#${item.id}`} className={activeNav === item.id ? 'nav-item active' : 'nav-item'} aria-current={route === item.id ? 'page' : undefined}>
+          <Icon name={item.icon} /><span>{item.label}</span>{item.id === 'practice' && due.length > 0 && <span className="nav-badge" aria-label={`${due.length} due`}>{due.length}</span>}
         </a>)}
       </nav>
       <div className="sidebar-journey">
-        <div className="eyebrow">ONE SESSION AT A TIME</div>
-        <p>Small steps.<br /><strong>Lasting progress.</strong></p>
+        <div className="eyebrow">{selectedPath ? `${selectedPath.shortTitle} PATH` : 'ALL TRACKS'}</div>
         <progress aria-label={selectedPath ? 'Selected path completed' : 'Curriculum completed'} value={selectedStatus?.completed ?? completed} max={selectedStatus?.total ?? lessons.length} />
-        <span>{selectedStatus?.completed ?? completed} of {selectedStatus?.total ?? lessons.length} {selectedPath ? `${selectedPath.shortTitle} path lessons` : 'lessons'} explored</span>
-        {selectedPath && <span className="overall-caption">{completed} / {lessons.length} across all curriculum</span>}
+        <span>{selectedStatus?.completed ?? completed} of {selectedStatus?.total ?? lessons.length} lessons</span>
       </div>
-      <div className="sidebar-bottom"><span className="local-dot" /> Local-first. Just for you.<button className="text-button" onClick={() => navigate('progress')}>Backup & storage</button></div>
+      <div className="sidebar-bottom"><span className="local-dot" /> Saved on this device<a className="text-button" href="#settings">Backup</a></div>
     </aside>
 
     <div className="main-shell">
-      <header className="topbar"><a className="mobile-brand" href="#today">Dev<span>PREP</span></a><span className="breadcrumb">Your interview journey <span>/</span> {route === 'study' ? 'Study session' : navigation.find(item => item.id === route)?.label ?? 'Page not found'}</span><div className="topbar-right"><span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Study progress saved on this browser'}</span><AccentPicker accent={accent.accent} onChange={accent.choose} /><button className="theme-button" aria-label="Toggle color theme" onClick={() => {
-        const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
-        document.documentElement.dataset.theme = theme
-        const url = new URL(window.location.href)
-        url.searchParams.set('scoutTheme', theme)
-        window.history.replaceState(null, '', url)
-      }}><Icon name="sun" size={18} /></button></div></header>
+      <header className="topbar"><a className="mobile-brand" href="#home">Dev<span>PREP</span></a>
+        <div className="topbar-right">
+          <a className="game-chip" href="#progress" aria-label={`${game.streak.current}-day streak, ${game.xp} XP`}><span className={game.streak.activeToday ? 'chip-part lit' : 'chip-part'}><Icon name="flame" size={16} />{game.streak.current}</span><span className="chip-part"><Icon name="bolt" size={16} />{game.xp}</span></a>
+          {pwa.updateReady && <a className="update-chip" href="#settings">Update ready</a>}
+          <span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Saved'}</span>
+          <button className="theme-button" aria-label="Toggle color theme" onClick={() => {
+            const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+            document.documentElement.dataset.theme = theme
+            const url = new URL(window.location.href)
+            url.searchParams.set('scoutTheme', theme)
+            window.history.replaceState(null, '', url)
+          }}><Icon name="sun" size={18} /></button>
+        </div></header>
       <main id="main-content" tabIndex={-1}>
         {store.error && <div className="alert" role="alert"><strong>{store.recovery ? 'Your saved progress needs attention.' : 'Progress could not be saved safely.'}</strong><p>{store.error} {store.unsaved && 'Your latest work is only in memory. Export it before closing this page.'}</p><div className="button-row">
           {!store.recovery && !store.conflict && <button onClick={store.retry}>Retry saving</button>}
@@ -199,23 +246,16 @@ export default function App() {
 
         {store.recovery ? <section className="card recovery"><div className="eyebrow">SAFE RECOVERY</div><h1 ref={heading} tabIndex={-1}>Let’s protect your progress.</h1><p>Existing browser data could not be loaded. We have not replaced it. Download the original data before starting over, or restore a valid DevPREP backup.</p><button onClick={recoveryExport}>Download original data</button>{backupControls}<button className="text-button" onClick={() => {
           if (window.confirm('Permanently replace unreadable browser data with a fresh start? Download the original data first.')) store.replace(emptyProgress())
-        }}>Replace with a fresh start</button></section>
+        }}>Replace with a fresh start</button><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></section>
           : <>
-            <PwaPanel reloadBlocked={!!(store.error || store.unsaved || store.conflict || accent.error)} beforeReload={() => {
-              if (store.recovery || store.error || store.unsaved || store.conflict || accent.error) return false
-              return store.retry()
-            }} />
-            <PathPicker selected={progress.selectedPath} onChange={changePath} />
-            {route === 'today' && <TodayScreen app={app} />}
-
-            {route === 'roadmap' && <RoadmapScreen app={app} />}
-
-            {route === 'review' && <ReviewScreen app={app} />}
-
+            {route === 'home' && <HomeScreen app={app} />}
+            {route === 'tracks' && <TracksScreen app={app} />}
+            {route === 'practice' && <PracticeScreen app={app} />}
             {route === 'progress' && <ProgressScreen app={app} />}
-
-            {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('today')}>Go to Today</button></section>)}
-            {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('today')}>Back to Today</button></section>}
+            {route === 'settings' && <SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} />}
+            {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
+            {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
+            <footer className="app-footer"><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></footer>
           </>}
       </main>
     </div>
@@ -225,7 +265,7 @@ export default function App() {
         if (pendingImport && store.replace(pendingImport)) {
           setPendingImport(null)
           setNotice('Backup restored. Your lessons, reviews, and unfinished session are ready.')
-          navigate('today')
+          navigate('home')
         } else setPendingImport(null)
       }}>Replace progress</button></div>
     </dialog>

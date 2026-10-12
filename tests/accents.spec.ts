@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { ACCENT_KEY, accents } from '../src/accent-preference'
+import { palettes } from '../src/appearance'
 import { STORAGE_KEY } from '../src/progress'
 import legacyBackup from './fixtures/v1-progress.json' with { type: 'json' }
 import { color, contrast, css, over, textContrast } from './contrast'
@@ -16,7 +17,7 @@ for (const theme of ['light', 'dark'] as const) {
         localStorage.removeItem(key)
         localStorage.setItem(progressKey, JSON.stringify(backup))
       }, { key: ACCENT_KEY, progressKey: STORAGE_KEY, backup: { ...legacyBackup, session: null, records: { 'hash-map-complements': { ...legacyBackup.records['hash-map-complements'], due: '2000-01-01' } } } })
-      await page.goto(`./?scoutTheme=${theme}`)
+      await page.goto(`./?scoutTheme=${theme}#settings`)
       const baseline = await page.evaluate(names => Object.fromEntries(names.map(name => [name, getComputedStyle(document.documentElement).getPropertyValue(`--cp-${name}`).trim()])), neutralTokens)
       await page.getByLabel('Accent', { exact: true }).selectOption(accent.id)
       await expect(page.locator('html')).toHaveAttribute('data-accent', accent.id)
@@ -46,11 +47,15 @@ for (const theme of ['light', 'dark'] as const) {
         expect(contrast(fill, highlight), `focus outline on highlight/${name}`).toBeGreaterThanOrEqual(3)
       }
       await expect(page.locator('.accent-swatch')).toHaveCSS('background-color', css(tokens.accent))
+      await page.getByLabel('Accent', { exact: true }).focus()
+      await page.keyboard.press('Tab')
+      await page.keyboard.press('Shift+Tab')
+      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-color', css(tokens.accent))
+      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-width', '2px')
+      await page.getByRole('link', { name: 'Home', exact: true }).click()
       await expect(page.locator('.nav-item.active')).toHaveCSS('color', css(tokens['accent-on-soft']))
       expect(await textContrast(page.locator('.nav-item.active'))).toBeGreaterThanOrEqual(4.5)
       expect(await textContrast(page.locator('.nav-badge'))).toBeGreaterThanOrEqual(4.5)
-      expect(await textContrast(page.locator('.note-card .eyebrow'))).toBeGreaterThanOrEqual(4.5)
-      expect(await textContrast(page.locator('.note-card p'))).toBeGreaterThanOrEqual(4.5)
       expect(await textContrast(page.locator('.track-index').first())).toBeGreaterThanOrEqual(4.5)
       const primary = page.locator('.hero-copy .primary')
       await expect(primary).toHaveCSS('background-color', css(tokens.accent))
@@ -58,14 +63,10 @@ for (const theme of ['light', 'dark'] as const) {
       await primary.hover()
       await expect(primary).toHaveCSS('background-color', css(tokens['accent-hover']))
       expect(await textContrast(primary)).toBeGreaterThanOrEqual(4.5)
-      await page.getByLabel('Accent', { exact: true }).focus()
-      await page.keyboard.press('Tab')
-      await page.keyboard.press('Shift+Tab')
-      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-color', css(tokens.accent))
-      await expect(page.getByLabel('Accent', { exact: true })).toHaveCSS('outline-width', '2px')
+      expect(await textContrast(page.locator('.game-chip .chip-part').first())).toBeGreaterThanOrEqual(4.5)
       await expect(page.locator('.local-dot')).toHaveCSS('background-color', css(tokens.success))
       await page.screenshot({ path: testInfo.outputPath(`${accent.id}-${theme}.png`) })
-      await page.getByRole('link', { name: 'Roadmap', exact: true }).click()
+      await page.getByRole('link', { name: 'Tracks', exact: true }).click()
       const selectedFilter = page.getByRole('button', { name: 'All tracks', exact: true })
       await expect(selectedFilter).toHaveCSS('color', css(tokens['accent-on-soft']))
       expect(await textContrast(selectedFilter)).toBeGreaterThanOrEqual(4.5)
@@ -73,7 +74,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.locator('.study-steps [aria-current="step"]')).toHaveCSS('color', css(tokens['accent-on-soft']))
       await page.getByRole('button', { name: 'Continue to practice' }).click()
       expect(await textContrast(page.getByRole('button', { name: 'Core task', exact: true }))).toBeGreaterThanOrEqual(4.5)
-      await page.goto(`./?scoutTheme=${theme}#progress`)
+      await page.goto(`./?scoutTheme=${theme}#settings`)
       await page.getByLabel('Import progress JSON').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{') })
       await expect(page.getByRole('alert')).toHaveCSS('border-left-color', css(tokens.danger))
     })
@@ -93,7 +94,7 @@ test('selection reloads independently of light/dark/system and leaves study back
   await page.addInitScript(({ key, backup }) => {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(backup))
   }, { key: STORAGE_KEY, backup: { ...legacyBackup, selectedPath: 'senior' } })
-  await page.goto('./')
+  await page.goto('./#settings')
   const before = await page.evaluate(key => localStorage.getItem(key), STORAGE_KEY)
   for (const accent of accents) {
     await page.getByLabel('Accent', { exact: true }).selectOption(accent.id)
@@ -110,22 +111,24 @@ test('selection reloads independently of light/dark/system and leaves study back
   await expect(page.locator('html')).toHaveAttribute('data-accent', 'purple')
   await page.goto('./')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-  await page.goto('./#progress')
+  await page.goto('./#settings')
   const downloading = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export backup' }).click()
   const downloaded = await downloading
   await page.getByLabel('Accent', { exact: true }).selectOption('blue')
   await page.getByLabel('Import progress JSON').setInputFiles((await downloaded.path())!)
   await page.getByRole('button', { name: 'Replace progress' }).click()
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('blue')
   expect(await page.evaluate(key => localStorage.getItem(key), STORAGE_KEY)).toBe(before)
+  await page.getByRole('link', { name: 'Home', exact: true }).click()
   await page.getByRole('button', { name: 'Resume session' }).click()
   await expect(page.getByText(legacyBackup.session.draft, { exact: true })).toBeVisible()
   await expect(page.getByRole('checkbox').first()).toBeChecked()
 })
 
 test('missing and invalid accents default to purple without silently rewriting storage', async ({ page }) => {
-  await page.goto('./')
+  await page.goto('./#settings')
   await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('purple')
   expect(await page.evaluate(key => localStorage.getItem(key), ACCENT_KEY)).toBeNull()
   await page.evaluate(key => localStorage.setItem(key, 'amber'), ACCENT_KEY)
@@ -147,9 +150,10 @@ test('accent read failure is visible without blocking or resetting study data', 
       return original.call(this, key)
     }
   }, { accentKey: ACCENT_KEY, progressKey: STORAGE_KEY, backup: legacyBackup })
-  await page.goto('./')
+  await page.goto('./#settings')
   await expect(page.getByRole('alert')).toContainText('accent preference could not be read')
   await expect(page.getByLabel('Accent', { exact: true })).toHaveValue('purple')
+  await page.getByRole('link', { name: 'Home', exact: true }).click()
   await page.getByRole('button', { name: 'Resume session' }).click()
   await expect(page.getByText(legacyBackup.session.draft, { exact: true })).toBeVisible()
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), STORAGE_KEY)).toEqual(legacyBackup)
@@ -157,7 +161,7 @@ test('accent read failure is visible without blocking or resetting study data', 
 
 test('failed accent writes retain the old value and can be retried without touching progress', async ({ page }) => {
   await page.addInitScript(({ key, backup }) => localStorage.setItem(key, JSON.stringify(backup)), { key: STORAGE_KEY, backup: legacyBackup })
-  await page.goto('./')
+  await page.goto('./#settings')
   await page.getByLabel('Accent', { exact: true }).selectOption('blue')
   await page.evaluate(accentKey => {
     const original = Storage.prototype.setItem
@@ -179,9 +183,9 @@ test('failed accent writes retain the old value and can be retried without touch
 })
 
 test('another tab changing an accent does not trigger a study-progress conflict', async ({ page, context }) => {
-  await page.goto('./')
+  await page.goto('./#settings')
   const other = await context.newPage()
-  await other.goto('./')
+  await other.goto('./#settings')
   await other.getByLabel('Accent', { exact: true }).selectOption('forest')
   await expect(page.getByRole('alert')).toHaveCount(0)
   await page.reload()
@@ -190,7 +194,7 @@ test('another tab changing an accent does not trigger a study-progress conflict'
 
 test('all accents are keyboard/touch accessible at a narrow custom-domain root', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 780 })
-  await page.goto('/')
+  await page.goto('/#settings')
   const selector = page.getByLabel('Accent', { exact: true })
   await selector.focus()
   await page.keyboard.press('End')
@@ -200,10 +204,46 @@ test('all accents are keyboard/touch accessible at a narrow custom-domain root',
   expect((await selector.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   for (const accent of accents) {
     await selector.selectOption(accent.id)
-    await page.getByRole('link', { name: 'Roadmap', exact: true }).click()
+    await page.getByRole('link', { name: 'Tracks', exact: true }).click()
     await page.reload()
-    await expect(selector).toHaveValue(accent.id)
+    await expect(page.locator('html')).toHaveAttribute('data-accent', accent.id)
     expect(new URL(page.url()).pathname).toBe('/')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.getByRole('link', { name: 'Settings', exact: true }).click()
+    await expect(selector).toHaveValue(accent.id)
+  }
+})
+
+test('every theme palette keeps every accent and the neutral text readable in light and dark', async ({ page }) => {
+  await page.goto('./#settings')
+  for (const palette of palettes) {
+    for (const theme of ['light', 'dark'] as const) {
+      for (const accent of accents) {
+        const tokens = await page.evaluate(({ palette, theme, accent, names }) => {
+          const root = document.documentElement
+          root.dataset.palette = palette
+          root.dataset.theme = theme
+          root.dataset.accent = accent
+          const style = getComputedStyle(root)
+          return Object.fromEntries(names.map(name => [name, style.getPropertyValue(`--cp-${name}`).trim()]))
+        }, { palette: palette.id, theme, accent: accent.id, names: tokensToRead })
+        const label = `${palette.id}/${theme}/${accent.id}`
+        const fill = color(tokens.accent)
+        expect(contrast(color(tokens['accent-fg']), fill), `${label} button text`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(fill, color(tokens.border)), `${label} progress fill versus track`).toBeGreaterThanOrEqual(3)
+        for (const name of ['bg', 'bg-elevated', 'surface', 'surface-soft']) {
+          const base = color(tokens[name])
+          const soft = over(color(tokens['accent-soft']), base)
+          const highlight = over(color(tokens.highlight), soft)
+          expect(contrast(fill, base), `${label} accent text on ${name}`).toBeGreaterThanOrEqual(4.5)
+          expect(contrast(color(tokens['accent-on-soft']), soft), `${label} selected text on soft/${name}`).toBeGreaterThanOrEqual(4.5)
+          expect(contrast(color(tokens.text), highlight), `${label} badge text on highlight/${name}`).toBeGreaterThanOrEqual(4.5)
+          expect(contrast(fill, highlight), `${label} focus outline on highlight/${name}`).toBeGreaterThanOrEqual(3)
+          for (const text of ['text', 'text-muted', 'text-soft', 'link']) {
+            expect(contrast(color(tokens[text]), base), `${label} ${text} on ${name}`).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+    }
   }
 })

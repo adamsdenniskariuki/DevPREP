@@ -38,7 +38,7 @@ export default defineConfig({
         ],
       },
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'],
         globIgnores: ['**/sw.js', '**/sw.js.map'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         rollupFormat: 'iife',

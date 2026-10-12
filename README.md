@@ -2,24 +2,47 @@
 
 A little practice. A stronger interview. DevPREP is a local-first interview preparation app for software engineers, built with React, TypeScript, and Vite.
 
+## What's inside
+
+| Screen | Purpose |
+| --- | --- |
+| **Home** (`#home`) | Target role, interview countdown, today's plan (next lesson + due reviews), XP/streak |
+| **Tracks** (`#tracks`) | Your selected path, or all curriculum by track |
+| **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
+| **Progress** (`#progress`) | Per-track completion, streak and freezes, badges, weak areas |
+| **Settings** (`#settings`) | Target role, interview date, focus tracks, appearance, About your data (backup/import), welcome tour |
+| **Study** (`#study`) | Chunked lesson → warm-up/core/stretch practice → explanation & confidence → scheduled review |
+
+Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Practice. "App & offline" (install, offline status, updates) sits at the bottom of every page.
+
 ## The study loop
 
-**Today → chunked lesson → practice → explanation & self-assessment → scheduled review.**
+- **46 original lessons**: 19 DSA, 10 system design, 9 ML and 8 behavioral, ordered by prerequisites.
+- Chunked reading, **warm-up → core → stretch** practice with progressive hints, worked answers and rubrics. Only the core task drives completion and review scheduling.
+- Resumable sessions: step, reading section, answer, hints, solution visibility and checklist are saved as you work.
+- Spaced reviews from your own confidence: first review after **1 / 3 / 7 days** (Needs practice / Getting there / Confident); later intervals reset to 1, ×1.5 or ×2, capped at 60 days.
+- Optional **Software Engineer** / **Senior Software Engineer** paths, chosen once as **Target role** in Settings.
 
-- **46 original, in-depth lessons** across all four tracks: **19 DSA, 10 system design, 9 ML, and 8 behavioral/interview lessons**, ordered by recommended prerequisites. All 12 original lessons are substantially deepened. See the coverage map below.
-- A daily plan suggesting one new lesson and one due review. Full-session estimates include learning and practice; longer lessons can be split across days. Additional practice is optional; nothing is locked.
-- Optional **Software Engineer** and **Senior Software Engineer** learning paths curate the existing lessons into different prerequisite-respecting sequences. Switch at any time without losing your work.
-- Chunked reading: objectives/prerequisites, individual concepts, worked examples and walkthroughs, pitfalls, and takeaways. Use the section selector or Previous/Next controls instead of scrolling through a wall of text.
-- Progressively challenging **warm-up → core → stretch** practice with progressive hints, worked answers, and rubrics. One session notebook is shared across the three difficulties; label optional work. Only the core task drives completion and review scheduling.
-- Interview follow-ups with discussion points to practice reasoning aloud, not memorize scripts.
-- Resumable sessions: current step, reading section, answer, core-task hints, core solution visibility, and checklist are saved as you work. Optional exercise disclosures reset when leaving that exercise, but notebook text stays.
-- Calendar-based spaced reviews driven by your own confidence. First reviews: **1 day** for Needs practice, **3 days** for Getting there, **7 days** for Confident. Subsequent reviews reset to 1, multiply the previous interval by 1.5 (rounded up), or double it respectively, capped at 60 days. Early practice also reschedules from its completion date.
-- Progress by track and recent session history. These are practice milestones, not readiness scores.
-- Desktop sidebar and lesson/practice split view; focused single-step study on smaller screens and bottom navigation on mobile. Keyboard navigation, visible focus, labeled controls, and reduced-motion support.
-- Clawpilot light/dark theme. `?scoutTheme=light` or `?scoutTheme=dark` explicitly overrides the system preference. The theme button updates that URL parameter.
-- Four optional accent colors: the original **Red (rose)**, **Blue**, **Forest green**, and **Purple**, independent of the light/dark theme.
+## Gamification (light)
 
-System design and behavioral work is assessed with prompts and checklists, **not automated grading**. DSA examples retain language-neutral pseudocode rather than introducing an arbitrary execution language. Behavioral illustrations are models for organizing genuine experience, never instructions to invent accomplishments. There is no code execution, AI coaching, full mock interview system, backend, account, payment, or notification service.
+Derived entirely from saved activity, so it needs no new stored data and old backups get credit automatically.
+
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident. A level every 200 XP.
+- **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
+- **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths). No lives, no leaderboards.
+
+## Appearance
+
+Settings → Appearance:
+
+- **Mode**: System (default), Light or Dark. `?scoutTheme=light|dark` still overrides for a page load; the topbar button toggles it.
+- **Theme**: Blueprint (default), Paper (classic), Sepia, High contrast.
+- **Accent**: Red (rose), Blue, Forest green, Purple (default).
+- **Font**: Atkinson Hyperlegible (default), Inter, Source Serif, OpenDyslexic (dyslexia-friendly) or your system font. Headings use Space Grotesk and code JetBrains Mono. Fonts are bundled and cached offline.
+
+Mode, theme and font are stored in `devprep.appearance.v1`; the accent in `devprep.accent.v1`; the tour flag in `devprep.tour.v1`. None of these are in progress backups. **Replay welcome tour** is in Settings.
+
+Self-assessment uses prompts and rubrics, not automated grading. No AI at runtime, backend or accounts. Behavioral examples are models for organizing genuine experience, never instructions to invent accomplishments.
 
 ## Curriculum coverage
 
@@ -34,7 +57,7 @@ Prerequisite links are advisory and remain within each track. Opening one asks b
 
 ## SWE and Senior SWE learning paths
 
-Choose a path with the **Learning path** selector, available on Today, Roadmap, Review, Progress, and Study. **Compare paths & outcomes** explains the audience and learning goals. No path is selected automatically: new users and old backups without a choice keep the existing curriculum order and all-track roadmap.
+Choose a path with **Target role** in Settings. **Compare paths & outcomes** explains the audience and learning goals. No path is selected automatically: new users and old backups without a choice keep the existing curriculum order and all-track roadmap.
 
 | Path | Curated lessons | Emphasis and sequence |
 | --- | --- | --- |
@@ -45,23 +68,16 @@ Both paths include every selected lesson's prerequisites earlier in the sequence
 
 Senior extensions cover negotiating ambiguous scope, owning an index migration/rollback, and influencing across teams without inventing authority. They appear during practice and reflection on the relevant lessons, with prompts, reasoning rubrics, and a defensible discussion. They are optional: notes share the session notebook, and they do **not** create extra completions, alter the core exercise, or add review dates.
 
-- **Today:** the first unfinished lesson in the selected path is the next recommendation. An unfinished session takes priority, even if it is outside the path. A daily completed lesson from any track still counts as study for that day.
-- **Roadmap:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 46 lessons remain open; ML and omitted coding/design topics are optional supplemental study.
+- **Home:** the first unfinished lesson in the selected path is the next recommendation. An unfinished session takes priority, even if it is outside the path. A daily completed lesson from any track still counts as study for that day.
+- **Tracks:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 46 lessons remain open; ML and omitted coding/design topics are optional supplemental study.
 - **Progress:** the selected path has its own denominator (29 or 30); overall progress remains out of 46. Both path totals are shown separately. Supplemental work contributes to overall completion, not to a path that omits it.
-- **Review:** the queue always includes every due completed lesson, including supplemental ML and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
+- **Practice:** the review queue always includes every due completed lesson, including supplemental ML and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
 - **Switching or clearing:** changing the selector updates only the path choice. Drafts, reading bookmarks, hints, checklist selections, completion records, and review dates stay intact. Choosing **All curriculum (no path selected)** restores the original recommendation behavior.
-- **Path completion:** Today says the path is explored and offers reviews or all-curriculum browsing; it does not silently enroll you in another path or supplemental track.
+- **Path completion:** Home says the path is explored and offers reviews or all-curriculum browsing; it does not silently enroll you in another path or supplemental track.
 
 These are **interview-preparation guides, not certification, level assessments, or readiness guarantees**. The Senior path is focused interview practice, not a complete senior-engineer training program. Adapt behavioral examples truthfully to your own experience; label hypothetical reasoning as hypothetical.
 
-## Appearance
-
-Use the visibly labeled **Accent** selector beside the light/dark button. Each option has a color name, the native selector identifies the selected option, and the adjacent swatch previews it. The control supports keyboard selection and touch-sized targets.
-
-- **Purple** is the default only when no accent was saved. Existing explicit **Red (rose)**, **Blue**, **Forest green**, and **Purple** selections are retained.
-- All four accent variants have deliberately paired light/dark values; switching does not reset study data.
-- Accent changes affect action buttons, active navigation, progress fills, selected states, tinted accents, and focus outlines. Neutral backgrounds, typography, layout, and success/warning/danger/link tokens are not palette overrides.
-- Light/dark behavior is unchanged: an explicit `scoutTheme` URL value wins over the system preference. Without a valid override, the system preference is read at page load. The accent selector does not change that URL or theme choice.
+## Accent details
 
 ### Accent persistence and recovery
 
@@ -146,7 +162,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Progress → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, and the latest 5,000 activity events.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), and the latest 5,000 activity events.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -161,6 +177,8 @@ All 12 published lesson IDs and their core practice contracts remain unchanged: 
 The storage key and backup schema version remain **v1**. A validated optional `session.readingSection` bookmark extends the session shape; original exports without it still load unchanged, beginning at the overview when returning to the Learn step. No destructive migration or automatic reset is performed. Old app versions may reject the new optional field; use the updated app when importing a new export.
 
 The optional root field `selectedPath` accepts only `"swe"` or `"senior"`. An absent field means no selected path; clearing the choice removes the field. Unknown values (including `null`) are rejected before import can replace data. Import confirmation states which path the backup will restore. Importing an old backup with no path clears the current choice, as part of the explicitly confirmed replacement, without assigning a level. Old payloads round-trip without newly inserted fields.
+
+The optional root field `profile` holds `interviewDate` (`YYYY-MM-DD`) and `focusTracks` (known track IDs, no duplicates). Empty values are omitted, so backups without it are unchanged.
 
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
@@ -180,7 +198,7 @@ The site is **https://devprep.madebyfavor.com/** (the project URL https://adamsd
 
 Pull requests run the same validation but **cannot deploy**. The workflow uses the built-in `GITHUB_TOKEN` and OIDC with job-scoped Pages permissions; no PAT is stored in this project.
 
-All app navigation is hash-based (`/DevPREP/#roadmap`, `/DevPREP/#study`), so refreshing or sharing a route does not need a server rewrite or a custom 404 page. `#study` resumes this browser’s active session; it is not a shared lesson URL.
+All app navigation is hash-based (`#tracks`, `#study`), so refreshing or sharing a route does not need a server rewrite or a custom 404 page. `#study` resumes this browser’s active session; it is not a shared lesson URL.
 
 ### Custom domain
 
@@ -211,9 +229,12 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/components/LessonReader.tsx`, `src/lesson-sections.ts` | Chunked content navigation and stable reading-section identifiers |
 | `src/components/ExtraPractice.tsx` | Optional warm-up/stretch hints, worked answers, and rubrics |
 | `src/learning-paths.ts`, `src/learning-paths.test.ts` | Curated path phases, senior extensions, selection/progress helpers, prerequisite and preservation tests |
-| `src/components/Path*.tsx` | Opt-in path selection, ordered roadmap, and senior discussion surfaces |
+| `src/components/Path*.tsx` | Ordered path roadmap and senior discussion surfaces |
 | `src/components/LessonList.tsx`, `src/format.ts` | Shared lesson rows and review-date formatting for path and all-track views |
-| `src/accents.css`, `src/components/AccentPicker.tsx`, `src/useAccent.ts` | Central accent palettes, appearance selection, and visible preference recovery |
+| `src/accents.css`, `src/useAccent.ts` | Central accent palettes and visible preference recovery |
+| `src/appearance.ts`, `src/useAppearance.ts`, `src/design.css` | Mode/theme/font preferences, palettes, fonts and the design layer |
+| `src/gamification.ts` | XP, streaks with freezes, badges and weak areas derived from activity |
+| `src/app-model.ts`, `src/components/WelcomeTour.tsx` | Shared screen model and the replayable welcome tour |
 | `src/accent-preference.ts`, `src/accent-preference.test.ts`, `tests/accents.spec.ts` | Separate preference contract, startup/error checks, real palette contrast and browser coverage |
 | `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
 | `src/sw.ts`, `src/pwa-cache.ts` | Integrity-checked, mount-scoped offline caches and safe version routing |
@@ -224,7 +245,7 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |
 | `src/App.tsx` | Shell, routing, storage alerts, and backup flows |
-| `src/screens/` | Today, roadmap, review, progress, and study screens |
+| `src/screens/` | Home, Tracks, Practice, Progress, Settings and Study screens |
 | `src/components/` | Reusable UI components |
 | `src/styles.css` | Clawpilot tokens and responsive layouts |
 | `src/progress.test.ts` | Curriculum contract, state transitions, invalid inputs, storage failures |
