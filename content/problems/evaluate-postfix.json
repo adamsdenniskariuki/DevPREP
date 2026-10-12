@@ -1,0 +1,148 @@
+{
+  "id": "evaluate-postfix",
+  "title": "Evaluate a postfix expression",
+  "pattern": "Stack",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "stack-balanced-delimiters",
+  "prompt": "tokens is a valid postfix (reverse Polish) expression. Operands are integer strings such as \"12\" or \"-3\"; operators are \"+\", \"-\" and \"*\". Return the value.\n\n- 1 to 10,000 tokens. Every intermediate result stays between -10^12 and 10^12.\n- In postfix, \"a b -\" means a - b.",
+  "function": {
+    "js": "evalPostfix",
+    "py": "eval_postfix"
+  },
+  "starter": {
+    "js": "function evalPostfix(tokens) {\n  // Your code here\n}\n",
+    "py": "def eval_postfix(tokens):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "3",
+          "4",
+          "+",
+          "2",
+          "*"
+        ]
+      ],
+      "expected": 14
+    },
+    {
+      "args": [
+        [
+          "5",
+          "1",
+          "2",
+          "+",
+          "4",
+          "*",
+          "+",
+          "3",
+          "-"
+        ]
+      ],
+      "expected": 14
+    },
+    {
+      "args": [
+        [
+          "-7"
+        ]
+      ],
+      "expected": -7
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "2",
+          "-3",
+          "*"
+        ]
+      ],
+      "expected": -6
+    },
+    {
+      "args": [
+        [
+          "10",
+          "4",
+          "-"
+        ]
+      ],
+      "expected": 6
+    },
+    {
+      "args": [
+        [
+          "4",
+          "10",
+          "-"
+        ]
+      ],
+      "expected": -6
+    },
+    {
+      "args": [
+        [
+          "1",
+          "2",
+          "3",
+          "4",
+          "+",
+          "+",
+          "+"
+        ]
+      ],
+      "expected": 10
+    },
+    {
+      "args": [
+        [
+          "-2",
+          "-2",
+          "*",
+          "-5",
+          "-"
+        ]
+      ],
+      "expected": 9
+    },
+    {
+      "args": [
+        [
+          "9",
+          "9",
+          "*",
+          "9",
+          "*",
+          "9",
+          "*",
+          "100",
+          "-"
+        ]
+      ],
+      "expected": 6461
+    }
+  ],
+  "hints": [
+    "Operands appear before the operator that uses them. Which data structure gives you the most recent operands first?",
+    "Push numbers. When you see an operator, pop two values.",
+    "The first pop is the right operand b, the second is the left operand a; push a op b. The final stack holds the answer."
+  ],
+  "solution": {
+    "js": "function evalPostfix(tokens) {\n  const stack = []\n  for (const token of tokens) {\n    if (token === '+' || token === '-' || token === '*') {\n      const b = stack.pop()\n      const a = stack.pop()\n      stack.push(token === '+' ? a + b : token === '-' ? a - b : a * b)\n    } else {\n      stack.push(Number(token))\n    }\n  }\n  return stack[0]\n}\n",
+    "py": "def eval_postfix(tokens):\n    stack = []\n    for token in tokens:\n        if token in (\"+\", \"-\", \"*\"):\n            b = stack.pop()\n            a = stack.pop()\n            stack.append(a + b if token == \"+\" else a - b if token == \"-\" else a * b)\n        else:\n            stack.append(int(token))\n    return stack[0]\n",
+    "explanation": "A stack holds operands waiting for an operator. Each operator consumes the two most recent operands. Pop order matters for subtraction: the top of the stack is the right-hand operand. Checking \"-\" by exact equality keeps \"-3\" a number."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "notes": "Each token is pushed or popped a constant number of times."
+  },
+  "followUps": [
+    "How would you add division that truncates toward zero so JavaScript and Python agree?",
+    "How would you convert an infix expression to postfix (shunting-yard)?"
+  ]
+}

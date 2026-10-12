@@ -17,7 +17,8 @@ for (const mount of ['/', '/DevPREP/']) {
     for (const file of await builtFiles()) {
       const response = await request.get(`${origin}${mount}${file}`)
       expect(response.status(), file).toBe(200)
-      expect(await response.body(), file).toEqual(await readFile(join('dist', file)))
+      // Buffer.equals is a byte compare; toEqual on the multi-megabyte Pyodide files is slow enough to drop keep-alive.
+      expect((await response.body()).equals(await readFile(join('dist', file))), file).toBe(true)
     }
     const cname = await request.get(`${origin}${mount}CNAME`)
     expect(await cname.text()).toMatch(/^devprep\.madebyfavor\.com\r?\n$/)

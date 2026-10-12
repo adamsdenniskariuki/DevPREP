@@ -1,0 +1,104 @@
+{
+  "id": "almost-palindrome",
+  "title": "One deletion from a palindrome",
+  "pattern": "Two pointers",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "Return true if text reads the same forwards and backwards after deleting at most one character.\n\n- text has 0 to 100,000 lowercase English letters.\n- The empty string and single characters are palindromes.",
+  "function": {
+    "js": "canBePalindrome",
+    "py": "can_be_palindrome"
+  },
+  "starter": {
+    "js": "function canBePalindrome(text) {\n  // Your code here\n}\n",
+    "py": "def can_be_palindrome(text):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "racecar"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "abca"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "abc"
+      ],
+      "expected": false
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        ""
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "a"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "ab"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "deeee"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "cbbcc"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "abcdefdba"
+      ],
+      "expected": false
+    },
+    {
+      "args": [
+        "ebcbbececabbacecbbcbe"
+      ],
+      "expected": true
+    },
+    {
+      "args": [
+        "aguokepatgbnvfqmgmlcupuufxoohdfpgjdmysgvhmvffcnqxjjxqncffvmhvgsymdjgpfdhooxfuupuculmgmqfvnbgtapekouga"
+      ],
+      "expected": true
+    }
+  ],
+  "hints": [
+    "Compare characters from both ends while they match. What does the first mismatch tell you?",
+    "At the first mismatch (i, j), one of the two characters must be the deleted one.",
+    "Check whether text[i+1..j] or text[i..j-1] is a palindrome; no other deletion can help."
+  ],
+  "solution": {
+    "js": "function canBePalindrome(text) {\n  const isPalindrome = (i, j) => {\n    while (i < j) {\n      if (text[i] !== text[j]) return false\n      i++; j--\n    }\n    return true\n  }\n  let i = 0\n  let j = text.length - 1\n  while (i < j) {\n    if (text[i] !== text[j]) return isPalindrome(i + 1, j) || isPalindrome(i, j - 1)\n    i++; j--\n  }\n  return true\n}\n",
+    "py": "def can_be_palindrome(text):\n    def is_palindrome(i, j):\n        while i < j:\n            if text[i] != text[j]:\n                return False\n            i += 1\n            j -= 1\n        return True\n\n    i, j = 0, len(text) - 1\n    while i < j:\n        if text[i] != text[j]:\n            return is_palindrome(i + 1, j) or is_palindrome(i, j - 1)\n        i += 1\n        j -= 1\n    return True\n",
+    "explanation": "Matching outer characters never need deleting, so skip them. At the first mismatch the deletion must remove one of the two mismatched characters; try both and check the remaining middle with a plain palindrome scan."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "At most three linear scans. Trying every deletion is O(n²)."
+  },
+  "followUps": [
+    "Generalise to at most k deletions. Which technique replaces the two-pointer scan?"
+  ]
+}

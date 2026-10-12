@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { lessons, tracks } from './curriculum'
 import {
   beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES,
-  MAX_DRAFT_LENGTH, parseBackup, readProgress, serializeBackup, STORAGE_KEY, updateProfile, writeProgress,
+  MAX_DRAFT_LENGTH, parseBackup, readProgress, recordSolve, serializeBackup, STORAGE_KEY, updateProfile, writeProgress,
 } from './progress'
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import type { Progress, Rating, StoragePort } from './progress'
+import { problemIndex } from './problems'
 
 const now = new Date('2026-09-17T12:00:00.000Z')
 const first = lessons[0]
@@ -265,5 +266,39 @@ describe('optional study profile', () => {
     ['null profile', null],
   ])('rejects a backup whose profile has an %s', (_, profile) => {
     expect(() => parseBackup(JSON.stringify({ ...legacyBackup, profile }))).toThrow()
+  })
+})
+
+describe('solved coding problems', () => {
+  const id = problemIndex[0].id
+
+  it('records the first pass per language and keeps the original time', () => {
+    const later = new Date('2026-09-18T12:00:00.000Z')
+    const once = recordSolve(emptyProgress(now), id, 'js', now)
+    expect(once.solved).toEqual({ [id]: { js: now.toISOString() } })
+    expect(recordSolve(once, id, 'js', later)).toBe(once)
+    const both = recordSolve(once, id, 'py', later)
+    expect(both.solved?.[id]).toEqual({ js: now.toISOString(), py: later.toISOString() })
+    expect(() => recordSolve(once, 'not-a-problem', 'js', now)).toThrow()
+  })
+
+  it('upgrades a v1 export with solves and round-trips it without touching lessons', () => {
+    const legacy = parseBackup(JSON.stringify(legacyBackup))
+    expect(legacy.solved).toBeUndefined()
+    const upgraded = recordSolve(legacy, id, 'py', now)
+    const again = parseBackup(serializeBackup(upgraded))
+    expect(again.solved).toEqual({ [id]: { py: now.toISOString() } })
+    expect(again.records).toEqual(legacy.records)
+    expect(again.session).toEqual(legacy.session)
+  })
+
+  it.each([
+    ['unknown problem', { 'not-a-problem': { js: '2026-09-17T12:00:00.000Z' } }],
+    ['empty entry', { [problemIndex[0].id]: {} }],
+    ['unknown language', { [problemIndex[0].id]: { rust: '2026-09-17T12:00:00.000Z' } }],
+    ['bad timestamp', { [problemIndex[0].id]: { js: 'yesterday' } }],
+    ['array', []],
+  ])('rejects a backup whose solved map has an %s', (_, solved) => {
+    expect(() => parseBackup(JSON.stringify({ ...legacyBackup, solved }))).toThrow()
   })
 })

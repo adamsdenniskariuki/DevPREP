@@ -2,9 +2,10 @@ import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
 import type { Lesson, Track } from './curriculum'
 import type { GameStats, WeakArea } from './gamification'
 import type { LearningPath, PathId } from './learning-paths'
+import type { CodeLanguage } from './problem-types'
 import type { Activity, Mode, Profile, Progress } from './progress'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -36,6 +37,8 @@ export interface AppModel {
   browseAll: (track?: Track | 'all') => void
   changePath: (id: PathId | undefined) => void
   changeProfile: (patch: Partial<Profile>) => void
+  /** Records a passing run and returns the XP it earned (0 if already solved in that language). */
+  solveProblem: (problemId: string, lang: CodeLanguage) => number
   tourOpen: boolean
   closeTour: () => void
   replayTour: () => void

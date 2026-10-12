@@ -1,0 +1,331 @@
+{
+  "id": "fewest-jumps",
+  "title": "Fewest jumps to the end",
+  "pattern": "Greedy",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "greedy-interval-selection",
+  "prompt": "You start on platform 0. From platform i you can jump forward to any platform from i + 1 to i + reach[i]. Return the fewest jumps needed to reach the last platform, or -1 if it is unreachable.\n\n- 1 to 100,000 platforms; 0 <= reach[i] <= 100,000.\n- Already standing on the last platform takes 0 jumps.",
+  "function": {
+    "js": "fewestJumps",
+    "py": "fewest_jumps"
+  },
+  "starter": {
+    "js": "function fewestJumps(reach) {\n  // Your code here\n}\n",
+    "py": "def fewest_jumps(reach):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          2,
+          3,
+          1,
+          1,
+          4
+        ]
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          3,
+          2,
+          1,
+          0,
+          4
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          0
+        ]
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1,
+          0
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          0,
+          1
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        [
+          10,
+          0,
+          0,
+          0
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          2,
+          0,
+          2,
+          0,
+          1
+        ]
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          0,
+          1,
+          0,
+          3
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          2,
+          0,
+          0,
+          2,
+          1,
+          3,
+          3,
+          3,
+          2,
+          3,
+          3,
+          2,
+          2,
+          3,
+          0,
+          1,
+          1,
+          4,
+          1,
+          4,
+          3,
+          0,
+          1,
+          2,
+          2,
+          1,
+          2,
+          2,
+          0,
+          0,
+          0,
+          0,
+          1,
+          4,
+          2,
+          4,
+          3,
+          0,
+          1,
+          1,
+          3,
+          1,
+          1,
+          0,
+          3,
+          0,
+          0,
+          4,
+          3,
+          0,
+          3,
+          4,
+          1,
+          3,
+          3,
+          4,
+          0,
+          2,
+          0,
+          3,
+          3,
+          0,
+          2,
+          0,
+          0,
+          4,
+          2,
+          4,
+          2,
+          0,
+          4,
+          2,
+          2,
+          4,
+          3,
+          3,
+          1,
+          1,
+          4,
+          1
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          2,
+          1,
+          2,
+          4,
+          4,
+          4,
+          3,
+          3,
+          3,
+          6,
+          1,
+          2,
+          1,
+          6,
+          1,
+          3,
+          1,
+          2,
+          6,
+          1,
+          4,
+          4,
+          1,
+          3,
+          5,
+          1,
+          2,
+          3,
+          3,
+          1,
+          3,
+          3,
+          2,
+          2,
+          1,
+          1,
+          1,
+          3,
+          2,
+          2,
+          6,
+          6,
+          5,
+          5,
+          2,
+          3,
+          6,
+          2,
+          1,
+          4,
+          5,
+          6,
+          2,
+          1,
+          1,
+          3,
+          6,
+          3,
+          1,
+          3,
+          1,
+          6,
+          2,
+          3,
+          6,
+          1,
+          3,
+          3,
+          5,
+          1,
+          3,
+          4,
+          3,
+          3,
+          2,
+          4,
+          3,
+          6,
+          3,
+          6,
+          5,
+          4,
+          1,
+          5,
+          6,
+          1,
+          5,
+          6,
+          4,
+          1,
+          3,
+          6,
+          5,
+          4,
+          1,
+          3,
+          6,
+          1,
+          2,
+          3
+        ]
+      ],
+      "expected": 28
+    }
+  ],
+  "hints": [
+    "Think of BFS levels: platforms reachable in 1 jump, in 2 jumps, and so on. Each level is a contiguous range.",
+    "While scanning the current range, track the farthest platform reachable from it. That becomes the end of the next range.",
+    "When i reaches the end of the current range, take a jump. If the farthest reach hasn't moved past i, you are stuck: return -1."
+  ],
+  "solution": {
+    "js": "function fewestJumps(reach) {\n  const last = reach.length - 1\n  let jumps = 0\n  let rangeEnd = 0\n  let farthest = 0\n  for (let i = 0; i < last; i++) {\n    farthest = Math.max(farthest, i + reach[i])\n    if (i === rangeEnd) {\n      if (farthest <= i) return -1\n      jumps++\n      rangeEnd = farthest\n      if (rangeEnd >= last) break\n    }\n  }\n  return jumps\n}\n",
+    "py": "def fewest_jumps(reach):\n    last = len(reach) - 1\n    jumps = range_end = farthest = 0\n    for i in range(last):\n        farthest = max(farthest, i + reach[i])\n        if i == range_end:\n            if farthest <= i:\n                return -1\n            jumps += 1\n            range_end = farthest\n            if range_end >= last:\n                break\n    return jumps\n",
+    "explanation": "This is BFS without a queue: the platforms reachable with exactly k jumps form a contiguous block, and the next block ends at the farthest point reachable from the current one. Jumping only when the current block is exhausted, as far as possible, is never worse than any other choice."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "notes": "A DP over every platform is O(n · max reach)."
+  },
+  "followUps": [
+    "Prove the greedy choice is safe with an exchange argument.",
+    "Return the platforms you land on, too."
+  ]
+}

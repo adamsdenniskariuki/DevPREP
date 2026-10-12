@@ -1,0 +1,301 @@
+{
+  "id": "sorted-squares",
+  "title": "Squares in order",
+  "pattern": "Two pointers",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "two-pointers-sorted-pairs",
+  "prompt": "values is sorted in nondecreasing order and may contain negatives. Return a new list of each value squared, also in nondecreasing order.\n\n- 0 to 100,000 integers between -10^4 and 10^4.\n- Aim for O(n) time: do not sort the result.",
+  "function": {
+    "js": "sortedSquares",
+    "py": "sorted_squares"
+  },
+  "starter": {
+    "js": "function sortedSquares(values) {\n  // Your code here\n}\n",
+    "py": "def sorted_squares(values):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          -4,
+          -1,
+          0,
+          3,
+          10
+        ]
+      ],
+      "expected": [
+        0,
+        1,
+        9,
+        16,
+        100
+      ]
+    },
+    {
+      "args": [
+        [
+          -7,
+          -3,
+          2,
+          3,
+          11
+        ]
+      ],
+      "expected": [
+        4,
+        9,
+        9,
+        49,
+        121
+      ]
+    },
+    {
+      "args": [
+        []
+      ],
+      "expected": []
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          5
+        ]
+      ],
+      "expected": [
+        25
+      ]
+    },
+    {
+      "args": [
+        [
+          -5,
+          -5,
+          -5
+        ]
+      ],
+      "expected": [
+        25,
+        25,
+        25
+      ]
+    },
+    {
+      "args": [
+        [
+          -3,
+          -2,
+          -1
+        ]
+      ],
+      "expected": [
+        1,
+        4,
+        9
+      ]
+    },
+    {
+      "args": [
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "expected": [
+        0,
+        0,
+        1
+      ]
+    },
+    {
+      "args": [
+        [
+          -99,
+          -98,
+          -95,
+          -91,
+          -90,
+          -81,
+          -81,
+          -76,
+          -74,
+          -66,
+          -64,
+          -61,
+          -61,
+          -58,
+          -57,
+          -56,
+          -52,
+          -49,
+          -48,
+          -40,
+          -25,
+          -25,
+          -22,
+          -19,
+          -19,
+          -14,
+          -13,
+          -12,
+          -11,
+          -11,
+          -8,
+          -2,
+          3,
+          13,
+          14,
+          15,
+          17,
+          18,
+          18,
+          18,
+          21,
+          21,
+          22,
+          22,
+          25,
+          26,
+          26,
+          27,
+          30,
+          33,
+          33,
+          34,
+          37,
+          38,
+          41,
+          43,
+          47,
+          48,
+          49,
+          50,
+          52,
+          52,
+          61,
+          65,
+          68,
+          69,
+          71,
+          74,
+          76,
+          77,
+          80,
+          81,
+          82,
+          84,
+          85,
+          87,
+          88,
+          88,
+          90,
+          96
+        ]
+      ],
+      "expected": [
+        4,
+        9,
+        64,
+        121,
+        121,
+        144,
+        169,
+        169,
+        196,
+        196,
+        225,
+        289,
+        324,
+        324,
+        324,
+        361,
+        361,
+        441,
+        441,
+        484,
+        484,
+        484,
+        625,
+        625,
+        625,
+        676,
+        676,
+        729,
+        900,
+        1089,
+        1089,
+        1156,
+        1369,
+        1444,
+        1600,
+        1681,
+        1849,
+        2209,
+        2304,
+        2304,
+        2401,
+        2401,
+        2500,
+        2704,
+        2704,
+        2704,
+        3136,
+        3249,
+        3364,
+        3721,
+        3721,
+        3721,
+        4096,
+        4225,
+        4356,
+        4624,
+        4761,
+        5041,
+        5476,
+        5476,
+        5776,
+        5776,
+        5929,
+        6400,
+        6561,
+        6561,
+        6561,
+        6724,
+        7056,
+        7225,
+        7569,
+        7744,
+        7744,
+        8100,
+        8100,
+        8281,
+        9025,
+        9216,
+        9604,
+        9801
+      ]
+    }
+  ],
+  "hints": [
+    "The largest square is at one of the two ends of the input. Why?",
+    "Put one pointer at each end and fill the result from the back.",
+    "Compare the squares at left and right, write the larger at position write, move that pointer inward, and decrement write."
+  ],
+  "solution": {
+    "js": "function sortedSquares(values) {\n  const result = new Array(values.length)\n  let left = 0\n  let right = values.length - 1\n  for (let write = values.length - 1; write >= 0; write--) {\n    const a = values[left] * values[left]\n    const b = values[right] * values[right]\n    if (a > b) { result[write] = a; left++ } else { result[write] = b; right-- }\n  }\n  return result\n}\n",
+    "py": "def sorted_squares(values):\n    result = [0] * len(values)\n    left, right = 0, len(values) - 1\n    for write in range(len(values) - 1, -1, -1):\n        a, b = values[left] * values[left], values[right] * values[right]\n        if a > b:\n            result[write] = a\n            left += 1\n        else:\n            result[write] = b\n            right -= 1\n    return result\n",
+    "explanation": "Squares are largest at the extremes of a sorted list (the most negative or the most positive value). Two pointers walk inward from both ends, always placing the larger square at the next free slot from the back."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n) for the output",
+    "notes": "Sorting the squares is O(n log n). The two-pointer merge exploits the existing order."
+  },
+  "followUps": [
+    "Could you do this in place if the caller allowed overwriting the input?"
+  ]
+}

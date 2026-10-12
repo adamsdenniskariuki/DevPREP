@@ -18,6 +18,8 @@ export default function Icon({ name, size = 20 }: { name: string; size?: number 
     chart: <><path d="M4 3v17h17M8 15v-4m5 4V7m5 8V4" /></>,
     arrow: <path d="M4 12h16m-6-6 6 6-6 6" />,
     check: <path d="m5 12 4 4L19 6" />,
+    x: <path d="M6 6l12 12M18 6 6 18" />,
+    back: <path d="M20 12H4m6-6-6 6 6 6" />,
     book: <><path d="M12 5C9 3 5 3 2 4v15c4-1 7-1 10 1 3-2 6-2 10-1V4c-3-1-7-1-10 1Zm0 0v15" /></>,
     code: <><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18" /></>,
   }

@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordSolve, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
 import type { Mode, Profile, Rating, StudySession } from './progress'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
 import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, daysUntil, gameStats, weakAreas } from './gamification'
+import { activityXp, daysUntil, gameStats, solveXp, weakAreas } from './gamification'
+import { problemIds } from './problems'
+import type { CodeLanguage } from './problem-types'
 import { TOUR_KEY } from './appearance'
 import Icon from './components/Icon'
 import PwaPanel from './components/PwaPanel'
@@ -23,6 +25,8 @@ import SettingsScreen from './screens/SettingsScreen'
 import Study from './screens/Study'
 import type { AppModel, Route } from './app-model'
 
+const CodeScreen = lazy(() => import('./screens/CodeScreen'))
+
 const navigation = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'tracks', label: 'Tracks', icon: 'map' },
@@ -30,15 +34,16 @@ const navigation = [
   { id: 'progress', label: 'Progress', icon: 'chart' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study']
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code']
 /** Hashes from earlier releases keep working as bookmarks. */
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 
-function parseHash(): { route: Route | 'unknown'; track?: Track } {
+function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string } {
   const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
   const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
   if (!route || rest.length) return { route: 'unknown' }
   if (sub === undefined) return { route }
+  if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
   const track = tracks.find(item => item.id === sub)?.id
   return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
 }
@@ -54,6 +59,7 @@ export default function App() {
   const { progress } = store
   const [route, setRoute] = useState(() => parseHash().route)
   const [track, setTrack] = useState<Track | 'all'>('all')
+  const [problemId, setProblemId] = useState(() => parseHash().problemId)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
   const [backupError, setBackupError] = useState('')
@@ -77,6 +83,7 @@ export default function App() {
     const apply = () => {
       const parsed = parseHash()
       setRoute(parsed.route)
+      setProblemId(parsed.problemId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -84,7 +91,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route])
+  useEffect(() => { heading.current?.focus() }, [route, problemId])
   useEffect(() => {
     if (pendingImport) importDialog.current?.showModal()
     else importDialog.current?.close()
@@ -109,6 +116,18 @@ export default function App() {
   function navigate(next: Route) {
     window.location.hash = next
     setRoute(next)
+    setProblemId(undefined)
+  }
+
+  const latest = useRef(progress)
+  latest.current = progress
+  function solveProblem(id: string, lang: CodeLanguage) {
+    const before = latest.current
+    const after = recordSolve(before, id, lang)
+    if (after === before) return 0
+    store.update(value => recordSolve(value, id, lang))
+    latest.current = after
+    return solveXp(after) - solveXp(before)
   }
 
   function changePath(id: PathId | undefined) {
@@ -197,10 +216,10 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' ? 'home' : route
+  const activeNav = route === 'study' ? 'home' : route === 'code' ? 'practice' : route
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
@@ -251,6 +270,7 @@ export default function App() {
             {route === 'home' && <HomeScreen app={app} />}
             {route === 'tracks' && <TracksScreen app={app} />}
             {route === 'practice' && <PracticeScreen app={app} />}
+            {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
             {route === 'progress' && <ProgressScreen app={app} />}
             {route === 'settings' && <SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} />}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}

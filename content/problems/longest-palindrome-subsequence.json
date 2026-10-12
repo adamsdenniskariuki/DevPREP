@@ -1,0 +1,98 @@
+{
+  "id": "longest-palindrome-subsequence",
+  "title": "Longest palindromic subsequence",
+  "pattern": "Dynamic programming",
+  "level": "sse",
+  "difficulty": "stretch",
+  "prompt": "Return the length of the longest subsequence of text that reads the same forwards and backwards.\n\n- text has 0 to 1,000 lowercase English letters.\n- This is an interval DP: solve every substring text[i..j] from short to long.",
+  "function": {
+    "js": "longestPalindromeSubsequence",
+    "py": "longest_palindrome_subsequence"
+  },
+  "starter": {
+    "js": "function longestPalindromeSubsequence(text) {\n  // Your code here\n}\n",
+    "py": "def longest_palindrome_subsequence(text):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        "bbbab"
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        "cbbd"
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        ""
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        "a"
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "ab"
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        "aa"
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        "character"
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        "agbdba"
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        "bbaabbbabaaabbbaabbbbbababbaababbbbaabaabbabbaabaa"
+      ],
+      "expected": 40
+    },
+    {
+      "args": [
+        "ebaaabacabbeaddaebbcecbaebabdcbcecdedbaddccbebddddacaadddaccaeadadecccaabedcbddd"
+      ],
+      "expected": 43
+    }
+  ],
+  "hints": [
+    "Define L[i][j] as the answer for the substring from i to j inclusive.",
+    "If text[i] == text[j], both ends can wrap a palindrome: L[i][j] = L[i+1][j-1] + 2. Otherwise drop one end: max(L[i+1][j], L[i][j-1]).",
+    "Fill i from the end of the string backwards and j forwards from i, so smaller intervals are ready first. L[i][i] = 1."
+  ],
+  "solution": {
+    "js": "function longestPalindromeSubsequence(text) {\n  const n = text.length\n  if (n === 0) return 0\n  const L = Array.from({ length: n }, () => new Array(n).fill(0))\n  for (let i = n - 1; i >= 0; i--) {\n    L[i][i] = 1\n    for (let j = i + 1; j < n; j++) {\n      L[i][j] = text[i] === text[j]\n        ? (i + 1 <= j - 1 ? L[i + 1][j - 1] : 0) + 2\n        : Math.max(L[i + 1][j], L[i][j - 1])\n    }\n  }\n  return L[0][n - 1]\n}\n",
+    "py": "def longest_palindrome_subsequence(text):\n    n = len(text)\n    if n == 0:\n        return 0\n    L = [[0] * n for _ in range(n)]\n    for i in range(n - 1, -1, -1):\n        L[i][i] = 1\n        for j in range(i + 1, n):\n            if text[i] == text[j]:\n                L[i][j] = (L[i + 1][j - 1] if i + 1 <= j - 1 else 0) + 2\n            else:\n                L[i][j] = max(L[i + 1][j], L[i][j - 1])\n    return L[0][n - 1]\n",
+    "explanation": "Matching end characters can always both be used as the outer pair of a palindrome. When they differ, at least one end is unused. Every state depends on strictly shorter intervals, so filling i downward and j upward respects the dependencies."
+  },
+  "complexity": {
+    "time": "O(n²)",
+    "space": "O(n²)",
+    "notes": "Equivalent to the LCS of text and its reverse. Keeping only two rows reduces space to O(n)."
+  },
+  "followUps": [
+    "What is the fewest characters to insert to make text a palindrome? (Hint: use this answer.)"
+  ]
+}

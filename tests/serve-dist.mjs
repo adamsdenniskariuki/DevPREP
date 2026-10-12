@@ -5,6 +5,9 @@ import { extname, join } from 'node:path'
 const types = {
   '.html': 'text/html',
   '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.wasm': 'application/wasm',
+  '.zip': 'application/zip',
   '.css': 'text/css',
   '.json': 'application/json',
   '.webmanifest': 'application/manifest+json',

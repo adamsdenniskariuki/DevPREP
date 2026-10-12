@@ -1,0 +1,272 @@
+{
+  "id": "combination-totals",
+  "title": "Combinations that hit a total",
+  "pattern": "Backtracking",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "backtracking-subsets",
+  "prompt": "candidates holds distinct positive integers; each may be used any number of times. Return every combination that sums to target. Write each combination in nondecreasing order, and sort the list of combinations lexicographically (compare first elements, then second, and so on).\n\n- 0 to 12 candidates between 1 and 30; 1 <= target <= 30.",
+  "function": {
+    "js": "combinationTotals",
+    "py": "combination_totals"
+  },
+  "starter": {
+    "js": "function combinationTotals(candidates, target) {\n  // Your code here\n}\n",
+    "py": "def combination_totals(candidates, target):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          2,
+          3,
+          6,
+          7
+        ],
+        7
+      ],
+      "expected": [
+        [
+          2,
+          2,
+          3
+        ],
+        [
+          7
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          2,
+          3,
+          5
+        ],
+        8
+      ],
+      "expected": [
+        [
+          2,
+          2,
+          2,
+          2
+        ],
+        [
+          2,
+          3,
+          3
+        ],
+        [
+          3,
+          5
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          4
+        ],
+        3
+      ],
+      "expected": []
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [],
+        5
+      ],
+      "expected": []
+    },
+    {
+      "args": [
+        [
+          1
+        ],
+        3
+      ],
+      "expected": [
+        [
+          1,
+          1,
+          1
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          7,
+          3,
+          2
+        ],
+        7
+      ],
+      "expected": [
+        [
+          2,
+          2,
+          3
+        ],
+        [
+          7
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          5,
+          10,
+          25
+        ],
+        30
+      ],
+      "expected": [
+        [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ],
+        [
+          5,
+          5,
+          5,
+          5,
+          10
+        ],
+        [
+          5,
+          5,
+          10,
+          10
+        ],
+        [
+          5,
+          25
+        ],
+        [
+          10,
+          10,
+          10
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        6
+      ],
+      "expected": [
+        [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          1,
+          1,
+          1,
+          2
+        ],
+        [
+          1,
+          1,
+          1,
+          3
+        ],
+        [
+          1,
+          1,
+          2,
+          2
+        ],
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          2,
+          2,
+          2
+        ],
+        [
+          3,
+          3
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          8,
+          11,
+          13,
+          9,
+          4
+        ],
+        26
+      ],
+      "expected": [
+        [
+          4,
+          4,
+          9,
+          9
+        ],
+        [
+          4,
+          9,
+          13
+        ],
+        [
+          4,
+          11,
+          11
+        ],
+        [
+          8,
+          9,
+          9
+        ],
+        [
+          13,
+          13
+        ]
+      ]
+    }
+  ],
+  "hints": [
+    "Build combinations one number at a time. How do you avoid producing both [2, 3] and [3, 2]?",
+    "Sort candidates and only allow choices at or after the index of the last number chosen.",
+    "Recurse with (start, remaining). Stop a branch once a candidate exceeds remaining; record the path when remaining hits 0. Exploring smaller candidates first yields lexicographic order."
+  ],
+  "solution": {
+    "js": "function combinationTotals(candidates, target) {\n  const sorted = [...candidates].sort((a, b) => a - b)\n  const results = []\n  const path = []\n  const explore = (start, remaining) => {\n    if (remaining === 0) { results.push([...path]); return }\n    for (let i = start; i < sorted.length && sorted[i] <= remaining; i++) {\n      path.push(sorted[i])\n      explore(i, remaining - sorted[i])\n      path.pop()\n    }\n  }\n  explore(0, target)\n  return results\n}\n",
+    "py": "def combination_totals(candidates, target):\n    ordered = sorted(candidates)\n    results, path = [], []\n\n    def explore(start, remaining):\n        if remaining == 0:\n            results.append(path[:])\n            return\n        for i in range(start, len(ordered)):\n            if ordered[i] > remaining:\n                break\n            path.append(ordered[i])\n            explore(i, remaining - ordered[i])\n            path.pop()\n\n    explore(0, target)\n    return results\n",
+    "explanation": "Choosing numbers in nondecreasing order (never going back to a smaller index) generates each multiset exactly once. Sorted candidates let a branch stop as soon as a candidate exceeds the remaining total. Because smaller choices are explored first and no finished combination is a prefix of another, results come out in lexicographic order."
+  },
+  "complexity": {
+    "time": "O(S · L)",
+    "space": "O(L) plus the output",
+    "notes": "S is the number of search states and L = target / min(candidates) is the maximum depth. Worst-case growth is exponential in target, which is why target is small."
+  },
+  "followUps": [
+    "Each candidate may be used at most once and candidates can repeat. How do you skip duplicate results?"
+  ]
+}

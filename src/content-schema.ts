@@ -77,6 +77,54 @@ export function validateLesson(value: unknown, where = 'lesson'): string[] {
   return check.errors
 }
 
+const PROBLEM_REQUIRED = ['id', 'title', 'pattern', 'level', 'difficulty', 'prompt', 'function', 'starter', 'tests', 'hiddenTests', 'hints', 'solution', 'complexity', 'followUps']
+const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
+/** Validates one content/problems/<id>.json runnable coding problem. */
+export function validateProblem(value: unknown, where = 'problem'): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', PROBLEM_REQUIRED, ['lessonId'])
+  if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
+  for (const key of ['title', 'pattern', 'prompt']) check.text(value[key], key)
+  if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+  if (!['warm-up', 'core', 'stretch'].includes(value.difficulty as string)) check.fail('difficulty', 'expected warm-up, core or stretch')
+  if ('lessonId' in value) check.text(value.lessonId, 'lessonId')
+  const pair = (key: string, extra: string[] = []) => {
+    const item = value[key]
+    if (!isRec(item)) return check.fail(key, 'expected object')
+    check.keys(item, key, ['js', 'py', ...extra])
+    for (const lang of ['js', 'py', ...extra]) check.text(item[lang], `${key}.${lang}`)
+  }
+  pair('function')
+  pair('starter')
+  pair('solution', ['explanation'])
+  if (isRec(value.function)) {
+    if (!IDENT.test(String(value.function.js))) check.fail('function.js', 'expected identifier')
+    if (!IDENT.test(String(value.function.py))) check.fail('function.py', 'expected identifier')
+  }
+  const tests = (key: string, min: number) => {
+    const list = value[key]
+    if (!Array.isArray(list) || list.length < min) return check.fail(key, `expected at least ${min} tests`)
+    list.forEach((item, index) => {
+      const path = `${key}[${index}]`
+      if (!isRec(item)) return check.fail(path, 'expected object')
+      check.keys(item, path, ['args', 'expected'])
+      if (!Array.isArray(item.args)) check.fail(`${path}.args`, 'expected array')
+    })
+  }
+  tests('tests', 2)
+  tests('hiddenTests', 3)
+  check.texts(value.hints, 'hints', 3)
+  check.texts(value.followUps, 'followUps')
+  if (!isRec(value.complexity)) check.fail('complexity', 'expected object')
+  else {
+    check.keys(value.complexity, 'complexity', ['time', 'space', 'notes'])
+    for (const key of ['time', 'space', 'notes']) check.text(value.complexity[key], `complexity.${key}`)
+  }
+  return check.errors
+}
+
 /** Validates a content/<track>/track.json document. */
 export function validateTrack(value: unknown, where = 'track'): string[] {
   const check = new Checker(where)

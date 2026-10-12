@@ -1,0 +1,281 @@
+{
+  "id": "tree-height",
+  "title": "Height of a binary tree",
+  "pattern": "Trees",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "trees-bst-validation",
+  "prompt": "Return the number of nodes on the longest path from root down to a leaf. An empty tree (null / None) has height 0.\n\n- Nodes have val, left and right (child node or null). In Python they are dicts: node[\"left\"].\n- 0 to 10,000 nodes; depth at most 500.",
+  "function": {
+    "js": "treeHeight",
+    "py": "tree_height"
+  },
+  "starter": {
+    "js": "function treeHeight(root) {\n  // Your code here\n}\n",
+    "py": "def tree_height(root):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        {
+          "val": 3,
+          "left": {
+            "val": 9,
+            "left": null,
+            "right": null
+          },
+          "right": {
+            "val": 20,
+            "left": {
+              "val": 15,
+              "left": null,
+              "right": null
+            },
+            "right": {
+              "val": 7,
+              "left": null,
+              "right": null
+            }
+          }
+        }
+      ],
+      "expected": 3
+    },
+    {
+      "args": [
+        {
+          "val": 1,
+          "left": null,
+          "right": {
+            "val": 2,
+            "left": null,
+            "right": null
+          }
+        }
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        null
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        {
+          "val": 1,
+          "left": null,
+          "right": null
+        }
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        {
+          "val": 1,
+          "left": {
+            "val": 2,
+            "left": {
+              "val": 4,
+              "left": {
+                "val": 6,
+                "left": null,
+                "right": null
+              },
+              "right": null
+            },
+            "right": null
+          },
+          "right": {
+            "val": 3,
+            "left": null,
+            "right": {
+              "val": 5,
+              "left": null,
+              "right": null
+            }
+          }
+        }
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        {
+          "val": 1,
+          "left": {
+            "val": 2,
+            "left": {
+              "val": 4,
+              "left": {
+                "val": 8,
+                "left": {
+                  "val": 16,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 17,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "val": 9,
+                "left": {
+                  "val": 18,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 19,
+                  "left": null,
+                  "right": null
+                }
+              }
+            },
+            "right": {
+              "val": 5,
+              "left": {
+                "val": 10,
+                "left": {
+                  "val": 20,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 21,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "val": 11,
+                "left": {
+                  "val": 22,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 23,
+                  "left": null,
+                  "right": null
+                }
+              }
+            }
+          },
+          "right": {
+            "val": 3,
+            "left": {
+              "val": 6,
+              "left": {
+                "val": 12,
+                "left": {
+                  "val": 24,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 25,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "val": 13,
+                "left": {
+                  "val": 26,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 27,
+                  "left": null,
+                  "right": null
+                }
+              }
+            },
+            "right": {
+              "val": 7,
+              "left": {
+                "val": 14,
+                "left": {
+                  "val": 28,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 29,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "val": 15,
+                "left": {
+                  "val": 30,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 31,
+                  "left": null,
+                  "right": null
+                }
+              }
+            }
+          }
+        }
+      ],
+      "expected": 5
+    },
+    {
+      "args": [
+        {
+          "val": 1,
+          "left": {
+            "val": 2,
+            "left": {
+              "val": 3,
+              "left": {
+                "val": 4,
+                "left": {
+                  "val": 5,
+                  "left": null,
+                  "right": null
+                },
+                "right": null
+              },
+              "right": null
+            },
+            "right": null
+          },
+          "right": null
+        }
+      ],
+      "expected": 5
+    }
+  ],
+  "hints": [
+    "How does a tree's height relate to the heights of its two subtrees?",
+    "height(node) = 1 + max(height(left), height(right)), with height(null) = 0.",
+    "Without recursion, run a breadth-first search and count how many levels you process."
+  ],
+  "solution": {
+    "js": "function treeHeight(root) {\n  let level = root ? [root] : []\n  let height = 0\n  while (level.length) {\n    height++\n    const next = []\n    for (const node of level) {\n      if (node.left) next.push(node.left)\n      if (node.right) next.push(node.right)\n    }\n    level = next\n  }\n  return height\n}\n",
+    "py": "def tree_height(root):\n    level = [root] if root else []\n    height = 0\n    while level:\n        height += 1\n        level = [child for node in level for child in (node[\"left\"], node[\"right\"]) if child]\n    return height\n",
+    "explanation": "Process the tree one level at a time; the number of non-empty levels is the height. This iterative BFS avoids the call-stack depth limits that a recursive solution hits on very deep, list-like trees."
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(w)",
+    "notes": "w is the maximum width of a level. The recursive version uses O(h) stack space instead."
+  },
+  "followUps": [
+    "When would you prefer the recursive version, and how deep can it go before overflowing?"
+  ]
+}

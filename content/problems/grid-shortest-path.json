@@ -1,0 +1,189 @@
+{
+  "id": "grid-shortest-path",
+  "title": "Shortest path through a floor plan",
+  "pattern": "Graphs",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "graph-bfs-shortest-hops",
+  "prompt": "grid is a list of equal-length strings: \".\" is open floor and \"#\" is a wall. Moving one cell up, down, left or right costs one step. Return the fewest steps from the top-left cell to the bottom-right cell, or -1 if it cannot be reached (including when either cell is a wall).\n\n- 1 to 300 rows and 1 to 300 columns.\n- A 1×1 open grid needs 0 steps.",
+  "function": {
+    "js": "shortestGridPath",
+    "py": "shortest_grid_path"
+  },
+  "starter": {
+    "js": "function shortestGridPath(grid) {\n  // Your code here\n}\n",
+    "py": "def shortest_grid_path(grid):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          "..#",
+          "#..",
+          "#.."
+        ]
+      ],
+      "expected": 4
+    },
+    {
+      "args": [
+        [
+          ".#",
+          "#."
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          "."
+        ]
+      ],
+      "expected": 0
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          "#"
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          "....",
+          "###.",
+          "....",
+          ".###",
+          "...."
+        ]
+      ],
+      "expected": 13
+    },
+    {
+      "args": [
+        [
+          ".",
+          ".",
+          "."
+        ]
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        [
+          "..",
+          ".#"
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          ".#..##.......##",
+          ".#...#..#.#...#",
+          "......####..#..",
+          ".....###.......",
+          ".#.#.#.........",
+          ".....#.........",
+          ".....#.....#...",
+          ".###...###.#...",
+          "...#.........#.",
+          ".###...........",
+          "..##...#...#.#.",
+          ".##....#.#..#.."
+        ]
+      ],
+      "expected": 25
+    },
+    {
+      "args": [
+        [
+          "...##.....#.#...##.#",
+          "..#.###....##....##.",
+          "#....#...#..##.#.#.#",
+          "........###..#...##.",
+          "....#.#....#...#..#.",
+          ".....##......##...#.",
+          ".....#.##.#.#......#",
+          "....#...#..#...#.#.#",
+          "#...#..###...#..#..#",
+          "..#...##.#.#.#....#.",
+          "#.#.#.........#.....",
+          "..........######....",
+          ".#....#..#.#...#####",
+          "..#.......#....#.#..",
+          "...........#....#...",
+          ".#.#..##..##.#...#.#",
+          "..#...###.#.#.....##",
+          ".......####.........",
+          "#.#...#..#.#..##.##.",
+          ".......#.......#####"
+        ]
+      ],
+      "expected": -1
+    },
+    {
+      "args": [
+        [
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          "..............................",
+          ".............................."
+        ]
+      ],
+      "expected": 58
+    }
+  ],
+  "hints": [
+    "Every move costs the same. Which traversal finds shortest paths in an unweighted graph?",
+    "Breadth-first search from (0, 0) reaches cells in order of distance.",
+    "Store distance per cell, mark cells visited when you enqueue them, and use a head index instead of shift() so the queue stays O(1)."
+  ],
+  "solution": {
+    "js": "function shortestGridPath(grid) {\n  const rows = grid.length\n  const cols = grid[0].length\n  if (grid[0][0] === '#' || grid[rows - 1][cols - 1] === '#') return -1\n  const dist = new Array(rows * cols).fill(-1)\n  const queue = [0]\n  dist[0] = 0\n  for (let head = 0; head < queue.length; head++) {\n    const cell = queue[head]\n    const r = Math.floor(cell / cols)\n    const c = cell % cols\n    for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {\n      const nr = r + dr\n      const nc = c + dc\n      if (nr < 0 || nc < 0 || nr >= rows || nc >= cols || grid[nr][nc] === '#') continue\n      const next = nr * cols + nc\n      if (dist[next] !== -1) continue\n      dist[next] = dist[cell] + 1\n      queue.push(next)\n    }\n  }\n  return dist[rows * cols - 1]\n}\n",
+    "py": "from collections import deque\n\ndef shortest_grid_path(grid):\n    rows, cols = len(grid), len(grid[0])\n    if grid[0][0] == \"#\" or grid[rows - 1][cols - 1] == \"#\":\n        return -1\n    dist = [[-1] * cols for _ in range(rows)]\n    dist[0][0] = 0\n    queue = deque([(0, 0)])\n    while queue:\n        r, c = queue.popleft()\n        for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):\n            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == \".\" and dist[nr][nc] == -1:\n                dist[nr][nc] = dist[r][c] + 1\n                queue.append((nr, nc))\n    return dist[rows - 1][cols - 1]\n",
+    "explanation": "Treat each open cell as a node with edges to open neighbours. BFS visits nodes in nondecreasing distance, so the first time a cell is reached is via a shortest path. Marking on enqueue prevents duplicates in the queue."
+  },
+  "complexity": {
+    "time": "O(R · C)",
+    "space": "O(R · C)",
+    "notes": "Each cell is enqueued at most once and checks four neighbours. Array.shift() is O(n) in JavaScript, which is why the queue uses a head index."
+  },
+  "followUps": [
+    "Some cells cost 2 to cross. What replaces BFS?",
+    "How would A* with Manhattan distance speed up large grids?"
+  ]
+}

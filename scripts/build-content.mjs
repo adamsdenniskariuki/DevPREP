@@ -24,11 +24,33 @@ export function buildCurriculum(root = 'content') {
 }
 
 export const OUTPUT = 'src/generated/curriculum.json'
+export const PROBLEMS_OUTPUT = 'src/generated/problems.json'
+export const PROBLEM_INDEX_OUTPUT = 'src/generated/problem-index.json'
+
+export function buildProblems(root = 'content') {
+  const dir = join(root, 'problems')
+  const { problems: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const problems = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/problems/index.json lists ${id} but the file is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/problems has problems not listed in index.json: ${[...files].join(', ')}`)
+  const index = problems.map(({ id, title, pattern, level, difficulty, lessonId }) => ({ id, title, pattern, level, difficulty, ...(lessonId ? { lessonId } : {}) }))
+  return { problems, index }
+}
+
+function writeIfChanged(path, value) {
+  const text = JSON.stringify(value) + '\n'
+  if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
+    mkdirSync('src/generated', { recursive: true })
+    writeFileSync(path, text)
+  }
+}
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const text = JSON.stringify(buildCurriculum()) + '\n'
-  if (!existsSync(OUTPUT) || readFileSync(OUTPUT, 'utf8') !== text) {
-    mkdirSync('src/generated', { recursive: true })
-    writeFileSync(OUTPUT, text)
-  }
+  writeIfChanged(OUTPUT, buildCurriculum())
+  const { problems, index } = buildProblems()
+  writeIfChanged(PROBLEMS_OUTPUT, problems)
+  writeIfChanged(PROBLEM_INDEX_OUTPUT, index)
 }

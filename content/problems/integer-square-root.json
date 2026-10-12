@@ -1,0 +1,117 @@
+{
+  "id": "integer-square-root",
+  "title": "Integer square root",
+  "pattern": "Binary search",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "binary-search-lower-bound",
+  "prompt": "Return the largest integer r with r * r <= n, without using a built-in square root or power function.\n\n- 0 <= n <= 10^12.",
+  "function": {
+    "js": "integerSqrt",
+    "py": "integer_sqrt"
+  },
+  "starter": {
+    "js": "function integerSqrt(n) {\n  // Your code here\n}\n",
+    "py": "def integer_sqrt(n):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [
+        0
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        8
+      ],
+      "expected": 2
+    },
+    {
+      "args": [
+        16
+      ],
+      "expected": 4
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        1
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        2
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        3
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        99
+      ],
+      "expected": 9
+    },
+    {
+      "args": [
+        100
+      ],
+      "expected": 10
+    },
+    {
+      "args": [
+        101
+      ],
+      "expected": 10
+    },
+    {
+      "args": [
+        2147395599
+      ],
+      "expected": 46339
+    },
+    {
+      "args": [
+        999999999999
+      ],
+      "expected": 999999
+    },
+    {
+      "args": [
+        1000000000000
+      ],
+      "expected": 1000000
+    },
+    {
+      "args": [
+        250710119383
+      ],
+      "expected": 500709
+    }
+  ],
+  "hints": [
+    "As r grows, r * r only grows. Which search works on a monotonic yes/no question?",
+    "Search r in [0, min(n, 10^6)]. The question 'is r * r <= n?' is true then false.",
+    "Find the last r where the answer is true: use mid = ceil((low + high) / 2) so the loop always shrinks."
+  ],
+  "solution": {
+    "js": "function integerSqrt(n) {\n  let low = 0\n  let high = Math.min(n, 1_000_000)\n  while (low < high) {\n    const mid = Math.floor((low + high + 1) / 2)\n    if (mid * mid <= n) low = mid\n    else high = mid - 1\n  }\n  return low\n}\n",
+    "py": "def integer_sqrt(n):\n    low, high = 0, min(n, 1_000_000)\n    while low < high:\n        mid = (low + high + 1) // 2\n        if mid * mid <= n:\n            low = mid\n        else:\n            high = mid - 1\n    return low\n",
+    "explanation": "Binary search on the answer: r * r <= n is true for small r and false beyond the root. Keep low as a value known to satisfy it and shrink toward the last true value. The upper mid avoids an infinite loop when high = low + 1."
+  },
+  "complexity": {
+    "time": "O(log n)",
+    "space": "O(1)",
+    "notes": "The bound 10^6 keeps mid * mid within 10^12, well inside exact double precision (2^53)."
+  },
+  "followUps": [
+    "How would you find a real square root to six decimal places? When is Newton's method preferable?"
+  ]
+}
