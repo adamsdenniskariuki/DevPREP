@@ -1,0 +1,273 @@
+{
+  "id": "training-serving-skew",
+  "kind": "guide",
+  "topic": "ml-production",
+  "level": "se",
+  "title": "Training-serving skew: same features offline and online",
+  "summary": "A model only works in production if it sees the same features it was trained on. Share feature definitions, join point-in-time, log what you serve and measure the gap.",
+  "minutes": 14,
+  "principle": "Every feature a model sees at serving time must be computed by the same definition, from data that would have been available at that moment, as the feature it was trained on. Treat the gap between offline and online feature values as a measured, alerted metric, not an assumption.",
+  "why": "Training-serving skew is the classic way a model with great offline metrics quietly underperforms after launch. Nothing crashes: the model receives numbers, scores them and returns predictions. The numbers just mean something slightly different from what it learned.\n\nThe usual causes are mundane. **Two code paths**: features are written once in a batch job (SQL or Spark) for training and again in a service (Java, Go) for serving, and the two drift apart on edge cases such as nulls, time zones or rounding. **Time travel**: the training join uses a feature value computed after the event being predicted, so the model learns from the future and offline metrics are inflated. **Stale features**: the online store is refreshed less often than the training data assumed, so a \"last hour\" count is really from yesterday. **Preprocessing drift**: vocabularies, normalisation statistics or bucket boundaries are refitted for training but the serving copy is never updated.\n\nThe cures are structural. Define each feature once and run that definition for both paths (a shared library or a feature store). Build training sets with **point-in-time correct joins**. Log the exact feature vector the model scored and train on those logs where you can. Then compare offline and online values for the same entity and time, and alert when they disagree.",
+  "diagrams": [
+    {
+      "id": "tss-pit-join",
+      "type": "sequence",
+      "title": "A point-in-time correct training join",
+      "alt": "Sequence diagram. The training job reads labelled events with their timestamps, asks the feature history for the latest value that was available before each event time, receives that value, and writes the training row. A later value computed after the event is skipped.",
+      "caption": "The join key is entity plus time. Using the latest value instead of the as-of value leaks the future into training.",
+      "actors": [
+        { "id": "job", "label": "Training job" },
+        { "id": "labels", "label": "Label events" },
+        { "id": "hist", "label": "Feature history" },
+        { "id": "out", "label": "Training set" }
+      ],
+      "messages": [
+        { "from": "job", "to": "labels", "label": "read (user, event_time, label)", "note": "Each label row carries the moment the prediction would have been made, not the moment the label arrived." },
+        { "from": "labels", "to": "job", "label": "u42, 10:05, bought=1", "style": "reply" },
+        { "from": "job", "to": "hist", "label": "u42 value with avail <= 10:05", "note": "Ask for the newest value that was already available to serving at 10:05. Use the availability time, not the end of the aggregation window." },
+        { "from": "hist", "to": "job", "label": "clicks_1h=3 (avail 10:00)", "style": "reply", "note": "A value written at 10:30 also exists, and it includes the purchase itself. The as-of lookup never returns it." },
+        { "from": "job", "to": "out", "label": "write row (3, label 1)", "note": "The row now matches what the online model would really have seen at 10:05." }
+      ]
+    },
+    {
+      "id": "tss-log-and-wait",
+      "type": "flow",
+      "title": "Log served features, join labels later",
+      "alt": "Architecture flow. The app calls the model server, which reads the online feature store and scores. The server writes the exact feature vector to a feature log. Outcomes from the app land in a label source. A joiner combines the feature log with labels, a trainer builds a model, the registry stores it and the server loads it.",
+      "caption": "Training on logged features removes a whole class of skew: the model learns from the vectors serving actually produced.",
+      "nodes": [
+        { "id": "app", "label": "App", "kind": "client", "col": 0, "row": 0 },
+        { "id": "server", "label": "Model server", "kind": "service", "col": 1, "row": 0 },
+        { "id": "online", "label": "Online store", "kind": "cache", "col": 2, "row": 1, "sub": "low-latency reads" },
+        { "id": "registry", "label": "Model registry", "kind": "storage", "col": 3, "row": 0 },
+        { "id": "flog", "label": "Feature log", "kind": "queue", "col": 1, "row": 2, "sub": "vector + req id" },
+        { "id": "labels", "label": "Label source", "kind": "db", "col": 0, "row": 3, "sub": "clicks, purchases" },
+        { "id": "join", "label": "Joiner", "kind": "worker", "col": 1, "row": 4, "sub": "on request id" },
+        { "id": "trainer", "label": "Trainer", "kind": "worker", "col": 3, "row": 4 }
+      ],
+      "edges": [
+        { "from": "app", "to": "server", "label": "score request" },
+        { "from": "server", "to": "online", "label": "get features" },
+        { "from": "server", "to": "flog", "label": "log vector", "style": "async" },
+        { "from": "app", "to": "labels", "label": "outcomes", "style": "async" },
+        { "from": "flog", "to": "join" },
+        { "from": "labels", "to": "join" },
+        { "from": "join", "to": "trainer", "label": "training rows" },
+        { "from": "trainer", "to": "registry", "label": "new version" },
+        { "from": "registry", "to": "server", "label": "deploy", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "A request arrives and the server fetches features from the online store. Whatever it gets, fresh or stale, correct or buggy, is what the model scores." },
+        { "edges": [2], "text": "The server logs the exact vector with a request id, asynchronously so logging never slows the response. Sample if volume is too high, but log the whole vector." },
+        { "edges": [3], "text": "Outcomes (a click, a purchase, a chargeback) arrive later and are stored with the same request id or an entity and time." },
+        { "edges": [4, 5], "text": "The joiner pairs each logged vector with its outcome. No feature is recomputed, so there is nothing to drift." },
+        { "edges": [6, 7, 8], "text": "Training, registration and deployment close the loop. The cost: a new feature has no history until it has been logged for a while, so you still need backfills for brand-new features." }
+      ]
+    },
+    {
+      "id": "tss-approaches",
+      "type": "chart",
+      "title": "Ways to keep features consistent",
+      "alt": "Trade-off chart with skew protection on the vertical axis and setup effort on the horizontal axis. Re-implementing features in the serving code is cheap but gives weak protection. A shared feature library and precomputed batch scores are in the middle. A feature store and logging served features give strong protection for more effort.",
+      "caption": "Rough positions, not measurements. Most teams combine a single definition (library or store) with logging served features.",
+      "x": { "label": "Setup effort", "low": "small", "high": "large" },
+      "y": { "label": "Skew protection", "low": "weak", "high": "strong" },
+      "points": [
+        { "label": "Re-implement online", "x": 2, "y": 1 },
+        { "label": "Shared library", "x": 4, "y": 6 },
+        { "label": "Precomputed scores", "x": 3, "y": 8 },
+        { "label": "Feature store", "x": 8, "y": 8, "highlight": true },
+        { "label": "Log served features", "x": 6, "y": 10 }
+      ]
+    },
+    {
+      "id": "tss-leak-timeline",
+      "type": "timeline",
+      "title": "How a time-travel leak usually plays out",
+      "alt": "Timeline of an illustrative incident. A new feature is added and offline AUC jumps sharply. The model ships, online conversion does not move, an engineer compares offline and logged feature values and finds the training join used values computed after the event. The join is rewritten as an as-of join and the offline gain mostly disappears.",
+      "caption": "Illustrative, not a specific incident. A suspiciously large offline jump from one feature is a leak until proven otherwise.",
+      "events": [
+        { "at": "Week 0", "label": "New feature orders_24h added to the training set", "kind": "trigger" },
+        { "at": "Week 0", "label": "Offline AUC jumps far more than any recent change", "kind": "trigger" },
+        { "at": "Week 1", "label": "Model ships; online conversion is flat, a few segments drop", "kind": "impact" },
+        { "at": "Week 2", "label": "Offline vs logged values for the same requests disagree", "kind": "detect" },
+        { "at": "Week 2", "label": "Training join used the daily snapshot taken after the event", "kind": "detect" },
+        { "at": "Week 3", "label": "Join rewritten as-of availability time; previous model restored", "kind": "mitigate" },
+        { "at": "Week 4", "label": "Skew check added to the pipeline; offline gain mostly gone", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "tss-two-paths",
+      "type": "compare",
+      "title": "Two implementations versus one definition",
+      "alt": "Side-by-side comparison. Before: a batch SQL job computes features for training and a separate serving service re-implements them, so the model sees different values. After: one feature definition is materialised into both an offline store for training and an online store for serving.",
+      "caption": "The fix is not more careful copying. It is having only one thing to copy from.",
+      "before": {
+        "label": "Two code paths",
+        "nodes": [
+          { "id": "raw", "label": "Raw events", "kind": "db", "col": 0, "row": 1 },
+          { "id": "sql", "label": "Batch SQL", "kind": "worker", "col": 1, "row": 0, "sub": "nulls -> 0" },
+          { "id": "svc", "label": "Serving code", "kind": "service", "col": 1, "row": 2, "sub": "nulls -> mean" },
+          { "id": "train", "label": "Training", "kind": "bad", "col": 2, "row": 0 },
+          { "id": "serve", "label": "Serving", "kind": "bad", "col": 2, "row": 2 }
+        ],
+        "edges": [
+          { "from": "raw", "to": "sql" },
+          { "from": "raw", "to": "svc" },
+          { "from": "sql", "to": "train" },
+          { "from": "svc", "to": "serve", "label": "different values", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "One definition",
+        "nodes": [
+          { "id": "def", "label": "Feature def", "kind": "good", "col": 0, "row": 1, "sub": "versioned" },
+          { "id": "off", "label": "Offline store", "kind": "storage", "col": 1, "row": 0 },
+          { "id": "on", "label": "Online store", "kind": "cache", "col": 1, "row": 2 },
+          { "id": "train", "label": "Training", "kind": "good", "col": 2, "row": 0 },
+          { "id": "serve", "label": "Serving", "kind": "good", "col": 2, "row": 2 }
+        ],
+        "edges": [
+          { "from": "def", "to": "off", "label": "backfill" },
+          { "from": "def", "to": "on", "label": "materialise" },
+          { "from": "off", "to": "train", "label": "as-of join" },
+          { "from": "on", "to": "serve", "label": "lookup" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Join features as of the prediction time",
+      "bad": {
+        "label": "Joins the latest value: leaks the future",
+        "lang": "sql",
+        "code": "SELECT l.user_id, l.label, f.orders_24h\nFROM labels l\nJOIN user_features_latest f ON f.user_id = l.user_id;\n-- f was computed today, after most label events happened"
+      },
+      "good": {
+        "label": "As-of join on availability time",
+        "lang": "sql",
+        "code": "SELECT l.user_id, l.label, f.orders_24h\nFROM labels l\nJOIN LATERAL (\n  SELECT h.orders_24h\n  FROM user_features_history h\n  WHERE h.user_id = l.user_id\n    AND h.available_at <= l.event_time   -- what serving could see\n  ORDER BY h.available_at DESC\n  LIMIT 1\n) f ON true;"
+      },
+      "why": "The training row must hold the value the online model would have read at that moment. Filtering on `available_at` (when the value landed in the online store), not on the end of the aggregation window, also models pipeline delay, so a feature that lands an hour late is an hour stale in training too."
+    },
+    {
+      "title": "Ship preprocessing with the model",
+      "bad": {
+        "label": "Statistics refitted in training, hard-coded in serving",
+        "lang": "py",
+        "code": "# train.py\nmean, std = df.amount.mean(), df.amount.std()\nX = (df.amount - mean) / std\n\n# serving/handler.py (written months ago)\nx = (req.amount - 52.0) / 31.0"
+      },
+      "good": {
+        "label": "One fitted pipeline saved as one artifact",
+        "lang": "py",
+        "code": "pipe = Pipeline([\n    ('prep', ColumnTransformer([('num', StandardScaler(), ['amount'])])),\n    ('model', GradientBoostingClassifier()),\n])\npipe.fit(train_df, train_y)          # fit on the training split only\njoblib.dump(pipe, 'model-v7.joblib')  # serving loads and calls pipe.predict_proba"
+      },
+      "why": "When scaling constants, vocabularies or bucket edges live in two places, retraining updates one of them. Packaging the fitted transforms with the model makes them a single versioned artifact that cannot drift apart."
+    }
+  ],
+  "checklist": [
+    "Each feature has one definition (shared library, feature store or transform graph) used by both training and serving.",
+    "Training sets are built with point-in-time joins on the time the value was available to serving, not the latest value.",
+    "Fitted preprocessing (scalers, vocabularies, bucket edges) is versioned and shipped inside the model artifact.",
+    "Serving logs the exact feature vector it scored, with a request id and the model version.",
+    "A scheduled job recomputes features offline for a sample of logged requests and alerts when values disagree beyond a tolerance.",
+    "Online features carry a timestamp, and serving checks their age against a freshness budget.",
+    "Missing-value, default and unit handling are identical in both paths and covered by a shared test."
+  ],
+  "antipatterns": [
+    {
+      "title": "Re-implementing features in the serving language",
+      "bad": {
+        "label": "Batch SQL for training, hand-written port for serving",
+        "lang": "text",
+        "code": "training:  COALESCE(avg_basket, 0)\nserving:   avgBasket != null ? avgBasket : globalMean\n\nSame name, different number for every new user."
+      },
+      "better": { "label": "One definition feeds both stores", "diagram": "tss-two-paths" },
+      "why": "Two implementations agree on the happy path and disagree on nulls, time zones, rounding and late data. A model is very sensitive to exactly those cases because they cluster in specific segments such as new users."
+    },
+    {
+      "title": "Serving whatever the online store returns, however old",
+      "bad": {
+        "label": "No freshness check",
+        "lang": "py",
+        "code": "feats = online_store.get(user_id)  # pipeline broke 2 days ago\nreturn model.predict(feats)"
+      },
+      "better": {
+        "label": "Check the age and degrade explicitly",
+        "lang": "py",
+        "code": "feats = online_store.get(user_id)\nif now() - feats.updated_at > MAX_AGE['clicks_1h']:\n    metrics.incr('stale_feature', tags={'name': 'clicks_1h'})\n    feats = feats.with_default('clicks_1h')   # same default used in training\nreturn model.predict(feats)"
+      },
+      "why": "A stalled feature pipeline does not raise errors; it just serves yesterday's values that the model reads as today's behaviour. Measuring age turns silent skew into a metric and lets you fall back to a value the model was trained to handle."
+    },
+    {
+      "title": "Fitting preprocessing on the full dataset",
+      "bad": {
+        "label": "Scaler and target encoding see the test rows",
+        "lang": "py",
+        "code": "df['city_rate'] = df.groupby('city').label.transform('mean')\ntrain, test = split(df)"
+      },
+      "better": {
+        "label": "Fit on train only, apply to test and serving",
+        "lang": "py",
+        "code": "train, test = split_by_time(df)\nrates = train.groupby('city').label.mean()\nfor part in (train, test):\n    part['city_rate'] = part.city.map(rates).fillna(train.label.mean())"
+      },
+      "why": "Statistics computed on rows the model will be evaluated on (or on future rows) leak labels into features. Offline metrics look better than anything serving can reproduce, which is skew by another name."
+    }
+  ],
+  "interview": [
+    "When you sketch an ML system, draw the feature path twice (training and serving) and then say how you make them the same: one definition, materialised into an offline and an online store.",
+    "Say \"point-in-time join\" out loud when you describe building the training set, and explain the availability-time detail: features land late, so training must see the same lag.",
+    "Propose logging served feature vectors with a request id. It gives you skew detection, debugging and a leak-free training source in one move.",
+    "Name a concrete skew metric: for sampled requests, recompute features offline and compare per feature (match rate for categoricals, relative difference for numbers), with an alert threshold.",
+    "At SSE level, discuss the cost: feature stores add a platform to run, and log-and-wait delays new features, so you mix logging with careful backfills."
+  ],
+  "quiz": [
+    {
+      "question": "A new feature lifts offline AUC far more than anything before it, but the online A/B test is flat. What is the most likely cause?",
+      "choices": ["The online test is underpowered", "The training join used feature values computed after the event", "The model is overfitting to a small segment", "The serving hardware is slower"],
+      "answer": 1,
+      "explain": "A huge offline gain that disappears online is the signature of leakage. Check the join: if it takes the latest value rather than the as-of value, the feature carries information from the future."
+    },
+    {
+      "question": "Why should a point-in-time join filter on when a value became available to serving rather than when its window ended?",
+      "choices": ["It is faster to index", "It reproduces pipeline delay, so training sees the same staleness serving does", "Window end times are not stored", "It removes the need for labels"],
+      "answer": 1,
+      "explain": "A \"last hour\" count for 10:00 might only reach the online store at 10:20. Using the window end would give training fresher data than serving ever gets, which is a subtle form of skew."
+    },
+    {
+      "question": "What is the main advantage of training on logged served features?",
+      "choices": ["It needs no labels", "The model learns from exactly the vectors serving produced, bugs and staleness included", "It makes new features available immediately", "It removes the need for an online store"],
+      "answer": 1,
+      "explain": "Nothing is recomputed, so there is no second implementation to drift. The trade-off is that a new feature has no history until it has been logged for a while."
+    },
+    {
+      "question": "Your normalisation constants are hard-coded in the serving handler. What is the best fix?",
+      "choices": ["Add a comment reminding people to update them", "Fit the preprocessing with the model and ship both as one versioned artifact", "Remove normalisation", "Recompute them on each request from recent traffic"],
+      "answer": 1,
+      "explain": "Packaging fitted transforms with the model makes them change together. Recomputing per request would make serving use statistics the model never saw."
+    },
+    {
+      "question": "Which check best detects skew in production?",
+      "choices": ["Compare training loss across runs", "For sampled requests, recompute features offline and compare to the logged online values", "Watch CPU usage of the model server", "Count requests per second"],
+      "answer": 1,
+      "explain": "Skew is a disagreement between two paths for the same entity and time. Only comparing both values for the same request measures it directly."
+    }
+  ],
+  "practice": {
+    "prompt": "Your team's fraud model scored 0.94 AUC offline but catches noticeably less fraud than expected after launch. Features are computed in Spark for training and in a Java service for serving. How do you find and fix the problem, and stop it recurring?",
+    "answer": "First confirm it is skew rather than drift: take a sample of recent requests, log or reconstruct the online feature vectors, recompute the same features offline for the same transaction ids and times, and compare per feature. Look for null and default handling, time zones, units and window boundaries. Check the training join: it must be point-in-time on availability time, otherwise the offline 0.94 is inflated by leakage. Check freshness of online features against the training assumption. To fix structurally, define each feature once and materialise it into offline and online stores (a feature store or a shared transform library), ship fitted preprocessing inside the model artifact, and log served vectors with request ids so future training can use them. Add a scheduled skew job with per-feature thresholds and an alert, and a feature-age metric in serving with a trained default when stale.",
+    "rubric": [
+      "Measures skew by comparing offline and online values for the same requests",
+      "Checks the training join for time travel and uses point-in-time on availability time",
+      "Names concrete causes: nulls/defaults, time zones, units, stale features",
+      "Moves to a single feature definition shared by both paths",
+      "Logs served features and adds an ongoing skew and freshness alert"
+    ]
+  },
+  "links": {
+    "lessons": ["ml-data-preparation", "ml-evaluation-leakage", "ml-mlops", "ml-fraud-detection"],
+    "cases": ["news-feed", "ad-click-aggregation"],
+    "guides": ["ml-pipelines", "model-monitoring", "caching-strategies"]
+  }
+}

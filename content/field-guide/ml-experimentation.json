@@ -1,0 +1,329 @@
+{
+  "id": "ml-experimentation",
+  "kind": "guide",
+  "topic": "ml-production",
+  "level": "sse",
+  "title": "ML experimentation: offline gates, A/B tests, interleaving",
+  "summary": "Offline metrics decide what is worth testing; online experiments decide what ships. Randomise by user, size the test before starting, guard the business, and never stop on the first good day.",
+  "minutes": 18,
+  "principle": "Use offline evaluation to filter candidates cheaply, and a pre-registered online experiment to decide launches: a fixed randomisation unit, one primary metric, guardrails, a sample size computed in advance and a single analysis at the end (or a proper sequential method). Keep a long-term holdout to check that wins add up.",
+  "why": "Offline metrics such as AUC or NDCG on a held-out set are fast and safe, but they answer a narrower question than the business asks. They score the model on logged data that the previous model shaped, they ignore how users react to new results, and they say nothing about latency or revenue. Many offline wins are flat online. So offline evaluation is a gate, not a verdict.\n\nAn **A/B test** randomly splits a **randomisation unit** (usually the user, so each person gets a consistent experience) into control and treatment and compares a pre-chosen **primary metric**. **Guardrail metrics** (latency, errors, revenue, complaints) must not get worse even if the primary improves. The **sample size** is set by the smallest effect worth detecting: for a two-arm test at 5% significance and 80% power, a handy approximation is `n ≈ 16 σ² / δ²` per arm, so halving the effect you want to see quadruples the users you need.\n\nOnline tests have their own traps. **Peeking**, checking significance every day and stopping at the first p < 0.05, inflates false positives well above 5%. **Novelty effects** make a new ranking look better in week one simply because it is different (and change aversion can do the opposite). **Sample ratio mismatch** (a 50/50 split that arrives 50.8/49.2 at large volume) signals broken assignment or logging, and invalidates the result.\n\nFor ranking, **interleaving** mixes results from two rankers into one list per user and credits clicks to the ranker that supplied each item. Because every user compares both rankers directly, it is often reported to need far fewer users than an A/B test, but it only measures preference, so business impact still needs an A/B test. Finally, a small **long-term holdout** that receives none of the quarter's launches shows whether a string of small wins really adds up.",
+  "diagrams": [
+    {
+      "id": "exp-ladder",
+      "type": "flow",
+      "title": "From offline candidate to full launch",
+      "alt": "Flow from left to right: offline evaluation, shadow deployment, interleaving for ranking models, an A/B test, then ramp to 100 percent, followed by a long-term holdout. Candidates that fail offline go back to development; an A/B test that breaches a guardrail is stopped.",
+      "caption": "Each rung is more expensive and more trustworthy than the one before. Most candidates should die cheaply on the left.",
+      "nodes": [
+        { "id": "offline", "label": "Offline eval", "kind": "state", "col": 0, "row": 0, "sub": "time-based split" },
+        { "id": "shadow", "label": "Shadow", "kind": "state", "col": 1, "row": 0, "sub": "latency, errors" },
+        { "id": "inter", "label": "Interleaving", "kind": "state", "col": 2, "row": 0, "sub": "ranking only" },
+        { "id": "ab", "label": "A/B test", "kind": "state", "col": 3, "row": 0, "sub": "pre-registered" },
+        { "id": "ramp", "label": "Ramp to 100%", "kind": "good", "col": 4, "row": 0 },
+        { "id": "drop", "label": "Back to dev", "kind": "bad", "col": 0, "row": 2 },
+        { "id": "stop", "label": "Stop test", "kind": "bad", "col": 3, "row": 2, "sub": "guardrail breach" },
+        { "id": "hold", "label": "Long holdout", "kind": "note", "col": 4, "row": 2, "sub": "1-5% for a quarter" }
+      ],
+      "edges": [
+        { "from": "offline", "to": "shadow", "label": "beats champion" },
+        { "from": "shadow", "to": "inter", "label": "healthy" },
+        { "from": "inter", "to": "ab", "label": "preferred" },
+        { "from": "ab", "to": "ramp", "label": "primary up" },
+        { "from": "ramp", "to": "hold", "style": "async" },
+        { "from": "offline", "to": "drop", "label": "no gain", "style": "fail" },
+        { "from": "ab", "to": "stop", "label": "guard worse", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0, 5], "text": "Offline evaluation on a time-based holdout (train on the past, test on the future) filters ideas. It cannot see user reactions, so a win here only buys an online test." },
+        { "edges": [1], "text": "Shadow traffic checks that the model runs: latency, memory, errors and how often its decisions differ from the champion. No user sees its output." },
+        { "edges": [2], "text": "For rankers, interleaving gives a quick, sensitive read on which ranker users prefer, using a fraction of the traffic." },
+        { "edges": [3, 6], "text": "The A/B test runs for its planned duration. Ship only if the primary metric improves and no guardrail gets worse; a guardrail breach stops it early." },
+        { "edges": [4], "text": "After ramping, a small long-term holdout keeps the old experience so you can measure whether a quarter of launches added up to what the individual tests claimed." }
+      ]
+    },
+    {
+      "id": "exp-assignment",
+      "type": "sequence",
+      "title": "Deterministic assignment and exposure logging",
+      "alt": "Sequence diagram. The app asks the assignment service for the user's variant. The service hashes the user id with the experiment salt, returns treatment, and the app calls model B. When results are actually shown, the app logs an exposure event, and later logs the outcome event.",
+      "caption": "Hashing makes the variant stable across sessions; logging exposure at render time keeps people who never saw the change out of the analysis.",
+      "actors": [
+        { "id": "app", "label": "App" },
+        { "id": "assign", "label": "Assignment" },
+        { "id": "model", "label": "Model B" },
+        { "id": "log", "label": "Event log" }
+      ],
+      "messages": [
+        { "from": "app", "to": "assign", "label": "variant for user u42, exp rank-v8?", "note": "The randomisation unit is the user, so the same person gets the same ranker on every visit." },
+        { "from": "assign", "to": "app", "label": "hash(exp, salt, u42) % 100 = 37: B", "style": "reply", "note": "Deterministic and stateless. A per-experiment salt stops users always landing in treatment across experiments." },
+        { "from": "app", "to": "model", "label": "rank candidates" },
+        { "from": "model", "to": "app", "label": "ranked list", "style": "reply" },
+        { "from": "app", "to": "log", "label": "exposure(u42, rank-v8, B)", "style": "async", "note": "Log when the result is actually rendered, for both arms, so control and treatment are counted the same way." },
+        { "from": "app", "to": "log", "label": "outcome(u42, click, item 9)", "style": "async", "note": "Metrics are computed per user over the test window and compared between arms." }
+      ]
+    },
+    {
+      "id": "exp-interleave",
+      "type": "flow",
+      "title": "Team-draft interleaving for two rankers",
+      "alt": "Flow diagram. Ranker A and ranker B each produce a list. A team-draft merge takes turns picking each ranker's best remaining item into one shown list. User clicks on the shown list are credited to the ranker that contributed each clicked item.",
+      "caption": "Every user judges both rankers side by side in one list, which removes most between-user noise. It measures preference, not revenue.",
+      "nodes": [
+        { "id": "a", "label": "Ranker A", "kind": "service", "col": 0, "row": 0 },
+        { "id": "b", "label": "Ranker B", "kind": "service", "col": 0, "row": 2 },
+        { "id": "merge", "label": "Team draft", "kind": "worker", "col": 1, "row": 1, "sub": "take turns" },
+        { "id": "shown", "label": "Shown list", "kind": "client", "col": 2, "row": 1, "sub": "items tagged A/B" },
+        { "id": "clicks", "label": "Clicks", "kind": "queue", "col": 3, "row": 1 },
+        { "id": "ca", "label": "Credit A", "kind": "good", "col": 4, "row": 0 },
+        { "id": "cb", "label": "Credit B", "kind": "good", "col": 4, "row": 2 }
+      ],
+      "edges": [
+        { "from": "a", "to": "merge", "label": "list A" },
+        { "from": "b", "to": "merge", "label": "list B" },
+        { "from": "merge", "to": "shown" },
+        { "from": "shown", "to": "clicks", "label": "user clicks" },
+        { "from": "clicks", "to": "ca", "label": "item from A" },
+        { "from": "clicks", "to": "cb", "label": "item from B" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Both rankers score the same candidates for the same query and user." },
+        { "edges": [2], "text": "A coin flip decides who picks first; then the rankers take turns adding their highest-ranked item not already in the list, and each item remembers its team." },
+        { "edges": [3], "text": "The user sees one ordinary-looking list and clicks as usual." },
+        { "edges": [4, 5], "text": "Clicks are credited to the contributing ranker. Over many queries, the share of wins says which ranker users prefer. Follow with an A/B test for business metrics." }
+      ]
+    },
+    {
+      "id": "exp-sample-size",
+      "type": "bars",
+      "title": "Users needed per arm by minimum detectable effect",
+      "alt": "Bar chart of users needed per arm for a conversion rate of 5 percent. Detecting a 1 percent relative lift needs about 3,040 thousand users, 2 percent about 760 thousand, 5 percent about 122 thousand and 10 percent about 30 thousand.",
+      "caption": "Computed with n ≈ 16·p(1−p)/δ² at a 5% baseline, two-sided α = 0.05 and 80% power. Halve the effect, quadruple the users.",
+      "unit": "thousand users per arm",
+      "bars": [
+        { "label": "1% relative lift", "value": 3040, "highlight": true },
+        { "label": "2% relative lift", "value": 760 },
+        { "label": "5% relative lift", "value": 122 },
+        { "label": "10% relative lift", "value": 30 }
+      ]
+    },
+    {
+      "id": "exp-methods",
+      "type": "chart",
+      "title": "Evaluation methods: cost against trust",
+      "alt": "Trade-off chart with cost and user risk on the horizontal axis and trust in real-world impact on the vertical axis. Offline metrics are cheap with low trust. Shadow is cheap and says little about impact. Interleaving is moderate on both. A/B tests are costly with high trust. A long-term holdout is the most costly and most trusted.",
+      "caption": "Rough positions. Move right only for candidates that survived the cheaper methods.",
+      "x": { "label": "Cost and user risk", "low": "low", "high": "high" },
+      "y": { "label": "Trust in real impact", "low": "low", "high": "high" },
+      "points": [
+        { "label": "Offline metrics", "x": 1, "y": 3 },
+        { "label": "Shadow", "x": 3, "y": 1 },
+        { "label": "Interleaving", "x": 4, "y": 6 },
+        { "label": "A/B test", "x": 7, "y": 8, "highlight": true },
+        { "label": "Long-term holdout", "x": 9, "y": 10 }
+      ]
+    },
+    {
+      "id": "exp-novelty",
+      "type": "timeline",
+      "title": "A novelty effect fading",
+      "alt": "Timeline of an illustrative experiment. On day one the new ranker shows a large click-through lift, which shrinks by day three and day seven and is no longer significant by day fourteen. The team decides on the planned end date using the stable later period.",
+      "caption": "Illustrative. Look at the effect by day since first exposure; if it decays, judge on the stable tail, or on new users who have no habit to break.",
+      "events": [
+        { "at": "Day 1", "label": "New ranker launched to 50% of users", "kind": "trigger" },
+        { "at": "Day 1", "label": "CTR lift +4%: users click on unfamiliar items", "kind": "impact" },
+        { "at": "Day 3", "label": "Lift +2.5%; someone asks to ship now", "kind": "impact" },
+        { "at": "Day 7", "label": "Lift +1%; plot by days since exposure shows decay", "kind": "detect" },
+        { "at": "Day 14", "label": "Planned end: lift +0.3%, not significant", "kind": "detect" },
+        { "at": "Day 15", "label": "Not shipped; ranker iterated on with a new hypothesis", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "exp-peeking",
+      "type": "compare",
+      "title": "Peeking every day versus a planned analysis",
+      "alt": "Side-by-side comparison. Before: results are checked daily and the test stops as soon as p is below 0.05, which ships false positives. After: a power analysis fixes the sample size and the test is analysed once at the end, or a sequential test with alpha spending is used.",
+      "caption": "Every extra look is another chance for noise to cross the line. Either look once, or use a method designed for repeated looks.",
+      "before": {
+        "label": "Stop at first p < 0.05",
+        "nodes": [
+          { "id": "data", "label": "Daily results", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "check", "label": "p < 0.05 today?", "kind": "decision", "col": 1, "row": 0 },
+          { "id": "ship", "label": "Ship early", "kind": "bad", "col": 2, "row": 0, "sub": "inflated false +" },
+          { "id": "wait", "label": "Wait a day", "kind": "note", "col": 1, "row": 2 }
+        ],
+        "edges": [
+          { "from": "data", "to": "check" },
+          { "from": "check", "to": "ship", "label": "yes", "style": "fail" },
+          { "from": "check", "to": "wait", "label": "no" },
+          { "from": "wait", "to": "data" }
+        ]
+      },
+      "after": {
+        "label": "Planned analysis",
+        "nodes": [
+          { "id": "plan", "label": "Power analysis", "kind": "note", "col": 0, "row": 0, "sub": "fixed n and days" },
+          { "id": "run", "label": "Run to n", "kind": "worker", "col": 1, "row": 0 },
+          { "id": "test", "label": "Test once", "kind": "good", "col": 2, "row": 0 },
+          { "id": "seq", "label": "Sequential test", "kind": "good", "col": 1, "row": 2, "sub": "alpha spending" }
+        ],
+        "edges": [
+          { "from": "plan", "to": "run" },
+          { "from": "run", "to": "test" },
+          { "from": "plan", "to": "seq", "label": "or" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Assign variants deterministically by user",
+      "bad": {
+        "label": "A coin flip per request",
+        "lang": "py",
+        "code": "def ranker_for(request):\n    return model_b if random.random() < 0.5 else model_a\n# the same user flips between rankers on every page load"
+      },
+      "good": {
+        "label": "Hash of experiment, salt and user id",
+        "lang": "py",
+        "code": "def variant(user_id: str, exp: str, salt: str, treat_pct: int = 50) -> str:\n    digest = hashlib.sha256(f'{exp}:{salt}:{user_id}'.encode()).hexdigest()\n    bucket = int(digest[:8], 16) % 100\n    return 'B' if bucket < treat_pct else 'A'\n\n# log exposure where the result is rendered, for both arms\nlog_exposure(user_id, exp, variant(user_id, exp, SALT))"
+      },
+      "why": "Per-request randomisation gives each user a mix of both rankers, which blurs the effect and breaks user-level metrics such as retention. Hashing is stable, needs no state, and a per-experiment salt keeps assignments independent between experiments. Analyse at the same unit you randomised on, or use a variance method that accounts for clustering."
+    },
+    {
+      "title": "Check sample ratio mismatch before reading results",
+      "bad": {
+        "label": "Go straight to the lift",
+        "lang": "py",
+        "code": "lift = conv_b / users_b - conv_a / users_a\nprint('ship' if p_value(conv_a, users_a, conv_b, users_b) < 0.05 else 'hold')"
+      },
+      "good": {
+        "label": "Validate the split first",
+        "lang": "py",
+        "code": "from scipy.stats import chisquare\ntotal = users_a + users_b\n_, p_srm = chisquare([users_a, users_b], f_exp=[total / 2, total / 2])\nif p_srm < 0.001:\n    raise InvalidExperiment('sample ratio mismatch: check assignment and logging')\n# only now compare the primary metric and guardrails"
+      },
+      "why": "If a 50/50 test delivers a split that is very unlikely by chance, something is filtering users differently per arm: a crash in one variant, a redirect, a bot filter, or exposure logged in only one code path. Any lift computed on that population is untrustworthy, however significant it looks."
+    }
+  ],
+  "checklist": [
+    "Offline evaluation uses a time-based holdout and is treated as a gate for an online test, not a launch decision.",
+    "The randomisation unit (usually user) is chosen deliberately, assignment is deterministic, and analysis is at the same unit.",
+    "One primary metric, a short list of guardrails (latency, errors, revenue, complaints) and the decision rule are written down before the test starts.",
+    "Sample size and duration come from a power calculation on the minimum effect worth shipping, and cover at least a full weekly cycle.",
+    "Results are read once at the planned end, or with a sequential method designed for repeated looks.",
+    "Sample ratio mismatch is checked automatically before anyone looks at the lift.",
+    "Effects are plotted by days since first exposure to spot novelty or change aversion.",
+    "For rankers, interleaving is used to screen candidates quickly before an A/B test.",
+    "A small long-term holdout measures the cumulative effect of a period's launches."
+  ],
+  "antipatterns": [
+    {
+      "title": "Peeking and stopping on the first significant day",
+      "bad": { "label": "Check daily, ship when p dips under 0.05", "diagram": "exp-peeking" },
+      "better": {
+        "label": "Pre-register the analysis",
+        "lang": "yaml",
+        "code": "experiment: rank-v8\nunit: user\nprimary: sessions_with_click_per_user\nguardrails: [p95_latency_ms, revenue_per_user, hide_item_rate]\nmde_relative: 0.02\nduration_days: 14        # from power analysis, two full weeks\nanalysis: fixed_horizon  # or: sequential (alpha spending)"
+      },
+      "why": "With a fixed 5% threshold, each additional look gives noise another chance to cross it, so the real false-positive rate of daily peeking over a few weeks ends up well above 5%. Fix the horizon from a power calculation, or use a sequential test whose thresholds are adjusted for the number of looks."
+    },
+    {
+      "title": "Shipping on an offline metric",
+      "bad": {
+        "label": "NDCG went up, ship it",
+        "lang": "text",
+        "code": "offline NDCG@10: 0.412 -> 0.431 on last month's logs\n=> launch to 100%"
+      },
+      "better": {
+        "label": "Offline gate, online decision",
+        "lang": "text",
+        "code": "offline NDCG@10 up on a time-based holdout   -> eligible\nshadow: p99 latency +4 ms, errors flat      -> eligible\nA/B, 14 days: primary +1.8%, guardrails ok  -> ship"
+      },
+      "why": "Offline data was collected under the old model, so it can only judge items the old model chose to show (a form of selection bias), and it cannot capture user reactions, latency or business effects. Offline wins often shrink or vanish online."
+    },
+    {
+      "title": "Metric shopping after the fact",
+      "bad": {
+        "label": "Pick the metric that moved",
+        "lang": "text",
+        "code": "Primary flat. 40 secondary metrics checked.\n\"Time on page for Android tablet users is up 6% (p=0.03)!\" => ship"
+      },
+      "better": {
+        "label": "Decide first, correct for many looks",
+        "lang": "text",
+        "code": "Decision rule set before launch: primary up, guardrails not worse.\nSecondary and segment results are exploratory:\ncorrect for multiple comparisons and confirm in a follow-up test."
+      },
+      "why": "With dozens of metrics and segments at a 5% threshold, a few will look significant by chance alone. Pre-registering the decision rule keeps the test honest; interesting segment results become hypotheses for the next experiment."
+    },
+    {
+      "title": "Ignoring interference between users",
+      "bad": {
+        "label": "User-level split in a two-sided marketplace",
+        "lang": "text",
+        "code": "Treatment riders get a new pricing model.\nThey take drivers that control riders would have got.\nTreatment looks great; global launch shows nothing."
+      },
+      "better": {
+        "label": "Randomise at a unit that contains the effect",
+        "lang": "text",
+        "code": "Randomise by city or region (cluster test), or alternate\nwhole time windows between models (switchback test),\nand accept that fewer units means less power."
+      },
+      "why": "A/B analysis assumes one user's treatment does not change another user's outcome. In marketplaces, social feeds and shared inventory that fails, and the measured lift partly comes from taking value from control. Cluster or switchback designs restore independence at the cost of power."
+    }
+  ],
+  "interview": [
+    "When asked \"how would you know the new model is better?\", walk the ladder: offline gate on a time-based split, shadow, then a pre-registered A/B test with a primary metric and guardrails.",
+    "State the randomisation unit and why (user for consistent experience and retention metrics), and mention deterministic hashing with a salt.",
+    "Give a sample size intuition: `n ≈ 16 σ² / δ²` per arm at 5% significance and 80% power, so halving the detectable effect quadruples the sample. Run for at least a full week to cover weekly cycles.",
+    "Name the traps unprompted: peeking, novelty effects, sample ratio mismatch, multiple comparisons, and interference in marketplaces.",
+    "For ranking or search, propose interleaving as a fast, sensitive screen, then an A/B test for business metrics, plus a long-term holdout at SSE level."
+  ],
+  "quiz": [
+    {
+      "question": "A team checks its A/B test every day and stops the first day p < 0.05. What happens to the false-positive rate?",
+      "choices": ["It stays at 5%", "It rises well above 5%", "It falls below 5% because there is more data", "It depends only on sample size"],
+      "answer": 1,
+      "explain": "Each look is another chance for random noise to cross the threshold. Fix the analysis time in advance or use a sequential test that adjusts the threshold for repeated looks."
+    },
+    {
+      "question": "You need to detect a 1% relative lift instead of a 2% lift. Roughly how does the required sample size change?",
+      "choices": ["It doubles", "It quadruples", "It halves", "It stays the same"],
+      "answer": 1,
+      "explain": "Sample size scales with `1/δ²`. Halving the effect size multiplies the users needed by four."
+    },
+    {
+      "question": "Why is the user, not the request, usually the randomisation unit for a recommendation model test?",
+      "choices": ["Requests cannot be hashed", "Users then get a consistent experience and user-level metrics such as retention stay valid", "It makes the test finish faster", "It avoids the need for guardrails"],
+      "answer": 1,
+      "explain": "Per-request assignment mixes both models for each user, blurring the effect and making user-level outcomes impossible to attribute. Analyse at the unit you randomised on."
+    },
+    {
+      "question": "What is the main limitation of interleaving compared with an A/B test?",
+      "choices": ["It needs many more users", "It only measures which ranker users prefer, not effects such as revenue or retention", "It cannot be used for search", "It requires labels from human raters"],
+      "answer": 1,
+      "explain": "Interleaving is sensitive because each user compares both rankers in one list, but its output is a preference. Business metrics need a separate A/B test."
+    },
+    {
+      "question": "A 50/50 test ends with 1,012,000 users in control and 988,000 in treatment. What should you do first?",
+      "choices": ["Report the lift; small imbalances are normal", "Investigate a sample ratio mismatch before trusting any metric", "Reweight treatment users by 1.024", "Extend the test for another week"],
+      "answer": 1,
+      "explain": "At two million users a 1.2-point imbalance is extremely unlikely by chance. Something is dropping users from one arm, so the populations are no longer comparable."
+    }
+  ],
+  "practice": {
+    "prompt": "You built a new ranking model for an e-commerce search page. Offline NDCG improved by 3%. Design how you would decide whether to launch it.",
+    "answer": "Treat the offline gain as permission to test, after confirming it holds on a time-based holdout and across key segments. Shadow the model to check latency, errors and how often it reorders the top results. Optionally run team-draft interleaving to confirm users prefer it, using a small slice of traffic. Then run an A/B test randomised by user via a salted hash, with exposure logged at render time in both arms. Pre-register one primary metric (for example purchases per user or search sessions with a purchase), guardrails (p95 latency, revenue per user, zero-result and refinement rates, errors) and a decision rule. Size it from the minimum lift worth shipping using roughly `16σ²/δ²` per arm, and run at least two full weeks. Check sample ratio mismatch first, analyse once at the end (or with a sequential method), and look at effect by days since exposure for novelty. If it ships, ramp gradually and keep a small long-term holdout to measure cumulative impact.",
+    "rubric": [
+      "Uses offline results as a gate, not the launch decision",
+      "Randomises by user with deterministic assignment and exposure logging",
+      "Pre-registers a primary metric, guardrails and decision rule",
+      "Sizes the test with a power calculation and runs full weekly cycles",
+      "Addresses peeking, novelty and sample ratio mismatch",
+      "Mentions interleaving and/or a long-term holdout"
+    ]
+  },
+  "links": {
+    "lessons": ["ml-evaluation-leakage", "ml-search-ranking", "ml-recsys-design", "ml-deployment-monitoring"],
+    "cases": ["news-feed", "typeahead", "ride-hailing"],
+    "guides": ["model-monitoring", "training-serving-skew", "llm-evals"]
+  }
+}

@@ -1,0 +1,310 @@
+{
+  "id": "model-monitoring",
+  "kind": "guide",
+  "topic": "ml-production",
+  "level": "sse",
+  "title": "Model monitoring: drift, proxies, rollouts and rollback",
+  "summary": "Labels arrive late, so watch inputs, outputs and proxy metrics now, confirm with real performance later, ship behind shadow and canary, and keep the last good model one switch away.",
+  "minutes": 18,
+  "principle": "Monitor a model at three layers: inputs (is the data what we trained on?), outputs (is the model behaving as before?) and outcomes (is it still right?). Page on outputs, outcomes and business proxies; use input drift to diagnose. Release every model through shadow and canary stages with an automatic, rehearsed rollback.",
+  "why": "Ordinary service monitoring (errors, latency, saturation) says almost nothing about a model. A model can return 200 OK in 20 ms while being confidently wrong, because the world it was trained on has moved. The vocabulary matters in interviews:\n\n**Data drift** (covariate shift) is a change in the input distribution `P(X)` while the relationship `P(Y|X)` stays the same: more mobile users, a new market. **Concept drift** is a change in `P(Y|X)` itself: fraudsters change tactics, so the same transaction now means something else. **Prior (label) shift** is a change in `P(Y)`, such as the base fraud rate doubling. **Label delay** is the operational problem that ties them together: true outcomes such as chargebacks or churn may take days or weeks to arrive, so you cannot measure accuracy in time to react.\n\nThat is why monitoring is layered. Input and output distributions are available immediately and are compared with a reference window using statistics such as the **Population Stability Index**, `PSI = Σ (a_i − e_i) · ln(a_i / e_i)` over bins, where `e_i` and `a_i` are the reference and current shares of bin `i`. PSI is the symmetric form of KL divergence: `PSI = KL(A‖E) + KL(E‖A)` with `KL(P‖Q) = Σ p_i · ln(p_i / q_i)`. Proxy metrics (approval rate, click-through, manual-review hit rate) move within hours. True performance arrives last and settles the question.\n\nDrift alone is not harm: many shifts do not hurt the model, and concept drift can hurt it with no input drift at all. So page on what users and the business feel, keep drift as the diagnostic, and make rollback and retraining routine operations rather than emergencies.",
+  "diagrams": [
+    {
+      "id": "mon-layers",
+      "type": "flow",
+      "title": "Three monitoring layers and what they trigger",
+      "alt": "Architecture flow. The model server writes predictions to a prediction log. An input monitor and an output monitor read the log immediately. A performance monitor joins the log with delayed labels. All three feed alerting, which pages on-call, who can roll back or trigger retraining.",
+      "caption": "Inputs and outputs are fast but indirect; labels are direct but slow. You need both speeds.",
+      "nodes": [
+        { "id": "server", "label": "Model server", "kind": "service", "col": 0, "row": 0 },
+        { "id": "plog", "label": "Prediction log", "kind": "queue", "col": 1, "row": 0, "sub": "inputs + score" },
+        { "id": "inmon", "label": "Input monitor", "kind": "worker", "col": 2, "row": 0, "sub": "PSI per feature" },
+        { "id": "outmon", "label": "Output monitor", "kind": "worker", "col": 2, "row": 1, "sub": "score dist, rates" },
+        { "id": "labels", "label": "Delayed labels", "kind": "db", "col": 0, "row": 3, "sub": "days to weeks" },
+        { "id": "perf", "label": "Perf. monitor", "kind": "worker", "col": 2, "row": 3, "sub": "recall by segment" },
+        { "id": "alert", "label": "Alerting", "kind": "service", "col": 3, "row": 1 },
+        { "id": "oncall", "label": "On-call", "kind": "client", "col": 4, "row": 1 },
+        { "id": "rollback", "label": "Roll back", "kind": "good", "col": 4, "row": 0 },
+        { "id": "retrain", "label": "Retrain", "kind": "good", "col": 4, "row": 2 }
+      ],
+      "edges": [
+        { "from": "server", "to": "plog", "label": "log", "style": "async" },
+        { "from": "plog", "to": "inmon" },
+        { "from": "plog", "to": "outmon" },
+        { "from": "plog", "to": "perf" },
+        { "from": "labels", "to": "perf", "label": "join later" },
+        { "from": "inmon", "to": "alert", "label": "diagnostic" },
+        { "from": "outmon", "to": "alert", "label": "page" },
+        { "from": "perf", "to": "alert", "label": "page" },
+        { "from": "alert", "to": "oncall" },
+        { "from": "oncall", "to": "rollback" },
+        { "from": "oncall", "to": "retrain" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Every prediction is logged with its inputs, score, model version and a request id. Without this log there is nothing to monitor." },
+        { "edges": [1, 5], "text": "Input monitors compare each feature with a reference window (often the training data or a recent stable week). They are fast but noisy, so they mostly explain alerts rather than raise them." },
+        { "edges": [2, 6], "text": "Output monitors watch the score distribution and decision rates, such as the share of transactions blocked. A sudden shift here is cheap to detect and usually worth a page." },
+        { "edges": [3, 4, 7], "text": "When labels arrive, join them on request id to compute real metrics per segment. This is the ground truth, but for fraud or churn it can lag by weeks." },
+        { "edges": [8, 9, 10], "text": "On-call chooses: roll back to the previous version if the new one is at fault, or retrain if the world moved and the old model would be just as wrong." }
+      ]
+    },
+    {
+      "id": "mon-rollout",
+      "type": "sequence",
+      "title": "Shadow, canary and automatic rollback",
+      "alt": "Sequence diagram. The deployer puts model v8 in shadow, where the router copies traffic to it but its scores are only logged. The monitor reports healthy, so the deployer starts a 5 percent canary. The monitor detects a guardrail breach and the deployer routes all traffic back to v7.",
+      "caption": "Shadow catches crashes, latency and score-distribution surprises with zero user impact. Only the canary can catch harm to real outcomes.",
+      "actors": [
+        { "id": "deploy", "label": "Deployer" },
+        { "id": "router", "label": "Router" },
+        { "id": "v7", "label": "Champion v7" },
+        { "id": "v8", "label": "Challenger v8" },
+        { "id": "mon", "label": "Monitor" }
+      ],
+      "messages": [
+        { "from": "deploy", "to": "router", "label": "shadow: mirror traffic to v8", "note": "v7 still answers every request. v8 receives a copy and its answers are thrown away after logging." },
+        { "from": "router", "to": "v8", "label": "mirrored request", "style": "async" },
+        { "from": "v8", "to": "mon", "label": "log shadow score", "style": "async", "note": "Compare v8 with v7 on the same requests: latency, errors, score distribution, how often decisions differ." },
+        { "from": "mon", "to": "deploy", "label": "shadow healthy", "style": "reply" },
+        { "from": "deploy", "to": "router", "label": "canary: 5% to v8", "note": "Now v8's decisions reach real users, so business guardrails become measurable." },
+        { "from": "router", "to": "v8", "label": "5% live traffic" },
+        { "from": "router", "to": "v7", "label": "95% live traffic" },
+        { "from": "mon", "to": "deploy", "label": "breach: approvals down 8%", "style": "fail", "note": "A guardrail with a pre-agreed threshold and a minimum sample size fires. Nobody debates it at 3 a.m." },
+        { "from": "deploy", "to": "router", "label": "route 100% to v7", "note": "Rollback is a routing change to a model that is still loaded and warm, so it takes seconds." },
+        { "from": "router", "to": "v7", "label": "all traffic", "style": "reply" }
+      ]
+    },
+    {
+      "id": "mon-drift-kinds",
+      "type": "chart",
+      "title": "Kinds of change: how visible, how harmful",
+      "alt": "Trade-off chart with visibility without labels on the horizontal axis and typical harm on the vertical axis. Upstream data bugs are highly visible and harmful. Covariate shift is visible but often moderate. Seasonality is visible and usually mild. Prior shift is partly visible. Concept drift is hard to see without labels and often harmful.",
+      "caption": "Rough positions. The dangerous corner is top left: concept drift can hurt badly while input monitors stay green.",
+      "x": { "label": "Visible without labels", "low": "hidden", "high": "obvious" },
+      "y": { "label": "Typical harm", "low": "mild", "high": "severe" },
+      "points": [
+        { "label": "Upstream data bug", "x": 9, "y": 9 },
+        { "label": "Covariate shift", "x": 8, "y": 4 },
+        { "label": "Seasonality", "x": 7, "y": 1 },
+        { "label": "Prior shift", "x": 5, "y": 6 },
+        { "label": "Concept drift", "x": 2, "y": 8, "highlight": true }
+      ]
+    },
+    {
+      "id": "mon-psi-bars",
+      "type": "bars",
+      "title": "PSI per feature against the training reference",
+      "alt": "Bar chart of Population Stability Index for five features. Transaction amount is highest at 0.31, country 0.12, merchant category 0.07, device type 0.04 and hour of day 0.02.",
+      "caption": "Illustrative values. A ranked per-feature PSI turns \"the model is off\" into \"amount changed\": a diagnostic, not a verdict.",
+      "unit": "PSI",
+      "bars": [
+        { "label": "amount", "value": 0.31, "highlight": true },
+        { "label": "country", "value": 0.12 },
+        { "label": "merchant_cat", "value": 0.07 },
+        { "label": "device_type", "value": 0.04 },
+        { "label": "hour_of_day", "value": 0.02 }
+      ]
+    },
+    {
+      "id": "mon-label-delay",
+      "type": "timeline",
+      "title": "Label delay in a fraud model",
+      "alt": "Timeline of an illustrative fraud model incident. A new merchant segment shifts the amount distribution on day 2. Output and proxy monitors catch a drop in flagged transactions on day 3 and the model is rolled back on day 4. Chargeback labels only confirm the recall drop around day 35, after which the model is retrained.",
+      "caption": "Illustrative. Waiting for chargebacks would have meant a month of missed fraud; output and proxy metrics bought weeks.",
+      "events": [
+        { "at": "Day 0", "label": "v8 ships after shadow and a clean 5% canary", "kind": "trigger" },
+        { "at": "Day 2", "label": "Large new merchant onboarded; amount PSI rises to about 0.3", "kind": "trigger" },
+        { "at": "Day 3", "label": "Share of transactions flagged drops by a fifth", "kind": "impact" },
+        { "at": "Day 3", "label": "Output monitor pages; manual-review hit rate also falling", "kind": "detect" },
+        { "at": "Day 4", "label": "Traffic routed back to v7 while the team investigates", "kind": "mitigate" },
+        { "at": "Day 35", "label": "Chargebacks arrive and confirm lower recall for the new segment", "kind": "detect" },
+        { "at": "Day 40", "label": "Retrained with the new segment; per-segment recall alert added", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "mon-alert-design",
+      "type": "compare",
+      "title": "Paging on every feature versus paging on impact",
+      "alt": "Side-by-side comparison. Before: drift statistics for two hundred features all page on-call, who learns to ignore them. After: score distribution and proxy metrics page on-call, while feature drift goes to a dashboard used for diagnosis.",
+      "caption": "Many features drift a little every day without harming the model. Page on impact; explain with drift.",
+      "before": {
+        "label": "Page on any drift",
+        "nodes": [
+          { "id": "feat", "label": "200 feature PSIs", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "rule", "label": "PSI > 0.1 pages", "kind": "service", "col": 1, "row": 0 },
+          { "id": "oncall", "label": "On-call", "kind": "bad", "col": 2, "row": 0, "sub": "alert fatigue" }
+        ],
+        "edges": [
+          { "from": "feat", "to": "rule" },
+          { "from": "rule", "to": "oncall", "label": "dozens a week", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Page on impact",
+        "nodes": [
+          { "id": "out", "label": "Score dist", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "proxy", "label": "Proxy metrics", "kind": "worker", "col": 0, "row": 1 },
+          { "id": "feat", "label": "Feature PSIs", "kind": "worker", "col": 0, "row": 2 },
+          { "id": "page", "label": "Page", "kind": "good", "col": 2, "row": 0 },
+          { "id": "dash", "label": "Dashboard", "kind": "good", "col": 2, "row": 2, "sub": "for diagnosis" }
+        ],
+        "edges": [
+          { "from": "out", "to": "page", "label": "sustained" },
+          { "from": "proxy", "to": "page" },
+          { "from": "feat", "to": "dash" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Compute PSI so it does not blow up",
+      "bad": {
+        "label": "Bins from current data, no smoothing",
+        "lang": "py",
+        "code": "def psi(ref, cur, bins=10):\n    edges = np.histogram_bin_edges(cur, bins)\n    e = np.histogram(ref, edges)[0] / len(ref)\n    a = np.histogram(cur, edges)[0] / len(cur)\n    return np.sum((a - e) * np.log(a / e))  # inf or nan on empty bins"
+      },
+      "good": {
+        "label": "Fixed reference quantile bins, open ends, epsilon",
+        "lang": "py",
+        "code": "def psi(ref, cur, bins=10, eps=1e-4):\n    edges = np.unique(np.quantile(ref, np.linspace(0, 1, bins + 1)))\n    edges[0], edges[-1] = -np.inf, np.inf   # nothing falls outside\n    e = np.histogram(ref, edges)[0] / len(ref)\n    a = np.histogram(cur, edges)[0] / len(cur)\n    e, a = np.clip(e, eps, None), np.clip(a, eps, None)\n    return float(np.sum((a - e) * np.log(a / e)))"
+      },
+      "why": "Bins must be fixed from the reference so every day is compared on the same grid; quantile bins keep each reference bin populated. Open-ended outer bins catch new extremes instead of silently dropping them, and the epsilon stops an empty bin from producing infinity. Remember that PSI also depends on bin count and sample size: tiny samples show drift that is only noise, so set a minimum count before alerting."
+    },
+    {
+      "title": "Alert rules that people will trust",
+      "bad": {
+        "label": "Instant page on any drift",
+        "lang": "yaml",
+        "code": "- alert: FeatureDrift\n  expr: max(feature_psi) > 0.1\n  for: 0m\n  severity: page"
+      },
+      "good": {
+        "label": "Tiered, sustained, sample-gated, owned",
+        "lang": "yaml",
+        "code": "- alert: FlaggedRateShift      # output: page\n  expr: abs(flag_rate - flag_rate_7d_same_hour) / flag_rate_7d_same_hour > 0.2\n    and predictions_1h > 5000\n  for: 30m\n  severity: page\n  runbook: runbooks/fraud-model.md#rollback\n- alert: FeatureDrift          # input: ticket, for diagnosis\n  expr: feature_psi{tier=\"top20\"} > 0.25 and rows_1d > 10000\n  for: 6h\n  severity: ticket"
+      },
+      "why": "Comparing with the same hour last week removes daily cycles, the sample gate stops quiet hours from firing on noise, and `for` requires the shift to persist. The page is about behaviour users feel; drift on important features raises a ticket that explains it. PSI thresholds of about 0.1 (watch) and 0.25 (act) are a common rule of thumb from credit scoring, a starting point to tune rather than a law."
+    }
+  ],
+  "checklist": [
+    "Every prediction is logged with inputs, score, model version and request id, and labels can be joined to it later.",
+    "Input drift is computed per feature against a fixed reference window with fixed bins, and ranked for diagnosis.",
+    "Output monitors watch the score distribution and decision rates per important segment, compared with the same period last week.",
+    "At least one fast proxy metric (approval rate, CTR, review hit rate) is agreed with the business and alerted on.",
+    "Real performance is computed per segment as labels arrive, and the label delay is written down so people know when it is trustworthy.",
+    "Alerts have a minimum sample size, a sustain window, an owner and a runbook; drift alone opens a ticket, not a page.",
+    "New models go through shadow then canary, with guardrail thresholds agreed before launch.",
+    "The previous model stays loaded so rollback is a routing change, and the rollback is rehearsed.",
+    "Retraining is triggered by evidence (sustained drift on top features, a performance drop, a known world change) as well as a schedule."
+  ],
+  "antipatterns": [
+    {
+      "title": "Waiting for labels before noticing anything",
+      "bad": {
+        "label": "Only monitor accuracy",
+        "lang": "text",
+        "code": "Dashboard: weekly precision and recall from confirmed labels.\nFraud labels take 30-60 days.\n=> A broken model is detected two months after it broke."
+      },
+      "better": {
+        "label": "Fast indirect signals, slow direct ones",
+        "lang": "text",
+        "code": "minutes: error rate, latency, score distribution, decision rates\nhours:   proxy metrics (manual-review hit rate, customer disputes)\nweeks:   precision and recall by segment from confirmed labels"
+      },
+      "why": "When labels are delayed, accuracy is a lagging indicator. Output and proxy metrics will not prove the model is wrong, but they detect most breakages early enough to roll back, and labels confirm the diagnosis later."
+    },
+    {
+      "title": "Paging on drift in every feature",
+      "bad": {
+        "label": "Every feature can page",
+        "lang": "text",
+        "code": "200 features x PSI > 0.1 => on-call paged several times a week,\nmostly for harmless seasonal shifts. Real alerts get ignored."
+      },
+      "better": { "label": "Page on impact, use drift to explain", "diagram": "mon-alert-design" },
+      "why": "With many features, some will always drift by chance or season. If drift pages, on-call learns to ignore pages. Concept drift, the most harmful kind, may not show in inputs at all, so input drift is neither necessary nor sufficient for harm."
+    },
+    {
+      "title": "Retraining blindly on a schedule",
+      "bad": {
+        "label": "Nightly retrain, auto-promote",
+        "lang": "text",
+        "code": "cron: 0 2 * * *  train_on_last_30_days && promote"
+      },
+      "better": {
+        "label": "Scheduled or triggered, but always gated",
+        "lang": "text",
+        "code": "triggers: weekly schedule | sustained drift on top features | perf drop\ngate:     beats the champion on a recent time-based holdout,\n          per-segment checks pass, data validation passes\nthen:     shadow -> canary -> full rollout"
+      },
+      "why": "Auto-promoting whatever trains overnight will one day ship a model trained on a broken upstream table or a spam attack. Retraining should be routine, but promotion must go through the same evaluation gates and staged rollout as any other release."
+    },
+    {
+      "title": "Rollback means retraining the old model",
+      "bad": {
+        "label": "Old model must be rebuilt",
+        "lang": "text",
+        "code": "\"Roll back\" = find the old commit, rerun training, hope the\ndata snapshot still exists, redeploy. Takes a day."
+      },
+      "better": {
+        "label": "Previous version stays deployable",
+        "lang": "text",
+        "code": "registry: v7 (production, previous), v8 (production, current)\nrouter:   v7 still loaded and warm\nrollback: one routing change, seconds, no rebuild"
+      },
+      "why": "Rollback has to be faster than diagnosis. Keeping the last known good artifact in the registry, and ideally warm behind the router, turns a bad release into a minutes-long incident."
+    }
+  ],
+  "interview": [
+    "Define the drift types precisely: data drift is `P(X)` changing, concept drift is `P(Y|X)` changing, prior shift is `P(Y)` changing. Then say why it matters: only concept drift breaks the model by definition, and it can be invisible in inputs.",
+    "Bring up label delay unprompted for fraud, churn or ads conversions, and use it to justify proxy metrics and output monitoring.",
+    "If you mention PSI or KL, state the formula and the practical details: fixed reference bins, smoothing for empty bins, a minimum sample size, and that KL is asymmetric while PSI is its symmetric sum.",
+    "Describe the release path: offline gate, shadow, canary with guardrails and pre-agreed thresholds, then ramp, with rollback as a routing change to a warm previous version.",
+    "At SSE level, talk about alert design: what pages versus what opens a ticket, per-segment views, owners and runbooks, and evidence-based retraining triggers with promotion gates."
+  ],
+  "quiz": [
+    {
+      "question": "Fraudsters change tactics so that transactions which used to be safe are now often fraudulent. The input distribution looks unchanged. What is this?",
+      "choices": ["Covariate shift", "Concept drift", "Prior shift", "Training-serving skew"],
+      "answer": 1,
+      "explain": "The relationship between inputs and the label, `P(Y|X)`, has changed. That is concept drift, and it is why input monitors alone cannot prove a model is healthy."
+    },
+    {
+      "question": "Which formula is the Population Stability Index for reference shares e_i and current shares a_i?",
+      "choices": ["Σ a_i · ln(a_i / e_i)", "Σ (a_i − e_i) · ln(a_i / e_i)", "Σ (a_i − e_i)² / e_i", "max |A(x) − E(x)|"],
+      "answer": 1,
+      "explain": "PSI is `Σ (a_i − e_i) · ln(a_i / e_i)`, which equals `KL(A‖E) + KL(E‖A)`. The first choice is one direction of KL only, the third is a chi-square statistic and the last is the KS statistic."
+    },
+    {
+      "question": "Labels for your churn model arrive 30 days after the prediction. What should page on-call within hours of a bad release?",
+      "choices": ["Weekly AUC", "Shifts in the score distribution, decision rates and an agreed proxy metric", "Training loss", "PSI on every feature"],
+      "answer": 1,
+      "explain": "Output and proxy metrics are available immediately and reflect what the model is doing. AUC needs labels; per-feature PSI is noisy and better used to explain an alert."
+    },
+    {
+      "question": "What can a shadow deployment detect that a canary is needed for?",
+      "choices": ["Latency regressions", "Crashes on real inputs", "The effect of the new model's decisions on user outcomes", "Differences in score distribution"],
+      "answer": 2,
+      "explain": "In shadow the new model's answers are never shown to users, so outcomes cannot change. Latency, crashes and score differences are all visible in shadow; outcome impact needs live traffic."
+    },
+    {
+      "question": "Why keep the previous model version loaded behind the router after a release?",
+      "choices": ["To average both models' scores", "So rollback is a fast routing change rather than a rebuild", "Because registries cannot delete versions", "To double throughput"],
+      "answer": 1,
+      "explain": "Rollback should be faster than diagnosis. A warm previous version makes it a configuration change that takes seconds."
+    }
+  ],
+  "practice": {
+    "prompt": "You own a credit-card fraud model. Confirmed fraud labels (chargebacks) arrive 30 to 90 days after a transaction. Design monitoring, release and retraining so that a bad model or a shift in fraud patterns is caught within hours, not months.",
+    "answer": "Log every scored transaction with features, score, decision, model version and id. Layer the monitoring. Within minutes: service health plus the score distribution and the share of transactions blocked or sent to review, per segment (country, merchant category, channel), compared with the same hour last week, with a minimum volume and a sustain window. Within hours: proxies such as manual-review hit rate, customer dispute calls and issuer declines. As labels arrive: precision and recall per segment, with the label delay documented. Input drift per feature via PSI on fixed reference quantile bins with smoothing; rank features and raise tickets, not pages, unless it is a top feature with a large sustained shift. Release through an offline gate on a time-based holdout, then shadow (compare decisions with the champion), then a small canary with guardrails on block rate and review hit rate, then ramp. Keep the champion warm so rollback is a routing change, and rehearse it. Retrain on a schedule and on triggers (sustained top-feature drift, proxy decline, known events), but always through the same gates. Mention that concept drift can appear without input drift, which is why proxies and per-segment outcome metrics matter.",
+    "rubric": [
+      "Explains label delay and why accuracy alone is too slow",
+      "Monitors outputs and proxies with sample gates, seasonality-aware baselines and per-segment views",
+      "Uses input drift (PSI or similar, stated correctly) as a diagnostic rather than a page",
+      "Describes shadow and canary with pre-agreed guardrails and fast rollback",
+      "Retraining triggers plus promotion gates, not blind auto-promotion",
+      "Distinguishes data drift from concept drift"
+    ]
+  },
+  "links": {
+    "lessons": ["ml-deployment-monitoring", "ml-mlops", "ml-fraud-detection", "design-reliability-observability"],
+    "cases": ["metrics-monitoring", "payments"],
+    "guides": ["observability", "graceful-degradation", "training-serving-skew", "ml-experimentation", "ml-pipelines"]
+  }
+}

@@ -1,0 +1,229 @@
+{
+  "id": "air-canada-chatbot-2024",
+  "kind": "case",
+  "topic": "llm-apps",
+  "level": "se",
+  "title": "Air Canada chatbot, 2024: the company owns what its bot says",
+  "summary": "A website chatbot told a grieving passenger they could claim a bereavement fare after booking. The airline's policy page said otherwise. A BC tribunal held Air Canada responsible for its chatbot and ordered it to pay.",
+  "minutes": 12,
+  "organisation": "Air Canada",
+  "year": 2024,
+  "problem": "In *Moffatt v. Air Canada*, 2024 BCCRT 149, British Columbia's Civil Resolution Tribunal decided a small claim about a **bereavement fare refund**. On 11 November 2022, after their grandmother died in Ontario, the applicant went to Air Canada's website to book a flight from Vancouver to Toronto at bereavement rates and asked the site's **support chatbot** about them.\n\nThe chatbot's answer, captured in a screenshot, said the passenger could submit a ticket for a reduced bereavement rate **within 90 days** of the ticket being issued, including when they had already travelled, using a refund application form. The words \"bereavement fares\" in that answer linked to Air Canada's **Bereavement travel** page, which said the policy does **not** apply to requests made after travel is completed.\n\nRelying on the chatbot, they bought two full-price one-way tickets ($794.98 out, $845.38 back) and applied for the reduced fare on 17 November 2022, well inside the 90 days. Air Canada refused because it did not allow retroactive applications. On 8 February 2023 an Air Canada representative admitted in an email that the chatbot had used \"misleading words\" and said the issue had been noted so the chatbot could be updated. The dispute went to the tribunal.",
+  "constraints": [
+    "Customers use the chatbot as part of the airline's website, often in a hurry and under stress; here the passenger was booking on the day of a death in the family.",
+    "The authoritative policy lived on a separate web page, and the chatbot's answer contradicted it while linking to it.",
+    "The chatbot's answer concerned money and eligibility, so a wrong answer led directly to a purchase decision.",
+    "The decision notes Air Canada gave no information about how its chatbot worked, so nothing is known about whether it was rule-based or generative."
+  ],
+  "decisions": [
+    {
+      "decision": "Air Canada offered a chatbot that answered policy questions directly, with a link to the policy page as supporting material.",
+      "tradeoff": "A conversational answer is quicker for customers than reading a policy page, but the tribunal treated whatever the bot says as the company's own representation, even when the linked page says something different."
+    },
+    {
+      "decision": "In the dispute, Air Canada argued it could not be held liable for information from its agents, servants or representatives, including the chatbot.",
+      "tradeoff": "The tribunal called this \"a remarkable submission\": despite its interactive side, the chatbot is part of Air Canada's website, and the airline answers for everything on that site, from fixed pages and chatbot replies alike."
+    },
+    {
+      "decision": "Air Canada also argued the passenger could have found the correct rule on the Bereavement travel page.",
+      "tradeoff": "The tribunal noted Air Canada gave no reason why the policy page deserved more trust than the chatbot, or why a customer should cross-check one part of the site against another. Pointing to a correct source elsewhere did not cure the wrong answer."
+    },
+    {
+      "decision": "Air Canada pointed to terms in its Domestic Tariff and to a $200 goodwill coupon it had offered, but did not file the tariff text, or any evidence that the passenger accepted the coupon (they said they had not).",
+      "tradeoff": "The tribunal held no contractual defence was proven and allowed no set-off. It also drew an adverse inference on the fare amount because Air Canada, best placed to supply it, provided no evidence."
+    }
+  ],
+  "failures": "The tribunal analysed the claim as **negligent misrepresentation**: Air Canada owed the customer a duty of care, the chatbot's statement was inaccurate, Air Canada did not take reasonable care to make its chatbot accurate, the customer reasonably relied on it, and that reliance caused loss. The member accepted that the passenger would not have flown last-minute at full fare if they had known, which matched their diligent follow-up for a refund.\n\nFrom an engineering point of view, the failure was an assistant that **stated a policy rule that contradicted the authoritative source** it linked to, on a question where the answer drove a purchase. Whatever checks existed did not catch the conflict between the bot and the policy page, and the bot answered a refund-eligibility question itself rather than handing it to a person or a deterministic policy lookup.\n\nThe tribunal found the passenger should have paid $979.48 for both flights (a $380 bereavement fare each way plus the same fixed charges and the sales tax on that fare) instead of the $1,630.36 they paid, and awarded **$650.88** in damages, $36.14 pre-judgment interest and $125 in tribunal fees: **$812.02** in total, payable within 14 days. Their claim had been for $880; the remaining claims were dismissed.",
+  "lessons": [
+    "Whatever your assistant says is your product speaking. Design as if every answer were printed on your website, because legally it may be treated that way.",
+    "Ground policy answers in the authoritative source and quote or summarise it, rather than letting the bot paraphrase from memory or stale training text.",
+    "Keep one source of truth. If the bot and a page disagree, that is a bug to detect automatically, not a user's job to notice.",
+    "Route high-stakes intents (refunds, eligibility, pricing, legal terms) to a deterministic lookup or a human, and say so to the user.",
+    "Build evals from real policy questions and re-run them whenever the policy or the bot changes; log answers with their sources so you can audit them.",
+    "When a wrong answer is reported, fix the bot and also remediate the customer; the tribunal measured the loss, not the intent."
+  ],
+  "caveats": "This summary follows the tribunal's written reasons only. The decision says Air Canada gave no information about the nature of its chatbot, so whether it used a large language model is not established by this source; the case is still a useful lesson for LLM assistants because the principle applied was about responsibility for website information in general. It is a small-claims decision by one tribunal member in one province, so its weight as precedent is limited. Amounts are as written in the decision, which uses \"$\" without naming the currency. The \"better\" designs in the compare and sequence diagrams are illustrative engineering responses, not anything the decision or Air Canada describes.",
+  "diagrams": [
+    {
+      "id": "aca-timeline",
+      "type": "timeline",
+      "title": "From a chatbot answer to a tribunal order",
+      "alt": "Timeline. On 11 November 2022 the passenger asks Air Canada's chatbot about bereavement fares and is told they can apply within 90 days, then books the outbound flight. On 16 November they book the return. On 17 November they apply for the bereavement fare. Emails continue through December 2022 and February 2023. On 8 February 2023 a representative admits the chatbot used misleading words. On 14 February 2024 the tribunal orders Air Canada to pay 812.02 dollars.",
+      "caption": "The airline acknowledged the misleading answer in writing within three months, but the dispute still took a tribunal decision to resolve.",
+      "events": [
+        { "at": "11 Nov 2022", "label": "After a family death, the site's chatbot says bereavement rates can be claimed later", "kind": "trigger" },
+        { "at": "11 Nov 2022", "label": "Passenger says phone agent quoted ~$380 per flight; outbound bought for $794.98", "kind": "impact" },
+        { "at": "16 Nov 2022", "label": "Return ticket bought for $845.38, still relying on the chatbot's answer", "kind": "impact" },
+        { "at": "17 Nov 2022", "label": "First application for the bereavement fare, well inside the 90 days", "kind": "detect" },
+        { "at": "Dec 2022 - Feb 2023", "label": "Emails back and forth seeking a partial refund; Air Canada says no retroactive claims", "kind": "detect" },
+        { "at": "8 Feb 2023", "label": "Rep admits chatbot gave \"misleading words\"; issue noted so it can be updated", "kind": "mitigate" },
+        { "at": "14 Feb 2024", "label": "Tribunal finds negligent misrepresentation; orders $812.02 within 14 days", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "aca-website",
+      "type": "flow",
+      "title": "Two parts of one website, two different rules",
+      "alt": "Flow diagram. The passenger asks the website chatbot about bereavement fares. The chatbot links to the Bereavement travel page but tells them they can claim later, so they buy full-fare tickets. Their refund request is refused under the page's rule that claims after travel are not accepted, and they take the dispute to the tribunal, which orders 812.02 dollars.",
+      "caption": "The bot linked to the correct rule and contradicted it in the same answer. The tribunal held the company responsible for both.",
+      "nodes": [
+        { "id": "cust", "label": "Passenger", "kind": "client", "col": 0, "row": 1, "sub": "booking same day" },
+        { "id": "bot", "label": "Website chatbot", "kind": "bad", "col": 2, "row": 1, "sub": "\"within 90 days\"" },
+        { "id": "page", "label": "Bereavement page", "kind": "good", "col": 2, "row": 3, "sub": "none after travel" },
+        { "id": "tix", "label": "Tickets bought", "kind": "service", "col": 4, "row": 1, "sub": "$1,630.36 total" },
+        { "id": "refund", "label": "Refund request", "kind": "decision", "col": 4, "row": 3, "sub": "refused" },
+        { "id": "crt", "label": "Tribunal (CRT)", "kind": "external", "col": 4, "row": 5, "sub": "$812.02 ordered" }
+      ],
+      "edges": [
+        { "from": "cust", "to": "bot", "label": "asks about fares" },
+        { "from": "bot", "to": "page", "label": "links to", "style": "async" },
+        { "from": "bot", "to": "tix", "label": "claim later", "style": "fail" },
+        { "from": "tix", "to": "refund", "label": "applies 17 Nov" },
+        { "from": "page", "to": "refund", "label": "policy applied" },
+        { "from": "refund", "to": "crt", "label": "small claim" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "On the day of the death, the passenger uses the support chatbot on Air Canada's website to ask about bereavement fares." },
+        { "edges": [1], "text": "The answer hyperlinks \"bereavement fares\" to the Bereavement travel page, which says the policy does not apply after travel is completed." },
+        { "edges": [2], "text": "But the answer itself says they can submit for a reduced rate within 90 days of ticketing, even after travelling. They buy both tickets at full price." },
+        { "edges": [3, 4], "text": "They apply on 17 November. Air Canada applies the page's rule: no retroactive bereavement claims." },
+        { "edges": [5], "text": "The tribunal finds negligent misrepresentation and orders damages, interest and fees." }
+      ]
+    },
+    {
+      "id": "aca-grounding",
+      "type": "compare",
+      "title": "Free-standing bot answer versus grounded answer with escalation",
+      "alt": "Side-by-side comparison. Left: the chatbot writes its own answer about refund eligibility, which contradicts the policy page it links to. Right: the bot retrieves the current policy text, answers from it with a link, and hands refund or eligibility decisions to a human agent.",
+      "caption": "Illustrative fix. One source of truth, answers built from it, and a human or rule engine for decisions that cost money.",
+      "before": {
+        "label": "What happened: bot states its own rule",
+        "nodes": [
+          { "id": "q", "label": "Policy question", "kind": "client", "col": 0, "row": 0 },
+          { "id": "bot", "label": "Chatbot answer", "kind": "bad", "col": 2, "row": 0, "sub": "claim within 90d" },
+          { "id": "page", "label": "Policy page", "kind": "note", "col": 2, "row": 1, "sub": "says the opposite" }
+        ],
+        "edges": [
+          { "from": "q", "to": "bot" },
+          { "from": "bot", "to": "page", "label": "contradicts", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Better: retrieve, cite, escalate",
+        "nodes": [
+          { "id": "q", "label": "Policy question", "kind": "client", "col": 0, "row": 0 },
+          { "id": "src", "label": "Policy source", "kind": "db", "col": 1, "row": 1, "sub": "single truth" },
+          { "id": "bot", "label": "Grounded answer", "kind": "good", "col": 2, "row": 0, "sub": "quotes + link" },
+          { "id": "human", "label": "Human agent", "kind": "good", "col": 2, "row": 1, "sub": "refund decisions" }
+        ],
+        "edges": [
+          { "from": "q", "to": "bot" },
+          { "from": "src", "to": "bot", "label": "retrieved text" },
+          { "from": "bot", "to": "human", "label": "money at stake" }
+        ]
+      }
+    },
+    {
+      "id": "aca-safe-flow",
+      "type": "sequence",
+      "title": "A support bot that answers from policy and hands off refunds",
+      "alt": "Sequence diagram with five actors: customer, support bot, policy store, human agent and an answer log. The customer asks whether a bereavement fare can be claimed after travel. The bot retrieves the current policy, answers from it with a link, and logs the answer with its source. When the customer asks for a refund, the bot hands the case to a human agent, who replies with a decision.",
+      "caption": "Illustrative design. Retrieval keeps answers tied to the real rule; the log makes them auditable; the handoff keeps the bot from promising money.",
+      "actors": [
+        { "id": "cust", "label": "Customer" },
+        { "id": "bot", "label": "Support bot" },
+        { "id": "kb", "label": "Policy store" },
+        { "id": "agent", "label": "Human agent" },
+        { "id": "log", "label": "Answer log" }
+      ],
+      "messages": [
+        { "from": "cust", "to": "bot", "label": "claim fare after travel?", "note": "A high-stakes policy question: the answer will drive a purchase." },
+        { "from": "bot", "to": "kb", "label": "retrieve bereavement policy", "note": "The bot looks up the current, versioned policy text instead of answering from memory." },
+        { "from": "kb", "to": "bot", "label": "policy text + version", "style": "reply", "note": "Here that text would say claims after completed travel are not accepted." },
+        { "from": "bot", "to": "cust", "label": "answer from policy + link", "style": "reply", "note": "The answer restates the retrieved rule and links to the same page, so the two cannot disagree." },
+        { "from": "bot", "to": "log", "label": "answer + source id", "style": "async", "note": "Logged answers with their sources feed audits and regression evals." },
+        { "from": "cust", "to": "bot", "label": "already flew, want refund", "note": "Refund requests are a decision, not a lookup." },
+        { "from": "bot", "to": "agent", "label": "hand off with context", "note": "The bot escalates instead of improvising eligibility or amounts." },
+        { "from": "agent", "to": "cust", "label": "decision under policy", "style": "reply", "note": "A person, accountable for the outcome, answers the refund question." }
+      ]
+    },
+    {
+      "id": "aca-amounts",
+      "type": "bars",
+      "title": "The money in the decision ($)",
+      "alt": "Bar chart of amounts from the tribunal's decision: 1,630.36 dollars paid for both flights, 979.48 dollars they would have cost at the bereavement fare, 880 dollars claimed, 650.88 dollars in damages awarded, and 812.02 dollars total ordered including interest and fees.",
+      "caption": "Figures from the decision. Damages were the gap between what was paid and the estimated cost at a $380 bereavement fare plus the applicable charges and tax.",
+      "unit": "$ (per the decision)",
+      "bars": [
+        { "label": "Paid for both flights", "value": 1630.36 },
+        { "label": "At bereavement fare", "value": 979.48 },
+        { "label": "Amount claimed", "value": 880 },
+        { "label": "Damages awarded", "value": 650.88, "highlight": true },
+        { "label": "Total ordered", "value": 812.02, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "In an LLM support-bot design, say early: \"The bot's answers are company statements, so policy answers are grounded in the authoritative source and cite it.\"",
+    "Name the high-stakes intents (refunds, pricing, eligibility, legal terms) and route them to a deterministic system or a human instead of free generation.",
+    "Propose a consistency check: evals that ask policy questions and compare answers with the current policy text, re-run on every policy or prompt change.",
+    "Mention auditability: log the question, retrieved sources, model version and answer so a disputed answer can be reconstructed.",
+    "Use this case to show product judgment: linking to the correct policy page did not protect the company here."
+  ],
+  "quiz": [
+    {
+      "question": "What did Air Canada's chatbot tell the passenger about bereavement fares?",
+      "choices": ["That bereavement fares had been discontinued", "That they could submit for a reduced bereavement rate within 90 days of the ticket being issued, even after travelling", "That they had to phone an agent before booking", "That bereavement fares only applied to international flights"],
+      "answer": 1,
+      "explain": "The screenshot in evidence showed this. The linked Bereavement travel page said the opposite: the policy does not apply to requests after travel is completed."
+    },
+    {
+      "question": "How did the tribunal respond to the argument that Air Canada was not liable for its chatbot's information?",
+      "choices": ["It agreed, because the chatbot was automated", "It held the chatbot is part of the website, and the airline answers for all the information on its site", "It split responsibility with the chatbot vendor", "It did not address the argument"],
+      "answer": 1,
+      "explain": "The member called the idea that the chatbot was effectively a separate legal entity \"a remarkable submission\". Information from a chatbot counts the same as information on a static page."
+    },
+    {
+      "question": "Why did the correct policy page not protect Air Canada?",
+      "choices": ["The page was offline", "The tribunal saw no reason a customer should be expected to tell which part of the site is right, or cross-check between them", "The passenger never received the link", "The page was published after the booking"],
+      "answer": 1,
+      "explain": "Reliance on the chatbot was found reasonable. Linking to a correct source does not cancel a wrong answer; the system has to make the answer itself correct."
+    },
+    {
+      "question": "How were the $650.88 in damages calculated?",
+      "choices": ["The full ticket price refunded", "The difference between the $1,630.36 paid and the $979.48 the flights would have cost at a $380 bereavement fare each way plus charges and tax", "The $880 the passenger claimed", "A fixed amount for distress"],
+      "answer": 1,
+      "explain": "Damages put the passenger where they would have been without the misrepresentation. With interest ($36.14) and fees ($125), the total ordered was $812.02."
+    },
+    {
+      "question": "Which engineering change most directly addresses this failure for an LLM support bot?",
+      "choices": ["A longer disclaimer under each answer", "Grounding policy answers in the authoritative source, testing them against it, and escalating refund decisions to a person or rules engine", "Making the bot more conversational", "Removing links from answers"],
+      "answer": 1,
+      "explain": "The harm came from a confident answer that contradicted policy on a money decision. Grounding, policy evals and escalation attack that directly; a disclaimer does not make a wrong answer right, and the correct linked page did not save Air Canada here."
+    }
+  ],
+  "practice": {
+    "prompt": "You are building an LLM-based customer-support assistant for an airline's website. It must answer questions about fares, refunds and special policies such as bereavement travel. Design it so it does not repeat Air Canada's 2024 mistake.",
+    "answer": "Treat every answer as a company statement. **Source of truth**: policies live in a versioned store owned by the policy team; the website pages and the bot both render from it. **Answering**: classify intent first. For policy questions, retrieve the relevant policy sections and generate an answer constrained to them, quoting the key rule and linking to the exact section; if retrieval finds nothing confident, say so and offer a person rather than guessing. **High-stakes intents** (refund eligibility, fare amounts, compensation, legal terms) go to a deterministic policy engine or a human agent with the conversation attached; the bot may explain the process but not promise outcomes. **Quality**: an eval set of real and tricky policy questions with expected answers checked against the policy text, run in CI on any change to prompts, model or policies, plus a check that flags answers contradicting their cited source. **Operations**: log the question, retrieved sources and versions, model version and answer for audit; a fast path for staff to report a wrong answer, fix it, and remediate affected customers; monitor topics with high escalation or complaint rates. Mention the trade-off: grounding and escalation add latency and staff cost, which is acceptable for money-affecting answers.",
+    "rubric": [
+      "Single authoritative policy source shared by the website and the bot",
+      "Policy answers grounded in retrieved text with citations, and an honest fallback when nothing is found",
+      "Refund, pricing and eligibility decisions escalated to rules or humans, not generated",
+      "Evals that check answers against policy, re-run on every model, prompt or policy change",
+      "Answer logging with sources and versions for audit, plus a remediation path for wrong answers",
+      "Recognises the company is accountable for the bot's output, so linking to the correct page is not enough"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-rag", "ai-responsible-ai", "ai-llm-system-design", "ai-evals"],
+    "guides": ["rag-in-production", "llm-evals", "prompt-injection-guardrails", "graceful-degradation"]
+  },
+  "sources": [
+    {
+      "title": "Moffatt v. Air Canada, 2024 BCCRT 149 (File SC-2023-005609)",
+      "publisher": "British Columbia Civil Resolution Tribunal",
+      "url": "https://decisions.civilresolutionbc.ca/crt/crtd/en/item/525448/index.do",
+      "date": "2024-02-14"
+    }
+  ]
+}

@@ -1,0 +1,321 @@
+{
+  "id": "rag-in-production",
+  "kind": "guide",
+  "topic": "llm-apps",
+  "level": "se",
+  "title": "RAG in production: retrieval you can trust",
+  "summary": "Chunk with structure, retrieve with BM25 plus vectors, rerank, enforce access control before the model sees a document, cite sources, keep the index fresh and log every retrieval.",
+  "minutes": 16,
+  "principle": "In retrieval-augmented generation the answer can only be as good as what was retrieved. Treat retrieval as a search system with its own pipeline, permissions, freshness and metrics, and make the model answer only from what it was given, with citations a user can check.",
+  "why": "A demo RAG app is a vector database and a prompt. A production one fails in quieter ways: the right passage was never retrieved, a stale copy of a policy was, a user saw text from a document they are not allowed to open, or forty chunks were pasted into the prompt and the model latched onto the wrong one. None of these show up as errors. The model writes a fluent, confident answer either way.\n\nMost of the work is classic search engineering. Split documents along their structure and keep metadata with each chunk. Combine keyword search (BM25 is strong on names, codes and rare terms) with embedding search (strong on paraphrase), then rerank a few dozen candidates down to a handful. Filter by the caller's permissions inside the retrieval query. Ask the model to cite chunk ids and check those citations. Re-index when documents change or when you change the embedding model, and log which chunks each answer used so you can tell a retrieval miss from a generation mistake.",
+  "diagrams": [
+    {
+      "id": "rag-pipeline",
+      "type": "flow",
+      "title": "Two pipelines: ingestion and query",
+      "alt": "Flow diagram. Top row: source documents go to a chunker, then an embedder, then a hybrid index that holds BM25 and vector data. Lower rows: a user calls the RAG service, which calls a retriever that queries the hybrid index, passes candidates to a reranker, then sends the top chunks to the LLM, which returns a cited answer to the user.",
+      "caption": "Ingestion runs offline and decides what can ever be found. The query path only ranks what ingestion stored.",
+      "nodes": [
+        { "id": "docs", "label": "Source docs", "kind": "external", "col": 0, "row": 0, "sub": "wiki, tickets" },
+        { "id": "chunk", "label": "Chunker", "kind": "worker", "col": 1, "row": 0, "sub": "split + metadata" },
+        { "id": "embed", "label": "Embedder", "kind": "worker", "col": 2, "row": 0 },
+        { "id": "index", "label": "Hybrid index", "kind": "db", "col": 3, "row": 0, "sub": "BM25 + vectors" },
+        { "id": "user", "label": "User", "kind": "client", "col": 0, "row": 2 },
+        { "id": "api", "label": "RAG service", "kind": "service", "col": 1, "row": 2 },
+        { "id": "retr", "label": "Retriever", "kind": "service", "col": 3, "row": 2, "sub": "ACL filter" },
+        { "id": "rerank", "label": "Reranker", "kind": "service", "col": 3, "row": 4, "sub": "50 -> 5" },
+        { "id": "llm", "label": "LLM", "kind": "external", "col": 1, "row": 4 }
+      ],
+      "edges": [
+        { "from": "docs", "to": "chunk", "label": "changed docs", "style": "async" },
+        { "from": "chunk", "to": "embed", "style": "async" },
+        { "from": "embed", "to": "index", "label": "upsert", "style": "async" },
+        { "from": "user", "to": "api", "label": "question" },
+        { "from": "api", "to": "retr", "label": "query + user id" },
+        { "from": "retr", "to": "index", "label": "hybrid search" },
+        { "from": "retr", "to": "rerank", "label": "candidates" },
+        { "from": "rerank", "to": "llm", "label": "top chunks" },
+        { "from": "llm", "to": "user", "label": "cited answer", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Ingestion picks up new and changed documents and splits them along headings and paragraphs. Each chunk keeps its document id, section, version and access list." },
+        { "edges": [2], "text": "Chunks are embedded and written to an index that supports both keyword (BM25) and vector search. Upserts are keyed by chunk id so re-runs do not duplicate." },
+        { "edges": [3, 4], "text": "At query time the service passes the question and the caller's identity. Identity matters: the retriever must only return chunks this user may read." },
+        { "edges": [5], "text": "The retriever runs keyword and vector search with the permission filter inside the query, then fuses the two ranked lists." },
+        { "edges": [6, 7], "text": "A reranker scores the question against each candidate and keeps a handful. Fewer, better chunks beat a long, noisy context." },
+        { "edges": [8], "text": "The model answers from the chunks and cites their ids. The service checks that every cited id was actually supplied before showing the answer." }
+      ]
+    },
+    {
+      "id": "rag-query-sequence",
+      "type": "sequence",
+      "title": "One question, end to end",
+      "alt": "Sequence diagram with user, RAG service, search index, reranker and LLM. The service sends a filtered hybrid query to the index, gets fifty candidates, reranks them to five, sends those with the question to the LLM, validates the returned citations and replies to the user with sources.",
+      "caption": "Every hop is logged with chunk ids and scores, so a bad answer can be traced to a retrieval miss or a generation error.",
+      "actors": [
+        { "id": "user", "label": "User" },
+        { "id": "svc", "label": "RAG service" },
+        { "id": "idx", "label": "Search index" },
+        { "id": "rr", "label": "Reranker" },
+        { "id": "llm", "label": "LLM" }
+      ],
+      "messages": [
+        { "from": "user", "to": "svc", "label": "How do I rotate API keys?" },
+        { "from": "svc", "to": "idx", "label": "BM25 + vector, acl in groups", "note": "The permission filter is part of the query, not a step after it. Documents the user cannot read are never candidates." },
+        { "from": "idx", "to": "svc", "label": "50 candidates (fused)", "style": "reply", "note": "Two ranked lists are merged, for example with reciprocal rank fusion, which needs ranks, not comparable scores." },
+        { "from": "svc", "to": "rr", "label": "question + 50 chunks" },
+        { "from": "rr", "to": "svc", "label": "top 5 with scores", "style": "reply", "note": "If the best score is below a threshold, the service can answer \"I could not find this\" instead of guessing." },
+        { "from": "svc", "to": "llm", "label": "rules + 5 chunks + question", "note": "Chunks are labelled with ids and marked as reference data, not instructions." },
+        { "from": "llm", "to": "svc", "label": "answer citing [c2] [c4]", "style": "reply" },
+        { "from": "svc", "to": "user", "label": "answer + sources c2, c4", "style": "reply", "note": "Before replying, the service checks that c2 and c4 were among the chunks it supplied. An unknown id means an invented source." }
+      ]
+    },
+    {
+      "id": "rag-retrieval-options",
+      "type": "chart",
+      "title": "Retrieval strategies: quality against cost",
+      "alt": "Trade-off chart with relevant chunks found on the vertical axis and latency and cost on the horizontal axis. Keyword only and vector only are cheap with moderate recall. Hybrid is slightly more costly with better recall. Hybrid plus reranking is highlighted as the best balance. Stuffing whole documents into a long context is costly and less precise. Multi-step agentic retrieval is the most costly and strong on hard questions.",
+      "caption": "Positions are a rough guide, not measurements. Hybrid plus a reranker is the usual default; go further only when evals show multi-hop questions failing.",
+      "x": { "label": "Latency and cost", "low": "cheap", "high": "expensive" },
+      "y": { "label": "Relevant chunks found", "low": "few", "high": "most" },
+      "points": [
+        { "label": "BM25 only", "x": 1, "y": 4 },
+        { "label": "Vector only", "x": 2, "y": 5 },
+        { "label": "Hybrid (fused)", "x": 3, "y": 7 },
+        { "label": "Hybrid + rerank", "x": 5, "y": 8.5, "highlight": true },
+        { "label": "Stuff whole docs", "x": 8, "y": 5 },
+        { "label": "Agentic multi-step", "x": 9, "y": 10 }
+      ]
+    },
+    {
+      "id": "rag-context-stuffing",
+      "type": "compare",
+      "title": "Context stuffing versus reranked context",
+      "alt": "Side-by-side comparison. Before: fifty retrieved chunks go straight into the prompt and the model produces a diluted answer that mixes an outdated version. After: fifty candidates go through a reranker, five chunks reach the model, and it produces a grounded answer with citations.",
+      "caption": "More context is not more knowledge. Irrelevant chunks cost tokens and give the model more wrong things to quote.",
+      "before": {
+        "label": "Top 50 straight into the prompt",
+        "nodes": [
+          { "id": "r", "label": "Retriever", "kind": "service", "col": 0, "row": 0 },
+          { "id": "m", "label": "LLM", "kind": "external", "col": 1, "row": 0, "sub": "50 chunks" },
+          { "id": "a", "label": "Mixed answer", "kind": "bad", "col": 2, "row": 0, "sub": "quotes old v1" }
+        ],
+        "edges": [
+          { "from": "r", "to": "m", "label": "50 chunks" },
+          { "from": "m", "to": "a", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Rerank to 5, then generate",
+        "nodes": [
+          { "id": "r", "label": "Retriever", "kind": "service", "col": 0, "row": 0 },
+          { "id": "k", "label": "Reranker", "kind": "service", "col": 0, "row": 1 },
+          { "id": "m", "label": "LLM", "kind": "external", "col": 1, "row": 1, "sub": "5 chunks" },
+          { "id": "a", "label": "Cited answer", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "r", "to": "k", "label": "50" },
+          { "from": "k", "to": "m", "label": "top 5" },
+          { "from": "m", "to": "a" }
+        ]
+      }
+    },
+    {
+      "id": "rag-acl-filter",
+      "type": "compare",
+      "title": "Where to enforce document permissions",
+      "alt": "Side-by-side comparison. Before: the retriever searches all documents and the model sees a confidential HR chunk, then a filter tries to hide it from the answer, which leaks anyway. After: the retriever applies the caller's group filter inside the search, so only permitted chunks ever reach the model.",
+      "caption": "Once a chunk is in the prompt, assume its content can appear in the answer. Filter before retrieval returns, not after generation.",
+      "before": {
+        "label": "Filter after generation",
+        "nodes": [
+          { "id": "r", "label": "Search all docs", "kind": "service", "col": 0, "row": 0 },
+          { "id": "m", "label": "LLM", "kind": "external", "col": 1, "row": 0, "sub": "sees HR chunk" },
+          { "id": "l", "label": "Leaked summary", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "r", "to": "m" },
+          { "from": "m", "to": "l", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Filter inside the search",
+        "nodes": [
+          { "id": "u", "label": "User groups", "kind": "note", "col": 0, "row": 0 },
+          { "id": "r", "label": "Filtered search", "kind": "service", "col": 0, "row": 1 },
+          { "id": "m", "label": "LLM", "kind": "external", "col": 1, "row": 1, "sub": "permitted only" },
+          { "id": "a", "label": "Safe answer", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "u", "to": "r", "label": "acl filter" },
+          { "from": "r", "to": "m" },
+          { "from": "m", "to": "a" }
+        ]
+      }
+    },
+    {
+      "id": "rag-freshness",
+      "type": "flow",
+      "title": "Keeping the index fresh",
+      "alt": "State diagram for a document in the index. A new document is chunked and indexed. An edit marks it changed and it is re-chunked and re-indexed under a new version, with old chunks deleted. A deletion or permission change removes or updates its chunks. Changing the embedding model triggers a full re-embed into a new index that is swapped in when complete.",
+      "caption": "Edits, deletions and permission changes must reach the index as fast as content does. A model change means a full rebuild, not a patch.",
+      "nodes": [
+        { "id": "new", "label": "New doc", "kind": "state", "col": 0, "row": 0 },
+        { "id": "indexed", "label": "Indexed v1", "kind": "state", "col": 2, "row": 0, "sub": "chunks + acl" },
+        { "id": "changed", "label": "Edited", "kind": "state", "col": 4, "row": 0 },
+        { "id": "v2", "label": "Indexed v2", "kind": "good", "col": 4, "row": 2, "sub": "old chunks gone" },
+        { "id": "deleted", "label": "Deleted/ACL cut", "kind": "state", "col": 2, "row": 2 },
+        { "id": "purged", "label": "Chunks purged", "kind": "good", "col": 2, "row": 4 },
+        { "id": "model", "label": "Embed model swap", "kind": "decision", "col": 0, "row": 2 },
+        { "id": "rebuild", "label": "Rebuild index", "kind": "worker", "col": 0, "row": 4, "sub": "then alias swap" }
+      ],
+      "edges": [
+        { "from": "new", "to": "indexed", "label": "ingest" },
+        { "from": "indexed", "to": "changed", "label": "source edit" },
+        { "from": "changed", "to": "v2", "label": "re-chunk" },
+        { "from": "indexed", "to": "deleted", "label": "delete / revoke" },
+        { "from": "deleted", "to": "purged", "label": "remove fast" },
+        { "from": "model", "to": "rebuild", "label": "re-embed all", "style": "async" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Chunk along structure and keep metadata",
+      "bad": {
+        "label": "Fixed character windows, text only",
+        "lang": "py",
+        "code": "def chunk(doc):\n    text = doc.text\n    return [text[i:i + 1000] for i in range(0, len(text), 1000)]\n# cuts tables and sentences in half; no id, version or permissions"
+      },
+      "good": {
+        "label": "Split on sections, keep ids, version and ACL",
+        "lang": "py",
+        "code": "def chunk(doc):\n    for section in split_on_headings(doc):\n        for i, part in enumerate(pack_paragraphs(section, max_tokens=400, overlap=50)):\n            yield {\n                'id': f\"{doc.id}:{section.anchor}:{i}\",\n                'text': f\"{doc.title} > {section.heading}\\n{part}\",\n                'doc_id': doc.id, 'version': doc.version,\n                'acl': doc.allowed_groups, 'updated_at': doc.updated_at,\n            }"
+      },
+      "why": "Splitting on headings keeps a step list or a table together, and prefixing the title and heading gives the chunk context it lost when it was cut out. Stable ids make re-indexing an upsert, the version lets you purge old chunks, and the ACL travels with the text so retrieval can filter on it. Sizes here are illustrative; tune them with retrieval evals."
+    },
+    {
+      "title": "Fuse keyword and vector results, then rerank",
+      "bad": {
+        "label": "Vector search only, top 20 into the prompt",
+        "lang": "py",
+        "code": "hits = vectors.search(embed(q), k=20)\nprompt = SYSTEM + '\\n'.join(h.text for h in hits) + q"
+      },
+      "good": {
+        "label": "Hybrid with a permission filter, rerank, cite",
+        "lang": "py",
+        "code": "flt = {'acl': {'any_of': user.groups}}\nkw = index.bm25(q, k=50, filter=flt)\nvec = index.knn(embed(q), k=50, filter=flt)\ncands = rrf([kw, vec])[:50]   # score = sum 1 / (60 + rank)\ntop = reranker.score(q, cands)[:5]\nif not top or top[0].score < MIN_SCORE:\n    return NOT_FOUND\nlog_retrieval(q, cands, top)\nreturn generate(q, top, cite=True)"
+      },
+      "why": "Embeddings miss exact identifiers such as error codes or product names, and BM25 misses paraphrases; fusing ranks gets both. Reciprocal rank fusion only needs ranks, so you do not have to calibrate two different score scales. The reranker reads question and chunk together, which is slower but more precise, so it runs on a short list. A score floor turns a retrieval miss into an honest \"not found\"."
+    }
+  ],
+  "checklist": [
+    "Chunks follow document structure, carry a stable id, source, version, timestamp and access list, and include enough heading context to stand alone.",
+    "Retrieval combines keyword and vector search and fuses the results; a reranker trims candidates to a small top-k.",
+    "Permissions are enforced inside the retrieval query using the caller's identity, never by asking the model or by filtering the answer afterwards.",
+    "The model is told to answer only from the supplied chunks, to cite chunk ids, and to say when the answer is not there; the service verifies cited ids were supplied.",
+    "Edits, deletions and permission changes propagate to the index within a stated freshness target; an embedding model change triggers a full rebuild and swap.",
+    "Each request logs the query, candidate ids, rerank scores and the chunks used, so retrieval and generation can be evaluated separately.",
+    "Retrieval quality (recall@k on a labelled question set) is tracked over time, not just end-to-end answer quality."
+  ],
+  "antipatterns": [
+    {
+      "title": "Letting the model enforce permissions",
+      "bad": {
+        "label": "Retrieve everything, ask the model to behave",
+        "lang": "text",
+        "code": "System: Only use documents the user is allowed to see.\nUser groups: [eng]\nContext: [c1 eng-runbook] [c2 hr-salaries] [c3 eng-faq]"
+      },
+      "better": {
+        "label": "Only permitted chunks are ever retrieved",
+        "lang": "py",
+        "code": "hits = index.search(q, filter={'acl': {'any_of': user.groups}})\n# c2 is never a candidate, so it cannot be quoted"
+      },
+      "why": "A model is not an access-control system. It can be confused, or talked out of the rule by the question or by a document. If the confidential chunk is in the prompt, assume it can leak. Filter where the data is."
+    },
+    {
+      "title": "Changing the embedding model without re-indexing",
+      "bad": {
+        "label": "New model for queries, old vectors in the index",
+        "lang": "yaml",
+        "code": "query_embedder: embed-model-v2\nindex: docs-embed-v1   # vectors from a different model"
+      },
+      "better": {
+        "label": "Rebuild into a new index, then switch the alias",
+        "lang": "yaml",
+        "code": "build: docs-embed-v2 (full re-embed, backfill check)\nalias docs-current: docs-embed-v1 -> docs-embed-v2 after evals pass\nkeep docs-embed-v1 for rollback"
+      },
+      "why": "Vectors from different embedding models live in different spaces, so similarity between them is meaningless. Retrieval silently degrades with no errors. Treat a model change like a schema migration: build the new index alongside, evaluate, then swap atomically."
+    },
+    {
+      "title": "Answers without checkable sources",
+      "bad": {
+        "label": "Fluent answer, no way to verify",
+        "lang": "text",
+        "code": "Q: What is our refund window?\nA: Refunds are accepted within 60 days."
+      },
+      "better": {
+        "label": "Cited answer, citations validated",
+        "lang": "text",
+        "code": "A: Refunds are accepted within 30 days of delivery [c4].\nSources: [c4] Refund policy v7, section 2 (updated 2026-08-01)\nService check: c4 was in the supplied context -> show"
+      },
+      "why": "Citations let users and reviewers check the answer, and checking that each cited id was in the context catches invented sources. When nothing relevant was retrieved, \"I couldn't find this in the docs\" is the correct answer."
+    }
+  ],
+  "interview": [
+    "Split the design into an ingestion pipeline and a query path out loud, and say which failures belong to each.",
+    "Default to hybrid retrieval plus a reranker and explain why: keywords catch exact identifiers, vectors catch paraphrase, the reranker buys precision on a short list.",
+    "Raise access control before the interviewer does: filter by the caller's groups in the search query, and propagate permission changes quickly.",
+    "Talk about freshness as a number (\"edits searchable within 15 minutes\") and about re-indexing when the embedding model changes.",
+    "Close with observability: log candidate ids and scores per request, and measure retrieval recall separately from answer quality so you know which half to fix."
+  ],
+  "quiz": [
+    {
+      "question": "Users search for an error code like `E4012` and the RAG system never finds the right runbook, though paraphrased questions work. What is the most likely fix?",
+      "choices": ["Add keyword (BM25) search and fuse it with vector search", "Use a larger LLM", "Increase top-k from 5 to 50", "Lower the temperature"],
+      "answer": 0,
+      "explain": "Embeddings capture meaning but often blur rare exact tokens such as codes and names. Keyword search matches them exactly. Fusing both ranked lists covers both kinds of query."
+    },
+    {
+      "question": "Where should document permissions be enforced in a RAG system?",
+      "choices": ["In the system prompt", "In the retrieval query, using the caller's identity", "By filtering the generated answer", "Only at ingestion time"],
+      "answer": 1,
+      "explain": "Anything placed in the prompt may appear in the answer, and the model cannot be trusted to keep secrets. Filtering at ingestion alone misses per-user differences. Filter in the search so forbidden chunks are never candidates."
+    },
+    {
+      "question": "Why does passing 50 retrieved chunks to the model often give worse answers than passing the best 5?",
+      "choices": ["Models ignore anything after the first chunk", "Irrelevant or outdated chunks distract the model and cost tokens and latency", "Long prompts are rejected by the API", "Citations only work with 5 chunks"],
+      "answer": 1,
+      "explain": "Extra chunks add noise the model may quote, including stale versions, and increase cost and time to first token. Reranking to a small, relevant set usually improves both quality and latency."
+    },
+    {
+      "question": "You switch to a new embedding model for queries. What else must happen?",
+      "choices": ["Nothing, embeddings are interchangeable", "Re-embed the corpus into a new index and swap it in", "Only re-embed documents edited since the switch", "Normalise the query vectors"],
+      "answer": 1,
+      "explain": "Vectors from different models are not comparable. Build a fully re-embedded index alongside the old one, evaluate it, and switch atomically, keeping the old index for rollback."
+    },
+    {
+      "question": "An answer is wrong. Your logs show the correct chunk was not among the candidates. What kind of failure is this?",
+      "choices": ["A generation failure: improve the prompt", "A retrieval failure: look at chunking, query and index", "A rate-limit problem", "A citation-validation bug"],
+      "answer": 1,
+      "explain": "If the evidence never reached the model, no prompt can fix it. Logging candidate ids per request is what lets you separate retrieval misses from generation mistakes."
+    }
+  ],
+  "practice": {
+    "prompt": "Design an internal \"ask the docs\" assistant over 2 million pages from a wiki, a ticket system and shared drives. Different teams can see different documents, and docs change daily.",
+    "answer": "Ingestion: connectors emit change events; a worker splits pages on headings into roughly a few hundred tokens with small overlap, prefixes title and heading, and stores chunk id, doc id, version, updated time and the doc's allowed groups. Index into a store that supports BM25 and vector search with metadata filters; upserts keyed by chunk id, and old versions deleted on edit. Permission changes and deletions go through the same pipeline with a tight freshness target. Query path: authenticate the user, resolve groups, run BM25 and vector search with the group filter, fuse with reciprocal rank fusion, rerank to about five chunks, and return \"not found\" below a score threshold. Prompt the model to answer only from the chunks and cite ids; verify citations before showing them. Log query, candidates, scores and chunks used. Evaluate retrieval with recall@k on a labelled question set and answers with a faithfulness check; rebuild the index behind an alias when the embedding model changes.",
+    "rubric": [
+      "Separates ingestion from query path and stores metadata (ids, version, ACL) per chunk",
+      "Uses hybrid retrieval with fusion and a reranker, with a reason for each",
+      "Enforces permissions inside retrieval using the caller's identity",
+      "Handles freshness: edits, deletions, permission changes and embedding model changes",
+      "Grounds answers with validated citations and a \"not found\" path",
+      "Logs retrieval and measures retrieval quality separately from generation"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-rag", "ai-llm-system-design", "ai-evals", "ml-search-ranking"],
+    "cases": ["typeahead", "web-crawler"],
+    "guides": ["llm-evals", "prompt-injection-guardrails", "llm-cost-latency", "caching-strategies", "observability"]
+  }
+}
