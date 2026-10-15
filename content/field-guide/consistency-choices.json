@@ -1,0 +1,269 @@
+{
+  "id": "consistency-choices",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "Consistency choices: strong, eventual and the guarantees between",
+  "summary": "Choose consistency per feature, not per system: strong where a stale read costs money, eventual where it costs nothing, and session guarantees like read-your-writes for the cases users actually notice.",
+  "minutes": 16,
+  "principle": "Consistency is a per-feature product decision with a latency and availability price. Name the guarantee each read needs (linearizable, read-your-writes, monotonic, or eventual), pay for strong consistency only where a stale or lost write causes real harm, and decide up front how conflicting writes are resolved.",
+  "why": "Replication gives you availability and read scale, but replicas lag. A read can land on a copy that has not seen the latest write. Whether that matters depends on the feature: showing 1,203 likes instead of 1,204 is harmless; letting two people withdraw the same last 100 from an account is not.\n\n**CAP**, stated carefully: during a network partition, a replicated system must either refuse some requests (stay consistent) or answer them with possibly stale or conflicting data (stay available). It says nothing about the normal case. **PACELC** fills that gap: if there is a Partition, trade Availability against Consistency; Else, even with a healthy network, trade Latency against Consistency, because waiting for more replicas to confirm takes time.\n\nBetween strong and eventual sit **session guarantees** that fix most user-visible bugs cheaply. **Read-your-writes**: after I post, I see my post. **Monotonic reads**: once I have seen a value, I never see an older one on refresh. They are scoped to one user or session, so they cost far less than global strong consistency.\n\nWhen a system accepts writes in more than one place, it also needs a **conflict rule**. Last-writer-wins by timestamp is simple but silently drops writes and depends on clocks. Version vectors detect concurrent writes so the application (or a CRDT) can merge them.",
+  "diagrams": [
+    {
+      "id": "cons-quorum",
+      "type": "flow",
+      "title": "Quorum reads and writes with N=3, W=2, R=2",
+      "alt": "Flow diagram. A writer sends version 2 through a coordinator to three replicas; replicas A and B acknowledge and replica C lags at version 1. A reader then asks the coordinator, which reads two replicas. Because two plus two is greater than three, the read set always overlaps the write set and includes at least one replica with version 2.",
+      "caption": "R + W > N makes every read quorum overlap every write quorum, so the newest acknowledged version is always among the replies.",
+      "nodes": [
+        { "id": "writer", "label": "Writer", "kind": "client", "col": 0, "row": 0, "sub": "write v2" },
+        { "id": "reader", "label": "Reader", "kind": "client", "col": 0, "row": 4 },
+        { "id": "coord", "label": "Coordinator", "kind": "service", "col": 1, "row": 2 },
+        { "id": "ra", "label": "Replica A", "kind": "db", "col": 3, "row": 0, "sub": "v2" },
+        { "id": "rb", "label": "Replica B", "kind": "db", "col": 3, "row": 2, "sub": "v2" },
+        { "id": "rc", "label": "Replica C", "kind": "db", "col": 3, "row": 4, "sub": "v1 (lagging)" }
+      ],
+      "edges": [
+        { "from": "writer", "to": "coord", "label": "put v2" },
+        { "from": "coord", "to": "ra", "label": "ack" },
+        { "from": "coord", "to": "rb", "label": "ack" },
+        { "from": "coord", "to": "rc", "label": "slow / later", "style": "async" },
+        { "from": "reader", "to": "coord", "label": "get, R=2" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The coordinator sends the write to all N=3 replicas." },
+        { "edges": [1, 2], "text": "It reports success once W=2 replicas acknowledge. The write is durable on a majority even though C has not caught up." },
+        { "edges": [3], "text": "Replica C applies v2 later, or is repaired by anti-entropy or read repair. Until then it still says v1." },
+        { "edges": [4], "text": "A read asks R=2 replicas. Any 2 of the 3 must include A or B, so the coordinator sees v2 and returns the highest version. Overlap is the whole trick: R + W > N." },
+        { "edges": [1, 4], "text": "Caveat: quorums alone are not full linearizability. Sloppy quorums, concurrent writes and partial failures can still produce surprises, so check what your database actually promises." }
+      ]
+    },
+    {
+      "id": "cons-ryw-seq",
+      "type": "sequence",
+      "title": "Read-your-writes broken by replica lag, then fixed",
+      "alt": "Sequence diagram. A user posts a comment, which is written to the primary. The page reload reads from a lagging replica and the comment is missing. The fix routes that user's reads to the primary, or to a replica that has caught up to the user's last write position, for a short window after writing.",
+      "caption": "The bug is per user, so the fix can be per user too: no need to make every read strong.",
+      "actors": [
+        { "id": "user", "label": "User" },
+        { "id": "app", "label": "App" },
+        { "id": "primary", "label": "Primary DB" },
+        { "id": "replica", "label": "Read replica" }
+      ],
+      "messages": [
+        { "from": "user", "to": "app", "label": "POST comment" },
+        { "from": "app", "to": "primary", "label": "INSERT comment", "note": "The primary commits and returns its log position (LSN), say 1042." },
+        { "from": "app", "to": "user", "label": "201, set last_write=1042", "style": "reply", "note": "Remember the position in the session or a cookie." },
+        { "from": "user", "to": "app", "label": "reload page" },
+        { "from": "app", "to": "replica", "label": "SELECT comments" },
+        { "from": "replica", "to": "app", "label": "at 1030: comment missing", "style": "fail", "note": "The replica is a few hundred milliseconds behind. The user thinks the post was lost and posts it again." },
+        { "from": "user", "to": "app", "label": "reload (with fix)" },
+        { "from": "app", "to": "replica", "label": "read if applied ≥ 1042", "note": "Option A: wait briefly for the replica to reach the position. Option B: read from the primary for a few seconds after a write." },
+        { "from": "replica", "to": "app", "label": "at 1045: comment present", "style": "reply" },
+        { "from": "app", "to": "user", "label": "page with comment", "style": "reply" }
+      ]
+    },
+    {
+      "id": "cons-spectrum",
+      "type": "chart",
+      "title": "Consistency guarantees: cost vs strength",
+      "alt": "Trade-off chart with latency and availability cost on the horizontal axis and strength of guarantee on the vertical axis. Eventual consistency is cheapest and weakest. Monotonic reads and read-your-writes are low cost session guarantees. Causal consistency sits in the middle. Linearizable is strongest and most expensive.",
+      "caption": "A rough ordering, not a measurement. Session guarantees buy most of the user-visible benefit for a small part of the cost.",
+      "x": { "label": "Latency / availability cost", "low": "cheap", "high": "expensive" },
+      "y": { "label": "Strength of guarantee", "low": "weak", "high": "strong" },
+      "points": [
+        { "label": "Eventual", "x": 1, "y": 1 },
+        { "label": "Monotonic reads", "x": 2, "y": 3 },
+        { "label": "Read-your-writes", "x": 4, "y": 5, "highlight": true },
+        { "label": "Causal", "x": 6, "y": 7 },
+        { "label": "Linearizable", "x": 9, "y": 9 }
+      ]
+    },
+    {
+      "id": "cons-per-feature",
+      "type": "compare",
+      "title": "One consistency level for everything vs per feature",
+      "alt": "Side-by-side comparison. On the left balances, likes and the feed all go through one globally strong store, so likes and feed pay cross-region latency for no benefit. On the right balances use a strongly consistent store, likes go to an eventually consistent counter and the feed is served from a cache that may be slightly stale.",
+      "caption": "Spend strong consistency where a wrong answer costs money or trust, and nowhere else.",
+      "before": {
+        "label": "Everything strong and global",
+        "nodes": [
+          { "id": "bal", "label": "Balances", "kind": "service", "col": 0, "row": 0 },
+          { "id": "likes", "label": "Likes", "kind": "service", "col": 0, "row": 1 },
+          { "id": "feed", "label": "Feed", "kind": "service", "col": 0, "row": 2 },
+          { "id": "db", "label": "Strong store", "kind": "bad", "col": 2, "row": 1, "sub": "slow for all" }
+        ],
+        "edges": [
+          { "from": "bal", "to": "db" },
+          { "from": "likes", "to": "db", "label": "consensus write" },
+          { "from": "feed", "to": "db" }
+        ]
+      },
+      "after": {
+        "label": "Chosen per feature",
+        "nodes": [
+          { "id": "bal", "label": "Balances", "kind": "service", "col": 0, "row": 0 },
+          { "id": "likes", "label": "Likes", "kind": "service", "col": 0, "row": 1 },
+          { "id": "feed", "label": "Feed", "kind": "service", "col": 0, "row": 2 },
+          { "id": "sdb", "label": "Strong DB", "kind": "good", "col": 2, "row": 0, "sub": "transactions" },
+          { "id": "ctr", "label": "Counter", "kind": "good", "col": 2, "row": 1, "sub": "eventual" },
+          { "id": "cache", "label": "Feed cache", "kind": "good", "col": 2, "row": 2, "sub": "stale ok" }
+        ],
+        "edges": [
+          { "from": "bal", "to": "sdb", "label": "linearizable" },
+          { "from": "likes", "to": "ctr", "label": "merge later" },
+          { "from": "feed", "to": "cache", "label": "seconds old" }
+        ]
+      }
+    },
+    {
+      "id": "cons-write-latency",
+      "type": "bars",
+      "title": "What a write waits for (the \"else\" in PACELC)",
+      "alt": "Bar chart of illustrative write latency. Acknowledging after one local node takes about 1 ms. Waiting for a majority quorum in one region takes about 3 ms. Waiting for a majority across regions takes about 80 ms because it needs a cross-region round trip.",
+      "caption": "Illustrative orders of magnitude. With no failure at all, stronger guarantees still cost latency, set mostly by the distance to the replicas you wait for.",
+      "unit": "ms per write (rough)",
+      "bars": [
+        { "label": "Local ack only", "value": 1 },
+        { "label": "In-region quorum", "value": 3, "highlight": true },
+        { "label": "Cross-region quorum", "value": 80 }
+      ]
+    },
+    {
+      "id": "cons-lww-timeline",
+      "type": "timeline",
+      "title": "How last-writer-wins silently drops a write",
+      "alt": "Timeline of an illustrative conflict. Two devices edit the same shopping cart in different regions while replication is delayed. One region's clock runs ahead. When replication resumes, last-writer-wins keeps the write with the larger timestamp and the other item disappears without any error. The fix uses version vectors to detect the concurrent writes and merges the carts.",
+      "caption": "An illustrative scenario, not a real incident. LWW never reports a conflict; it just picks a winner, and clock skew can make it pick the older write.",
+      "events": [
+        { "at": "T+0", "label": "Phone (region EU) adds a book to the cart", "kind": "trigger" },
+        { "at": "T+1s", "label": "Tablet (region US, clock 3 s behind) adds a pen to the same cart", "kind": "trigger" },
+        { "at": "T+5s", "label": "Replication catches up; LWW keeps the higher timestamp, the book, and drops the pen", "kind": "impact" },
+        { "at": "Day 2", "label": "Support tickets: items vanish from carts edited on two devices", "kind": "detect" },
+        { "at": "Day 3", "label": "Store version vectors per cart; concurrent versions are kept as siblings", "kind": "mitigate" },
+        { "at": "Day 4", "label": "Cart merges siblings as a set union (removals tracked explicitly)", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Write down the guarantee per read path",
+      "bad": {
+        "label": "\"The database is eventually consistent\" (for everything)",
+        "lang": "text",
+        "code": "All reads: any replica\nAll writes: primary, async replication\n\n# withdraw: reads balance from a replica -> double spend\n# profile edit: user reloads, sees old name, edits again"
+      },
+      "good": {
+        "label": "A guarantee and a mechanism per feature",
+        "lang": "yaml",
+        "code": "balance.withdraw:   linearizable   # single-row txn on primary, conditional update\nprofile.view.self:  read-your-writes # primary for 5 s after a write, else replica\nprofile.view.other: eventual       # any replica, lag alarm at 2 s\nlikes.count:        eventual       # sharded counter, merged every few seconds\nfeed.page:          monotonic reads # sticky replica per session"
+      },
+      "why": "Being explicit forces the trade-off into the design review. Each line names the user-visible promise and how it is met, so a new engineer cannot quietly move the balance read to a replica."
+    },
+    {
+      "title": "Guard a balance with a conditional write, not a stale read",
+      "bad": {
+        "label": "Read on a replica, then write",
+        "lang": "sql",
+        "code": "-- on a replica\nSELECT balance FROM accounts WHERE id = 7;   -- 100 (maybe stale)\n-- app checks 100 >= 100, then on the primary:\nUPDATE accounts SET balance = balance - 100 WHERE id = 7;"
+      },
+      "good": {
+        "label": "One atomic, conditional statement on the primary",
+        "lang": "sql",
+        "code": "UPDATE accounts\nSET balance = balance - 100, version = version + 1\nWHERE id = 7 AND balance >= 100\nRETURNING balance;  -- no row back: insufficient funds"
+      },
+      "why": "The check and the change must see the same, latest state. A replica read can be stale and a separate check-then-write races with a parallel withdrawal. The conditional update makes the primary the single decision point."
+    }
+  ],
+  "checklist": [
+    "Each feature's reads are labelled: linearizable, read-your-writes, monotonic, or eventual, with the reason.",
+    "Money, inventory and uniqueness checks run as atomic conditional writes on the authority, not on replicas.",
+    "Users see their own writes: session routing to the primary, or reads that wait for the replica to reach the user's last write position.",
+    "Replica lag is measured and alerted on, and the product tolerates the alert threshold.",
+    "With multi-writer replication, the conflict rule is chosen on purpose; LWW only where losing a concurrent write is acceptable.",
+    "Quorum settings satisfy R + W > N where reads must see the latest acknowledged write, and the team knows what failures still break it.",
+    "The behaviour during a partition is decided per feature: refuse (consistent) or serve possibly stale (available)."
+  ],
+  "antipatterns": [
+    {
+      "title": "Making everything strong \"to be safe\"",
+      "bad": { "label": "One global consensus store for every feature", "diagram": "cons-per-feature" },
+      "better": {
+        "label": "Classify features by the cost of a stale read",
+        "lang": "text",
+        "code": "Stale read costs money or trust -> strong (balances, stock at checkout)\nUser notices own stale data     -> read-your-writes\nNobody notices for seconds      -> eventual (counts, feeds, search)"
+      },
+      "why": "Strong consistency across regions adds a round trip to every write and loses availability during partitions. Spending it on likes and feeds makes the whole product slower and more fragile for no user benefit."
+    },
+    {
+      "title": "Last-writer-wins on data that users merge",
+      "bad": {
+        "label": "Overwrite by wall-clock timestamp",
+        "lang": "js",
+        "code": "if (incoming.updatedAt > stored.updatedAt) store(incoming)\n// two devices edit the cart concurrently: one edit vanishes\n// a fast clock on one node wins every time"
+      },
+      "better": {
+        "label": "Detect concurrency, then merge",
+        "lang": "js",
+        "code": "const order = compare(incoming.vv, stored.vv) // version vectors\nif (order === 'after') store(incoming)\nelse if (order === 'concurrent') store(mergeCarts(stored, incoming))\n// 'before': ignore, we already have newer data"
+      },
+      "why": "LWW cannot tell \"newer\" from \"concurrent\", and wall clocks drift. Version vectors record which replica updates each version has seen, so the system knows when two writes did not see each other and must be merged (or kept as siblings for the app to resolve)."
+    }
+  ],
+  "interview": [
+    "Do not say \"we'll use eventual consistency\" for the whole design. Walk through features: \"Balances are strongly consistent; the feed is eventually consistent with a few seconds of lag; users always see their own posts.\"",
+    "State CAP precisely: it is about behaviour during a partition. Then bring in PACELC to explain the latency you pay on every normal write.",
+    "When you add replicas, immediately name replica lag and how you give read-your-writes (sticky routing to the primary after writes, or waiting for a log position).",
+    "If you use quorums, show the arithmetic: N=3, W=2, R=2 overlap; W=1, R=1 is fast but can read stale.",
+    "At SSE level, raise multi-region writes and conflict resolution: LWW is lossy, version vectors detect concurrency, CRDTs merge it, or avoid it by giving each record a single home region."
+  ],
+  "quiz": [
+    {
+      "question": "What does CAP actually constrain?",
+      "choices": ["Every distributed system must give up one of three properties at all times", "During a network partition, a replicated system cannot both answer every request and stay linearizable", "Databases can be fast or consistent but not both", "Only systems with three or more nodes"],
+      "answer": 1,
+      "explain": "CAP is about the partition case: some nodes cannot talk, so either refuse requests or risk stale answers. PACELC adds the normal case, where the trade is latency against consistency."
+    },
+    {
+      "question": "With N=3 replicas, which setting guarantees a read quorum overlaps the latest acknowledged write quorum?",
+      "choices": ["W=1, R=1", "W=1, R=2", "W=2, R=2", "W=2, R=1"],
+      "answer": 2,
+      "explain": "Overlap needs R + W > N. 2 + 2 = 4 > 3, so any two replicas read must include one of the two that acknowledged the write. The other options sum to 3 or less."
+    },
+    {
+      "question": "A user edits their display name, reloads and sees the old name. Which guarantee is missing?",
+      "choices": ["Linearizability", "Read-your-writes", "Monotonic writes", "Partition tolerance"],
+      "answer": 1,
+      "explain": "The read went to a replica that had not applied the user's own write. Read-your-writes can be provided per session, for example by reading from the primary briefly after a write, without making all reads strong."
+    },
+    {
+      "question": "Why is last-writer-wins risky for a shopping cart edited on two devices?",
+      "choices": ["It is too slow", "It needs a consensus protocol", "It silently discards one of two concurrent edits, and clock skew can pick the older one", "It cannot be used with replicas"],
+      "answer": 2,
+      "explain": "LWW turns every conflict into a winner and a silent loser. For data users expect to merge, detect concurrency with version vectors and merge (or use a CRDT such as a set with tracked removals)."
+    },
+    {
+      "question": "Which feature most justifies strongly consistent, possibly slower writes?",
+      "choices": ["Like counts on posts", "Seat assignment for a concert", "Trending hashtags", "Profile view counters"],
+      "answer": 1,
+      "explain": "Selling the same seat twice is a real harm that is expensive to undo. Counts and trends can lag by seconds without anyone being hurt."
+    }
+  ],
+  "practice": {
+    "prompt": "You are designing a digital wallet used in two regions. Users see their balance, send money, see a transaction history and can 'like' merchant posts. Choose consistency per feature and explain what happens during a cross-region network partition.",
+    "answer": "Give each wallet a single home region where its balance lives in a strongly consistent store; transfers are atomic conditional updates (balance >= amount) plus an idempotency key, executed in the home region. Transfers between wallets in different regions use a durable transfer record and a saga, so no cross-region distributed lock is needed. The balance shown after the user's own transfer uses read-your-writes (read from the home primary for a few seconds, or wait for the replica to reach the write position). Transaction history can be eventually consistent with monotonic reads (sticky replica per session). Likes use an eventually consistent counter. During a partition: users whose home region is reachable keep working; users cut off from their home region can view a possibly stale balance marked as such, but sends are refused (we choose consistency for money); likes keep working in both regions and converge later. Measure replica lag and alert if it exceeds what the UI promises.",
+    "rubric": [
+      "Classifies each feature by the cost of a stale read",
+      "Keeps money movement strongly consistent with atomic conditional writes",
+      "Provides read-your-writes for the user's own actions",
+      "Avoids multi-writer conflicts on balances (home region) or names a conflict rule",
+      "States partition behaviour per feature (refuse vs serve stale)",
+      "Mentions PACELC latency cost or replica-lag monitoring"
+    ]
+  },
+  "links": {
+    "lessons": ["design-consistency", "design-replication-partitioning"],
+    "cases": ["payments", "kv-store", "collaborative-editor", "ticket-booking"],
+    "guides": ["caching-strategies", "idempotency-keys", "queues-async-work"]
+  }
+}

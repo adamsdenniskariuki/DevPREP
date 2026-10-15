@@ -1,0 +1,283 @@
+{
+  "id": "retries-backoff",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "se",
+  "title": "Retries and backoff: recover without causing the next outage",
+  "summary": "Retry only transient failures on idempotent calls, back off exponentially with jitter, cap retries with a budget, retry at one layer only, and propagate deadlines so no one works on an abandoned request.",
+  "minutes": 14,
+  "principle": "A retry is extra load sent to a system that just failed. Retry only when the failure is likely transient and the operation is safe to repeat, spread retries out with exponential backoff and jitter, limit them with a budget, do it at one layer of the stack, and stop as soon as the caller's deadline has passed.",
+  "why": "Most failures in a distributed system are brief: a dropped connection, a node restarting, a leader election. One well-timed retry hides them from users. But retries multiply. If a client, an API gateway and a backend each retry three times, one user click can become 27 database calls, all arriving exactly when the database is struggling. That amplification can keep a system overloaded after the original fault is gone, a pattern often called a retry storm.\n\nSafe retries need four things. **Classification**: retry timeouts, connection resets, 503 and 429; do not retry 400, 401, 404 or 409, which will fail the same way again. **Idempotency**: GET, PUT and DELETE are idempotent by HTTP definition; a POST needs an idempotency key. **Spacing**: exponential backoff with random jitter so clients do not retry in synchronized waves. **Limits**: a maximum attempt count, a retry budget (for example, retries may add at most 10% to normal traffic), and a deadline that travels with the request.\n\nWhen the server knows better, it should say so: a `Retry-After` header on 503 or 429 tells clients when to come back (RFC 9110 defines the header; 429 comes from RFC 6585).",
+  "diagrams": [
+    {
+      "id": "rt-amplification",
+      "type": "flow",
+      "title": "Retry amplification across layers",
+      "alt": "Flow diagram of a request path with four layers. A client tries up to 3 times, the API tries the orders service up to 3 times per call, and the orders service tries the database up to 3 times per call, so one user action can produce 27 database queries during an outage. A note shows the fix: retry at one layer only.",
+      "caption": "Retries multiply: 3 × 3 × 3 = 27. Retry at one layer (usually the one closest to the failure or the edge) and fail fast everywhere else.",
+      "nodes": [
+        { "id": "client", "label": "Client", "kind": "client", "col": 0, "row": 1, "sub": "3 attempts" },
+        { "id": "api", "label": "API", "kind": "service", "col": 1, "row": 1, "sub": "3 per call" },
+        { "id": "orders", "label": "Orders service", "kind": "service", "col": 3, "row": 1, "sub": "3 per call" },
+        { "id": "db", "label": "Database", "kind": "bad", "col": 3, "row": 3, "sub": "27 queries" },
+        { "id": "fix", "label": "One retry layer", "kind": "good", "col": 1, "row": 3, "sub": "others fail fast" }
+      ],
+      "edges": [
+        { "from": "client", "to": "api", "label": "up to 3" },
+        { "from": "api", "to": "orders", "label": "up to 9" },
+        { "from": "orders", "to": "db", "label": "up to 27", "style": "fail" },
+        { "from": "fix", "to": "db", "label": "max 3", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The database slows down. The client times out and retries: up to 3 requests reach the API." },
+        { "edges": [1], "text": "The API also retries each of those 3 times: up to 9 calls to the orders service." },
+        { "edges": [2], "text": "The orders service retries each database call 3 times: up to 27 queries, aimed at the component that is already failing." },
+        { "edges": [3], "text": "Fix: pick one layer to retry. Inner layers return errors quickly (with a retryable signal), and the total stays at 3. Retry budgets cap the rest." }
+      ]
+    },
+    {
+      "id": "rt-backoff-bars",
+      "type": "bars",
+      "title": "Exponential backoff ceilings (base 100 ms, cap 5 s)",
+      "alt": "Bar chart of the maximum wait before each retry with a 100 ms base doubling each time and capped at 5 seconds: 100 ms, 200 ms, 400 ms, 800 ms, 1,600 ms, 3,200 ms and then 5,000 ms at the cap.",
+      "caption": "Computed as min(cap, base × 2^attempt). With full jitter each actual wait is a random value between zero and the bar, which spreads clients apart.",
+      "unit": "ms max wait",
+      "bars": [
+        { "label": "Retry 1", "value": 100 },
+        { "label": "Retry 2", "value": 200 },
+        { "label": "Retry 3", "value": 400 },
+        { "label": "Retry 4", "value": 800 },
+        { "label": "Retry 5", "value": 1600 },
+        { "label": "Retry 6", "value": 3200 },
+        { "label": "Retry 7 (capped)", "value": 5000, "highlight": true }
+      ]
+    },
+    {
+      "id": "rt-jitter",
+      "type": "compare",
+      "title": "Fixed backoff vs backoff with jitter",
+      "alt": "Side-by-side comparison. On the left three clients that failed together all retry exactly one second later, hitting the recovering service in a synchronized spike. On the right each client waits a random part of the backoff window, so their retries arrive spread out and the service recovers.",
+      "caption": "Clients that fail together retry together, unless randomness pulls them apart.",
+      "before": {
+        "label": "Fixed delay: synchronized spike",
+        "nodes": [
+          { "id": "a", "label": "Client A", "kind": "client", "col": 0, "row": 0 },
+          { "id": "b", "label": "Client B", "kind": "client", "col": 0, "row": 1 },
+          { "id": "c", "label": "Client C", "kind": "client", "col": 0, "row": 2 },
+          { "id": "s", "label": "Service", "kind": "bad", "col": 2, "row": 1, "sub": "spike at t+1s" }
+        ],
+        "edges": [
+          { "from": "a", "to": "s", "label": "t+1.0s" },
+          { "from": "b", "to": "s", "label": "t+1.0s", "style": "fail" },
+          { "from": "c", "to": "s", "label": "t+1.0s" }
+        ]
+      },
+      "after": {
+        "label": "Full jitter: spread out",
+        "nodes": [
+          { "id": "a", "label": "Client A", "kind": "client", "col": 0, "row": 0 },
+          { "id": "b", "label": "Client B", "kind": "client", "col": 0, "row": 1 },
+          { "id": "c", "label": "Client C", "kind": "client", "col": 0, "row": 2 },
+          { "id": "s", "label": "Service", "kind": "good", "col": 2, "row": 1, "sub": "smooth load" }
+        ],
+        "edges": [
+          { "from": "a", "to": "s", "label": "t+0.2s" },
+          { "from": "b", "to": "s", "label": "t+0.7s" },
+          { "from": "c", "to": "s", "label": "t+0.4s" }
+        ]
+      }
+    },
+    {
+      "id": "rt-deadline-seq",
+      "type": "sequence",
+      "title": "Deadline propagation and Retry-After",
+      "alt": "Sequence diagram. A client sends a request with a 2 second deadline. The API passes the remaining 1.8 seconds to the inventory service, which queries the database. The first database call times out. With only 300 ms left, the inventory service does not retry and returns 503 with Retry-After: 2. The API passes the 503 up, and the client waits 2 seconds before its single retry.",
+      "caption": "Each hop gets the remaining budget, not a fresh timeout. When too little time is left to succeed, stop and say when to come back.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "api", "label": "API" },
+        { "id": "inv", "label": "Inventory" },
+        { "id": "db", "label": "Database" }
+      ],
+      "messages": [
+        { "from": "client", "to": "api", "label": "GET /stock (deadline 2s)" },
+        { "from": "api", "to": "inv", "label": "check (1.8s left)", "note": "The API subtracts its own time and passes the remaining budget, e.g. as a gRPC deadline or a header." },
+        { "from": "inv", "to": "db", "label": "query (timeout 1.5s)" },
+        { "from": "db", "to": "inv", "label": "timeout", "style": "fail", "note": "The inventory service is the one retrying layer, but only 300 ms remain: too little for a useful retry." },
+        { "from": "inv", "to": "api", "label": "503, Retry-After: 2", "style": "fail", "note": "Fail fast with a retryable status. Retry-After tells callers when trying again is worthwhile." },
+        { "from": "api", "to": "client", "label": "503, Retry-After: 2", "style": "fail", "note": "The API does not retry on its own; it passes the signal up." },
+        { "from": "client", "to": "api", "label": "retry after 2s (+jitter)", "note": "One retry at the edge, after the advised delay." },
+        { "from": "api", "to": "client", "label": "200 OK", "style": "reply" }
+      ]
+    },
+    {
+      "id": "rt-policies",
+      "type": "chart",
+      "title": "Retry policies: extra load vs errors hidden",
+      "alt": "Trade-off chart with extra load during an outage on the horizontal axis and transient errors hidden from users on the vertical axis. No retries add no load and hide nothing. A retry budget adds little load and hides most transient errors. Backoff with jitter at one layer hides slightly more but adds more load. Retrying three times at every layer adds the most load. A tight retry loop adds heavy load yet hides fewer errors because it retries before the fault clears.",
+      "caption": "Rough positions. A budget gets most of the benefit for little risk; immediate retries are the worst of both.",
+      "x": { "label": "Extra load in an outage", "low": "none", "high": "severe" },
+      "y": { "label": "Transient errors hidden", "low": "few", "high": "most" },
+      "points": [
+        { "label": "No retries", "x": 0, "y": 1 },
+        { "label": "Budget (10%)", "x": 2, "y": 7, "highlight": true },
+        { "label": "Jittered, 1 layer", "x": 5, "y": 8 },
+        { "label": "3x at every layer", "x": 9, "y": 9 },
+        { "label": "Tight loop", "x": 9, "y": 4 }
+      ]
+    },
+    {
+      "id": "rt-storm-timeline",
+      "type": "timeline",
+      "title": "Anatomy of a retry storm",
+      "alt": "Timeline of an illustrative retry storm. A database fails over and is unavailable for about 20 seconds. Clients and services time out and retry at every layer. When the database returns, it faces several times its normal load and falls over again. Alerts fire on retry rate, the team enables retry budgets and sheds load, and the system recovers.",
+      "caption": "An illustrative scenario, not a specific incident. The fault lasted 20 seconds; the retries kept the outage going for minutes.",
+      "events": [
+        { "at": "T+0", "label": "Primary database fails over; writes and reads stall", "kind": "trigger" },
+        { "at": "T+5s", "label": "Requests time out; client, API and service all start retrying", "kind": "impact" },
+        { "at": "T+20s", "label": "New primary is up, but receives several times normal load from queued retries", "kind": "impact" },
+        { "at": "T+40s", "label": "Database saturates again; timeouts trigger more retries (the overload sustains itself)", "kind": "impact" },
+        { "at": "T+3m", "label": "Alert on retry ratio and database CPU; on-call sees attempts per request far above normal", "kind": "detect" },
+        { "at": "T+5m", "label": "Disable inner-layer retries via config, turn on load shedding at the gateway", "kind": "mitigate" },
+        { "at": "T+9m", "label": "Load returns to normal; follow-up: retry budgets, one retry layer, deadlines", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "A retry helper that classifies, backs off, jitters and respects the deadline",
+      "bad": {
+        "label": "Retry everything, immediately, forever",
+        "lang": "ts",
+        "code": "async function call(req: Req) {\n  while (true) {\n    try { return await http(req) }\n    catch { /* try again */ }\n  }\n}"
+      },
+      "good": {
+        "label": "Bounded, jittered, deadline-aware",
+        "lang": "ts",
+        "code": "const RETRYABLE = new Set([408, 429, 502, 503, 504])\n\nasync function call(req: Req, deadline: number, maxAttempts = 3) {\n  for (let attempt = 0; ; attempt++) {\n    const res = await http(req, { timeoutMs: deadline - Date.now() }).catch(err => err)\n    const retryable = res instanceof NetworkError || RETRYABLE.has(res.status)\n    if (!retryable || attempt + 1 >= maxAttempts) return res\n    if (!req.idempotent && !req.idempotencyKey) return res\n    if (!retryBudget.tryTake()) return res\n    const ceiling = Math.min(5000, 100 * 2 ** attempt)\n    const advised = retryAfterMs(res) ?? 0\n    const wait = Math.max(advised, Math.random() * ceiling) // full jitter\n    if (Date.now() + wait >= deadline) return res          // no time left: give up\n    await sleep(wait)\n  }\n}"
+      },
+      "why": "The loop retries only failures that can succeed later, only for safe operations, only while a shared budget allows, and never past the caller's deadline. Full jitter spreads clients out; Retry-After wins when the server provides it."
+    },
+    {
+      "title": "Pass the remaining deadline down, not a fresh timeout",
+      "bad": {
+        "label": "Every hop has its own 5 s timeout",
+        "lang": "text",
+        "code": "client timeout:   2 s\nAPI -> inventory: 5 s\ninventory -> DB:  5 s\n# client gave up at 2 s; servers keep working for up to 10 s\n# on an answer nobody will read"
+      },
+      "good": {
+        "label": "One budget, shrinking at each hop",
+        "lang": "text",
+        "code": "client deadline:  now + 2.0 s  (sent as grpc-timeout / header)\nAPI -> inventory: remaining 1.8 s\ninventory -> DB:  remaining 1.6 s minus a margin\n# each hop stops and frees resources when the budget is gone"
+      },
+      "why": "Work done after the caller has given up is pure waste, and during an incident it is the waste that keeps the system overloaded. A propagated deadline lets every layer cancel together."
+    }
+  ],
+  "checklist": [
+    "Only transient failures are retried: timeouts, connection errors, 429, 502, 503, 504. Client errors (400, 401, 403, 404, 409, 422) are not.",
+    "Non-idempotent operations are retried only with an idempotency key.",
+    "Backoff is exponential with a cap and full jitter; Retry-After is honoured when present.",
+    "Attempts are bounded (often 2-3 total) and a retry budget caps retries as a share of traffic.",
+    "Exactly one layer in the call chain owns retries; the others fail fast with a clear retryable signal.",
+    "Deadlines propagate across hops, and work stops when the remaining budget is too small.",
+    "Retry rate (attempts per request) is a metric with an alert, so storms are visible early.",
+    "Retries are combined with circuit breakers or load shedding so a down dependency gets rest, not more traffic."
+  ],
+  "antipatterns": [
+    {
+      "title": "Synchronized retries with a fixed delay",
+      "bad": { "label": "Everyone retries at t+1s", "diagram": "rt-jitter" },
+      "better": {
+        "label": "Full jitter on an exponential ceiling",
+        "lang": "ts",
+        "code": "const ceiling = Math.min(capMs, baseMs * 2 ** attempt)\nconst wait = Math.random() * ceiling\nawait sleep(wait)"
+      },
+      "why": "Clients that failed at the same moment, for the same reason, will retry at the same moment with a fixed delay. A random wait inside a growing window spreads them across time, so the recovering service sees a ramp instead of a wall."
+    },
+    {
+      "title": "Retrying requests that cannot succeed",
+      "bad": {
+        "label": "Retry on any non-2xx",
+        "lang": "ts",
+        "code": "if (!res.ok) return retry()\n// 400 bad input, 401 expired token, 404 missing: retried 5 times each"
+      },
+      "better": {
+        "label": "Classify first",
+        "lang": "ts",
+        "code": "if (res.status === 401) return refreshTokenThenRetryOnce()\nif (RETRYABLE.has(res.status)) return retryWithBackoff()\nreturn res // 4xx: fix the request, do not repeat it"
+      },
+      "why": "A 400 or 404 is a statement about the request, not about the server's health. Repeating it only adds load and latency. A few cases (an expired token) have a specific fix that is better than a blind retry."
+    },
+    {
+      "title": "Retrying a POST without an idempotency key",
+      "bad": {
+        "label": "Timeout on create, retry the same POST",
+        "lang": "http",
+        "code": "POST /transfers   {\"amount\": 100}\n(timeout)\nPOST /transfers   {\"amount\": 100}\n# two transfers if the first one actually succeeded"
+      },
+      "better": {
+        "label": "Same key on every attempt",
+        "lang": "http",
+        "code": "POST /transfers\nIdempotency-Key: 3f0c9a1e-...\n{\"amount\": 100}\n(timeout)\nPOST /transfers\nIdempotency-Key: 3f0c9a1e-...\n# server replays the first result"
+      },
+      "why": "A timeout does not mean the request failed; it means you do not know. Only an idempotent operation, or one made idempotent with a key, can be repeated without risking a duplicate side effect."
+    }
+  ],
+  "interview": [
+    "Whenever you draw a call between services, say the policy: \"Timeout 300 ms, up to 2 retries with exponential backoff and jitter, only on 503 and timeouts, and only because the call is idempotent.\"",
+    "Point out amplification: retries at several layers multiply. Choose one layer and make the rest fail fast.",
+    "Mention deadlines: the client's budget travels with the request so servers stop work the client has abandoned.",
+    "Pair retries with protection for the callee: retry budgets, circuit breakers, and honouring Retry-After from 429 and 503.",
+    "At SSE level, describe how you would detect a retry storm (attempts per request, retry ratio) and the kill switch you would use."
+  ],
+  "quiz": [
+    {
+      "question": "Which response should a client generally retry with backoff?",
+      "choices": ["400 Bad Request", "404 Not Found", "503 Service Unavailable", "422 Unprocessable Content"],
+      "answer": 2,
+      "explain": "503 signals a temporary server-side condition, often with Retry-After. 400, 404 and 422 describe the request itself; sending it again will fail the same way."
+    },
+    {
+      "question": "A client, an API and a backend each make up to 3 attempts. How many backend calls can one user action cause?",
+      "choices": ["3", "9", "27", "6"],
+      "answer": 2,
+      "explain": "Attempts multiply across layers: 3 at the client × 3 at the API × 3 at the backend = 27. Keep retries at one layer to hold it at 3."
+    },
+    {
+      "question": "Why add jitter to exponential backoff?",
+      "choices": ["To make retries faster", "So clients that failed together do not retry in synchronized waves", "Because servers reject evenly spaced requests", "To avoid needing a retry limit"],
+      "answer": 1,
+      "explain": "Clients hit by the same failure share the same schedule. Randomising each wait inside the backoff window spreads them out so the recovering service gets steady load instead of spikes."
+    },
+    {
+      "question": "The client set a 2 s deadline and 1.9 s have passed. A downstream call just timed out. What should the service do?",
+      "choices": ["Retry with a fresh 5 s timeout", "Return a retryable error now, since a retry cannot finish in time", "Retry three times quickly", "Queue the request for later"],
+      "answer": 1,
+      "explain": "The caller will give up in 100 ms, so any further work is wasted and adds load. Propagated deadlines let each layer see the remaining budget and stop."
+    },
+    {
+      "question": "What does a retry budget limit?",
+      "choices": ["The total time a single request can take", "Retries as a share of normal traffic, so they cannot multiply load during an outage", "The number of clients allowed to connect", "The size of request bodies"],
+      "answer": 1,
+      "explain": "A budget (say retries ≤ 10% of requests) lets retries hide occasional blips but stops them from doubling or tripling traffic when a dependency is truly down."
+    }
+  ],
+  "practice": {
+    "prompt": "A mobile app calls an API gateway, which calls a pricing service, which calls a database. Last week a 30-second database failover turned into a 10-minute outage. Each layer retried 3 times with a fixed 1-second delay. Redesign the retry and timeout policy.",
+    "answer": "Diagnose: 3 × 3 × 3 = 27× amplification, fixed delays synchronised the waves, and inner layers kept working after the app had given up, so the new primary was overloaded as soon as it came up. Policy: the app owns retries for user requests, at most 2 retries with exponential backoff (base 200 ms, cap a few seconds) and full jitter, honouring Retry-After. The gateway and pricing service do not retry; they fail fast with 503 and Retry-After. The pricing service may retry a database read once only if the deadline allows it, with a shared retry budget of about 10% of traffic. The app sends a deadline (for example 3 s) that propagates as a header or gRPC deadline; each hop passes the remaining time and abandons work when it runs out. Only idempotent calls are retried; writes carry an idempotency key. Add a circuit breaker on the database client and load shedding at the gateway. Monitor attempts per request and alert when it rises above about 1.1.",
+    "rubric": [
+      "Explains the 27× amplification and synchronized waves",
+      "Chooses a single retry layer; other layers fail fast",
+      "Exponential backoff with jitter and a cap; honours Retry-After",
+      "Retry budget and bounded attempts",
+      "Propagated deadlines that stop abandoned work",
+      "Idempotency for retried writes and a metric/alert for retry rate"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "design-rate-limiting"],
+    "problems": ["token-bucket-limiter"],
+    "cases": ["api-rate-limiter", "payments"],
+    "guides": ["idempotency-keys", "circuit-breakers", "graceful-degradation", "api-rate-limits", "queues-async-work"]
+  }
+}

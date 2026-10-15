@@ -1,0 +1,289 @@
+{
+  "id": "graceful-degradation",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "Graceful degradation: serve less instead of failing",
+  "summary": "Decide in advance what to drop when things break: kill switches, priority load shedding, stale caches, static fallbacks, deadline budgets and cells that limit blast radius.",
+  "minutes": 15,
+  "principle": "Rank every feature and every request by how much it matters, and design a cheaper path for everything below the top. When a dependency fails or load exceeds capacity, turn off or simplify the low-value parts first so the core journey keeps working for as many users as possible. Decide these trade-offs before the incident, not during it.",
+  "why": "Most outages are partial: one dependency is slow, one region is overloaded, one shard is hot. A system built as all-or-nothing turns any partial failure into a total one, because the page waits on its slowest call or every request queues behind work that does not matter.\n\nDegradation turns that into a dial. A product page without recommendations is still a product page; checkout with yesterday's delivery estimate still takes money; a search that returns cached results is better than a 503. The tools are simple but need preparation: **feature flags and kill switches** you can flip in seconds, **load shedding** that rejects low-priority work first, **stale caches** and **static fallbacks**, a **deadline budget** that stops waiting when an answer is no longer useful, and **cells** so a failure stays small.",
+  "diagrams": [
+    {
+      "id": "gd-page-fallbacks",
+      "type": "flow",
+      "title": "A product page with a fallback for every optional part",
+      "alt": "Architecture diagram. A product page service calls pricing, which is critical, and reviews and recommendations, which are optional. Reviews fall back to a stale cached copy and recommendations fall back to a static best-sellers list. Pricing has no fallback, so the page fails only if pricing fails.",
+      "caption": "Only one box on this page is allowed to fail the request. Everything else has a cheaper answer ready.",
+      "nodes": [
+        { "id": "user", "label": "Shopper", "kind": "client", "col": 0, "row": 2 },
+        { "id": "page", "label": "Product page", "kind": "service", "col": 1, "row": 2, "sub": "800 ms deadline" },
+        { "id": "price", "label": "Pricing", "kind": "service", "col": 3, "row": 0, "sub": "critical" },
+        { "id": "reviews", "label": "Reviews", "kind": "bad", "col": 3, "row": 2, "sub": "slow today" },
+        { "id": "recs", "label": "Recommendations", "kind": "bad", "col": 3, "row": 4, "sub": "kill switch off" },
+        { "id": "stale", "label": "Stale cache", "kind": "cache", "col": 4, "row": 3, "sub": "up to 1 day old" },
+        { "id": "static", "label": "Best sellers", "kind": "good", "col": 4, "row": 5, "sub": "static list" }
+      ],
+      "edges": [
+        { "from": "user", "to": "page" },
+        { "from": "page", "to": "price", "label": "must succeed" },
+        { "from": "page", "to": "reviews", "label": "250 ms max", "style": "fail" },
+        { "from": "reviews", "to": "stale", "label": "fallback", "style": "reply" },
+        { "from": "page", "to": "recs", "label": "skipped", "style": "fail" },
+        { "from": "recs", "to": "static", "label": "fallback", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The page has an overall deadline of 800 ms. Everything it does must fit inside it, so calls run in parallel with their own shorter timeouts." },
+        { "edges": [1], "text": "Pricing is **critical**: showing a wrong or missing price is worse than an error. If pricing fails, the page fails, and that is a deliberate choice." },
+        { "edges": [2, 3], "text": "Reviews are slow today. After 250 ms the page stops waiting and serves the last cached copy, even if it is a day old. Stale beats empty." },
+        { "edges": [4, 5], "text": "An operator has flipped the recommendations kill switch, so the page does not call it at all and shows a static best-sellers list instead. No timeout is spent." }
+      ]
+    },
+    {
+      "id": "gd-shedding",
+      "type": "sequence",
+      "title": "Priority load shedding at the edge",
+      "alt": "Sequence diagram. Under overload, the gateway checks the priority of each request. A checkout request is admitted and served. A background prefetch request is rejected immediately with 503 and a Retry-After header. When the backlog is still high, even browse traffic gets a cached, simplified response.",
+      "caption": "Rejecting cheap, low-value work early keeps capacity for the requests that make money. A fast 503 is cheaper than a slow timeout.",
+      "actors": [
+        { "id": "app", "label": "App" },
+        { "id": "gw", "label": "Gateway" },
+        { "id": "adm", "label": "Admission" },
+        { "id": "svc", "label": "Orders" }
+      ],
+      "messages": [
+        { "from": "app", "to": "gw", "label": "POST /checkout (critical)" },
+        { "from": "gw", "to": "adm", "label": "admit? load 130%", "note": "Admission control compares in-flight work or queue delay to capacity, not just CPU." },
+        { "from": "adm", "to": "gw", "label": "yes: critical tier", "style": "reply" },
+        { "from": "gw", "to": "svc", "label": "forward" },
+        { "from": "svc", "to": "app", "label": "201 Created", "style": "reply" },
+        { "from": "app", "to": "gw", "label": "GET /prefetch (low)", "note": "Background prefetch is the lowest tier. Nobody is waiting for it." },
+        { "from": "gw", "to": "adm", "label": "admit? load 130%" },
+        { "from": "adm", "to": "gw", "label": "no: shed low tier", "style": "fail" },
+        { "from": "gw", "to": "app", "label": "503 + Retry-After: 30", "style": "fail", "note": "Rejected in microseconds, before any work. The client backs off and retries later." },
+        { "from": "app", "to": "gw", "label": "GET /home (normal)" },
+        { "from": "gw", "to": "app", "label": "200 cached home page", "style": "reply", "note": "Normal-tier traffic is served from a cached, simplified version until load drops. A brownout, not a blackout." }
+      ]
+    },
+    {
+      "id": "gd-cells",
+      "type": "compare",
+      "title": "One shared fleet versus isolated cells",
+      "alt": "Side-by-side comparison. With one shared fleet, a single bad tenant or bad deploy overloads the shared database and every customer is affected. With cells, customers are split across independent copies of the stack behind a thin router, so the same failure only affects the customers in one cell.",
+      "caption": "Cells do not make failures rarer; they make each one smaller. A bad deploy rolled out cell by cell also stops at the first cell.",
+      "before": {
+        "label": "Shared fleet: 100% affected",
+        "nodes": [
+          { "id": "all", "label": "All customers", "kind": "client", "col": 0, "row": 1 },
+          { "id": "app", "label": "App fleet", "kind": "service", "col": 1, "row": 1 },
+          { "id": "db", "label": "Shared DB", "kind": "bad", "col": 2, "row": 1, "sub": "overloaded" }
+        ],
+        "edges": [
+          { "from": "all", "to": "app" },
+          { "from": "app", "to": "db", "label": "everyone waits", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Cells: about 1/3 affected",
+        "nodes": [
+          { "id": "router", "label": "Cell router", "kind": "lb", "col": 0, "row": 1, "sub": "by customer id" },
+          { "id": "c1", "label": "Cell 1", "kind": "good", "col": 2, "row": 0, "sub": "app + DB" },
+          { "id": "c2", "label": "Cell 2", "kind": "bad", "col": 2, "row": 1, "sub": "failing" },
+          { "id": "c3", "label": "Cell 3", "kind": "good", "col": 2, "row": 2, "sub": "app + DB" }
+        ],
+        "edges": [
+          { "from": "router", "to": "c1" },
+          { "from": "router", "to": "c2", "style": "fail" },
+          { "from": "router", "to": "c3" }
+        ]
+      }
+    },
+    {
+      "id": "gd-deadline",
+      "type": "bars",
+      "title": "Spending an 800 ms deadline budget",
+      "alt": "Bar chart of an illustrative 800 millisecond request budget. Gateway and auth take 60 ms, pricing 300 ms, reviews are capped at 250 ms, rendering takes 90 ms, leaving a reserve of 100 ms.",
+      "caption": "Illustrative numbers. Each hop gets a slice and passes the remaining deadline downstream, so nobody keeps working on an answer the user has already given up on.",
+      "unit": "ms",
+      "bars": [
+        { "label": "Gateway + auth", "value": 60 },
+        { "label": "Pricing (critical)", "value": 300, "highlight": true },
+        { "label": "Reviews (capped)", "value": 250 },
+        { "label": "Render", "value": 90 },
+        { "label": "Reserve", "value": 100 }
+      ]
+    },
+    {
+      "id": "gd-brownout",
+      "type": "timeline",
+      "title": "A brownout instead of an outage",
+      "alt": "Timeline of an illustrative incident. A recommendations database slows down and page latency climbs. An alert fires, the on-call flips the recommendations kill switch and latency recovers within a minute. The database is fixed later and recommendations are re-enabled gradually.",
+      "caption": "Because the kill switch existed and was tested, the user-facing impact lasted minutes and the real fix could happen calmly.",
+      "events": [
+        { "at": "T+0", "label": "The recommendations database starts a slow full-table scan after a bad query change.", "kind": "trigger" },
+        { "at": "T+2 min", "label": "Product page p99 rises from 400 ms to 3 s; page threads wait on recommendations.", "kind": "impact" },
+        { "at": "T+4 min", "label": "Page latency SLO burn-rate alert fires.", "kind": "detect" },
+        { "at": "T+6 min", "label": "On-call flips the recommendations kill switch; pages show a static best-sellers list.", "kind": "mitigate" },
+        { "at": "T+7 min", "label": "p99 back under 500 ms. Shoppers see a simpler page, not an error.", "kind": "mitigate" },
+        { "at": "T+50 min", "label": "Query fixed. Recommendations re-enabled for 5%, then 50%, then 100% of traffic.", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "gd-options",
+      "type": "chart",
+      "title": "Degradation tools by effort and experience kept",
+      "alt": "Trade-off chart with user experience kept on the vertical axis and effort to build on the horizontal axis. Failing hard keeps nothing. A static fallback is cheap and keeps a little. Kill switches and serving stale cache are moderate effort and keep a lot. Priority load shedding takes more work. Cell architecture is the most effort and limits the blast radius the most.",
+      "caption": "Positions are a rough guide. Kill switches and stale caches are the cheapest big wins; cells are a platform investment.",
+      "x": { "label": "Effort to build", "low": "small", "high": "large" },
+      "y": { "label": "Experience kept", "low": "none", "high": "most" },
+      "points": [
+        { "label": "Fail hard", "x": 0, "y": 0 },
+        { "label": "Static fallback", "x": 1, "y": 4 },
+        { "label": "Kill switch", "x": 2, "y": 6, "highlight": true },
+        { "label": "Serve stale cache", "x": 3, "y": 7 },
+        { "label": "Priority shedding", "x": 6, "y": 5 },
+        { "label": "Cells", "x": 9, "y": 8 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Optional data with a deadline and a fallback",
+      "bad": {
+        "label": "Await everything; any failure fails the page",
+        "lang": "ts",
+        "code": "const [price, reviews, recs] = await Promise.all([\n  pricing.get(sku), reviewsApi.get(sku), recsApi.get(user, sku),\n])\nreturn render({ price, reviews, recs })"
+      },
+      "good": {
+        "label": "Critical call can fail; optional calls degrade",
+        "lang": "ts",
+        "code": "const deadline = Date.now() + 800\nconst optional = <T>(p: Promise<T>, ms: number, fallback: () => T) =>\n  withTimeout(p, Math.min(ms, deadline - Date.now())).catch(() => fallback())\n\nconst [price, reviews, recs] = await Promise.all([\n  pricing.get(sku, { deadline }),                          // critical: may throw\n  optional(reviewsApi.get(sku), 250, () => reviewCache.get(sku) ?? null),\n  flags.on('recs') ? optional(recsApi.get(user, sku), 200, () => BEST_SELLERS) : BEST_SELLERS,\n])\nreturn render({ price, reviews, recs, degraded: !reviews || recs === BEST_SELLERS })"
+      },
+      "why": "Each optional call has a timeout inside the overall deadline and a cheaper answer when it fails. The kill switch skips recommendations entirely without a deploy. The `degraded` flag lets the page and the metrics show that a fallback was used."
+    },
+    {
+      "title": "Shed by priority, early and cheaply",
+      "bad": {
+        "label": "Queue everything until the server falls over",
+        "lang": "ts",
+        "code": "app.use(async (req, res, next) => {\n  await queue.waitForSlot() // unbounded wait, all priorities equal\n  next()\n})"
+      },
+      "good": {
+        "label": "Reject low tiers first when in-flight work is high",
+        "lang": "ts",
+        "code": "const LIMITS = { critical: 1.0, normal: 0.8, low: 0.5 } // share of capacity\napp.use((req, res, next) => {\n  const tier = priorityOf(req)            // e.g. checkout = critical\n  if (inFlight / capacity > LIMITS[tier]) {\n    metrics.inc('shed', { tier })\n    return res.status(503).set('Retry-After', '30').end()\n  }\n  inFlight++; res.on('finish', () => inFlight--)\n  next()\n})"
+      },
+      "why": "An unbounded queue makes every request slow, including the important ones, and the work done for requests that already timed out is wasted. Rejecting by tier keeps the critical path fast; `Retry-After` tells well-behaved clients when to come back."
+    }
+  ],
+  "checklist": [
+    "Every feature on a critical page is labelled critical or optional, and optional ones have a written fallback.",
+    "Kill switches exist for expensive or risky features, can be flipped in seconds without a deploy, and are exercised regularly.",
+    "Requests carry a deadline; each hop uses the remaining budget and stops work once it has passed.",
+    "Load shedding rejects by priority before doing work, returns 503 with `Retry-After`, and is metered per tier.",
+    "Caches can serve stale data when the source is down, with a maximum staleness you have agreed on.",
+    "A static fallback (default content, cached page) exists for the most important read paths.",
+    "Blast radius is bounded: cells or shards, and deploys rolled out cell by cell.",
+    "Degraded responses are visible in metrics and, where it matters, to the user."
+  ],
+  "antipatterns": [
+    {
+      "title": "Fallbacks that were never tested",
+      "bad": {
+        "label": "A kill switch nobody has flipped in a year",
+        "lang": "yaml",
+        "code": "flags:\n  recommendations:\n    enabled: true   # 'off' path last run: never"
+      },
+      "better": {
+        "label": "Exercise the degraded path on purpose",
+        "lang": "yaml",
+        "code": "game_day:\n  monthly:\n    - flip: recommendations=off   # in one cell, 10 minutes\n      expect: page_p99 < 500ms and error_rate unchanged"
+      },
+      "why": "A fallback that has never run is a guess. It may throw, call the same broken dependency, or overload something else. Regular drills prove it works and keep operators confident to use it."
+    },
+    {
+      "title": "The fallback depends on what failed",
+      "bad": {
+        "label": "Fallback reads from the same database",
+        "lang": "ts",
+        "code": "catch { return db.query('SELECT * FROM recs_backup WHERE sku = $1', [sku]) }\n// same overloaded database as the primary path"
+      },
+      "better": {
+        "label": "Fallback from an independent, cheap source",
+        "lang": "ts",
+        "code": "catch { return localCache.get(sku) ?? BUNDLED_BEST_SELLERS }"
+      },
+      "why": "When the database is the problem, sending fallback traffic to it adds load at the worst moment. Fallbacks should be cheaper and independent: in-process caches, CDN copies or bundled defaults."
+    },
+    {
+      "title": "Retrying instead of shedding",
+      "bad": {
+        "label": "Overloaded server answers slowly; clients retry",
+        "lang": "text",
+        "code": "server at 130% -> responses take 10 s -> clients time out\n-> clients retry -> server at 200%"
+      },
+      "better": {
+        "label": "Shed fast and tell clients when to return",
+        "lang": "text",
+        "code": "server at 130% -> low tier gets 503 + Retry-After in 1 ms\n-> clients back off with jitter -> load falls to 100%"
+      },
+      "why": "Slow answers under overload trigger timeouts and retries, which add even more load. Fast, explicit rejection of low-value work breaks the loop."
+    }
+  ],
+  "interview": [
+    "When drawing a page or API that fans out, label each dependency critical or optional and say what each optional one falls back to.",
+    "Say the magic words with specifics: \"Recommendations sit behind a kill switch and fall back to a static list; reviews serve stale cache up to a day old.\"",
+    "Explain load shedding by priority: checkout is never shed before prefetch, and rejection happens before work with 503 and Retry-After.",
+    "Mention deadline propagation: a 1 s client timeout means downstream work after 1 s is wasted, so pass the remaining budget along.",
+    "At SSE level, talk about blast radius: cells, shuffle sharding or per-tenant limits, and rolling deploys cell by cell, plus game days to test fallbacks."
+  ],
+  "quiz": [
+    {
+      "question": "Under overload, which request should be shed first?",
+      "choices": ["A checkout payment", "A background prefetch", "A login"],
+      "answer": 1,
+      "explain": "Shed the work with the least value and nobody waiting for it. Prefetch can be retried later at no cost to the user; checkout and login are the core journey."
+    },
+    {
+      "question": "Why reject with a fast 503 instead of queueing requests during overload?",
+      "choices": ["Queued requests get slow, time out on the client, and the work is wasted", "503 is cached by browsers", "Queues cannot hold HTTP requests"],
+      "answer": 0,
+      "explain": "Long queues make every request slow, including the important ones, and clients that have given up trigger retries. A fast rejection keeps latency low for admitted work."
+    },
+    {
+      "question": "Reviews are down. Which fallback is usually best for a product page?",
+      "choices": ["Fail the whole page", "Retry reviews until they answer", "Serve the last cached reviews, even if a day old"],
+      "answer": 2,
+      "explain": "Reviews are optional and change slowly, so slightly stale data is far better than an error or a long wait. Retrying adds load to a failing service."
+    },
+    {
+      "question": "What do cells mainly improve?",
+      "choices": ["The blast radius of a failure or a bad deploy", "Average latency", "Cost per request"],
+      "answer": 0,
+      "explain": "Cells split customers across independent copies of the stack. A failure in one cell affects only its share of customers, and deploys can stop after the first cell."
+    },
+    {
+      "question": "Why should a fallback not call the same database as the primary path?",
+      "choices": ["Databases forbid it", "If that database is the problem, the fallback adds load to it and fails too", "It would return the wrong data"],
+      "answer": 1,
+      "explain": "Fallbacks run exactly when something is struggling. They must be cheaper and independent: local caches, CDN copies or bundled defaults."
+    }
+  ],
+  "practice": {
+    "prompt": "Black Friday is coming. Your e-commerce site has a home page, search, product pages with reviews and recommendations, cart and checkout. Traffic may reach three times capacity. How do you make the site degrade gracefully?",
+    "answer": "First rank features: checkout, cart and pricing are critical; search and product pages are important; reviews, recommendations, personalised home and prefetch are optional. Put every optional feature behind a kill switch that works without a deploy, and test each one in a game day before the event. Give pages an overall deadline (for example 800 ms) and give each optional call a short timeout with a fallback: stale cached reviews, a static best-sellers list, a cached non-personalised home page from the CDN. Add priority load shedding at the gateway: when in-flight work passes a threshold, reject low tiers first with 503 and Retry-After, and never shed checkout before browsing. Serve search from cache for popular queries if the index is overloaded. Split traffic into cells so a failure or bad deploy hits only part of the customers, and freeze deploys or roll them cell by cell. Watch SLO dashboards per tier and a 'degraded responses' metric so operators know which switches are on.",
+    "rubric": [
+      "Ranks features into critical and optional before choosing mechanisms",
+      "Kill switches that need no deploy, tested in advance",
+      "Timeouts within a deadline budget, with independent fallbacks (stale cache, static content)",
+      "Priority load shedding with 503 and Retry-After, protecting checkout",
+      "Limits blast radius with cells or shards and careful deploys",
+      "Makes degradation visible in metrics"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "design-cache-data-flow", "design-rate-limiting"],
+    "cases": ["news-feed", "video-streaming", "ticket-booking"],
+    "guides": ["circuit-breakers", "caching-strategies", "api-rate-limits", "observability", "retries-backoff"]
+  }
+}

@@ -1,0 +1,288 @@
+{
+  "id": "api-auth",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "API authentication and authorization",
+  "summary": "Know who is calling (API keys, OAuth 2.0, mTLS), validate every token properly, keep tokens short-lived, and check access to each object, not just each endpoint.",
+  "minutes": 15,
+  "principle": "**Authentication** proves who the caller is; **authorization** decides what that caller may do to *this specific* resource. Use a standard protocol (OAuth 2.0) rather than inventing one, validate every token fully on every request, keep credentials short-lived and narrowly scoped, and enforce ownership in the data access path so no endpoint can forget it.",
+  "why": "Pick the mechanism by who the caller is:\n\n- **API keys** identify a project or integration. They are simple, but they are long-lived bearer secrets with no user identity, so treat them like passwords: hash them at rest, scope them, and support rotation.\n- **OAuth 2.0 authorization code with PKCE** is the standard for apps acting on behalf of a user (web, mobile, single-page apps). The user signs in at the authorization server, never in your app, and the app receives an access token with limited scopes. PKCE (RFC 7636) stops a stolen authorization code from being redeemed.\n- **Client credentials** is the OAuth 2.0 grant for service-to-service calls with no user. Pair it with **mutual TLS** when you also want both ends of the connection to prove identity with certificates.\n\nAccess tokens are usually bearer tokens: whoever holds one can use it. JWT access tokens (RFC 7519) let the API validate locally, but only if it checks the signature against a trusted key, and the `iss`, `aud`, `exp` and scope claims. Short lifetimes (minutes) limit the damage of a leak, and refresh tokens get new access tokens without another sign-in.\n\nThe most common real-world API flaw is not broken crypto but broken object-level authorization (BOLA, first in the OWASP API Security Top 10): the endpoint checks that you are logged in, then returns `/invoices/123` without checking that invoice 123 is yours.",
+  "diagrams": [
+    {
+      "id": "auth-pkce-sequence",
+      "type": "sequence",
+      "title": "Authorization code flow with PKCE",
+      "alt": "Sequence diagram. The app creates a secret code verifier and sends its hash as a code challenge when redirecting the user to the authorization server. The user signs in and consents, and the app receives a one-time code. The app exchanges the code plus the original verifier for an access token and refresh token, then calls the API with the bearer token, which the API validates.",
+      "caption": "The app never sees the password, and a stolen code is useless without the verifier that only the app holds.",
+      "actors": [
+        { "id": "user", "label": "User" },
+        { "id": "app", "label": "App" },
+        { "id": "as", "label": "Auth server" },
+        { "id": "api", "label": "API" }
+      ],
+      "messages": [
+        { "from": "user", "to": "app", "label": "tap Sign in", "note": "The app generates a random `code_verifier` and computes `code_challenge = BASE64URL(SHA256(verifier))`." },
+        { "from": "app", "to": "as", "label": "/authorize?challenge&scope&state", "note": "Opened in the system browser. `state` protects against CSRF on the redirect; scopes ask only for what is needed." },
+        { "from": "user", "to": "as", "label": "sign in + consent", "note": "Credentials and MFA happen on the authorization server's page, never in the app." },
+        { "from": "as", "to": "app", "label": "redirect ?code=abc&state", "style": "reply", "note": "A short-lived, one-time authorization code. On its own it cannot be redeemed." },
+        { "from": "app", "to": "as", "label": "POST /token code + verifier", "note": "The server hashes the verifier and compares it with the stored challenge. An attacker who intercepted the code does not have the verifier." },
+        { "from": "as", "to": "app", "label": "access (15m) + refresh token", "style": "reply", "note": "A short-lived access token and a refresh token. Mobile apps store them in the OS keychain." },
+        { "from": "app", "to": "api", "label": "GET /me  Bearer eyJ...", "note": "The access token goes in the Authorization header, never in the URL, where it would end up in logs." },
+        { "from": "api", "to": "app", "label": "200 (after token checks)", "style": "reply", "note": "The API checks signature, issuer, audience, expiry and scope before running any business logic." }
+      ]
+    },
+    {
+      "id": "auth-jwt-checks",
+      "type": "flow",
+      "title": "What the API checks on every request",
+      "alt": "Flow from a bearer request through signature verification, which looks up the key in a JWKS cache, then claim checks for issuer, audience and expiry, then a scope check, then an object ownership check, then the handler. A bad signature or claim leads to 401; a missing scope or a resource owned by someone else leads to 403 or 404.",
+      "caption": "Authentication failures are 401; authorization failures are 403 (or 404 to hide existence). The last check is per object and is the one most often missed.",
+      "nodes": [
+        { "id": "req", "label": "Bearer request", "kind": "client", "col": 0, "row": 0 },
+        { "id": "sig", "label": "Verify signature", "kind": "decision", "col": 1, "row": 0 },
+        { "id": "claims", "label": "Check claims", "kind": "decision", "col": 2, "row": 0, "sub": "iss, aud, exp" },
+        { "id": "scope", "label": "Check scope", "kind": "decision", "col": 3, "row": 0, "sub": "orders:write" },
+        { "id": "owner", "label": "Owns object?", "kind": "decision", "col": 4, "row": 0, "sub": "row-level check" },
+        { "id": "jwks", "label": "JWKS cache", "kind": "cache", "col": 1, "row": 2, "sub": "keys by kid" },
+        { "id": "e401", "label": "401", "kind": "bad", "col": 2, "row": 2, "sub": "WWW-Authenticate" },
+        { "id": "e403", "label": "403 / 404", "kind": "bad", "col": 3, "row": 2 },
+        { "id": "ok", "label": "Run handler", "kind": "good", "col": 4, "row": 2 }
+      ],
+      "edges": [
+        { "from": "req", "to": "sig" },
+        { "from": "sig", "to": "jwks", "label": "key for kid", "style": "async" },
+        { "from": "sig", "to": "e401", "label": "bad sig", "style": "fail" },
+        { "from": "sig", "to": "claims", "label": "ok" },
+        { "from": "claims", "to": "e401", "label": "wrong / expired", "style": "fail" },
+        { "from": "claims", "to": "scope", "label": "ok" },
+        { "from": "scope", "to": "e403", "label": "missing", "style": "fail" },
+        { "from": "scope", "to": "owner", "label": "ok" },
+        { "from": "owner", "to": "e403", "label": "not yours", "style": "fail" },
+        { "from": "owner", "to": "ok", "label": "yes" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Read the token's header to get the key id (`kid`) and fetch the issuer's public key from a cached JWKS. Pin the expected algorithm: never accept `alg: none` or let the token choose HMAC with your public key as the secret." },
+        { "edges": [2], "text": "A signature that does not verify means the token was forged or tampered with: 401 with a `WWW-Authenticate: Bearer` header." },
+        { "edges": [3, 4], "text": "Check `iss` (from the issuer you trust), `aud` (minted for *this* API, not another one), and `exp`/`nbf` with a small clock-skew allowance. A valid token for a different audience is still a 401." },
+        { "edges": [5, 6], "text": "Scopes limit what the client was granted. A read-only token calling a write endpoint gets 403 Forbidden." },
+        { "edges": [7, 8], "text": "Object-level authorization: load the resource and confirm the caller's user or tenant may act on it. Many APIs answer 404 here so callers cannot probe which ids exist." },
+        { "edges": [9], "text": "Only now does business logic run, with the verified identity passed in, never re-read from untrusted request fields." }
+      ]
+    },
+    {
+      "id": "auth-bola-compare",
+      "type": "compare",
+      "title": "Broken object-level authorization",
+      "alt": "Side-by-side comparison. On the left, a logged-in user requests invoice 124, the API loads it by id alone and returns another customer's invoice. On the right, the API loads the invoice by id and the caller's tenant id, finds nothing and returns 404.",
+      "caption": "Being logged in is not permission. Scope every lookup by the caller's identity so the check cannot be forgotten.",
+      "before": {
+        "label": "Lookup by id only",
+        "nodes": [
+          { "id": "u", "label": "User A", "kind": "client", "col": 0, "row": 0, "sub": "valid token" },
+          { "id": "a", "label": "GET invoice 124", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Invoices DB", "kind": "db", "col": 2, "row": 0 },
+          { "id": "x", "label": "User B's invoice", "kind": "bad", "col": 1, "row": 1 }
+        ],
+        "edges": [
+          { "from": "u", "to": "a" },
+          { "from": "a", "to": "d", "label": "WHERE id=124" },
+          { "from": "a", "to": "x", "label": "200", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Lookup scoped to the caller",
+        "nodes": [
+          { "id": "u", "label": "User A", "kind": "client", "col": 0, "row": 0, "sub": "valid token" },
+          { "id": "a", "label": "GET invoice 124", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Invoices DB", "kind": "db", "col": 2, "row": 0 },
+          { "id": "ok", "label": "404 Not Found", "kind": "good", "col": 1, "row": 1 }
+        ],
+        "edges": [
+          { "from": "u", "to": "a" },
+          { "from": "a", "to": "d", "label": "id AND tenant=A" },
+          { "from": "a", "to": "ok", "label": "no row", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "auth-options-chart",
+      "type": "chart",
+      "title": "Choosing an API credential",
+      "alt": "Chart with setup effort on the horizontal axis and how well a stolen or leaked credential is contained on the vertical axis. Keys in a URL are low effort and poorly contained. Static API keys are low effort and weak. Client credentials and authorization code with PKCE are medium effort with short-lived scoped tokens. Client credentials plus mTLS is the most effort and the best contained.",
+      "caption": "Rough positions, not measurements. Short-lived, scoped, sender-bound tokens contain a leak far better than a long-lived static key.",
+      "x": { "label": "Setup effort", "low": "minutes", "high": "days" },
+      "y": { "label": "Leak containment", "low": "poor", "high": "strong" },
+      "points": [
+        { "label": "Key in URL", "x": 1, "y": 1 },
+        { "label": "Static API key", "x": 2, "y": 4 },
+        { "label": "Client credentials", "x": 5, "y": 6 },
+        { "label": "Auth code + PKCE", "x": 6, "y": 9, "highlight": true },
+        { "label": "mTLS + OAuth", "x": 9, "y": 8 }
+      ]
+    },
+    {
+      "id": "auth-s2s-flow",
+      "type": "flow",
+      "title": "Service-to-service: client credentials over mTLS",
+      "alt": "Flow diagram. The orders service presents its certificate to the token server and receives a short-lived token with an audience of the billing API. It then calls the billing API over mutual TLS with that token. The billing API verifies the peer certificate and the token. A certificate authority issues certificates to both services.",
+      "caption": "mTLS proves which workload is on the other end of the connection; the token says what it may do. Both are short-lived and rotated automatically.",
+      "nodes": [
+        { "id": "orders", "label": "Orders service", "kind": "service", "col": 0, "row": 1 },
+        { "id": "ts", "label": "Token server", "kind": "external", "col": 2, "row": 0, "sub": "client credentials" },
+        { "id": "billing", "label": "Billing API", "kind": "service", "col": 4, "row": 1, "sub": "aud=billing" },
+        { "id": "ca", "label": "Internal CA", "kind": "external", "col": 2, "row": 3, "sub": "short-lived certs" }
+      ],
+      "edges": [
+        { "from": "orders", "to": "ts", "label": "get token (mTLS)" },
+        { "from": "orders", "to": "billing", "label": "mTLS + Bearer" },
+        { "from": "ca", "to": "orders", "label": "cert", "style": "async" },
+        { "from": "ca", "to": "billing", "label": "cert", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [2, 3], "text": "An internal certificate authority (or a service mesh) issues each workload a certificate that is renewed automatically, often every few hours." },
+        { "edges": [0], "text": "The orders service authenticates to the token server and gets back a token of a few minutes with audience `billing` and only the scopes it needs. No user is involved, so this is the client credentials grant." },
+        { "edges": [1], "text": "The call to billing is over mutual TLS. Billing checks the peer certificate (which workload is this?) and the token (what may it do?). If tokens are bound to the certificate (RFC 8705), a token copied from a log is useless from any other host." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Validate a JWT access token properly",
+      "bad": {
+        "label": "Decode and trust the payload",
+        "lang": "js",
+        "code": "const [, payload] = token.split('.')\nconst claims = JSON.parse(atob(payload))\nreq.user = claims.sub   // no signature, issuer, audience or expiry check"
+      },
+      "good": {
+        "label": "Verify signature and claims with a pinned algorithm",
+        "lang": "js",
+        "code": "import { createRemoteJWKSet, jwtVerify } from 'jose'\nconst jwks = createRemoteJWKSet(new URL('https://auth.example.com/.well-known/jwks.json'))\n\nasync function authenticate(req) {\n  const token = req.get('Authorization')?.replace(/^Bearer /, '')\n  if (!token) throw new ApiError(401, 'missing_token')\n  const { payload } = await jwtVerify(token, jwks, {\n    issuer: 'https://auth.example.com/',\n    audience: 'orders-api',\n    algorithms: ['RS256'],\n    clockTolerance: 30,\n  })\n  return { userId: payload.sub, tenantId: payload.tid, scopes: String(payload.scope ?? '').split(' ') }\n}"
+      },
+      "why": "Decoding is not verifying: anyone can write a JWT payload. A maintained library checks the signature against the issuer's published keys, rejects unexpected algorithms, and enforces `iss`, `aud` and `exp`. The audience check stops a token minted for another API from working here."
+    },
+    {
+      "title": "Enforce object-level authorization in the query",
+      "bad": {
+        "label": "Authenticated, so return whatever id was asked for",
+        "lang": "sql",
+        "code": "SELECT * FROM invoices WHERE id = $1;"
+      },
+      "good": {
+        "label": "Every lookup is scoped to the caller's tenant",
+        "lang": "sql",
+        "code": "SELECT * FROM invoices\nWHERE id = $1 AND tenant_id = $2;   -- $2 from the verified token, never from the request body\n-- no row: return 404"
+      },
+      "why": "Putting the tenant in the query (or in a repository layer or row-level security policy that every query goes through) means a new endpoint cannot forget the check. Random, unguessable ids help, but they are not authorization."
+    }
+  ],
+  "checklist": [
+    "Each caller type has a fitting mechanism: authorization code + PKCE for user apps, client credentials (plus mTLS where needed) for services, scoped API keys for simple integrations.",
+    "Credentials travel only over TLS and in headers, never in URLs or query strings.",
+    "Every token is verified on every request: signature with a pinned algorithm, `iss`, `aud`, `exp`, then scopes.",
+    "Access tokens live minutes, not days; refresh tokens are rotated, revocable and stored securely.",
+    "Every read and write checks that the caller may access that specific object or tenant, ideally enforced in a shared data-access layer.",
+    "API keys are stored hashed, shown once, scoped, prefixed for leak scanning, and can be rotated without downtime.",
+    "401 is returned for missing or invalid credentials (with `WWW-Authenticate`); 403 or 404 for valid callers without access.",
+    "Auth failures are logged and rate limited to slow credential stuffing and token guessing."
+  ],
+  "antipatterns": [
+    {
+      "title": "Trusting identity from the request body",
+      "bad": {
+        "label": "The client says who it is",
+        "lang": "http",
+        "code": "POST /transfers\nAuthorization: Bearer eyJ...   (user 42)\n\n{ \"fromUserId\": 77, \"amount\": 500 }"
+      },
+      "better": {
+        "label": "Identity comes only from the verified token",
+        "lang": "http",
+        "code": "POST /transfers\nAuthorization: Bearer eyJ...   (sub = 42)\n\n{ \"toAccount\": \"acc_9\", \"amount\": 500 }\n// server uses sub=42 as the source account owner"
+      },
+      "why": "Anything in the body, query string or a custom header can be edited by the caller. The only trustworthy identity is the one the server derived from a credential it verified."
+    },
+    {
+      "title": "Long-lived tokens with no way to revoke",
+      "bad": {
+        "label": "One JWT valid for a year",
+        "lang": "json",
+        "code": "{ \"sub\": \"42\", \"scope\": \"*\", \"exp\": 1767225600 }"
+      },
+      "better": {
+        "label": "Short access token, revocable refresh token",
+        "lang": "json",
+        "code": "{ \"sub\": \"42\", \"aud\": \"orders-api\", \"scope\": \"orders:read\", \"exp\": <now + 15 min> }\n// refresh token: stored server-side, rotated on use, revoked on logout"
+      },
+      "why": "A self-contained JWT cannot be recalled once issued; the API accepts it until `exp`. Keeping access tokens short bounds the damage of a leak, while the refresh token, which the authorization server checks each time, is where you revoke."
+    },
+    {
+      "title": "Checking permissions only at the endpoint level",
+      "bad": {
+        "label": "Role check, no ownership check",
+        "diagram": "auth-bola-compare"
+      },
+      "better": {
+        "label": "Role check plus a tenant-scoped query",
+        "lang": "js",
+        "code": "requireScope(req, 'invoices:read')\nconst invoice = await invoices.findOne({ id: req.params.id, tenantId: req.auth.tenantId })\nif (!invoice) throw new ApiError(404, 'not_found')"
+      },
+      "why": "\"Can this user read invoices?\" and \"can this user read *this* invoice?\" are different questions. Attackers simply increment ids. Scoping the query by the token's tenant closes the hole for every caller at once."
+    }
+  ],
+  "interview": [
+    "Start by naming the callers: \"End users through our mobile app use authorization code with PKCE; partner servers use client credentials; internal services use mTLS plus short-lived tokens.\"",
+    "List the token checks out loud: signature with pinned algorithm, issuer, audience, expiry, scope. Interviewers listen for `aud` in particular.",
+    "Always add the object-level check when you design a `GET /things/{id}` endpoint, and mention BOLA by name.",
+    "Explain the revocation trade-off: stateless JWTs are fast to validate but cannot be recalled, so keep them short and revoke via refresh tokens or, if needed, a deny list.",
+    "At SSE level, talk about key rotation (JWKS with multiple `kid`s), centralising auth at a gateway while still enforcing ownership in services, and auditing access."
+  ],
+  "quiz": [
+    {
+      "question": "What does PKCE protect against in the authorization code flow?",
+      "choices": ["An intercepted authorization code being exchanged by an attacker", "Cross-site scripting in the API", "Expired access tokens"],
+      "answer": 0,
+      "explain": "The app sends a hash of a secret verifier up front and the verifier itself at the token exchange. Someone who steals only the code cannot produce the verifier, so the code is useless to them."
+    },
+    {
+      "question": "A JWT has a valid signature from your identity provider, but its `aud` is `billing-api` and it was sent to `orders-api`. What should orders-api do?",
+      "choices": ["Accept it: the signature is valid", "Reject it with 401", "Accept it only for read requests"],
+      "answer": 1,
+      "explain": "The audience says which API the token was minted for. Accepting tokens for other audiences lets any service that receives a token replay it against you."
+    },
+    {
+      "question": "Which grant fits a nightly batch job calling another internal service with no user involved?",
+      "choices": ["Authorization code with PKCE", "Client credentials", "Implicit grant"],
+      "answer": 1,
+      "explain": "Client credentials authenticates the calling application itself. The implicit grant is discouraged by current OAuth security guidance, and authorization code needs a user to sign in."
+    },
+    {
+      "question": "User A is logged in and requests `/orders/1002`, which belongs to user B. The API returns it. What is this vulnerability called?",
+      "choices": ["Cross-site request forgery", "Broken object-level authorization (BOLA / IDOR)", "Token replay"],
+      "answer": 1,
+      "explain": "The caller is authenticated but not authorized for that object. It tops the OWASP API Security Top 10. The fix is to scope every object lookup by the caller's identity."
+    },
+    {
+      "question": "Why keep access tokens short-lived when you also issue refresh tokens?",
+      "choices": ["Short tokens are smaller on the wire", "A stateless access token cannot be revoked, so a short lifetime bounds the damage of a leak", "Refresh tokens cannot be stolen"],
+      "answer": 1,
+      "explain": "APIs validate JWT access tokens locally and accept them until they expire. The refresh token goes back to the authorization server each time, which is where revocation and rotation happen."
+    }
+  ],
+  "practice": {
+    "prompt": "Design authentication and authorization for a multi-tenant invoicing API used by a web app, a mobile app, partner integrations and internal services.",
+    "answer": "Use an OAuth 2.0 / OpenID Connect authorization server. The web and mobile apps use the authorization code flow with PKCE (system browser on mobile, tokens in the keychain; for the web app, a backend-for-frontend keeps tokens out of the browser). Partners use client credentials with per-partner clients and scopes such as `invoices:read`; offer scoped, hashed, rotatable API keys only for simple read-only integrations. Internal services use client credentials over mTLS, with certificates issued by a mesh or internal CA. Access tokens are JWTs with `iss`, `aud=invoices-api`, `sub`, `tid` (tenant), scopes and a 10–15 minute `exp`; refresh tokens rotate on use and are revoked on logout. The gateway verifies signature, issuer, audience, expiry and coarse scopes; each service still enforces object-level access by scoping every query with the token's tenant (or row-level security), returning 404 for other tenants' objects. Errors: 401 with WWW-Authenticate, 403 for missing scope. Rotate signing keys via JWKS with overlapping `kid`s, rate limit auth endpoints, and audit-log access to invoices.",
+    "rubric": [
+      "Matches grant types to caller types (PKCE for users, client credentials for services)",
+      "Lists full token validation including audience and expiry",
+      "Short-lived access tokens with refresh/revocation strategy",
+      "Object-level, tenant-scoped authorization enforced in the data path",
+      "Service-to-service identity (mTLS or equivalent) and key rotation",
+      "Correct use of 401 vs 403/404"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "ai-agents-tools"],
+    "cases": ["payments", "file-sync"],
+    "guides": ["api-error-format", "api-rate-limits", "webhooks", "api-styles-rest-grpc"]
+  }
+}

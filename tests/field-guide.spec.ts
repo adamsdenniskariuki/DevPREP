@@ -158,3 +158,13 @@ for (const width of [360, 768, 1440]) {
     expect(svgWidth).toBeGreaterThan(Math.min(width - 80, 300))
   })
 }
+
+test('every entry renders all its diagrams and fits a 360px screen', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 800 })
+  for (const item of entries) {
+    await page.goto(`./#guide/${item.id}`)
+    await expect(page.getByRole('heading', { level: 1, name: item.title })).toBeVisible()
+    await expect(page.locator('.dg-figure'), item.id).toHaveCount(item.diagrams.length)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), item.id).toBe(true)
+  }
+})

@@ -1,0 +1,274 @@
+{
+  "id": "resource-naming",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "Resource naming and URL design",
+  "summary": "Name resources with plural nouns, keep nesting shallow, put filtering and sorting in query parameters, and model awkward actions explicitly instead of inventing verbs.",
+  "minutes": 11,
+  "principle": "A URL names a thing; the HTTP method says what to do with it. Use plural nouns for collections (`/orders`) and an id for one item (`/orders/42`), nest only to show real ownership and only one level deep, push filtering, sorting and paging into query parameters, and pick one casing style for the whole API.",
+  "why": "URLs are the most visible part of an API and the hardest to change: they end up in client code, docs, bookmarks, logs and dashboards. A predictable scheme means a developer who has seen `/orders/42` can guess `/customers/7` without reading docs, and tools such as gateways, caches and rate limiters can route and group by path.\n\nThe common failures are verbs in paths (`/getOrder`), so the method and the path disagree; deep nesting (`/customers/7/orders/42/items/3`), which forces clients to know every parent id and makes moving a resource a breaking change; and inconsistent casing or pluralisation, which turns every call into a docs lookup.\n\nNot everything is CRUD. Cancelling an order, merging accounts or starting an export are real actions. Good designs model them either as a new resource (`POST /orders/42/cancellations`), a state change on the item (`PATCH` with a status field) or a clearly marked custom action (`POST /orders/42:cancel`, the style Google's API guidelines use). What matters is that you choose one convention and apply it everywhere.",
+  "diagrams": [
+    {
+      "id": "rn-tree",
+      "type": "flow",
+      "title": "Collections, items and shallow nesting",
+      "alt": "Resource tree. The root has two collections, customers and orders. Each collection leads to a single item by id. A customer item has a nested orders sub-collection that lists that customer's orders, but each order is still addressed at the top-level path orders slash id. Order items are a sub-collection one level under an order.",
+      "caption": "Nest to express ownership for listing, then link back to the canonical top-level URL for each item.",
+      "nodes": [
+        { "id": "root", "label": "/", "kind": "note", "col": 0, "row": 2 },
+        { "id": "custs", "label": "/customers", "kind": "service", "col": 1, "row": 0, "sub": "collection" },
+        { "id": "cust", "label": "/customers/{id}", "kind": "state", "col": 2, "row": 0, "sub": "item" },
+        { "id": "corders", "label": "…/{id}/orders", "kind": "service", "col": 3, "row": 1, "sub": "filtered list" },
+        { "id": "orders", "label": "/orders", "kind": "service", "col": 1, "row": 4, "sub": "collection" },
+        { "id": "order", "label": "/orders/{id}", "kind": "state", "col": 3, "row": 4, "sub": "canonical item" },
+        { "id": "items", "label": "…/{id}/items", "kind": "service", "col": 4, "row": 3, "sub": "one level deep" }
+      ],
+      "edges": [
+        { "from": "root", "to": "custs" },
+        { "from": "custs", "to": "cust", "label": "GET by id" },
+        { "from": "cust", "to": "corders", "label": "owns" },
+        { "from": "root", "to": "orders" },
+        { "from": "orders", "to": "order", "label": "GET by id" },
+        { "from": "corders", "to": "order", "label": "links to", "style": "reply" },
+        { "from": "order", "to": "items", "label": "owns" }
+      ],
+      "steps": [
+        { "edges": [0, 3], "text": "Top-level collections are plural nouns. `GET /orders` lists, `POST /orders` creates." },
+        { "edges": [1, 4], "text": "An item is the collection path plus a stable, opaque id. The method decides the action: GET reads, PATCH updates, DELETE removes." },
+        { "edges": [2], "text": "A nested path is a convenient filtered list: \"this customer's orders\". It is equivalent to `GET /orders?customerId=7`." },
+        { "edges": [5], "text": "Each listed order links to its canonical top-level URL, so clients never need the customer id to fetch an order." },
+        { "edges": [6], "text": "Line items truly belong to an order, so one level of nesting is fine. Stop there; deeper paths become fragile." }
+      ]
+    },
+    {
+      "id": "rn-verbs",
+      "type": "compare",
+      "title": "Verbs in paths vs nouns plus methods",
+      "alt": "Side-by-side comparison. On the left, separate endpoints named getUser, createUser and deleteUser are all called with POST, so the method and path disagree. On the right, one users collection and one user item are used with GET, POST and DELETE.",
+      "caption": "Three verb endpoints collapse into two noun URLs. The method carries the verb.",
+      "before": {
+        "label": "Verb endpoints",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 1 },
+          { "id": "g", "label": "POST /getUser", "kind": "bad", "col": 1, "row": 0 },
+          { "id": "n", "label": "POST /createUser", "kind": "bad", "col": 2, "row": 1 },
+          { "id": "d", "label": "GET /deleteUser", "kind": "bad", "col": 1, "row": 2, "sub": "unsafe GET!" }
+        ],
+        "edges": [
+          { "from": "c", "to": "g" },
+          { "from": "c", "to": "n" },
+          { "from": "c", "to": "d", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Nouns + methods",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 1 },
+          { "id": "col", "label": "/users", "kind": "good", "col": 1, "row": 0, "sub": "GET list, POST" },
+          { "id": "item", "label": "/users/{id}", "kind": "good", "col": 2, "row": 1, "sub": "GET PATCH DELETE" }
+        ],
+        "edges": [
+          { "from": "c", "to": "col" },
+          { "from": "c", "to": "item" }
+        ]
+      }
+    },
+    {
+      "id": "rn-deep",
+      "type": "compare",
+      "title": "Deep nesting vs flat resources with filters",
+      "alt": "Side-by-side comparison. On the left a review is reached through customers, orders, items and reviews, four levels deep, so the client needs four ids. On the right, reviews is a top-level collection reached by its own id or filtered with a query parameter for the item.",
+      "caption": "Every parent in a path is an id the client must know and a coupling you cannot change later.",
+      "before": {
+        "label": "4 levels deep",
+        "nodes": [
+          { "id": "a", "label": "/customers/7", "kind": "service", "col": 0, "row": 0 },
+          { "id": "b", "label": "/orders/42", "kind": "service", "col": 1, "row": 0 },
+          { "id": "c", "label": "/items/3", "kind": "service", "col": 2, "row": 0 },
+          { "id": "d", "label": "/reviews/9", "kind": "bad", "col": 2, "row": 1, "sub": "needs 4 ids" }
+        ],
+        "edges": [
+          { "from": "a", "to": "b" },
+          { "from": "b", "to": "c" },
+          { "from": "c", "to": "d", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Flat + query filter",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 0 },
+          { "id": "r", "label": "/reviews/9", "kind": "good", "col": 1, "row": 0, "sub": "one id" },
+          { "id": "q", "label": "/reviews", "kind": "good", "col": 1, "row": 1, "sub": "?itemId=3" }
+        ],
+        "edges": [
+          { "from": "c", "to": "r", "label": "GET" },
+          { "from": "c", "to": "q", "label": "GET filtered" }
+        ]
+      }
+    },
+    {
+      "id": "rn-cancel",
+      "type": "sequence",
+      "title": "An action that is not CRUD: cancelling an order",
+      "alt": "Sequence diagram. The client posts to the cancellations sub-collection of order 42 with a reason and an idempotency key. The API checks the order state, records a cancellation, and queues a refund. It replies 202 Accepted with a Location for the cancellation. The client later polls the cancellation and sees it completed.",
+      "caption": "Modelling the action as a resource gives it an id, a status to poll and a natural place for audit data.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "api", "label": "Orders API" },
+        { "id": "db", "label": "Order store" },
+        { "id": "worker", "label": "Refund worker" }
+      ],
+      "messages": [
+        { "from": "client", "to": "api", "label": "POST /orders/42/cancellations", "note": "A noun for the action. The body carries the reason; an Idempotency-Key makes retries safe." },
+        { "from": "api", "to": "db", "label": "load order 42", "note": "Only some states can be cancelled. A shipped order gets 409 Conflict, not a silent no-op." },
+        { "from": "db", "to": "api", "label": "status: PAID", "style": "reply" },
+        { "from": "api", "to": "db", "label": "insert cancellation c1, PENDING" },
+        { "from": "api", "to": "worker", "label": "refund job for c1", "style": "async" },
+        { "from": "api", "to": "client", "label": "202, Location: …/cancellations/c1", "style": "reply", "note": "202 because the refund is not done yet. The Location tells the client where to check." },
+        { "from": "worker", "to": "db", "label": "c1 COMPLETED, order CANCELLED" },
+        { "from": "client", "to": "api", "label": "GET …/cancellations/c1" },
+        { "from": "api", "to": "client", "label": "200 {status: COMPLETED}", "style": "reply" }
+      ]
+    },
+    {
+      "id": "rn-action-chart",
+      "type": "chart",
+      "title": "Four ways to expose a non-CRUD action",
+      "alt": "Trade-off chart with consistency with REST conventions on the horizontal axis and how clearly the URL states the intent on the vertical axis. A verb URL like cancelOrder is clear but inconsistent. A PATCH of a status field is consistent but hides the intent. A custom method with a colon and a cancellation sub-resource both score well, with the sub-resource highest on consistency.",
+      "caption": "Positions are a rough guide. Pick one of the two top-right styles and use it for every action in the API.",
+      "x": { "label": "Fits REST conventions", "low": "ad hoc", "high": "uniform" },
+      "y": { "label": "Intent is obvious", "low": "hidden", "high": "explicit" },
+      "points": [
+        { "label": "POST /cancelOrder", "x": 1, "y": 7 },
+        { "label": "PATCH status", "x": 7, "y": 3 },
+        { "label": "POST /orders/42:cancel", "x": 6, "y": 9 },
+        { "label": "POST …/cancellations", "x": 9, "y": 8, "highlight": true }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Filter, sort and page with query parameters",
+      "bad": {
+        "label": "Filters baked into the path",
+        "lang": "http",
+        "code": "GET /orders/status/open/sort/date-desc/page/3\nGET /getOpenOrdersForCustomer/7"
+      },
+      "good": {
+        "label": "One collection, composable parameters",
+        "lang": "http",
+        "code": "GET /orders?customerId=7&status=open&sort=-createdAt&limit=20&cursor=eyJpZCI6...\n\n# documented: sort fields, max limit, which fields can be filtered"
+      },
+      "why": "Query parameters combine freely and can be added later without new routes. Path segments imply hierarchy, so every new filter would need a new endpoint and a new docs page."
+    },
+    {
+      "title": "Pick one casing and stick to it",
+      "bad": {
+        "label": "Three styles in one API",
+        "lang": "http",
+        "code": "GET /Customer/7/shipping_addresses?SortBy=created\n{ \"FirstName\": \"Ana\", \"last_name\": \"Silva\", \"zipCode\": \"1000\" }"
+      },
+      "good": {
+        "label": "kebab-case paths, camelCase fields",
+        "lang": "http",
+        "code": "GET /customers/7/shipping-addresses?sort=createdAt\n{ \"firstName\": \"Ana\", \"lastName\": \"Silva\", \"postalCode\": \"1000\" }"
+      },
+      "why": "No single convention is \"right\", but mixing them forces every client author to check each name. Lowercase paths avoid surprises with case-sensitive routers, and one field style lets clients map JSON to objects automatically."
+    }
+  ],
+  "checklist": [
+    "Collections are plural nouns (`/orders`) and items are `collection/{id}`; no verbs in paths.",
+    "Ids in URLs are stable and opaque; do not expose database row numbers if you might shard or migrate.",
+    "Nesting is at most one level and only for true ownership; every item also has one canonical URL.",
+    "Filtering, sorting, field selection and paging use query parameters with documented names and limits.",
+    "Paths, query parameters and JSON fields each follow one documented casing style.",
+    "Non-CRUD actions follow one convention across the API (sub-resource or custom method) and return 202 when the work is asynchronous.",
+    "Responses include links or ids that let clients reach related resources without building URLs by hand."
+  ],
+  "antipatterns": [
+    {
+      "title": "Verbs in the path",
+      "bad": { "label": "getUser / createUser / deleteUser", "diagram": "rn-verbs" },
+      "better": {
+        "label": "Nouns plus HTTP methods",
+        "lang": "http",
+        "code": "GET    /users/7\nPOST   /users\nDELETE /users/7"
+      },
+      "why": "The method already is the verb. A verb in the path invites mismatches, and a `GET /deleteUser` is dangerous: crawlers, link previews and prefetchers assume GET is safe and may call it."
+    },
+    {
+      "title": "Nesting every relationship",
+      "bad": { "label": "Path mirrors the whole data model", "diagram": "rn-deep" },
+      "better": {
+        "label": "Shallow paths and filters",
+        "lang": "http",
+        "code": "GET /reviews/9\nGET /reviews?itemId=3\nGET /orders/42/items      (one level, real ownership)"
+      },
+      "why": "Deep paths force clients to carry every ancestor id and make it a breaking change to re-parent a resource. A flat canonical URL plus filters gives the same queries with less coupling."
+    },
+    {
+      "title": "Using the collection URL for a one-off action",
+      "bad": {
+        "label": "Overloaded POST with an action flag",
+        "lang": "http",
+        "code": "POST /orders\n{ \"action\": \"cancel\", \"orderId\": 42 }"
+      },
+      "better": {
+        "label": "The action has its own address",
+        "lang": "http",
+        "code": "POST /orders/42/cancellations\nIdempotency-Key: 5d1f...\n{ \"reason\": \"customer_request\" }\n\nHTTP/1.1 202 Accepted\nLocation: /orders/42/cancellations/c1"
+      },
+      "why": "`POST /orders` should mean \"create an order\". Overloading it makes logs, metrics, permissions and rate limits unable to tell creates from cancels. A dedicated address can be authorised, monitored and documented on its own."
+    }
+  ],
+  "interview": [
+    "When you list endpoints, write them as method plus path, for example `GET /users/{id}/orders?status=open&limit=20`, and say why each one is a noun.",
+    "Call out one awkward action explicitly (cancel, refund, export) and show how you model it; interviewers often probe exactly that.",
+    "Say where filters, sorting and paging live (query parameters) and what the limits are.",
+    "Mention that URLs are a long-lived contract, so you prefer opaque ids and shallow paths that survive data-model changes."
+  ],
+  "quiz": [
+    {
+      "question": "Which URL best fits common REST naming conventions for one order?",
+      "choices": ["/getOrder?id=42", "/orders/42", "/order/get/42", "/Orders/42/details/view"],
+      "answer": 1,
+      "explain": "A plural collection plus an id names the item. The HTTP method (GET, PATCH, DELETE) supplies the verb, so the path does not need one."
+    },
+    {
+      "question": "Where should filtering and sorting options for a list endpoint go?",
+      "choices": ["In extra path segments", "In query parameters", "In a request body on GET", "In custom headers"],
+      "answer": 1,
+      "explain": "Query parameters compose and are optional, so new filters do not need new routes. Bodies on GET have no defined semantics in HTTP and are dropped by some proxies."
+    },
+    {
+      "question": "Why is `GET /users/7/delete` particularly risky?",
+      "choices": ["It is too long", "GET is assumed safe, so crawlers and prefetchers may trigger the delete", "GET cannot carry an id", "Browsers block GET with path parameters"],
+      "answer": 1,
+      "explain": "HTTP clients and intermediaries treat GET as having no side effects. Anything that follows links, such as link previews or crawlers, could delete the user."
+    },
+    {
+      "question": "An order belongs to a customer. What is a good way to expose it?",
+      "choices": ["Only at /customers/{cid}/orders/{oid}", "At /orders/{oid}, with /customers/{cid}/orders as a convenient filtered list", "At /orders/{oid}/customers/{cid}", "As a query on /customers?orderId="],
+      "answer": 1,
+      "explain": "A canonical top-level URL needs only the order id and survives ownership changes. The nested list is a convenience equivalent to `/orders?customerId=`."
+    }
+  ],
+  "practice": {
+    "prompt": "Design the URL scheme for a library app: books, copies of each book, members, loans and holds. Members borrow and return copies and can place a hold on a book. Show the main endpoints.",
+    "answer": "Collections: `/books`, `/members`, `/loans`, `/holds`. Items: `/books/{bookId}`, `/members/{memberId}`, `/loans/{loanId}`, `/holds/{holdId}`. Copies truly belong to a book, so `/books/{bookId}/copies` and `/books/{bookId}/copies/{copyId}`, one level deep. Borrowing creates a loan: `POST /loans { copyId, memberId }` returning 201 with Location, with an idempotency key. Returning is a state change: `POST /loans/{loanId}/return` or `PATCH /loans/{loanId} { returnedAt }`; I would pick one action convention and use it everywhere. Holds: `POST /holds { bookId, memberId }`, `DELETE /holds/{holdId}` to cancel. Lists use query parameters: `GET /loans?memberId=7&status=active&sort=-dueAt&limit=20`, and `GET /members/{id}/loans` as a convenience alias. Paths are lowercase kebab-case, JSON fields camelCase, ids opaque strings.",
+    "rubric": [
+      "Plural noun collections and item-by-id URLs with no verbs",
+      "Nesting only for true ownership (copies under books), at most one level",
+      "Borrowing modelled as creating a loan resource",
+      "A clear, consistent convention for the non-CRUD return action",
+      "Filtering, sorting and paging in query parameters",
+      "Consistent casing and opaque ids"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-end-to-end-bookmarks"],
+    "cases": ["url-shortener", "photo-sharing"],
+    "guides": ["api-styles-rest-grpc", "pagination", "api-versioning", "api-error-format", "idempotency-keys"]
+  }
+}

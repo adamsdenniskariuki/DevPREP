@@ -1,0 +1,293 @@
+{
+  "id": "observability",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "se",
+  "title": "Observability: metrics, logs, traces and SLOs",
+  "summary": "Measure rate, errors and latency per service, log structured events with request ids, propagate trace context, and alert on SLO burn rather than on every cause.",
+  "minutes": 15,
+  "principle": "Instrument every service so you can answer \"is it broken, for whom, and where?\" without shipping new code. Use **metrics** for cheap aggregate health and alerting, **structured logs** for the details of individual events, and **traces** to follow one request across services. Tie them together with a shared request or trace id, and alert on user-facing symptoms measured against SLOs.",
+  "why": "In a distributed system a single user request touches many processes. When it fails or is slow, the evidence is spread across them. Without a shared id you cannot join it up; without aggregates you cannot tell one bad request from a trend; without SLOs you cannot tell a blip from an outage.\n\nUseful starting frameworks: the **RED** method for request-driven services (Rate, Errors, Duration), the **USE** method for resources such as CPUs, disks and pools (Utilization, Saturation, Errors), and the **four golden signals** from Google's SRE book (latency, traffic, errors, saturation). An **SLI** is a measured ratio of good events (\"requests under 300 ms that succeeded\"), an **SLO** is the target for it (99.9% over 30 days), and the **error budget** is what is left over (0.1%, about 43 minutes a month) to spend on risk such as deploys.",
+  "diagrams": [
+    {
+      "id": "obs-pipeline",
+      "type": "flow",
+      "title": "Three signals from one service, joined by a trace id",
+      "alt": "Architecture diagram. An orders service emits metrics to a time-series database, structured logs to a log store and spans to a tracing backend, all through a collector. Alerts fire from the metrics; dashboards, log search and trace views link to each other by trace id.",
+      "caption": "Metrics tell you something is wrong, traces tell you where, and logs tell you why. The shared trace id is what lets you jump between them.",
+      "nodes": [
+        { "id": "svc", "label": "Orders service", "kind": "service", "col": 0, "row": 2, "sub": "instrumented" },
+        { "id": "col", "label": "Collector", "kind": "worker", "col": 1, "row": 2, "sub": "agent / sidecar" },
+        { "id": "tsdb", "label": "Metrics store", "kind": "db", "col": 3, "row": 0, "sub": "time series" },
+        { "id": "logs", "label": "Log store", "kind": "storage", "col": 3, "row": 2, "sub": "JSON events" },
+        { "id": "traces", "label": "Trace store", "kind": "storage", "col": 3, "row": 4, "sub": "sampled spans" },
+        { "id": "alert", "label": "SLO alerts", "kind": "decision", "col": 4, "row": 1, "sub": "burn rate" },
+        { "id": "oncall", "label": "On-call", "kind": "client", "col": 4, "row": 3, "sub": "follows trace id" }
+      ],
+      "edges": [
+        { "from": "svc", "to": "col", "label": "emit" },
+        { "from": "col", "to": "tsdb", "label": "RED metrics", "style": "async" },
+        { "from": "col", "to": "logs", "label": "logs + trace_id", "style": "async" },
+        { "from": "col", "to": "traces", "label": "spans", "style": "async" },
+        { "from": "tsdb", "to": "alert", "label": "evaluate" },
+        { "from": "alert", "to": "oncall", "label": "page" },
+        { "from": "oncall", "to": "traces", "label": "find slow span" },
+        { "from": "oncall", "to": "logs", "label": "search trace_id" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The service emits all three signals through one SDK (OpenTelemetry is the common vendor-neutral choice) to a local collector, so app code does not care where data ends up." },
+        { "edges": [1], "text": "**Metrics** are pre-aggregated counters and histograms: request rate, error count and latency per route and status. They are cheap to keep for months and fast to query, which is why alerts run on them." },
+        { "edges": [2], "text": "**Logs** are structured JSON events. Every line carries the request's `trace_id`, so one search returns everything that happened to one request." },
+        { "edges": [3], "text": "**Traces** are trees of spans, one per unit of work, with timings. They are usually sampled because storing every span is expensive." },
+        { "edges": [4, 5], "text": "Alerts evaluate an SLO burn rate on the metrics and page a human only when users are affected." },
+        { "edges": [6, 7], "text": "The on-call engineer opens an example trace to find the slow hop, then searches logs by its `trace_id` for the error detail." }
+      ]
+    },
+    {
+      "id": "obs-traceparent",
+      "type": "sequence",
+      "title": "Propagating W3C trace context across services",
+      "alt": "Sequence diagram. A browser calls the gateway, which starts trace T1 and calls orders with a traceparent header. Orders creates a child span and calls payments with a new traceparent carrying the same trace id and its own span id. Each service reports its spans to the collector, which assembles them into one trace.",
+      "caption": "The trace id stays the same end to end; only the parent span id changes at each hop. Any service that drops the header breaks the trace in two.",
+      "actors": [
+        { "id": "client", "label": "Browser" },
+        { "id": "gw", "label": "Gateway" },
+        { "id": "orders", "label": "Orders" },
+        { "id": "pay", "label": "Payments" },
+        { "id": "col", "label": "Collector" }
+      ],
+      "messages": [
+        { "from": "client", "to": "gw", "label": "POST /orders", "note": "No trace context arrives, so the gateway starts a new trace with a random 16-byte trace id, T1." },
+        { "from": "gw", "to": "orders", "label": "traceparent: 00-T1-S1-01", "note": "Format: version, trace id (32 hex), parent span id (16 hex), flags. Flag 01 means sampled." },
+        { "from": "orders", "to": "pay", "label": "traceparent: 00-T1-S2-01", "note": "Orders made its own span S2 as a child of S1 and passes S2 as the new parent. The trace id T1 is unchanged." },
+        { "from": "pay", "to": "orders", "label": "200 (span S3 done)", "style": "reply" },
+        { "from": "orders", "to": "gw", "label": "201 Created", "style": "reply" },
+        { "from": "gw", "to": "client", "label": "201 + x-request-id: T1", "style": "reply", "note": "Returning the id lets support find this exact request when a user reports a problem." },
+        { "from": "pay", "to": "col", "label": "span S3 (parent S2)", "style": "async" },
+        { "from": "orders", "to": "col", "label": "span S2 (parent S1)", "style": "async" },
+        { "from": "gw", "to": "col", "label": "span S1 (root)", "style": "async", "note": "The collector rebuilds the tree from parent ids: S1 → S2 → S3, all under trace T1." }
+      ]
+    },
+    {
+      "id": "obs-cardinality",
+      "type": "bars",
+      "title": "How labels multiply time series for one metric",
+      "alt": "Bar chart of time series created by one request counter. Method and status alone: 25 series. Adding region: 100. Adding a route label with 50 routes: 5,000. Adding a user id label with a million users: 5 billion. Only the last bar is visible at this scale.",
+      "caption": "Simple multiplication of label values (5 methods × 5 statuses × 4 regions × 50 routes × 1M users). Each label multiplies the series count, so ids belong in logs and traces, never in metric labels.",
+      "unit": "time series",
+      "bars": [
+        { "label": "method × status", "value": 25 },
+        { "label": "+ region (4)", "value": 100 },
+        { "label": "+ route (50)", "value": 5000 },
+        { "label": "+ user_id (1M)", "value": 5000000000, "highlight": true }
+      ]
+    },
+    {
+      "id": "obs-alerting",
+      "type": "compare",
+      "title": "Alerting on causes versus on symptoms",
+      "alt": "Side-by-side comparison. Cause-based alerting pages on high CPU, one pod restart and a full disk queue, none of which say whether users are affected, and the on-call is woken by noise. Symptom-based alerting pages only when the checkout error-rate SLO is burning fast, and shows causes on a dashboard instead.",
+      "caption": "Page on what users feel. Causes go on dashboards and tickets, where they help diagnose without waking anyone.",
+      "before": {
+        "label": "Page on every cause",
+        "nodes": [
+          { "id": "cpu", "label": "CPU > 80%", "kind": "bad", "col": 0, "row": 0 },
+          { "id": "pod", "label": "Pod restarted", "kind": "bad", "col": 0, "row": 1 },
+          { "id": "q", "label": "Queue depth up", "kind": "bad", "col": 0, "row": 2 },
+          { "id": "page", "label": "Pager", "kind": "client", "col": 2, "row": 1, "sub": "3 pages, 0 impact" }
+        ],
+        "edges": [
+          { "from": "cpu", "to": "page", "style": "fail" },
+          { "from": "pod", "to": "page", "style": "fail" },
+          { "from": "q", "to": "page", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Page on SLO burn",
+        "nodes": [
+          { "id": "sli", "label": "Checkout SLI", "kind": "service", "col": 0, "row": 0, "sub": "good / total" },
+          { "id": "burn", "label": "Burn > 14.4x", "kind": "decision", "col": 1, "row": 0, "sub": "1h and 5m" },
+          { "id": "page", "label": "Pager", "kind": "good", "col": 2, "row": 0, "sub": "users affected" },
+          { "id": "dash", "label": "Cause dashboard", "kind": "note", "col": 1, "row": 1, "sub": "CPU, pods, queue" }
+        ],
+        "edges": [
+          { "from": "sli", "to": "burn" },
+          { "from": "burn", "to": "page", "label": "page" },
+          { "from": "burn", "to": "dash", "label": "link", "style": "async" }
+        ]
+      }
+    },
+    {
+      "id": "obs-error-budget",
+      "type": "timeline",
+      "title": "A month spending a 99.9% error budget",
+      "alt": "Timeline of an illustrative 30-day window for a 99.9% availability SLO, which allows about 43 minutes of failure. A bad deploy on day 4 burns 12 minutes. A burn-rate alert fires and the deploy is rolled back. A dependency incident on day 18 burns 25 minutes. With little budget left, the team freezes risky launches until the window rolls forward.",
+      "caption": "The budget turns reliability into a shared number: when it runs low, the team slows feature risk; when it is healthy, it can ship faster.",
+      "events": [
+        { "at": "Day 1", "label": "SLO 99.9% of requests succeed over 30 days. Budget: 0.1%, about 43 minutes.", "kind": "trigger" },
+        { "at": "Day 4, 10:02", "label": "A deploy raises the 5xx rate to 2% for checkout.", "kind": "impact" },
+        { "at": "Day 4, 10:06", "label": "The fast-burn alert fires: budget is burning at more than 14 times the sustainable rate.", "kind": "detect" },
+        { "at": "Day 4, 10:14", "label": "Rollback. About 12 minutes of budget spent.", "kind": "mitigate" },
+        { "at": "Day 18", "label": "A dependency outage burns about 25 minutes. Roughly 6 minutes remain.", "kind": "impact" },
+        { "at": "Day 18", "label": "Budget policy: risky launches wait; the team builds a fallback for the dependency.", "kind": "mitigate" },
+        { "at": "Day 31+", "label": "Day 4 rolls out of the window, budget recovers, launches resume.", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "obs-signal-cost",
+      "type": "chart",
+      "title": "Detail versus cost of each signal",
+      "alt": "Trade-off chart with per-request detail on the vertical axis and cost per request on the horizontal axis. Aggregated metrics are cheapest with the least detail. Sampled traces and structured logs sit in the middle. Full unsampled traces and verbose debug logs are the most expensive.",
+      "caption": "Positions are a rough guide. Pay for detail where it answers questions: metrics everywhere, structured logs at boundaries, sampled traces, and keep errors and slow requests.",
+      "x": { "label": "Cost per request", "low": "tiny", "high": "high" },
+      "y": { "label": "Per-request detail", "low": "aggregate", "high": "full" },
+      "points": [
+        { "label": "RED metrics", "x": 1, "y": 2, "highlight": true },
+        { "label": "Sampled traces", "x": 3, "y": 7 },
+        { "label": "Structured logs", "x": 5, "y": 5 },
+        { "label": "Debug logs", "x": 8, "y": 4 },
+        { "label": "Every span kept", "x": 7, "y": 9 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Log structured events with the request's ids",
+      "bad": {
+        "label": "Free-text line with nothing to join on",
+        "lang": "js",
+        "code": "console.log('payment failed for user ' + user.email + ': ' + err)"
+      },
+      "good": {
+        "label": "One JSON event per outcome, with trace and request ids",
+        "lang": "js",
+        "code": "log.error({\n  event: 'payment_failed',\n  trace_id: span.spanContext().traceId,\n  request_id: req.id,\n  user_id: user.id,          // an id, not the email\n  order_id: order.id,\n  provider: 'card-network',\n  error_code: err.code,\n  duration_ms: Date.now() - started,\n})"
+      },
+      "why": "Fields can be filtered and counted (\"all payment_failed by error_code in the last hour\") instead of grepped. The trace id joins this line to the trace and to every other service's logs for the same request. Using ids instead of an email keeps personal data out of the log store."
+    },
+    {
+      "title": "RED metrics with bounded labels",
+      "bad": {
+        "label": "A label per user and per raw path",
+        "lang": "js",
+        "code": "requests.inc({ path: req.url, user: req.user.id }) // /orders/8812?x=1"
+      },
+      "good": {
+        "label": "Route template and status class only",
+        "lang": "js",
+        "code": "const labels = { route: req.route.path, method: req.method, status: statusClass(res.statusCode) }\nrequests.inc(labels)                         // Rate\nif (res.statusCode >= 500) errors.inc(labels) // Errors\nlatency.observe(labels, elapsedSeconds)      // Duration (histogram)"
+      },
+      "why": "Every distinct label combination is a new time series. Raw URLs and user ids make the count unbounded, which slows queries and can blow up the bill. Route templates such as `/orders/:id` keep it to a few hundred series, and a histogram gives percentiles."
+    }
+  ],
+  "checklist": [
+    "Every service exports RED metrics (rate, errors, duration as a histogram) per route, and USE metrics for its pools, queues and hosts.",
+    "Metric labels have bounded values: route templates and status classes, never user ids, emails or raw URLs.",
+    "Logs are structured (JSON), one event per meaningful outcome, and include `trace_id` and a request id.",
+    "Trace context is propagated on every hop, including queues and async jobs, using W3C `traceparent`.",
+    "Each user-facing journey has an SLI and an SLO with a written error-budget policy.",
+    "Pages fire on symptoms (SLO burn rate, e.g. fast and slow windows); causes go to dashboards and tickets.",
+    "Every alert links to a runbook and to the dashboard that explains it.",
+    "Sampling keeps all errors and slow requests even when routine traces are dropped."
+  ],
+  "antipatterns": [
+    {
+      "title": "Alerting on averages",
+      "bad": {
+        "label": "Alert when mean latency > 500 ms",
+        "lang": "yaml",
+        "code": "alert: SlowCheckout\nexpr: avg(checkout_latency_seconds) > 0.5"
+      },
+      "better": {
+        "label": "Alert on the share of slow requests against the SLO",
+        "lang": "yaml",
+        "code": "alert: CheckoutLatencyBudgetBurn\n# SLI: fraction of requests slower than 300 ms\nexpr: slow_ratio_1h > 14 * 0.001 and slow_ratio_5m > 14 * 0.001"
+      },
+      "why": "An average hides the tail: 95% fast requests and 5% at 10 seconds can average well under the line while many users wait. A ratio of good events matches what users feel and plugs directly into an error budget."
+    },
+    {
+      "title": "Dropping trace context at async boundaries",
+      "bad": {
+        "label": "Publish a message with only the payload",
+        "lang": "js",
+        "code": "await queue.publish('order.created', { orderId })"
+      },
+      "better": {
+        "label": "Carry traceparent in message headers",
+        "lang": "js",
+        "code": "const headers = {}\npropagation.inject(context.active(), headers) // adds traceparent\nawait queue.publish('order.created', { orderId }, { headers })"
+      },
+      "why": "Without the header the consumer starts a fresh trace, so the slow email step can never be connected to the order that caused it. Queues, cron jobs and webhooks all need context passed explicitly."
+    },
+    {
+      "title": "Logging everything at debug level in production",
+      "bad": {
+        "label": "Verbose logs on every call",
+        "lang": "js",
+        "code": "log.debug('entering getPrice', { args })\nlog.debug('cache lookup', { key })\nlog.debug('leaving getPrice', { result })"
+      },
+      "better": {
+        "label": "One wide event per request, plus spans for timing",
+        "lang": "js",
+        "code": "log.info({ event: 'price_served', trace_id, sku, cache_hit, duration_ms })"
+      },
+      "why": "Line-by-line debug logs cost money to ship and store, bury the useful lines and often leak arguments that contain personal data. A single event with the right fields answers more questions, and spans already record timing."
+    }
+  ],
+  "interview": [
+    "In any design, add an observability section: \"Each service exports RED metrics, structured logs with a trace id, and sampled traces via OpenTelemetry.\"",
+    "Define the SLI and SLO for the main user journey out loud, e.g. \"99.9% of checkout requests succeed in under 500 ms over 30 days,\" and say what the error budget is for.",
+    "Say you page on symptoms (SLO burn rate) and keep causes such as CPU on dashboards. Interviewers listen for this distinction.",
+    "Mention cardinality: user ids go in logs and traces, never in metric labels.",
+    "At SSE level, cover propagation through queues, tail-based sampling that keeps errors, and multi-window burn-rate alerts."
+  ],
+  "quiz": [
+    {
+      "question": "Which signals make up the RED method?",
+      "choices": ["Rate, Errors, Duration", "Reads, Evictions, Disk", "Requests, Exceptions, Deploys"],
+      "answer": 0,
+      "explain": "RED is for request-driven services: how many requests, how many fail, how long they take. USE (Utilization, Saturation, Errors) is its partner for resources such as CPUs, disks and pools."
+    },
+    {
+      "question": "An SLO is 99.9% of requests succeeding over 30 days. Roughly how much full downtime does the error budget allow?",
+      "choices": ["About 4 minutes", "About 43 minutes", "About 7 hours"],
+      "answer": 1,
+      "explain": "30 days is 43,200 minutes; 0.1% of that is 43.2 minutes. 99.99% would allow about 4 minutes, and 99% about 7 hours."
+    },
+    {
+      "question": "In a W3C traceparent header, what stays the same across every hop of one request?",
+      "choices": ["The parent span id", "The flags byte", "The trace id"],
+      "answer": 2,
+      "explain": "The trace id names the whole request. Each service creates its own span and sends that span's id as the new parent id, so the parent id changes at every hop."
+    },
+    {
+      "question": "Why is `user_id` a bad metric label?",
+      "choices": ["Metrics cannot store strings", "Each distinct value creates a new time series, so the series count becomes unbounded", "It makes counters decrease"],
+      "answer": 1,
+      "explain": "Series count is the product of label values. A million users multiplies every metric by a million. Put ids in logs and traces, which are built for per-event detail."
+    },
+    {
+      "question": "Which alert should page the on-call engineer at night?",
+      "choices": ["CPU on one host above 85%", "Checkout SLO burning budget 14 times faster than sustainable", "A pod restarted once"],
+      "answer": 1,
+      "explain": "Page on symptoms users feel. High CPU or one restart may cause no user impact; a fast SLO burn means users are failing now. Causes belong on dashboards to help diagnosis."
+    }
+  ],
+  "practice": {
+    "prompt": "You own a checkout flow across gateway, cart, orders and payments services. Users report \"sometimes it's slow\" but dashboards look fine. Design the observability you would add.",
+    "answer": "Define the SLI first: the share of checkout requests that succeed in under 1 s, measured at the gateway; set an SLO such as 99.5% over 28 days. Add RED metrics per service with latency histograms and bounded labels (route template, method, status class), plus USE metrics for connection pools and queues. Averages explain why dashboards \"look fine\", so chart p95/p99 from the histograms. Adopt OpenTelemetry: propagate W3C traceparent through every HTTP call and through queue message headers, and use tail-based sampling that keeps every error and every request over 1 s. Emit one structured log event per request outcome with trace_id, request_id, route, status and duration, using ids rather than personal data. Return the request id to the client so support can look up a user's report. Alert with multi-window burn-rate rules on the SLO and link each alert to a runbook and a dashboard; keep CPU and pod alerts as non-paging.",
+    "rubric": [
+      "Defines an SLI and SLO for the user journey before choosing tools",
+      "Uses histograms and percentiles, explaining why averages hide the problem",
+      "Propagates trace context across HTTP and async hops",
+      "Sampling keeps errors and slow requests",
+      "Structured logs joined by trace or request id, with bounded metric labels",
+      "Pages on SLO burn rate, not on causes"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "ml-deployment-monitoring"],
+    "cases": ["metrics-monitoring", "ad-click-aggregation"],
+    "guides": ["circuit-breakers", "graceful-degradation", "retries-backoff", "api-error-format"]
+  }
+}

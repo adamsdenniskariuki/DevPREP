@@ -1,0 +1,292 @@
+{
+  "id": "api-versioning",
+  "kind": "guide",
+  "topic": "api",
+  "level": "sse",
+  "title": "API versioning and evolution without breaking clients",
+  "summary": "Evolve APIs with additive changes, know exactly what counts as breaking, version only when you must, and retire old versions with deprecation signals, usage data and a Sunset date.",
+  "minutes": 16,
+  "principle": "Treat a published API as a promise. Make additive, backward-compatible changes by default, keep a written list of what is breaking, and only introduce a new version when a breaking change is truly worth it. When you do, run old and new side by side, measure who still uses the old one, announce deprecation in-band and out-of-band, and remove it only after a published sunset date.",
+  "why": "You do not control when clients upgrade. Mobile apps stay installed for years, partners ship on their own schedules, and internal services deploy independently. A change that is harmless for your newest client can crash an old one, so the safe default is: the server may add, but must not take away or change meaning.\n\nVersions are expensive. Every live version is code to maintain, test, secure and document. Mature APIs therefore keep the number of major versions very small and lean on additive evolution, tolerant clients and contract tests. Where breaking changes are unavoidable, the common patterns are a version in the URL (`/v2/orders`), a version header or media type, or date-based versions pinned per account (Stripe is a well-known example).\n\nRetirement needs signals machines can read. RFC 8594 defines the `Sunset` response header, which carries the date after which a resource is expected to stop responding; the `Deprecation` header (RFC 9745) marks a resource as deprecated. Pair them with a `Link` to migration docs, direct emails to the owners of real traffic, and usage dashboards, so removal day is a non-event.",
+  "diagrams": [
+    {
+      "id": "av-change-check",
+      "type": "flow",
+      "title": "Is this change breaking?",
+      "alt": "Decision flow for a proposed API change. Adding an optional request field, a new response field or a new endpoint is additive and ships in the current version. Removing or renaming a field, changing a type or meaning, making an input required or tightening validation is breaking and needs a new version or a migration path. New enum values are flagged as risky for strict clients.",
+      "caption": "Most changes can be made additive. Reserve new versions for the ones on the right.",
+      "nodes": [
+        { "id": "change", "label": "Proposed change", "kind": "state", "col": 0, "row": 2 },
+        { "id": "q", "label": "Old client OK?", "kind": "decision", "col": 1, "row": 2 },
+        { "id": "add", "label": "Additive", "kind": "good", "col": 2, "row": 0, "sub": "new optional field" },
+        { "id": "enum", "label": "New enum value", "kind": "note", "col": 2, "row": 4, "sub": "breaks strict code" },
+        { "id": "brk", "label": "Breaking", "kind": "bad", "col": 3, "row": 2, "sub": "remove, rename" },
+        { "id": "ship", "label": "Ship in place", "kind": "good", "col": 4, "row": 0 },
+        { "id": "ver", "label": "New version", "kind": "service", "col": 4, "row": 2, "sub": "or migration path" }
+      ],
+      "edges": [
+        { "from": "change", "to": "q" },
+        { "from": "q", "to": "add", "label": "yes" },
+        { "from": "q", "to": "brk", "label": "no", "style": "fail" },
+        { "from": "q", "to": "enum", "label": "depends", "style": "async" },
+        { "from": "add", "to": "ship" },
+        { "from": "brk", "to": "ver" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Ask one question about every change: would a client built against today's contract still work, unmodified?" },
+        { "edges": [1, 4], "text": "New optional request fields, new response fields and new endpoints are additive. Ship them in the current version." },
+        { "edges": [3], "text": "A new enum value is technically additive, but a client with an exhaustive switch or strict decoder can fail. Document that enums may grow and make clients handle unknown values." },
+        { "edges": [2, 5], "text": "Removing, renaming, changing a type or meaning, making an input required or tightening validation all break someone. They need a new version or a dual-write migration." }
+      ]
+    },
+    {
+      "id": "av-side-by-side",
+      "type": "flow",
+      "title": "Serving v1 and v2 from one core",
+      "alt": "Architecture diagram. Old clients call v1 and new clients call v2 through a gateway that routes by URL prefix. v2 calls the core order service directly, while v1 goes through a thin adapter that translates old request and response shapes to v2. Usage metrics per version and per client feed a deprecation dashboard.",
+      "caption": "Keep one implementation and translate at the edge, so old versions cost an adapter, not a fork.",
+      "nodes": [
+        { "id": "old", "label": "Old clients", "kind": "client", "col": 0, "row": 0 },
+        { "id": "new", "label": "New clients", "kind": "client", "col": 0, "row": 2 },
+        { "id": "gw", "label": "Gateway", "kind": "lb", "col": 1, "row": 1, "sub": "routes /v1, /v2" },
+        { "id": "ad", "label": "v1 adapter", "kind": "service", "col": 2, "row": 0, "sub": "maps old shapes" },
+        { "id": "core", "label": "Orders core", "kind": "service", "col": 3, "row": 1, "sub": "speaks v2" },
+        { "id": "db", "label": "Orders DB", "kind": "db", "col": 4, "row": 1 },
+        { "id": "m", "label": "Usage by version", "kind": "storage", "col": 1, "row": 3, "sub": "per client id" }
+      ],
+      "edges": [
+        { "from": "old", "to": "gw", "label": "/v1/orders" },
+        { "from": "new", "to": "gw", "label": "/v2/orders" },
+        { "from": "gw", "to": "ad", "label": "v1" },
+        { "from": "ad", "to": "core", "label": "as v2" },
+        { "from": "gw", "to": "core", "label": "v2" },
+        { "from": "core", "to": "db" },
+        { "from": "gw", "to": "m", "label": "count calls", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Both versions are live at once. Clients choose by URL prefix (or header), and nothing forces an old client to move overnight." },
+        { "edges": [2, 3], "text": "v1 is a translation layer: rename fields, fill defaults, convert errors. Business logic lives in one place." },
+        { "edges": [4, 5], "text": "v2 talks to the core directly. New features land only here, which nudges clients to migrate." },
+        { "edges": [6], "text": "The gateway records calls per version and per client. That list is who you email, and it tells you when sunset is safe." }
+      ]
+    },
+    {
+      "id": "av-sunset-timeline",
+      "type": "timeline",
+      "title": "Retiring v1 without surprises",
+      "alt": "Timeline of a version retirement. v2 launches, then v1 is marked deprecated with Deprecation, Sunset and Link headers. Owners of remaining traffic are contacted, scheduled brownouts reveal hidden callers, a last stragglers list is resolved, and v1 is removed on the published sunset date, after which it returns 410 Gone.",
+      "caption": "An illustrative schedule. The point is the order of steps and that every step is visible to clients before removal.",
+      "events": [
+        { "at": "Month 0", "label": "v2 generally available; v1 still fully supported", "kind": "trigger" },
+        { "at": "Month 1", "label": "v1 responses carry Deprecation, Sunset (RFC 8594) and a Link to the migration guide", "kind": "detect" },
+        { "at": "Month 2", "label": "Usage dashboard per client id; owners of top callers contacted directly", "kind": "detect" },
+        { "at": "Month 6", "label": "Short scheduled brownouts of v1 expose callers nobody knew about", "kind": "impact" },
+        { "at": "Month 8", "label": "Remaining stragglers migrated or given a dated exception", "kind": "mitigate" },
+        { "at": "Month 9", "label": "Sunset date reached: v1 returns 410 Gone with a link to docs", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "av-tolerant",
+      "type": "compare",
+      "title": "Strict reader vs tolerant reader",
+      "alt": "Side-by-side comparison. The server adds a new field called loyaltyTier to a response. A strict client that rejects unknown fields fails to parse the response and crashes. A tolerant client ignores fields it does not know and keeps working.",
+      "caption": "Additive changes are only safe if clients ignore what they do not understand.",
+      "before": {
+        "label": "Strict client",
+        "nodes": [
+          { "id": "s", "label": "API adds field", "kind": "service", "col": 0, "row": 0, "sub": "loyaltyTier" },
+          { "id": "c", "label": "Strict decoder", "kind": "client", "col": 1, "row": 0, "sub": "unknown = error" },
+          { "id": "x", "label": "App crashes", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "s", "to": "c", "label": "200 JSON" },
+          { "from": "c", "to": "x", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Tolerant client",
+        "nodes": [
+          { "id": "s", "label": "API adds field", "kind": "service", "col": 0, "row": 0, "sub": "loyaltyTier" },
+          { "id": "c", "label": "Tolerant reader", "kind": "client", "col": 1, "row": 0, "sub": "ignores unknown" },
+          { "id": "ok", "label": "Keeps working", "kind": "good", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "s", "to": "c", "label": "200 JSON" },
+          { "from": "c", "to": "ok" }
+        ]
+      }
+    },
+    {
+      "id": "av-contract-tests",
+      "type": "sequence",
+      "title": "Consumer-driven contract tests in CI",
+      "alt": "Sequence diagram. The consumer's CI publishes a contract describing the requests it makes and the fields it reads to a contract broker. When the provider changes, its CI fetches all consumer contracts and verifies them against the new build. One contract fails because a field was removed, so the deploy gate blocks the release.",
+      "caption": "The provider learns it would break a real consumer before deploying, not from an incident.",
+      "actors": [
+        { "id": "cons", "label": "Consumer CI" },
+        { "id": "broker", "label": "Contract broker" },
+        { "id": "prov", "label": "Provider CI" },
+        { "id": "gate", "label": "Deploy gate" }
+      ],
+      "messages": [
+        { "from": "cons", "to": "broker", "label": "publish contract (reads id, total)", "note": "The contract lists only what this consumer actually sends and reads, not the whole schema." },
+        { "from": "prov", "to": "broker", "label": "fetch all consumer contracts", "note": "On every provider change, CI pulls the contracts of every known consumer." },
+        { "from": "broker", "to": "prov", "label": "3 contracts", "style": "reply", "note": "Provider CI replays each recorded interaction against the build under test." },
+        { "from": "prov", "to": "broker", "label": "result: checkout contract FAILS", "style": "fail", "note": "The change removed `total`, which the checkout consumer still reads." },
+        { "from": "gate", "to": "broker", "label": "can this version deploy?" },
+        { "from": "broker", "to": "gate", "label": "no: breaks checkout", "style": "fail", "note": "The release is blocked. Keep the field, or coordinate a migration first." }
+      ]
+    },
+    {
+      "id": "av-strategy-chart",
+      "type": "chart",
+      "title": "Versioning strategies compared",
+      "alt": "Trade-off chart with ease for clients and operators on the horizontal axis and the granularity of change the strategy allows on the vertical axis. Additive-only evolution is easiest but cannot break anything. URL path versions are easy to see and route but coarse. Header and media-type versions are finer but less visible. Per-account date versions allow the finest changes at the highest server cost.",
+      "caption": "Positions are a rough guide. Most teams combine additive evolution with rare, coarse major versions.",
+      "x": { "label": "Ease for clients and ops", "low": "harder", "high": "easier" },
+      "y": { "label": "Granularity of change", "low": "coarse", "high": "fine" },
+      "points": [
+        { "label": "Additive only", "x": 9, "y": 2, "highlight": true },
+        { "label": "URL path /v2", "x": 8, "y": 4, "highlight": true },
+        { "label": "Version header", "x": 5, "y": 6 },
+        { "label": "Media type", "x": 3, "y": 7 },
+        { "label": "Dated, per account", "x": 4, "y": 9 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Rename a field without breaking anyone",
+      "bad": {
+        "label": "Rename in place",
+        "lang": "json",
+        "code": "// before\n{ \"id\": \"o_42\", \"total\": 4000 }\n// after deploy: every client reading `total` breaks\n{ \"id\": \"o_42\", \"amountCents\": 4000 }"
+      },
+      "good": {
+        "label": "Expand, migrate, then contract",
+        "lang": "json",
+        "code": "// step 1: add the new field, keep the old one\n{ \"id\": \"o_42\", \"total\": 4000, \"amountCents\": 4000 }\n// step 2: docs + Deprecation on `total`, track readers\n// step 3: remove `total` only in the next major version"
+      },
+      "why": "Expand-and-contract turns one breaking change into an additive change plus a scheduled removal. Clients migrate on their own timeline while the server serves both shapes."
+    },
+    {
+      "title": "Tell clients a version is going away, in the response itself",
+      "bad": {
+        "label": "Only a blog post",
+        "lang": "http",
+        "code": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n(announcement lives on a blog nobody's code reads)"
+      },
+      "good": {
+        "label": "Machine-readable deprecation signals",
+        "lang": "http",
+        "code": "HTTP/1.1 200 OK\nDeprecation: @1790812800\nSunset: Wed, 31 Mar 2027 23:59:59 GMT\nLink: <https://api.example.com/docs/migrate-v2>; rel=\"deprecation\"\n\n// after the sunset date\nHTTP/1.1 410 Gone"
+      },
+      "why": "Headers reach the code and the logs of every caller, including integrations whose owners left. Client libraries and gateways can surface warnings automatically. Use the exact header syntax your platform supports and link to human docs."
+    }
+  ],
+  "checklist": [
+    "The team has a written list of breaking changes: removing or renaming fields or endpoints, changing types, units or meaning, making inputs required, tightening validation, changing defaults, error codes or auth.",
+    "Changes are additive by default; renames use expand-migrate-contract.",
+    "Clients are documented to ignore unknown fields and to handle unknown enum values.",
+    "Contract tests (consumer-driven or schema diff) run in the provider's CI and can block a deploy.",
+    "Each request records a client id and version, so you know exactly who uses what.",
+    "Old versions are adapters over one core implementation, not forks.",
+    "Deprecation is announced in-band (Deprecation, Sunset, Link headers) and out-of-band (email, changelog), with a published date and a policy for minimum support length.",
+    "After sunset the old version returns 410 Gone with a pointer to docs, not a confusing 404 or 500."
+  ],
+  "antipatterns": [
+    {
+      "title": "Strict clients that reject unknown fields",
+      "bad": { "label": "Every additive change breaks the client", "diagram": "av-tolerant" },
+      "better": {
+        "label": "Configure decoders to ignore unknown fields",
+        "lang": "ts",
+        "code": "type Order = { id: string; amountCents: number }\nfunction parseOrder(raw: unknown): Order {\n  const o = raw as Record<string, unknown>\n  // read only what we need; ignore anything new\n  return { id: String(o.id), amountCents: Number(o.amountCents) }\n}"
+      },
+      "why": "Server additivity and client tolerance are two halves of one rule. If either side is strict, the cheapest kind of evolution stops being safe."
+    },
+    {
+      "title": "A new major version for every change",
+      "bad": {
+        "label": "v1 … v7 all live",
+        "lang": "text",
+        "code": "/v1/orders  /v2/orders  /v3/orders  /v4/orders\n/v5/orders  /v6/orders  /v7/orders\nEach a separate code path, each with its own bugs."
+      },
+      "better": {
+        "label": "Additive evolution, rare majors",
+        "lang": "text",
+        "code": "/v1/orders  evolves additively for years\n/v2/orders  only for a real redesign\nAt most two majors live; v1 has a published sunset."
+      },
+      "why": "Every live version multiplies testing, security patching and support load. Versioning is a tool for rare breaking redesigns, not a substitute for additive change."
+    },
+    {
+      "title": "Removing a version on a date nobody heard about",
+      "bad": {
+        "label": "Switch off and wait for complaints",
+        "lang": "text",
+        "code": "Friday: delete /v1 routes\nMonday: partner checkout down, support queue on fire,\nemergency rollback"
+      },
+      "better": {
+        "label": "Measure, signal, brown out, then remove",
+        "lang": "text",
+        "code": "1. Usage per client id shows who still calls v1\n2. Deprecation + Sunset headers, direct emails\n3. Short scheduled brownouts flush out unknown callers\n4. Remove on the published date; return 410 Gone"
+      },
+      "why": "The callers you do not know about are the ones that break. Usage data finds them, headers reach their code, and brownouts surface the rest while rollback is still a config change."
+    }
+  ],
+  "interview": [
+    "Say your default out loud: \"Additive changes only; clients must ignore unknown fields; a new major version only for a real redesign.\"",
+    "List three or four concrete breaking changes from memory (remove or rename a field, change a type, make an input required, tighten validation).",
+    "Describe a retirement plan with numbers: usage per client, Deprecation and Sunset headers, brownouts, a minimum support window and 410 after sunset.",
+    "At SSE level, talk about org-wide policy: an API review step, contract tests that block deploys, and one core implementation with thin version adapters."
+  ],
+  "quiz": [
+    {
+      "question": "Which of these changes is backward compatible for well-behaved clients?",
+      "choices": ["Renaming a response field", "Adding a new optional response field", "Making an optional request field required", "Changing a price field from cents to dollars"],
+      "answer": 1,
+      "explain": "Clients that ignore unknown fields keep working when a field is added. The others remove something clients depend on or change its meaning, even if the JSON type stays the same."
+    },
+    {
+      "question": "What does the Sunset HTTP header (RFC 8594) communicate?",
+      "choices": ["The time the server last restarted", "The date after which the resource is expected to stop responding", "How long the response may be cached", "When the client should retry"],
+      "answer": 1,
+      "explain": "Sunset carries an HTTP date for planned retirement. Retry timing is Retry-After, caching is Cache-Control. Pair Sunset with a Link to migration docs."
+    },
+    {
+      "question": "Why is adding a new enum value sometimes a breaking change?",
+      "choices": ["JSON cannot represent enums", "Clients with exhaustive switches or strict decoders may fail on an unknown value", "Enums must be sorted", "It changes the URL"],
+      "answer": 1,
+      "explain": "On the wire it is additive, but strict clients treat unknown values as errors. Document that enums can grow and tell clients to map unknown values to a safe default."
+    },
+    {
+      "question": "What problem do consumer-driven contract tests solve?",
+      "choices": ["They load test the provider", "They tell the provider, before deploy, whether a change breaks what real consumers send and read", "They generate client SDKs", "They replace integration environments entirely"],
+      "answer": 1,
+      "explain": "Each consumer publishes the interactions it relies on, and the provider's CI verifies its new build against all of them. A failing contract blocks the release instead of causing an incident."
+    },
+    {
+      "question": "You must rename `total` to `amountCents`. What is the safest approach?",
+      "choices": ["Rename it and tell clients in the changelog", "Add `amountCents`, return both, deprecate `total`, remove it in the next major version", "Start v2 immediately for this one field", "Return `total` only to old app versions by sniffing User-Agent"],
+      "answer": 1,
+      "explain": "Expand-migrate-contract makes the change additive first. Clients move at their own pace, and the old field disappears only with a planned, signalled version change."
+    }
+  ],
+  "practice": {
+    "prompt": "Your public payments API is at v1 with about 2,000 integrations. Product wants to change how amounts and currencies are represented, which is a breaking change. Walk through how you would ship it and retire v1.",
+    "answer": "First try to make it additive: add a new `amount { value, currency }` object alongside the old fields and see whether that covers the need. If a real redesign is required, launch v2 behind the gateway with one core implementation and a thin v1 adapter, so business logic is not forked. Add contract tests from the main SDKs and top partners to CI. Tag every request with client id and version and build a usage dashboard. Announce with a changelog, emails to owners of real traffic, a migration guide and SDK releases; v1 responses get Deprecation, Sunset and Link headers. Commit to a minimum support window (for example 12 months for a public payments API) and publish the sunset date. Track migration weekly, reach out to the long tail, run short scheduled brownouts near the end to find unknown callers, and agree dated exceptions for critical partners. On the sunset date v1 returns 410 Gone with a docs link. Afterwards remove the adapter.",
+    "rubric": [
+      "Tries an additive change before a new version",
+      "Runs v1 and v2 side by side over one core with an adapter",
+      "Measures usage per client and version",
+      "Uses in-band (Deprecation, Sunset, Link) and out-of-band signals with a published date",
+      "Mentions contract tests or schema diff checks in CI",
+      "Plans brownouts, exceptions and a clean 410 after sunset"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-reliability-observability"],
+    "cases": ["payments"],
+    "guides": ["api-styles-rest-grpc", "resource-naming", "api-error-format", "observability", "webhooks"]
+  }
+}

@@ -1,0 +1,242 @@
+{
+  "id": "cloudflare-regex-outage-2019",
+  "kind": "case",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "Cloudflare, July 2019: one regex, every CPU, worldwide",
+  "summary": "A new WAF rule with a catastrophically backtracking regular expression shipped to every Cloudflare server in seconds, pinned the CPUs that serve HTTP traffic and caused global 502s for 27 minutes.",
+  "minutes": 15,
+  "organisation": "Cloudflare",
+  "year": 2019,
+  "problem": "Cloudflare's Web Application Firewall (WAF) Managed Rules are updated constantly to respond to new attacks; the post counts 476 change requests in the previous 60 days, about one every three hours. Because new vulnerabilities are exploited quickly, rule changes were allowed to go to the whole network at once through **Quicksilver**, Cloudflare's replicated key-value store that pushes configuration to every machine in its 180+ cities in seconds.\n\nOn 2 July 2019 an engineer shipped a minor change to the cross-site scripting (XSS) rules. It was deployed in \"simulate\" mode, in which traffic passes through the rule but nothing is blocked; simulated rules still execute. One rule contained a regular expression that backtracked enormously. The WAF is written in Lua and uses PCRE, a backtracking regex engine with no protection against runaway patterns. Every CPU core handling HTTP/HTTPS traffic across the network hit nearly 100%, and visitors to every Cloudflare domain got 502 errors from front-line servers that could not reach the overloaded serving processes. Core proxying, CDN and WAF functions were down for 27 minutes.",
+  "constraints": [
+    "WAF rules must ship fast and globally to protect customers from newly published exploits.",
+    "Quicksilver propagates changes to every machine worldwide with a p99 of about 2.29 seconds and averages around 350 changes per second.",
+    "The rule ran inline on the HTTP/HTTPS request path on every server, so any CPU cost was multiplied by all traffic.",
+    "Staff reached internal tools (the control panel, Jira, the build system) through Cloudflare's own Access product, and the customer dashboard and API passed through Cloudflare's edge.",
+    "The rollback plan for a rule required running the complete WAF build twice."
+  ],
+  "decisions": [
+    {
+      "decision": "Allow WAF rule changes to deploy globally in one step, without the staged DOG, PIG and Canary rollout used for other software.",
+      "tradeoff": "Protection against new attacks lands within seconds everywhere, but any bad rule also reaches every server before anyone can notice."
+    },
+    {
+      "decision": "Use a built-in \"global terminate\" kill switch to disable the WAF worldwide at 14:07 UTC.",
+      "tradeoff": "Traffic and CPU recovered within two minutes while other protection kept running, but customers lost WAF protection until the fix was verified at 14:52."
+    },
+    {
+      "decision": "Change the SOP to roll out rules in stages like other software, keeping emergency global deploys only for active attacks.",
+      "tradeoff": "Routine rule changes reach the network more slowly, but a bad rule now meets a dogfooding PoP and canaries first."
+    },
+    {
+      "decision": "Move to a regex engine with run-time guarantees (re2 or the Rust regex crate), restore the CPU-usage protection lost in a refactor, and add per-rule performance profiling to the test suite.",
+      "tradeoff": "Engine migration and rule rewrites cost engineering time, and existing rules may need adapting to a new engine, but no single rule can again consume unbounded CPU."
+    },
+    {
+      "decision": "Add an emergency way to take the Cloudflare dashboard and API off Cloudflare's edge, and automate status page updates.",
+      "tradeoff": "Extra paths to maintain and secure, but customers and staff keep control even when the edge itself is failing."
+    }
+  ],
+  "failures": "Cloudflare lists eleven contributing factors rather than one root cause. Up to the deploy, the process was followed: the pull request was approved, CI built and tested the rules, and a change request with rollout and rollback plans was filed. But the regex could backtrack enormously; a guard against excessive regex CPU had been removed by mistake weeks earlier in a refactor that was meant to reduce WAF CPU; PCRE gives no complexity guarantees; and the test suite checked what rules block and allow but not how much CPU they use. The SOP let a non-emergency rule go global without a staged rollout.\n\nResponse was slowed by the outage itself. The first alert on the global traffic drop fired too late and the status page was not updated quickly enough. Cloudflare Access was down, so staff could not log into the internal control panel; some had lost access because credentials not used recently had been disabled for security. Reaching Jira and the build system needed a rarely used bypass. Customers could not use the dashboard or API, which also run through the edge.",
+  "lessons": [
+    "Fast global configuration is a deployment. Config, rules and feature flags need staged rollout and canaries just like code.",
+    "Anything that runs on the hot path for every request needs a resource budget: test CPU and latency, not only correctness.",
+    "Choose algorithms with worst-case guarantees for untrusted input. Linear-time regex engines remove catastrophic backtracking by design.",
+    "Kill switches work: a per-component global terminate stopped the outage in two minutes once it was used.",
+    "Your incident tooling must not depend on the system that is down. Drill the break-glass path so it is fast when needed.",
+    "Look for multiple contributing causes. A single \"root cause\" hides the missing guards that let a small mistake become global."
+  ],
+  "caveats": "The post does not say exactly when the P0 was declared, when the status page was updated, or how much traffic was lost beyond a verbal report of 80%. The ETAs for profiling and engine migration were plans at the time of writing. Step counts in the bar chart are Cloudflare's numbers for a simplified pattern (`.*.*=.*`), not for the full production rule.",
+  "diagrams": [
+    {
+      "id": "cfr-timeline",
+      "type": "timeline",
+      "title": "2 July 2019 (times UTC)",
+      "alt": "Incident timeline. At 13:31 the rule change is merged, at 13:37 CI passes, and at 13:42 it deploys globally. At 13:45 the first page fires, followed by global 502s and CPU exhaustion. At 14:00 the WAF is identified, at 14:02 a global terminate is proposed, at 14:07 it is executed, at 14:09 traffic and CPU recover, and at 14:52 the WAF is re-enabled.",
+      "caption": "27 minutes from deploy to recovery. The last five, between proposing the kill switch and running it, went largely on getting past Cloudflare's own access problems.",
+      "events": [
+        { "at": "13:31", "label": "Pull request with the XSS rule change is approved and merged", "kind": "trigger" },
+        { "at": "13:37", "label": "TeamCity builds the rules; the WAF test suite passes", "kind": "trigger" },
+        { "at": "13:42", "label": "Change deploys automatically to the whole network via Quicksilver", "kind": "trigger" },
+        { "at": "13:45", "label": "First page: an external synthetic WAF test fails", "kind": "detect" },
+        { "at": "Shortly after", "label": "Global traffic drop alert, widespread 502s, CPU exhaustion reported from PoPs worldwide", "kind": "impact" },
+        { "at": "14:00", "label": "WAF identified as the cause using live CPU data, strace and error logs; attack ruled out", "kind": "detect" },
+        { "at": "14:02", "label": "Team proposes a global terminate of the WAF", "kind": "mitigate" },
+        { "at": "14:02–14:07", "label": "Access is down; staff use a rarely used bypass to reach internal systems", "kind": "impact" },
+        { "at": "14:07", "label": "Global WAF terminate executed", "kind": "mitigate" },
+        { "at": "14:09", "label": "Traffic and CPU back to expected levels worldwide", "kind": "resolve" },
+        { "at": "14:52", "label": "Fix tested in one city with paying customers' traffic removed; WAF re-enabled globally", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "cfr-request-path",
+      "type": "flow",
+      "title": "Where the rule ran and how it broke every request",
+      "alt": "Flow diagram. CI passes the rule and Quicksilver pushes it to every PoP in seconds. A visitor's request reaches a front-line web server, which hands it to the HTTP serving process, which runs the Lua WAF, which runs the new XSS rule. The rule's regex backtracks and pins the CPU, so the front-line server cannot reach the serving process and returns 502.",
+      "caption": "The rule sat on the path of every HTTP request, so its CPU cost was multiplied by all of Cloudflare's traffic at once.",
+      "nodes": [
+        { "id": "user", "label": "Visitor", "kind": "client", "col": 0, "row": 0 },
+        { "id": "front", "label": "Front-line web", "kind": "lb", "col": 1, "row": 0, "sub": "returns 502" },
+        { "id": "proxy", "label": "HTTP serving", "kind": "bad", "col": 2, "row": 0, "sub": "CPU near 100%" },
+        { "id": "waf", "label": "WAF (Lua)", "kind": "service", "col": 3, "row": 0, "sub": "PCRE engine" },
+        { "id": "rule", "label": "New XSS rule", "kind": "bad", "col": 3, "row": 2, "sub": "runaway regex" },
+        { "id": "ci", "label": "CI (TeamCity)", "kind": "worker", "col": 0, "row": 2, "sub": "tests passed" },
+        { "id": "qs", "label": "Quicksilver", "kind": "queue", "col": 1, "row": 2, "sub": "global in seconds" }
+      ],
+      "edges": [
+        { "from": "ci", "to": "qs", "label": "deploy" },
+        { "from": "qs", "to": "rule", "label": "to every PoP", "style": "async" },
+        { "from": "user", "to": "front", "label": "HTTPS" },
+        { "from": "front", "to": "proxy", "label": "can't reach", "style": "fail" },
+        { "from": "proxy", "to": "waf", "label": "inspect" },
+        { "from": "waf", "to": "rule", "label": "backtracks" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The rule change passes CI, which tests what rules block and allow but not how much CPU they use." },
+        { "edges": [1], "text": "Quicksilver pushes it to every machine worldwide in seconds. There is no canary stage for WAF rules." },
+        { "edges": [4, 5], "text": "Every HTTP/HTTPS request is inspected by the Lua WAF. In simulate mode the rule still runs, and its regex backtracks enormously on the PCRE engine." },
+        { "edges": [3], "text": "CPU cores dedicated to HTTP serving hit nearly 100%. Front-line servers that still have spare CPU cannot reach the serving processes." },
+        { "edges": [2], "text": "Visitors to every Cloudflare domain get a 502 error page." }
+      ]
+    },
+    {
+      "id": "cfr-rollout",
+      "type": "compare",
+      "title": "WAF rule deploy versus software release",
+      "alt": "Side-by-side comparison. Left: a WAF rule passes CI and Quicksilver sends it to every PoP at once, so a bad rule hits all of them. Right: software goes to the employee-only DOG PoP, then the PIG PoP with some non-paying customer traffic, then three Canary PoPs, and only then to the world.",
+      "caption": "Cloudflare's software already had a staged rollout. The fix was to put rule changes through the same stages, except for emergencies.",
+      "before": {
+        "label": "Rule SOP: global at once",
+        "nodes": [
+          { "id": "ci", "label": "CI passes", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "qs", "label": "Quicksilver", "kind": "queue", "col": 1, "row": 0, "sub": "p99 2.29 s" },
+          { "id": "all", "label": "Every PoP", "kind": "bad", "col": 2, "row": 0, "sub": "180+ cities" }
+        ],
+        "edges": [
+          { "from": "ci", "to": "qs" },
+          { "from": "qs", "to": "all", "label": "seconds", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Software SOP: staged",
+        "nodes": [
+          { "id": "dog", "label": "DOG PoP", "kind": "service", "col": 0, "row": 0, "sub": "employees only" },
+          { "id": "pig", "label": "PIG PoP", "kind": "service", "col": 1, "row": 0, "sub": "some free traffic" },
+          { "id": "can", "label": "3 Canary PoPs", "kind": "service", "col": 2, "row": 0, "sub": "paid + free" },
+          { "id": "world", "label": "Global", "kind": "good", "col": 2, "row": 1, "sub": "hours or days" }
+        ],
+        "edges": [
+          { "from": "dog", "to": "pig" },
+          { "from": "pig", "to": "can" },
+          { "from": "can", "to": "world" }
+        ]
+      }
+    },
+    {
+      "id": "cfr-kill-switch",
+      "type": "flow",
+      "title": "The road to the kill switch",
+      "alt": "Flow diagram. The SRE team tries to log in through Cloudflare Access, which is down because it runs on the failing edge, so the control panel is blocked. They fall back to a rarely used bypass path, reach the control panel, and execute the global WAF terminate at 14:07; CPU and traffic recover by 14:09.",
+      "caption": "The kill switch existed and worked in two minutes. Reaching it took five, because the login path ran on the broken system.",
+      "nodes": [
+        { "id": "sre", "label": "SRE team", "kind": "client", "col": 0, "row": 0 },
+        { "id": "access", "label": "Access login", "kind": "bad", "col": 2, "row": 0, "sub": "runs on the edge" },
+        { "id": "panel", "label": "Control panel", "kind": "service", "col": 4, "row": 0, "sub": "global terminate" },
+        { "id": "bypass", "label": "Bypass path", "kind": "service", "col": 2, "row": 2, "sub": "rarely drilled" },
+        { "id": "off", "label": "WAF off 14:07", "kind": "good", "col": 4, "row": 2, "sub": "CPU normal 14:09" }
+      ],
+      "edges": [
+        { "from": "sre", "to": "access", "label": "log in", "style": "fail" },
+        { "from": "access", "to": "panel", "label": "blocked", "style": "fail" },
+        { "from": "sre", "to": "bypass", "label": "fallback" },
+        { "from": "bypass", "to": "panel" },
+        { "from": "panel", "to": "off", "label": "terminate" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "At 14:02 the team decides on a global terminate, but Cloudflare Access is down, so they cannot authenticate to the internal control panel. Some staff had also lost access through an inactivity security rule." },
+        { "edges": [2, 3], "text": "They use a bypass mechanism that is rarely exercised to reach internal systems." },
+        { "edges": [4], "text": "At 14:07 the global WAF terminate runs. By 14:09 CPU and traffic are back to normal worldwide while other protections keep running." }
+      ]
+    },
+    {
+      "id": "cfr-backtracking",
+      "type": "bars",
+      "title": "Regex engine steps for the simplified pattern .*.*=.*",
+      "alt": "Bar chart of matching steps reported by Cloudflare for the pattern dot-star dot-star equals dot-star on a backtracking engine: 23 steps for x=x, 33 for x=xx, 45 for x=xxx, 555 for x= followed by 20 x's, and 4,067 steps to fail on 20 x's with no equals sign.",
+      "caption": "Cloudflare's own figures. Work grows super-linearly with input length and is worst when the match fails. A linear-time engine avoids this.",
+      "unit": "steps",
+      "bars": [
+        { "label": "x=x", "value": 23 },
+        { "label": "x=xx", "value": 33 },
+        { "label": "x=xxx", "value": 45 },
+        { "label": "x= plus 20 x's", "value": 555 },
+        { "label": "20 x's, no match", "value": 4067, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "When your design pushes config or rules globally, say: \"Config is code. It goes through a canary PoP and a staged rollout, with an emergency fast path only for active attacks.\"",
+    "For anything on the per-request hot path, mention a CPU or time budget and a test that fails when a change exceeds it.",
+    "If user-controlled input meets regular expressions, name catastrophic backtracking (ReDoS) and propose a linear-time engine such as RE2 or a timeout guard.",
+    "Design kill switches per component, and say where they live: reachable even when the main product, SSO and dashboards are down.",
+    "At SSE level, present an outage as several missing guards (test, rollout, engine, tooling) rather than one bad commit, and fix each layer."
+  ],
+  "quiz": [
+    {
+      "question": "Why did a rule deployed in \"simulate\" mode still take Cloudflare down?",
+      "choices": ["Simulate mode was misconfigured to block traffic", "Simulated rules still execute on real traffic, and this rule's regex consumed excessive CPU", "Quicksilver crashed while distributing it"],
+      "answer": 1,
+      "explain": "Simulate mode lets traffic through instead of blocking, but the rule must still run to measure it. Running a catastrophically backtracking regex on every request exhausted CPU."
+    },
+    {
+      "question": "Which change would have limited the blast radius even with the bad regex?",
+      "choices": ["A faster Quicksilver", "Staged rollout through a dogfooding PoP and canaries before global deploy", "More unit tests for what rules block"],
+      "answer": 1,
+      "explain": "Cloudflare's software already went DOG, then PIG, then Canaries, then global. Putting rules through the same stages would likely have exposed the CPU spike in a few PoPs first."
+    },
+    {
+      "question": "What property of re2 or the Rust regex crate addresses the root technical issue?",
+      "choices": ["They support more regex syntax", "They have run-time guarantees, matching in time linear in the input instead of backtracking", "They cache compiled patterns across servers"],
+      "answer": 1,
+      "explain": "Thompson-style automata process each input character once. A backtracking engine like PCRE can take super-linear steps on patterns like .*.*=.*."
+    },
+    {
+      "question": "Why did it take five minutes after deciding on a global terminate to execute it?",
+      "choices": ["The terminate required a full WAF rebuild", "Internal login (Access) ran through the failing edge, so staff needed a rarely used bypass", "Leadership approval was required"],
+      "answer": 1,
+      "explain": "Cloudflare uses its own products. With Access down, the control panel was unreachable until a bypass was used; some credentials had also expired for security."
+    },
+    {
+      "question": "The WAF test suite passed. What was it missing?",
+      "choices": ["Tests for requests that should be blocked", "A way to detect excessive CPU use by a rule", "Tests for requests that should be allowed"],
+      "answer": 1,
+      "explain": "The suite checked blocking and false positives, but not runaway CPU. Cloudflare committed to adding performance profiling for all rules to the test suite."
+    }
+  ],
+  "practice": {
+    "prompt": "You run an edge platform where security rules, including regexes, are pushed to thousands of servers and run on every request. Design the rule deployment pipeline and runtime safeguards so that one bad rule cannot take down the network.",
+    "answer": "Treat rules as code. In CI, run each rule against a large corpus of real and adversarial requests and record CPU time per request; fail the build if a rule exceeds a budget or regresses compared with the previous build. Use a regex engine with linear-time guarantees (RE2-style) so catastrophic backtracking is impossible; if some rules need a backtracking engine, enforce a step or time limit per match. Roll out in stages: an internal dogfooding site, then a small slice of low-risk traffic, then canary sites, then global, with automatic halt and rollback on CPU, error-rate or traffic-drop alarms. Keep an emergency global path for active attacks, with a two-person approval. Give each rule and the whole engine a kill switch that can be flipped from tooling that does not depend on the edge (separate SSO, out-of-band access, drilled regularly), and make rollback a config flip, not a rebuild. Keep the status page and customer API able to run off the edge.",
+    "rubric": [
+      "CPU or latency budget per rule enforced in CI",
+      "Linear-time regex engine or a per-match execution limit",
+      "Staged rollout with automatic halt, plus a guarded emergency path",
+      "Per-rule and global kill switches with fast rollback",
+      "Operator access and status tooling independent of the failing system",
+      "Alerting on global traffic drop and CPU saturation"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "design-rate-limiting"],
+    "cases": ["api-rate-limiter", "metrics-monitoring"],
+    "guides": ["observability", "graceful-degradation", "circuit-breakers"]
+  },
+  "sources": [
+    {
+      "title": "Details of the Cloudflare outage on July 2, 2019",
+      "publisher": "Cloudflare Blog",
+      "url": "https://blog.cloudflare.com/details-of-the-cloudflare-outage-on-july-2-2019/",
+      "date": "2019-07-12"
+    }
+  ]
+}

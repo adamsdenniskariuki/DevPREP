@@ -11,6 +11,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
+| **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
 | **Whiteboard** (`#board`) | A free diagram board saved on this device |
 | **Flashcards** (`#cards`) | 156 spaced-repetition concept cards across all five tracks, plus a recall card per coding problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
@@ -53,6 +54,16 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 - **Review** puts your notes beside the model answer and model diagram. You then self-score each rubric item as Missed, Partly or Covered. SSE items count on SSE cases or for the Senior role; otherwise they show as stretch goals.
 - Notes, boards and timers are saved per case in `devprep.design.v1` and are not part of backups. Saving a score records the best percentage (`designs`): 25 XP per case, plus 10 at 80% or more. Badges: Architect, Blueprint pro, Staff-ready.
 
+## Field Guide
+
+Best-practice **guides** (API design, system design, algorithm practice, code quality, testing, security, databases, ML and LLM apps in production), **real-world case studies** paraphrased from public engineering blogs and postmortems with cited sources, and an **anti-pattern gallery** (`#antipatterns`) with bad and better side by side. Filter by topic, level (SE/SSE) and type.
+
+- Every guide follows one template: principle → why it matters → how it works (diagrams) → good vs bad → checklist → anti-patterns → how to show this in an interview → quiz → practice question → related lessons, problems and design cases. Case studies cover the problem, constraints, decisions and trade-offs, what went wrong, interview lessons, caveats and sources.
+- **Diagrams** are original inline SVG drawn from data (`flow`, `sequence`, `compare`, `chart`, `bars`, `timeline`). They use theme tokens, so they follow every palette, dark mode and forced colours. Each has a title, an accessible name, a caption and a text description. Request flows have a **step-through** (Previous/Next, plus Play unless reduced motion is on). On narrow screens a figure scrolls sideways instead of shrinking its text. No runtime CDN: everything is bundled and precached for offline use.
+- Each case study was fact-checked against its cited sources by a separate review pass before merge. Details the sources don't state are left out or worded cautiously.
+- Finishing a quiz marks the entry read (`guides` in the backup): 15 XP, plus 5 for 100%. Quiz questions also become flashcards in the matching track's deck (`<track>-fg-<entry>-<n>`). Badges: Field notes, Well read (10 entries), Postmortem reader (3 case studies), Sharp eye (5 perfect quizzes) and one per finished topic.
+- The study plan adds an unread entry every third day (focus and weak tracks first); technical mocks add one practice question from a guide on that track.
+
 ## Flashcards, mocks, stories and plan
 
 - **Flashcards**: Leitner boxes with intervals of 0/1/3/7/14/30/60 days. Again resets to box 0 and re-queues the card once; Hard keeps it (minimum box 1); Good moves +1; Easy +2. Sessions show due cards first, then up to 10 new ones. Keys: Space/Enter reveals, 1–4 grades. A card counts as mastered from box 4.
@@ -64,7 +75,7 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 
 Derived entirely from saved activity and solves, so old backups get credit automatically.
 
-- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+). A level every 200 XP.
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+), 15 per Field Guide entry (+5 for a perfect quiz). A level every 200 XP.
 - **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
 - **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths, cards, mocks and the story bank). No lives, no leaderboards.
 
@@ -200,7 +211,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, story bank, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, story bank, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -223,6 +234,8 @@ The optional root field `solved` maps a problem ID to `{ "js"?: ISO time, "py"?:
 The optional root field `designs` maps a case ID to `{ "best": 0–100 integer, "at": ISO time }`. Unknown case IDs, extra keys, out-of-range or fractional scores and malformed times are rejected. Case IDs are append-only too (`tests/fixtures/case-ids.json`).
 
 The optional root field `cards` maps a card ID to `{ "box": 0–6, "due": YYYY-MM-DD, "at": ISO time, "reviews": 1–100000 }`. Card IDs are append-only (`tests/fixtures/card-ids.json`). `mocks` is a list of up to 500 `{ "track", "at", "percent": 0–100 integer, "minutes": 0–600 }`. `stories` is a list of up to 50 `{ "id", "title" (≤120), "competencies", "situation"/"task"/"action"/"result" (≤2,000 each), "updatedAt" }`. Unknown IDs, tracks, competencies, keys and duplicate story IDs are rejected.
+
+The optional root field `guides` maps a Field Guide entry ID to `{ "best": 0–100 integer, "at": ISO time }`, the best quiz score. Unknown entry IDs and malformed values are rejected; entry IDs are append-only (`tests/fixtures/guide-ids.json`).
 
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
@@ -297,6 +310,11 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/cases.test.ts`, `tests/fixtures/case-ids.json` | Case schema, diagram and rubric checks, append-only IDs |
 | `src/screens/DesignScreen.tsx`, `src/components/Whiteboard.tsx`, `src/design-drafts.ts`, `src/design-score.ts` | Case list, timed workspace, review and rubric, SVG whiteboard, local drafts |
 | `tests/design.spec.ts` | Timer, persisted notes and board, keyboard whiteboard, scoring, backups and narrow layouts |
+| `content/field-guide/` | One JSON file per Field Guide entry plus `index.json` (order); bundled to `src/generated/guides.json` (lazy) and `guide-index.json`, with quiz flashcards added to the decks |
+| `src/guide-types.ts`, `src/guides.ts` | Entry and diagram types, topics and their tracks, index and lazy loader |
+| `src/components/Diagram.tsx`, `src/diagram-layout.ts`, `src/diagram.css` | Theme-aware SVG diagrams, layout geometry (edge-through-box and label-collision checks) and step-throughs |
+| `src/screens/FieldGuideScreen.tsx`, `src/field-guide.css` | Guide list and filters, entry pages, quiz, anti-pattern gallery |
+| `src/guides.test.ts`, `tests/fixtures/guide-ids.json`, `tests/field-guide.spec.ts` | Schema, cross-links, diagram legibility, append-only IDs, integration; browser flows, diagram contrast in every palette and layouts at 360/768/1440 |
 | `content/flashcards/<track>.json` | Flashcard decks; bundled to `src/generated/flashcards.json` (lazy) and `flashcard-index.json` |
 | `src/flashcards.ts`, `src/screens/FlashcardsScreen.tsx` | Leitner scheduling, session queue and review UI |
 | `src/mocks.ts`, `src/screens/MockScreen.tsx` | Seeded mock builder, rubrics, timer and review |
@@ -331,6 +349,10 @@ Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern` (one of `PROB
 ### Adding a system design case
 
 Add `content/cases/<id>.json` with `id`, `title`, `level` (`se`/`sse`), `minutes`, `summary`, `prompt`, `lessons` (system-design lesson IDs), `steps` (2 or more bullets for each of the 8 framework keys), `diagram` (`nodes` with `kind`, `label` of up to 18 characters, and a unique `col` 0–5 and `row` 0–4; `edges` with an optional `label`) and `rubric` (5–10 items, at least one marked `"sse": true`). Then append the ID to `content/cases/index.json` and `tests/fixtures/case-ids.json`, and run `npm test`.
+
+### Adding a Field Guide entry
+
+Add `content/field-guide/<id>.json` (shape in `src/guide-types.ts`; every limit is in `validateGuide` in `src/content-schema.ts`). Common fields: `id`, `kind` (`guide`/`case`), `topic`, `level`, `title`, `summary`, `minutes`, `diagrams` (at least 3 of at least 2 types; ids unique across the whole guide), `interview`, `quiz` (3–6), `practice`, `links`. Guides add `principle`, `why`, `checklist`, `examples` and `antipatterns` (snippets hold `code` or a `diagram` id). Cases add `organisation`, `year`, `problem`, `constraints`, `decisions`, `failures`, `lessons`, `sources` and optional `caveats`. Append the ID to `content/field-guide/index.json` and `tests/fixtures/guide-ids.json`, add its quiz card IDs to `tests/fixtures/card-ids.json`, and run `npm test`. Flow diagrams sit on a 5×6 grid; tests fail if an arrow passes through a box, a label overflows its box or chart labels collide. Case studies must paraphrase and cite their sources.
 
 ### Adding flashcards
 

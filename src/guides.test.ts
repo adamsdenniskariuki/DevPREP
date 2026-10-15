@@ -50,6 +50,10 @@ describe('Field Guide content', () => {
     const { diagrams } = read(join(dir, name)) as FieldGuideEntry
     for (const diagram of diagrams) {
       for (const [id, body] of flowBodies(diagram)) expect(edgeCrossings(body), id).toEqual([])
+      for (const [id, body] of flowBodies(diagram)) for (const node of body.nodes) {
+        expect(node.label.length * 12.5 * 0.56, `${id}.${node.id} label fits its box`).toBeLessThanOrEqual(116)
+        if (node.sub) expect(node.sub.length * 11 * 0.56, `${id}.${node.id} sub fits its box`).toBeLessThanOrEqual(116)
+      }
       if (diagram.type === 'chart') expect(chartOverlaps(diagram), diagram.id).toEqual([])
       expect(describeDiagram(diagram).length, diagram.id).toBeGreaterThan(0)
     }
