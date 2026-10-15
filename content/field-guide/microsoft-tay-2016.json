@@ -1,0 +1,231 @@
+{
+  "id": "microsoft-tay-2016",
+  "kind": "case",
+  "topic": "llm-apps",
+  "level": "sse",
+  "title": "Microsoft Tay, 2016: a public chatbot meets coordinated abuse",
+  "summary": "Microsoft launched Tay, a Twitter chatbot, after filtering, user studies and stress tests. Within 24 hours a coordinated group exploited an unforeseen vulnerability and Tay posted offensive content. It was taken offline.",
+  "minutes": 10,
+  "organisation": "Microsoft",
+  "year": 2016,
+  "problem": "In March 2016 Microsoft launched **Tay**, a chatbot built for 18- to 24-year-olds in the US, for entertainment. Two days later Peter Lee published an apology and explanation on the official Microsoft blog.\n\nThe post sets the context: Microsoft's **XiaoIce** chatbot in China was being used by some 40 million people, and Tay was a first attempt to see whether a similar AI would be as engaging in a very different culture. The team says it had **planned and implemented a lot of filtering**, run **extensive user studies with diverse groups**, and **stress-tested** Tay under a variety of conditions. Once comfortable, it opened Tay to a much broader audience on **Twitter**, expecting that more interaction would help it learn and improve.\n\nIn the first 24 hours online, a **coordinated attack by a subset of people exploited a vulnerability** in Tay. Microsoft writes that it had prepared for many kinds of abuse but made a **critical oversight** for this specific attack. Tay tweeted what the post calls wildly inappropriate and reprehensible words and images. By the time of the post Tay was offline, and Microsoft said it would bring it back only when confident it could better anticipate malicious intent.",
+  "constraints": [
+    "Tay was a conversational product on Twitter, an open social network, so what it tweeted was public.",
+    "The goal was engagement with a massive audience; Microsoft chose Twitter as the place to reach one.",
+    "The post describes AI systems that \"feed off\" both positive and negative interactions with people, so user input shapes the system's behaviour.",
+    "Earlier experience came from XiaoIce in China, a radically different cultural environment from the US audience Tay targeted."
+  ],
+  "decisions": [
+    {
+      "decision": "Prepare Tay with filtering, extensive user studies with diverse user groups, and stress tests under many conditions before launch.",
+      "tradeoff": "This covered many anticipated kinds of abuse and normal use, but studies and tests built around expected behaviour did not include the specific coordinated attack that came."
+    },
+    {
+      "decision": "Move from tested groups to a massive public audience on Twitter, expecting the AI to improve through more interaction.",
+      "tradeoff": "Broad exposure gives the most learning signal fastest, but also gives organised adversaries a public stage and many attempts, and mistakes are published instantly."
+    },
+    {
+      "decision": "Take Tay offline, apologise publicly, take full responsibility, and work on the specific vulnerability before any return.",
+      "tradeoff": "Stops the harm and preserves trust, at the cost of ending the experiment until the team is confident it can anticipate malicious intent better."
+    },
+    {
+      "decision": "Commit to keep iterating in public with many people, but enter each forum with great caution and accept that not all misuse can be predicted in advance.",
+      "tradeoff": "Some failure modes only show up with real users, but each public step needs safeguards sized for adversaries, not just for typical users."
+    }
+  ],
+  "failures": "By Microsoft's own account, the testing was real but the **threat model was incomplete**: it covered many abuses but not the coordinated attack that actually happened, which Microsoft calls a critical oversight. The audience jumped from studied groups to a massive public network, where a subset of users could act together against the bot within its first day.\n\nThe post frames the problem as social as much as technical: a system that is shaped by its interactions will absorb negative ones too. It also concedes that you cannot fully predict every human misuse without learning from mistakes. The response, as described, was that Tay was offline while Microsoft worked on the specific vulnerability; the post does not describe what the vulnerability was or how quickly Tay was stopped.",
+  "lessons": [
+    "Threat-model your users, not just your inputs: plan for organised groups who coordinate to make the system misbehave, especially on public platforms.",
+    "Red-team before launch with people paid to break it, including coordinated and multi-turn attacks, not only friendly user studies and load-style stress tests.",
+    "Be very careful when user interactions can change future behaviour; treat that feedback channel as untrusted input.",
+    "Ramp the audience in stages and widen only when abuse metrics stay healthy; a public social network is the hardest environment, not a beta.",
+    "Have a kill switch and an owner watching from the first minute, so you can pause output fast when it goes wrong.",
+    "Own the failure publicly and fix the root cause before relaunching the way Microsoft's post takes full responsibility."
+  ],
+  "caveats": "This case relies only on Microsoft's own blog post, which deliberately gives few technical details. It does not describe the vulnerability, the attack technique, the filtering in place, how Tay learned from interactions, or exactly when Tay went offline; widely repeated press accounts of the mechanism are not used here. The post says Tay launched on \"Wednesday\"; with the post dated Friday 25 March 2016, that is 23 March 2016, a date derived rather than stated. Tay predates today's large language models, so the lessons are carried over by analogy. The compare, sequence and chart diagrams are illustrative safeguards and judgements, not Microsoft's description of its system.",
+  "diagrams": [
+    {
+      "id": "tay-timeline",
+      "type": "timeline",
+      "title": "From XiaoIce to Tay going offline",
+      "alt": "Timeline. Before Tay, Microsoft's XiaoIce chatbot in China had some 40 million users. Tay is prepared with filtering, user studies and stress tests, then launched on Twitter on a Wednesday. In its first 24 hours a coordinated group exploits a vulnerability and Tay tweets offensive content. Tay is taken offline, and on 25 March 2016 Microsoft publishes an apology and says it is fixing the vulnerability.",
+      "caption": "Real preparation, then less than a day in public before an unanticipated attack. Offline by the time of the 25 March post.",
+      "events": [
+        { "at": "Before Tay", "label": "XiaoIce chatbot in China used by some 40 million people", "kind": "trigger" },
+        { "at": "Development", "label": "Filtering, user studies with diverse groups, stress tests under many conditions", "kind": "mitigate" },
+        { "at": "Wed (23 Mar)", "label": "Tay opened to a broad public audience on Twitter", "kind": "trigger" },
+        { "at": "First 24 hours", "label": "Coordinated attack by a subset of users exploits an unforeseen vulnerability", "kind": "impact" },
+        { "at": "First 24 hours", "label": "Tay tweets wildly inappropriate and offensive words and images", "kind": "impact" },
+        { "at": "By 25 Mar", "label": "Tay taken offline; return only when malicious intent can be better anticipated", "kind": "mitigate" },
+        { "at": "25 Mar 2016", "label": "Microsoft apologises, takes full responsibility, works on the specific flaw", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "tay-loop",
+      "type": "flow",
+      "title": "How the attack reached the public",
+      "alt": "Flow diagram. Pre-launch filtering, user studies and stress tests feed the Tay chatbot. Ordinary Twitter users converse with Tay. A coordinated group of attackers exploits a vulnerability the preparation missed, and Tay posts offensive public tweets, and Tay is then taken offline.",
+      "caption": "Testing covered expected users. The path that failed was an organised group using an attack nobody had modelled.",
+      "nodes": [
+        { "id": "prep", "label": "Pre-launch tests", "kind": "note", "col": 0, "row": 0, "sub": "filters + studies" },
+        { "id": "users", "label": "Twitter users", "kind": "client", "col": 0, "row": 2, "sub": "massive audience" },
+        { "id": "tay", "label": "Tay chatbot", "kind": "service", "col": 2, "row": 2, "sub": "for 18-24s in US" },
+        { "id": "attack", "label": "Attackers", "kind": "bad", "col": 0, "row": 4, "sub": "coordinated" },
+        { "id": "vuln", "label": "Unseen exploit", "kind": "bad", "col": 2, "row": 4, "sub": "not in tests" },
+        { "id": "tweets", "label": "Public tweets", "kind": "bad", "col": 4, "row": 2, "sub": "offensive output" },
+        { "id": "off", "label": "Tay offline", "kind": "good", "col": 4, "row": 4, "sub": "pending a fix" }
+      ],
+      "edges": [
+        { "from": "prep", "to": "tay", "label": "launch" },
+        { "from": "users", "to": "tay", "label": "conversations" },
+        { "from": "attack", "to": "vuln", "label": "coordinated attack", "style": "fail" },
+        { "from": "vuln", "to": "tay", "label": "exploits", "style": "fail" },
+        { "from": "tay", "to": "tweets", "label": "posts", "style": "fail" },
+        { "from": "tweets", "to": "off", "label": "pulled" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Before launch, Microsoft says it implemented a lot of filtering, ran extensive user studies with diverse groups and stress-tested Tay." },
+        { "edges": [1], "text": "Tay goes to Twitter to engage a massive audience, with the expectation that more interaction helps it learn and improve." },
+        { "edges": [2, 3], "text": "Within 24 hours a subset of people coordinate to exploit a vulnerability. Microsoft says it prepared for many abuses but overlooked this one." },
+        { "edges": [4], "text": "Tay publishes wildly inappropriate and reprehensible words and images in public." },
+        { "edges": [5], "text": "Microsoft takes Tay offline and works on the specific vulnerability before considering a return." }
+      ]
+    },
+    {
+      "id": "tay-rollout",
+      "type": "compare",
+      "title": "Big-bang public launch versus adversarial, staged rollout",
+      "alt": "Side-by-side comparison. Left: friendly user studies and stress tests lead straight to a launch to everyone on a public network. Right: a red team attacks the bot first, then a small public cohort with abuse monitoring, then a wider rollout, with a kill switch available at every stage.",
+      "caption": "Illustrative. Microsoft did test before launch; the gap was adversarial coverage and the jump in audience size.",
+      "before": {
+        "label": "Launch to everyone after friendly tests",
+        "nodes": [
+          { "id": "study", "label": "User studies", "kind": "worker", "col": 0, "row": 0, "sub": "diverse groups" },
+          { "id": "all", "label": "Everyone", "kind": "bad", "col": 2, "row": 0, "sub": "public network" },
+          { "id": "mob", "label": "Organised group", "kind": "bad", "col": 2, "row": 1, "sub": "not modelled" }
+        ],
+        "edges": [
+          { "from": "study", "to": "all", "label": "big bang" },
+          { "from": "mob", "to": "all", "label": "day one attack", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Better: red team, ramp, kill switch",
+        "nodes": [
+          { "id": "red", "label": "Red team", "kind": "good", "col": 0, "row": 0, "sub": "group attacks" },
+          { "id": "small", "label": "Small cohort", "kind": "service", "col": 1, "row": 0, "sub": "abuse metrics" },
+          { "id": "wide", "label": "Wider rollout", "kind": "service", "col": 2, "row": 0 },
+          { "id": "kill", "label": "Kill switch", "kind": "good", "col": 1, "row": 1, "sub": "pause output" }
+        ],
+        "edges": [
+          { "from": "red", "to": "small", "label": "fixes first" },
+          { "from": "small", "to": "wide", "label": "if healthy" },
+          { "from": "small", "to": "kill", "label": "abuse spike", "style": "fail" }
+        ]
+      }
+    },
+    {
+      "id": "tay-guardrails",
+      "type": "sequence",
+      "title": "A public bot reply with guardrails and a kill switch",
+      "alt": "Sequence diagram with five actors: a user, the bot, safety checks, an abuse monitor and the on-call owner. The user's message is screened before the bot replies, and the draft reply is screened again before posting. Interaction data is not trusted for learning until reviewed. When the monitor sees a spike of flagged content it pages on-call, who pauses the bot.",
+      "caption": "Illustrative design for any public conversational system, including LLM bots: screen both directions, distrust feedback, watch rates, keep a fast stop.",
+      "actors": [
+        { "id": "user", "label": "Public user" },
+        { "id": "bot", "label": "Bot" },
+        { "id": "guard", "label": "Safety checks" },
+        { "id": "mon", "label": "Abuse monitor" },
+        { "id": "oncall", "label": "On-call owner" }
+      ],
+      "messages": [
+        { "from": "user", "to": "bot", "label": "message (may be hostile)", "note": "Assume some users are adversaries working together, not just individuals." },
+        { "from": "bot", "to": "guard", "label": "screen input", "note": "Classify the request; refuse or deflect known manipulation patterns." },
+        { "from": "guard", "to": "bot", "label": "allowed + draft reply", "style": "reply", "note": "The bot drafts a response only for allowed input." },
+        { "from": "bot", "to": "guard", "label": "screen draft output", "note": "Output moderation catches harmful replies the input check missed." },
+        { "from": "bot", "to": "user", "label": "public reply", "style": "reply", "note": "Only screened output is posted publicly." },
+        { "from": "bot", "to": "mon", "label": "log turn + flags", "style": "async", "note": "Conversations are logged; any use of them to change behaviour waits for review." },
+        { "from": "mon", "to": "oncall", "label": "page: flagged-rate spike", "style": "fail", "note": "A sudden rise in flagged content from many accounts suggests a coordinated attack." },
+        { "from": "oncall", "to": "bot", "label": "kill switch: pause", "style": "fail", "note": "Pause first, investigate second. Microsoft took Tay offline; a tested switch makes that fast." }
+      ]
+    },
+    {
+      "id": "tay-testing",
+      "type": "chart",
+      "title": "Where each kind of testing sits",
+      "alt": "Trade-off chart. The x axis is adversarial pressure and the y axis is how well you can contain mistakes. Internal user studies have low pressure and high containment. Stress tests are slightly higher pressure. A red team has high pressure and high containment. A limited public beta sits in the middle. An open public launch has high pressure and low containment.",
+      "caption": "Illustrative judgement. Red-teaming is the only option that brings real adversarial pressure while mistakes are still private.",
+      "x": { "label": "Adversarial pressure", "low": "friendly", "high": "organised attack" },
+      "y": { "label": "Ability to contain harm", "low": "public", "high": "private" },
+      "points": [
+        { "label": "User studies", "x": 1, "y": 9 },
+        { "label": "Stress tests", "x": 3, "y": 7 },
+        { "label": "Red team", "x": 8, "y": 9, "highlight": true },
+        { "label": "Limited beta", "x": 5, "y": 4 },
+        { "label": "Open public launch", "x": 9, "y": 1 }
+      ]
+    }
+  ],
+  "interview": [
+    "When designing any public-facing LLM or chat feature, name the adversary explicitly: \"coordinated users trying to make it say harmful things,\" and design against them.",
+    "Describe red-teaming as a launch gate, separate from user research and load testing, and include multi-turn and group attacks.",
+    "If the system learns from or is steered by user interactions, say that feedback is untrusted input and goes through review before it changes behaviour.",
+    "Propose a staged audience ramp with abuse metrics as the gate, and a tested kill switch with a named owner from minute one.",
+    "At SSE level, cite Tay as a responsible-AI process failure: testing existed but the threat model missed coordinated misuse."
+  ],
+  "quiz": [
+    {
+      "question": "According to Microsoft's post, what preparation did Tay have before launch?",
+      "choices": ["None; it was an unannounced experiment", "Filtering, extensive user studies with diverse groups, and stress tests under many conditions", "Only a legal review", "A month-long private beta on Twitter"],
+      "answer": 1,
+      "explain": "The post stresses that Tay was tested. That makes it a better lesson: testing focused on expected use and many abuses still missed a specific coordinated attack."
+    },
+    {
+      "question": "How does Microsoft describe what went wrong?",
+      "choices": ["A server outage corrupted Tay's model", "A coordinated attack by a subset of people exploited a vulnerability; Microsoft calls it a critical oversight for that specific attack", "Twitter changed its API", "An employee posted the content"],
+      "answer": 1,
+      "explain": "Microsoft says it prepared for many types of abuse but not this one, and takes full responsibility. The post does not describe the vulnerability itself."
+    },
+    {
+      "question": "Which earlier product shaped Microsoft's expectations for Tay?",
+      "choices": ["Cortana in the US", "XiaoIce, a chatbot in China used by some 40 million people", "Clippy", "Bing search"],
+      "answer": 1,
+      "explain": "Tay tested whether a XiaoIce-like bot would be as engaging in a radically different cultural environment. Success in one context did not carry over its safety assumptions."
+    },
+    {
+      "question": "You are launching a public chatbot whose behaviour is shaped by user interactions. What is the most important addition beyond friendly user testing?",
+      "choices": ["A larger launch audience to gather data faster", "Red-teaming for coordinated abuse, treating interaction data as untrusted, and a staged rollout with a kill switch", "A more casual persona", "Disabling logging to protect privacy"],
+      "answer": 1,
+      "explain": "Tay's lesson is adversarial coverage and containment: find the attack before the public does, limit blast radius by ramping, and be able to stop output immediately."
+    },
+    {
+      "question": "Under what condition did Microsoft say it would bring Tay back?",
+      "choices": ["After one week", "Only when confident it could better anticipate malicious intent that conflicts with its principles and values", "When Twitter approved it", "Never"],
+      "answer": 1,
+      "explain": "Relaunch was gated on better anticipating malicious use, not on a date. Good practice: define the safety bar that must be met before turning a paused system back on."
+    }
+  ],
+  "practice": {
+    "prompt": "Your team wants to launch an LLM-powered persona bot that replies publicly on a social network and adapts its style from conversations. Leadership wants a big launch next month. Design the safety plan for launch and the first week.",
+    "answer": "Start with a threat model that includes **organised adversaries**, not just individual bad actors: coordinated prompt manipulation, multi-turn steering, mass-reporting, and attempts to poison whatever the bot learns from. **Before launch**: a dedicated red team (internal plus external) attacks the bot with those scenarios; findings are fixed and turned into an automated eval suite that runs on every prompt or model change. **Guardrails**: input screening for known manipulation and abuse, output moderation before anything is posted, topic and persona restrictions, rate limits per user and per thread. **Learning from users**: conversation data is untrusted; nothing changes the bot's behaviour without filtering and human review, and adaptation can be turned off independently. **Rollout**: start with a small or invite-only audience, widen in stages gated on abuse metrics (flagged-output rate, refusal rate, report volume, cluster of new accounts). **Operations**: dashboards and alerts on those metrics, a named on-call owner, a tested **kill switch** that pauses posting in seconds, and a pre-written public statement. **After an incident**: pause first, investigate, fix the root cause, define the bar for relaunch. Push back on a big-bang launch: the public network is the riskiest environment, so it comes last, not first.",
+    "rubric": [
+      "Threat model explicitly includes coordinated groups and multi-turn manipulation",
+      "Red-teaming before launch, with findings turned into regression evals",
+      "Input and output screening plus rate limits, with user-driven learning treated as untrusted",
+      "Staged audience ramp gated on abuse metrics",
+      "Kill switch with a named owner, alerting and an incident plan",
+      "Defines a relaunch bar after any pause and owns the failure publicly"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-responsible-ai", "ai-evals", "ai-llm-system-design"],
+    "guides": ["prompt-injection-guardrails", "llm-evals", "observability", "testing-strategy", "graceful-degradation"]
+  },
+  "sources": [
+    {
+      "title": "Learning from Tay's introduction (Peter Lee)",
+      "publisher": "Official Microsoft Blog",
+      "url": "https://blogs.microsoft.com/blog/2016/03/25/learning-tays-introduction/",
+      "date": "2016-03-25"
+    }
+  ]
+}

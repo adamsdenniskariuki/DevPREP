@@ -1,0 +1,300 @@
+{
+  "id": "llm-evals",
+  "kind": "guide",
+  "topic": "llm-apps",
+  "level": "sse",
+  "title": "LLM evals: golden sets, judges and regression gates",
+  "summary": "Ship LLM changes like code: a versioned golden set, rubric scoring, calibrated LLM judges, a CI gate per slice, online signals and human review sampling, with retrieval measured apart from generation.",
+  "minutes": 18,
+  "principle": "Every change to a prompt, model, retriever or tool must be measured against a versioned set of representative cases before it ships, and watched with online signals after. Scores you cannot explain or reproduce are not evals; calibrate automated judges against humans and break results down by slice.",
+  "why": "LLM features fail by degrees. A prompt tweak that fixes one complaint quietly breaks three other kinds of question, a model upgrade changes tone and format, and a new chunking scheme drops recall on tables. Spot-checking a few examples in a playground does not catch this, because outputs vary between runs and the regressions sit in the long tail.\n\nAn eval system makes quality a number you can gate on. Offline, a golden set of real, labelled cases runs on every change and scores each output with code checks where possible and rubric-based LLM judges where not. Those judges have known biases (they can favour the first or the longer answer, or text from their own model family) so they need calibrating against human labels. Online, you watch user signals, run A/B tests for risky changes and sample traffic for human review, feeding failures back into the golden set. In RAG systems, score retrieval and generation separately so you know which half broke.",
+  "diagrams": [
+    {
+      "id": "ev-loop",
+      "type": "flow",
+      "title": "The eval loop: offline gate, online watch, feedback",
+      "alt": "Flow diagram. A golden set feeds an offline eval harness, whose results go to a CI gate. Passing changes go to a canary and then production. Production produces online signals, which are sampled for human review, and reviewed failures are added back to the golden set.",
+      "caption": "Offline evals stop known regressions; online signals find the unknown ones and turn them into new golden cases.",
+      "nodes": [
+        { "id": "golden", "label": "Golden set", "kind": "db", "col": 0, "row": 0, "sub": "versioned cases" },
+        { "id": "harness", "label": "Eval harness", "kind": "worker", "col": 1, "row": 0, "sub": "code + judge" },
+        { "id": "gate", "label": "CI gate", "kind": "decision", "col": 2, "row": 0, "sub": "per-slice limits" },
+        { "id": "canary", "label": "Canary / A-B", "kind": "service", "col": 3, "row": 0 },
+        { "id": "prod", "label": "Production", "kind": "service", "col": 4, "row": 0 },
+        { "id": "online", "label": "Online signals", "kind": "note", "col": 4, "row": 2, "sub": "thumbs, retries" },
+        { "id": "review", "label": "Human review", "kind": "client", "col": 2, "row": 2, "sub": "sampled traces" },
+        { "id": "block", "label": "Blocked PR", "kind": "bad", "col": 1, "row": 2 }
+      ],
+      "edges": [
+        { "from": "golden", "to": "harness", "label": "cases" },
+        { "from": "harness", "to": "gate", "label": "scores" },
+        { "from": "gate", "to": "canary", "label": "pass" },
+        { "from": "canary", "to": "prod", "label": "metrics hold" },
+        { "from": "prod", "to": "online", "style": "async" },
+        { "from": "online", "to": "review", "label": "sample + flags", "style": "async" },
+        { "from": "review", "to": "golden", "label": "new cases", "style": "async" },
+        { "from": "gate", "to": "block", "label": "regression", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Every prompt, model, retriever or tool change runs the versioned golden set. Deterministic checks run first (valid JSON, required fields, citations present); rubric judges score the rest." },
+        { "edges": [2, 7], "text": "The gate compares against the current production baseline per slice, not only the overall average. A drop beyond the agreed threshold on any important slice blocks the merge." },
+        { "edges": [3], "text": "Risky changes go to a canary or an A/B test, where online metrics such as task completion, escalations and user retries must hold." },
+        { "edges": [4, 5], "text": "In production, sample traces at random and over-sample ones with bad signals (thumbs down, rephrased questions, long sessions) for human review." },
+        { "edges": [6], "text": "Reviewed failures become new golden cases, so the same bug cannot ship twice. The set grows from real traffic, not from guesses." }
+      ]
+    },
+    {
+      "id": "ev-judge-sequence",
+      "type": "sequence",
+      "title": "Pairwise LLM-as-judge with bias controls",
+      "alt": "Sequence diagram with CI, eval harness, app under test, judge model and a human calibration set. The harness gets baseline and candidate answers, asks the judge to compare them with a rubric twice with the order swapped, keeps only consistent verdicts, checks judge agreement with human labels, and reports the win rate to CI.",
+      "caption": "Swapping positions and checking agreement with humans turns a judge from an opinion into a measurement you can defend.",
+      "actors": [
+        { "id": "ci", "label": "CI" },
+        { "id": "h", "label": "Eval harness" },
+        { "id": "app", "label": "App under test" },
+        { "id": "j", "label": "Judge model" },
+        { "id": "hum", "label": "Human labels" }
+      ],
+      "messages": [
+        { "from": "ci", "to": "h", "label": "run golden set v42", "note": "The golden set is versioned, so scores from two runs are comparable." },
+        { "from": "h", "to": "app", "label": "case: baseline + candidate" },
+        { "from": "app", "to": "h", "label": "answer A, answer B", "style": "reply" },
+        { "from": "h", "to": "j", "label": "rubric, A first then B", "note": "The rubric names concrete criteria (correct, grounded, complete, follows format) and asks for reasons before the verdict." },
+        { "from": "h", "to": "j", "label": "rubric, B first then A", "note": "Judges can favour whichever answer comes first. Asking twice with the order swapped exposes that." },
+        { "from": "j", "to": "h", "label": "verdicts + reasons", "style": "reply", "note": "If the two verdicts disagree, record a tie rather than trusting either one." },
+        { "from": "h", "to": "hum", "label": "agreement on labelled subset", "note": "Periodically compare judge verdicts with expert labels. Low agreement means the rubric or judge needs work, not that the model improved." },
+        { "from": "hum", "to": "h", "label": "agreement rate", "style": "reply" },
+        { "from": "h", "to": "ci", "label": "win rate per slice + CI", "style": "reply", "note": "Report a confidence interval. On a small set, a few points of difference can be noise." }
+      ]
+    },
+    {
+      "id": "ev-methods",
+      "type": "chart",
+      "title": "Evaluation methods: cost against fidelity",
+      "alt": "Trade-off chart with agreement with real user judgement on the vertical axis and cost per evaluated case on the horizontal axis. Exact-match and schema checks are cheapest with narrow coverage. Overlap metrics are cheap and weak for open answers. Rubric LLM judges are highlighted as mid-cost and fairly faithful. Pairwise judges are a little higher. Online A/B tests and expert human review are the most expensive and most faithful.",
+      "caption": "Positions are a rough guide. Use the cheap checks on every case, judges on every change, and humans to calibrate both.",
+      "x": { "label": "Cost per evaluated case", "low": "cheap", "high": "expensive" },
+      "y": { "label": "Agreement with users", "low": "weak", "high": "strong" },
+      "points": [
+        { "label": "Schema/exact checks", "x": 1, "y": 3 },
+        { "label": "Overlap metrics", "x": 2, "y": 1 },
+        { "label": "Rubric LLM judge", "x": 4, "y": 5.5, "highlight": true },
+        { "label": "Pairwise judge", "x": 5, "y": 7 },
+        { "label": "Online A/B test", "x": 7, "y": 9.5 },
+        { "label": "Expert review", "x": 9, "y": 8.5 }
+      ]
+    },
+    {
+      "id": "ev-slices",
+      "type": "bars",
+      "title": "An average that hides a regression",
+      "alt": "Bar chart of illustrative pass rates by slice for a candidate prompt. Overall is 91 percent. English questions 95, short factual 94, multi-turn 88, tables 83, and non-English questions 71 percent, highlighted as the regression.",
+      "caption": "Illustrative numbers. The overall score went up while non-English questions dropped; gate on slices, not just the mean.",
+      "unit": "% pass (illustrative)",
+      "bars": [
+        { "label": "Overall", "value": 91 },
+        { "label": "English", "value": 95 },
+        { "label": "Short factual", "value": 94 },
+        { "label": "Multi-turn", "value": 88 },
+        { "label": "Tables", "value": 83 },
+        { "label": "Non-English", "value": 71, "highlight": true }
+      ]
+    },
+    {
+      "id": "ev-split",
+      "type": "flow",
+      "title": "Measure retrieval and generation separately",
+      "alt": "Flow diagram. A question goes to the retriever, which returns chunks to the generator, which produces an answer. Under the retriever, retrieval metrics such as recall at k and rank of the first relevant chunk are computed against labelled relevant chunks. Under the generator, faithfulness to the chunks and answer correctness are scored.",
+      "caption": "If recall@k is low, fix chunking or search. If recall is fine but faithfulness is low, fix the prompt or the model.",
+      "nodes": [
+        { "id": "q", "label": "Question", "kind": "client", "col": 0, "row": 0 },
+        { "id": "r", "label": "Retriever", "kind": "service", "col": 1, "row": 0 },
+        { "id": "g", "label": "Generator", "kind": "external", "col": 3, "row": 0 },
+        { "id": "a", "label": "Answer", "kind": "state", "col": 4, "row": 0 },
+        { "id": "rm", "label": "Retrieval score", "kind": "note", "col": 1, "row": 2, "sub": "recall@k, MRR" },
+        { "id": "gm", "label": "Generation score", "kind": "note", "col": 3, "row": 2, "sub": "faithful, correct" },
+        { "id": "lab", "label": "Labelled chunks", "kind": "db", "col": 0, "row": 2 }
+      ],
+      "edges": [
+        { "from": "q", "to": "r" },
+        { "from": "r", "to": "g", "label": "top-k chunks" },
+        { "from": "g", "to": "a" },
+        { "from": "r", "to": "rm", "label": "ids returned" },
+        { "from": "lab", "to": "rm", "label": "expected ids" },
+        { "from": "g", "to": "gm", "label": "answer + chunks" }
+      ]
+    },
+    {
+      "id": "ev-vibes",
+      "type": "compare",
+      "title": "Playground spot checks versus a gated eval",
+      "alt": "Side-by-side comparison. Before: an engineer edits a prompt, tries three examples in a playground and ships, and a regression reaches users. After: the prompt change runs the golden set in CI, a slice regression fails the gate, and the change is fixed before shipping.",
+      "caption": "Three hand-picked examples confirm the fix you wanted; only a fixed, representative set shows what else moved.",
+      "before": {
+        "label": "Spot check and ship",
+        "nodes": [
+          { "id": "p", "label": "Prompt edit", "kind": "client", "col": 0, "row": 0 },
+          { "id": "t", "label": "3 manual tries", "kind": "note", "col": 1, "row": 0 },
+          { "id": "u", "label": "Users find bug", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "p", "to": "t" },
+          { "from": "t", "to": "u", "label": "looks good", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Golden set gates the merge",
+        "nodes": [
+          { "id": "p", "label": "Prompt edit", "kind": "client", "col": 0, "row": 0 },
+          { "id": "e", "label": "Golden set run", "kind": "worker", "col": 1, "row": 0 },
+          { "id": "g", "label": "Gate: slice drop", "kind": "decision", "col": 2, "row": 0 },
+          { "id": "f", "label": "Fixed pre-ship", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "p", "to": "e" },
+          { "from": "e", "to": "g" },
+          { "from": "g", "to": "f" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Write golden cases with checkable expectations",
+      "bad": {
+        "label": "Expected answer as an exact string",
+        "lang": "json",
+        "code": "{ \"input\": \"What's the refund window?\",\n  \"expected\": \"Refunds are accepted within 30 days of delivery.\" }"
+      },
+      "good": {
+        "label": "Slice tags, code checks and a rubric",
+        "lang": "json",
+        "code": "{ \"id\": \"refund-017\", \"slices\": [\"policy\", \"en\", \"single-turn\"],\n  \"input\": \"What's the refund window?\",\n  \"relevant_chunks\": [\"refund-policy:s2:0\"],\n  \"checks\": { \"must_contain\": [\"30 days\"], \"must_cite\": true },\n  \"rubric\": [\"States 30 days from delivery\", \"Mentions the receipt requirement\",\n             \"Uses only the cited policy\"],\n  \"source\": \"prod-trace 2026-09-14, reviewed\" }"
+      },
+      "why": "Exact string match fails correct answers that are worded differently. Cheap code checks catch the hard requirements, the rubric tells a judge (or a human) exactly what correct means, labelled chunks let you score retrieval, and slice tags let the gate spot a regression on one kind of question."
+    },
+    {
+      "title": "Gate CI on slices against the baseline",
+      "bad": {
+        "label": "One overall threshold",
+        "lang": "yaml",
+        "code": "eval:\n  dataset: golden\n  pass_if: mean_score >= 0.8"
+      },
+      "good": {
+        "label": "Pinned set, baseline diff, per-slice limits",
+        "lang": "yaml",
+        "code": "eval:\n  dataset: golden@v42          # pinned version\n  baseline: prod-2026-10-01\n  judge: rubric-judge@v3        # pinned judge model + prompt\n  repeats: 3                    # average out sampling noise\n  block_if:\n    - hard_checks_failed > 0\n    - any_slice_drop > 3pts and slice_size >= 30\n  report: [per_slice, ci95, worst_20_diffs]"
+      },
+      "why": "A fixed threshold either blocks everything or nothing as the set evolves. Comparing with the production baseline on the same pinned set and judge shows what this change did. Per-slice limits catch hidden regressions, a minimum slice size avoids blocking on noise, and listing the worst differences makes the failure reviewable."
+    }
+  ],
+  "checklist": [
+    "A golden set built mostly from real, reviewed traffic, versioned, tagged by slice, and kept apart from any examples used in the prompt.",
+    "Deterministic checks (format, schema, required facts, citations) run before any model-based judging.",
+    "Judges use explicit rubrics, a pinned model and prompt, swapped-order pairwise comparisons, and are re-checked against human labels.",
+    "CI compares candidate with baseline on the same set and blocks on per-slice regressions, with repeats or confidence intervals to account for noise.",
+    "Online metrics (task success, escalations, retries, thumbs) and A/B tests confirm offline gains; offline scores alone do not ship big changes.",
+    "A steady sample of production traces gets human review, over-weighted toward bad signals, and failures flow back into the golden set.",
+    "RAG systems score retrieval (recall@k against labelled chunks) separately from generation (faithfulness and correctness)."
+  ],
+  "antipatterns": [
+    {
+      "title": "Trusting an LLM judge without calibration",
+      "bad": {
+        "label": "Same model judges its own output, one order",
+        "lang": "text",
+        "code": "judge = candidate_model\nprompt = \"Which answer is better? A: {candidate} B: {baseline}\"\n# candidate always shown first; no rubric; no human check"
+      },
+      "better": {
+        "label": "Rubric, both orders, agreement with humans",
+        "lang": "text",
+        "code": "judge = pinned judge model + rubric v3\nscore(A,B) and score(B,A); disagree -> tie\nmonthly: 200 human-labelled pairs, report agreement\nlength-matched spot checks for verbosity bias"
+      },
+      "why": "Judges are known to show position bias, a preference for longer answers and a preference for outputs that resemble their own. Without controls, a \"win\" can mean \"was first\" or \"was wordier\". Swapping order, using rubrics and measuring agreement with humans makes the number defensible."
+    },
+    {
+      "title": "Evaluating only end-to-end answers in RAG",
+      "bad": {
+        "label": "One score, no idea which half failed",
+        "lang": "text",
+        "code": "answer_correct: 0.74  (was 0.81)\n-> tweak the prompt and hope"
+      },
+      "better": {
+        "label": "Split the score",
+        "lang": "text",
+        "code": "retrieval recall@5: 0.68 (was 0.86)   <- dropped\nfaithfulness given chunks: 0.93 (unchanged)\n-> the new chunker split tables; fix ingestion"
+      },
+      "why": "Prompt changes cannot recover evidence the retriever never returned. Labelled relevant chunks let you measure recall@k directly, and a faithfulness score tells you whether the model stuck to what it was given."
+    },
+    {
+      "title": "A golden set that never changes",
+      "bad": {
+        "label": "Written once at launch",
+        "lang": "text",
+        "code": "golden.jsonl: 150 cases, last edited 14 months ago\nall invented by the team; scores 0.97 every run"
+      },
+      "better": {
+        "label": "Grows from reviewed production failures",
+        "lang": "text",
+        "code": "weekly: sample + flagged traces -> review -> add cases\nversion bump on every change; old versions kept\nkeep a held-out slice no one tunes the prompt against"
+      },
+      "why": "A static set slowly stops resembling real use, and a team that tunes prompts against it overfits until it always passes. Real failures keep it honest, and a held-out slice shows whether gains generalise."
+    }
+  ],
+  "interview": [
+    "When you propose any LLM feature, add \"and here is how we will know it works\": a golden set, the metrics, and the gate.",
+    "Name the judge biases (position, length, self-preference) and the controls (rubric, swapped order, human agreement checks) without being asked.",
+    "Separate offline from online: offline evals block regressions before merge; online A/B tests and sampled human review measure real impact.",
+    "For RAG, say you measure retrieval recall and generation faithfulness separately, and explain how that tells you what to fix.",
+    "At SSE level, talk about the process: who owns the golden set, how failures flow back into it, and how noise is handled so the gate is trusted rather than bypassed."
+  ],
+  "quiz": [
+    {
+      "question": "A pairwise judge prefers the candidate 70% of the time, but the candidate was always shown first. What should you do?",
+      "choices": ["Ship it: 70% is a clear win", "Re-run with order swapped and count inconsistent verdicts as ties", "Switch to a bigger judge model and keep the order", "Lower the temperature of the judge"],
+      "answer": 1,
+      "explain": "LLM judges can favour whichever answer appears first. Judging both orders and treating disagreements as ties removes that bias from the win rate."
+    },
+    {
+      "question": "Your overall eval score rose from 88% to 91%. Why might you still block the change?",
+      "choices": ["Scores above 90% are suspicious", "A slice such as non-English questions may have dropped sharply", "CI should never pass on the first run", "The golden set must be rewritten after every change"],
+      "answer": 1,
+      "explain": "Averages hide slice regressions. Gate on per-slice changes against the baseline, with a minimum slice size so you are not blocking on noise."
+    },
+    {
+      "question": "End-to-end correctness fell after a chunking change. Which measurement tells you whether retrieval caused it?",
+      "choices": ["The judge's overall score", "Recall@k against labelled relevant chunks", "User thumbs-up rate", "Average answer length"],
+      "answer": 1,
+      "explain": "Recall@k checks whether the expected chunks were returned at all. If it dropped while faithfulness stayed flat, the regression is in retrieval, not generation."
+    },
+    {
+      "question": "What is the main reason to have humans review a sample of production traces when you already have LLM judges?",
+      "choices": ["Judges cannot read long text", "To find new failure types and to check that judges still agree with people", "Regulations require 100% human review", "Humans are cheaper than judges"],
+      "answer": 1,
+      "explain": "Judges only measure what the rubric describes and can drift or be biased. Human review discovers unknown failure types, which become golden cases, and calibrates the judges."
+    },
+    {
+      "question": "Why run each golden case more than once, or report a confidence interval?",
+      "choices": ["Outputs vary between runs, so small score differences can be noise", "Models get better with repetition", "It hides failures", "The first run is always cached"],
+      "answer": 0,
+      "explain": "Sampling makes outputs vary, and small sets give wide uncertainty. Repeats and intervals stop the gate from blocking or passing changes on random variation."
+    }
+  ],
+  "practice": {
+    "prompt": "Your team changes the prompt and model of a customer-support assistant every week. Incidents keep reaching users. Design an evaluation and release process.",
+    "answer": "Build a golden set of a few hundred cases mostly sampled from real conversations, reviewed and labelled, tagged by slice (intent, language, single vs multi-turn, tool use), with hard checks (format, required facts, policy refusals) and a rubric per case; version it and keep a held-out slice. In CI, every prompt, model, retriever or tool change runs the set against the production baseline with a pinned judge; hard check failures block, and any important slice that drops beyond a threshold blocks, with repeats and confidence intervals to handle noise. Judges use rubrics, swapped-order pairwise comparisons and are checked monthly against expert labels. For RAG, score recall@k and faithfulness separately. Passing changes go to a canary or A/B test watching task success, escalation rate and user retries. Sample production traces weekly for human review, weighted toward negative signals, and add failures to the golden set. Assign an owner for the set and publish a dashboard per slice.",
+    "rubric": [
+      "Golden set from real traffic, versioned, sliced, with hard checks and rubrics",
+      "Baseline comparison in CI with per-slice gating and noise handling",
+      "LLM judge with bias controls and human calibration",
+      "Online validation via canary or A/B with concrete metrics",
+      "Human review sampling feeding failures back into the set",
+      "Retrieval measured separately from generation where RAG is involved"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-evals", "ai-rag", "ai-llm-system-design", "ml-evaluation-leakage"],
+    "guides": ["rag-in-production", "testing-strategy", "observability", "prompt-injection-guardrails"]
+  }
+}

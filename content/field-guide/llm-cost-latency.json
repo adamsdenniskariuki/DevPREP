@@ -1,0 +1,296 @@
+{
+  "id": "llm-cost-latency",
+  "kind": "guide",
+  "topic": "llm-apps",
+  "level": "sse",
+  "title": "LLM cost and latency: budgets, routing, caching and fallbacks",
+  "summary": "Tokens are your unit of cost and time. Budget them, stream output, route easy requests to small models, cache carefully, cap output, and plan for timeouts and rate limits.",
+  "minutes": 18,
+  "principle": "Measure and budget every LLM call in tokens and milliseconds: input tokens drive time to first token and prefix cost, output tokens drive total latency, and model size multiplies both. Spend the big model only where it changes the result, and make every call bounded, cached safely and able to fail over.",
+  "why": "An LLM call is not a normal RPC. Its latency has two parts: **time to first token** (queueing plus processing the whole input, often called prefill) and generation time, which grows roughly linearly with the number of output tokens. Its cost scales with input and output tokens, and output tokens are often priced higher. A prompt that quietly grows from a few hundred to many thousands of tokens, or an answer with no length cap, can multiply cost and latency without any code change.\n\nThe levers are well known. Trim and order the prompt so a shared prefix can be cached by the provider. Stream tokens so users see progress after the first token instead of the last. Route easy requests to a small, fast model and escalate only when needed. Cache whole answers only where it is safe, because a cached answer can be stale or, worse, belong to someone else. Batch offline work. Cap `max_tokens`, set timeouts, retry with backoff on rate limits, and keep a fallback model or a degraded answer ready. Concrete prices, limits and speeds vary by provider and change often; the numbers below are illustrative.",
+  "diagrams": [
+    {
+      "id": "cl-stream-sequence",
+      "type": "sequence",
+      "title": "A streamed request through an LLM gateway",
+      "alt": "Sequence diagram with client, LLM gateway, response cache and model. The gateway checks the token budget and the cache, misses, sends the prompt with a max tokens cap and a timeout, receives the first token after prefill, streams tokens to the client as they arrive, and records usage when generation ends.",
+      "caption": "Users judge speed by the first token. Total time is still set by how many tokens you let the model write.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "gw", "label": "LLM gateway" },
+        { "id": "cache", "label": "Cache" },
+        { "id": "model", "label": "Model" }
+      ],
+      "messages": [
+        { "from": "client", "to": "gw", "label": "ask (tenant T, feature F)", "note": "The gateway is one place to enforce per-tenant token budgets, rate limits, timeouts and logging for every LLM call." },
+        { "from": "gw", "to": "cache", "label": "lookup key(T, prompt v, input)", "note": "The key includes tenant, prompt version and model so a hit can never cross users or stale versions." },
+        { "from": "cache", "to": "gw", "label": "miss", "style": "reply" },
+        { "from": "gw", "to": "model", "label": "prompt, max_tokens=400, stream", "note": "Static instructions first, request-specific text last, so a provider-side prefix cache can reuse the shared part." },
+        { "from": "model", "to": "gw", "label": "first token (TTFT)", "style": "reply", "note": "Time to first token is mostly queueing plus processing the input. Long prompts push it up." },
+        { "from": "gw", "to": "client", "label": "stream tokens as they arrive", "style": "reply", "note": "The user starts reading while the model is still writing." },
+        { "from": "model", "to": "gw", "label": "... last token, stop reason", "style": "reply", "note": "If the stop reason says the length cap was hit, the answer is truncated. Handle it rather than showing half a JSON object." },
+        { "from": "gw", "to": "client", "label": "done + usage logged", "style": "reply", "note": "The gateway records input and output tokens, TTFT and total time per tenant and feature, which is what cost dashboards and budgets are built on." }
+      ]
+    },
+    {
+      "id": "cl-latency-bars",
+      "type": "bars",
+      "title": "Where the time goes in one RAG answer",
+      "alt": "Bar chart of an illustrative latency breakdown for one answer. Retrieval and reranking take about 150 milliseconds, queueing about 100, prefill until the first token about 400, and generating 500 output tokens about 5000 milliseconds, which is highlighted as by far the largest part.",
+      "caption": "Illustrative numbers only; real values depend on model, hardware and load. Output length usually dominates, so capping and shortening answers is the biggest latency lever.",
+      "unit": "ms (illustrative)",
+      "bars": [
+        { "label": "Retrieve + rerank", "value": 150 },
+        { "label": "Queueing", "value": 100 },
+        { "label": "Prefill (to TTFT)", "value": 400 },
+        { "label": "Decode 500 tokens", "value": 5000, "highlight": true }
+      ]
+    },
+    {
+      "id": "cl-cascade",
+      "type": "flow",
+      "title": "Routing and cascades behind a gateway",
+      "alt": "Flow diagram. A request enters the LLM gateway, which first checks a cache. On a miss a router sends easy requests to a small model and hard ones to a large model. The small model's output goes through a quality check; if confidence is low the request escalates to the large model.",
+      "caption": "Most traffic is usually easy. Paying for the large model only on the hard tail is where the savings come from, if the check is reliable.",
+      "nodes": [
+        { "id": "req", "label": "Request", "kind": "client", "col": 0, "row": 2 },
+        { "id": "gw", "label": "LLM gateway", "kind": "service", "col": 1, "row": 2, "sub": "budget, limits" },
+        { "id": "cache", "label": "Cache", "kind": "cache", "col": 1, "row": 0, "sub": "scoped keys" },
+        { "id": "router", "label": "Router", "kind": "decision", "col": 2, "row": 2, "sub": "rules/classifier" },
+        { "id": "small", "label": "Small model", "kind": "worker", "col": 3, "row": 1, "sub": "fast, cheap" },
+        { "id": "large", "label": "Large model", "kind": "worker", "col": 3, "row": 3, "sub": "slow, costly" },
+        { "id": "check", "label": "Quality check", "kind": "decision", "col": 4, "row": 1, "sub": "schema, confidence" },
+        { "id": "done", "label": "Response", "kind": "good", "col": 4, "row": 3 }
+      ],
+      "edges": [
+        { "from": "req", "to": "gw" },
+        { "from": "gw", "to": "cache", "label": "lookup" },
+        { "from": "gw", "to": "router", "label": "miss" },
+        { "from": "router", "to": "small", "label": "easy" },
+        { "from": "router", "to": "large", "label": "hard" },
+        { "from": "small", "to": "check" },
+        { "from": "check", "to": "large", "label": "low confidence", "style": "fail" },
+        { "from": "large", "to": "done" },
+        { "from": "check", "to": "done", "label": "passes" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "The gateway checks the per-tenant budget and rate limit, then looks for a safe cache hit. A hit costs no model tokens." },
+        { "edges": [2, 3, 4], "text": "On a miss, a router picks a model. Simple rules (task type, input length, customer tier) or a small classifier send easy work to the small model and known-hard work straight to the large one." },
+        { "edges": [5, 8], "text": "The small model's answer is checked: valid schema, required fields, a confidence or verifier score. Most answers pass and return quickly." },
+        { "edges": [6, 7], "text": "Failures escalate to the large model. Those requests pay for both calls and take longer, so a cascade only saves money if the escalation rate stays low; track it." }
+      ]
+    },
+    {
+      "id": "cl-options",
+      "type": "chart",
+      "title": "Cost and quality of serving options",
+      "alt": "Trade-off chart with answer quality on the vertical axis and cost per request on the horizontal axis. An exact cache hit is almost free with quality equal to the original answer. A semantic cache hit is cheap but riskier. A small model is cheap with medium quality. A cascade is highlighted with near large-model quality at moderate cost. The large model is the most expensive with the highest quality. Offline batch with the large model is somewhat cheaper but not interactive.",
+      "caption": "Rough positions, not benchmarks. Cascades and safe caching are how teams get most of the quality for less of the cost.",
+      "x": { "label": "Cost per request", "low": "cheap", "high": "expensive" },
+      "y": { "label": "Answer quality", "low": "lower", "high": "higher" },
+      "points": [
+        { "label": "Exact cache hit", "x": 0.5, "y": 8 },
+        { "label": "Semantic cache hit", "x": 1, "y": 5 },
+        { "label": "Small model", "x": 3, "y": 6 },
+        { "label": "Cascade", "x": 5, "y": 8.5, "highlight": true },
+        { "label": "Batch (large)", "x": 7, "y": 8.5 },
+        { "label": "Large model", "x": 9.5, "y": 10 }
+      ]
+    },
+    {
+      "id": "cl-semantic-cache",
+      "type": "compare",
+      "title": "Semantic cache: global similarity versus scoped keys",
+      "alt": "Side-by-side comparison. Before: a semantic cache keyed only on embedding similarity returns user A's answer about their account to user B who asked a similar question. After: the cache key includes tenant, user scope, prompt version, model and source data version, with a TTL and a high similarity threshold, so user B gets a fresh model call.",
+      "caption": "A cache hit skips every check the model call would have had. Scope keys to whoever may see the answer, and expire them when the data changes.",
+      "before": {
+        "label": "Similarity only, global",
+        "nodes": [
+          { "id": "b", "label": "User B asks", "kind": "client", "col": 0, "row": 0, "sub": "my balance?" },
+          { "id": "c", "label": "Semantic cache", "kind": "cache", "col": 1, "row": 0, "sub": "nearest match" },
+          { "id": "x", "label": "A's balance", "kind": "bad", "col": 2, "row": 0, "sub": "leak + stale" }
+        ],
+        "edges": [
+          { "from": "b", "to": "c" },
+          { "from": "c", "to": "x", "label": "hit 0.93", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Scoped key, TTL, versioned",
+        "nodes": [
+          { "id": "b", "label": "User B asks", "kind": "client", "col": 0, "row": 0 },
+          { "id": "c", "label": "Scoped cache", "kind": "cache", "col": 1, "row": 0, "sub": "tenant+user+ver" },
+          { "id": "m", "label": "Model call", "kind": "good", "col": 2, "row": 0, "sub": "B's own data" }
+        ],
+        "edges": [
+          { "from": "b", "to": "c" },
+          { "from": "c", "to": "m", "label": "miss for B" }
+        ]
+      }
+    },
+    {
+      "id": "cl-fallback",
+      "type": "flow",
+      "title": "Timeouts, rate limits and fallbacks",
+      "alt": "State diagram for one LLM call. The primary model call either returns a response or hits a timeout or a 429 rate limit. A failure leads to one retry with backoff and jitter, honouring Retry-After. If the retry fails the call goes to a fallback model; if that also fails the user gets a degraded reply such as a cached or templated answer.",
+      "caption": "Every step has a deadline. The user gets something useful within the overall budget, even when the provider is overloaded.",
+      "nodes": [
+        { "id": "call", "label": "Primary model", "kind": "state", "col": 0, "row": 0, "sub": "deadline 8s" },
+        { "id": "ok", "label": "Response", "kind": "good", "col": 2, "row": 0 },
+        { "id": "err", "label": "Timeout or 429", "kind": "bad", "col": 0, "row": 2 },
+        { "id": "retry", "label": "Retry once", "kind": "state", "col": 2, "row": 2, "sub": "backoff + jitter" },
+        { "id": "fb", "label": "Fallback model", "kind": "state", "col": 4, "row": 2, "sub": "other model/region" },
+        { "id": "deg", "label": "Degraded reply", "kind": "note", "col": 4, "row": 4, "sub": "cached / template" }
+      ],
+      "edges": [
+        { "from": "call", "to": "ok", "label": "in time" },
+        { "from": "call", "to": "err", "style": "fail" },
+        { "from": "err", "to": "retry", "label": "budget left" },
+        { "from": "retry", "to": "ok", "label": "succeeds", "style": "reply" },
+        { "from": "retry", "to": "fb", "label": "fails again", "style": "fail" },
+        { "from": "fb", "to": "ok", "style": "reply" },
+        { "from": "fb", "to": "deg", "label": "fails", "style": "fail" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Bound every call: tokens, time and retries",
+      "bad": {
+        "label": "No caps, no deadline, no fallback",
+        "lang": "py",
+        "code": "resp = client.generate(model=\"big-model\", prompt=build_prompt(history_all, docs_all))\nreturn resp.text"
+      },
+      "good": {
+        "label": "Budgeted prompt, capped output, deadline, fallback",
+        "lang": "py",
+        "code": "prompt = build_prompt(SYSTEM, tools, docs=top_k(docs, 5),\n                      history=last_turns(history, max_tokens=1500))\nassert count_tokens(prompt) <= INPUT_BUDGET[feature]\n\nfor model, timeout in [(\"primary\", 8), (\"fallback\", 5)]:\n    try:\n        resp = client.generate(model=model, prompt=prompt, max_tokens=400,\n                               stream=True, timeout=timeout)\n        if resp.stop_reason == \"length\":\n            metrics.inc(\"truncated\", feature=feature)\n        return resp\n    except RateLimited as e:\n        sleep(min(e.retry_after or backoff_with_jitter(), 2))\n    except Timeout:\n        continue\nreturn degraded_answer(feature)"
+      },
+      "why": "Prompts grow silently as history and documents pile up, so trimming and an input budget stop cost and time to first token from creeping. `max_tokens` bounds total latency and cost, and the stop reason tells you when it truncated. A deadline per attempt, a bounded rate-limit wait and a fallback keep the whole call inside the user's patience."
+    },
+    {
+      "title": "Order the prompt for prefix caching",
+      "bad": {
+        "label": "Variable text first, shared text after",
+        "lang": "text",
+        "code": "[user question]\n[retrieved docs]\n[2,000-token system instructions + tool schemas]"
+      },
+      "good": {
+        "label": "Stable prefix first, variable text last",
+        "lang": "text",
+        "code": "[system instructions + tool schemas]   <- identical across requests\n[few-shot examples]                    <- identical across requests\n[retrieved docs]\n[user question]                        <- varies"
+      },
+      "why": "Many providers can reuse computation for a prompt prefix they have recently seen, which lowers input cost and time to first token; exact rules vary by provider. Any change early in the prompt (a timestamp, a user name) breaks the shared prefix, so keep the stable parts first and byte-identical."
+    }
+  ],
+  "checklist": [
+    "Each feature has an input token budget and a `max_tokens` cap; truncation (stop reason = length) is measured and handled.",
+    "Dashboards show time to first token, total latency, input and output tokens, and cost per request, broken down by feature, model and tenant.",
+    "Responses stream to interactive users; non-interactive work goes to batch or queues with relaxed deadlines.",
+    "A router or cascade sends easy requests to a smaller model, and the escalation rate and quality are tracked per route.",
+    "Prompts put stable content first to benefit from prefix caching; response caches key on tenant, user scope, prompt version, model and data version, with a TTL.",
+    "Every call has a deadline, bounded retries with backoff and jitter on 429 and 5xx, a fallback model or region, and a degraded answer.",
+    "A gateway enforces per-tenant rate and token limits so one customer or a runaway loop cannot exhaust the shared quota."
+  ],
+  "antipatterns": [
+    {
+      "title": "Sending the whole conversation every turn",
+      "bad": {
+        "label": "Full history, every turn, forever",
+        "lang": "text",
+        "code": "turn 1:   1,200 input tokens\nturn 20: 31,000 input tokens   (cost and TTFT keep climbing)\nturn 40: context limit exceeded -> error"
+      },
+      "better": {
+        "label": "Recent turns plus a running summary",
+        "lang": "text",
+        "code": "system + tools (cached prefix)\nsummary of earlier turns (~300 tokens, refreshed every 10 turns)\nlast 6 turns verbatim\nretrieved facts for this question only"
+      },
+      "why": "Input tokens are paid on every call and lengthen prefill, so unbounded history makes long conversations slow, expensive and eventually broken. Summaries and windows keep the cost of turn 40 close to turn 4. Numbers are illustrative."
+    },
+    {
+      "title": "A global semantic cache for personalised answers",
+      "bad": {
+        "label": "Similarity alone decides a hit",
+        "lang": "py",
+        "code": "hit = cache.nearest(embed(question), threshold=0.9)\nif hit: return hit.answer   # any user's, any age"
+      },
+      "better": {
+        "label": "Scoped, versioned, expiring, and only for safe content",
+        "lang": "py",
+        "code": "if feature.cacheable:   # e.g. public FAQ, not account data\n    key = (tenant, scope, PROMPT_V, MODEL, corpus_version)\n    hit = cache.nearest(key, embed(question), threshold=0.97, max_age=3600)\n    if hit: return hit.answer"
+      },
+      "why": "Two questions can be close in embedding space and still need different answers (\"cancel my order\" versus \"cancel my subscription\"), and an answer built from one user's data must never reach another. Restrict semantic caching to non-personal content, scope the key, version it, and expire it when sources change."
+    },
+    {
+      "title": "Retrying rate limits immediately in a tight loop",
+      "bad": {
+        "label": "Hammer the provider on 429",
+        "lang": "py",
+        "code": "while True:\n    try: return call()\n    except RateLimited: pass"
+      },
+      "better": {
+        "label": "Honour Retry-After, back off, cap attempts",
+        "lang": "py",
+        "code": "for attempt in range(3):\n    try: return call()\n    except RateLimited as e:\n        sleep(e.retry_after or base * 2**attempt * random.uniform(0.5, 1.5))\nreturn fallback()"
+      },
+      "why": "Instant retries add load exactly when the provider is shedding it, and every client retrying in sync makes it worse. Exponential backoff with jitter, a retry cap and a client-side token bucket keep you under the quota and recover faster."
+    }
+  ],
+  "interview": [
+    "Split latency into time to first token and generation time, and say which levers move each: shorter prompts and prefix caching for the first, `max_tokens` and shorter answers for the second.",
+    "Estimate cost per request from input and output tokens and requests per day, and state that numbers are illustrative because prices change.",
+    "Propose a gateway that owns budgets, rate limits, caching, routing, timeouts and usage logging for all LLM calls.",
+    "Mention model routing or a cascade, and say you would measure escalation rate and quality per route with evals before trusting the savings.",
+    "Raise the caching risks unprompted: semantic hits can be wrong, stale or cross-tenant, so scope keys, version them and limit caching to safe content."
+  ],
+  "quiz": [
+    {
+      "question": "Users complain the assistant feels slow, but total latency is fine for short answers. Which change most improves perceived speed?",
+      "choices": ["Streaming tokens to the client", "Raising max_tokens", "Adding more retrieved documents", "Switching to a larger model"],
+      "answer": 0,
+      "explain": "Streaming lets users start reading at the first token instead of waiting for the last. It does not shorten total time but greatly improves perceived latency."
+    },
+    {
+      "question": "For a long answer, which usually dominates total latency?",
+      "choices": ["Network round trip", "Generating the output tokens", "TLS handshake", "Tokenising the input"],
+      "answer": 1,
+      "explain": "Output is generated token by token, so total time grows roughly with output length. That is why `max_tokens` and concise answers are strong latency levers."
+    },
+    {
+      "question": "Why put static instructions and tool schemas at the start of the prompt?",
+      "choices": ["Models read the end first", "So a shared prefix can be reused by prefix caching, lowering cost and time to first token", "It reduces output tokens", "It is required by all APIs"],
+      "answer": 1,
+      "explain": "Prefix caching reuses work for identical leading tokens. Variable content early in the prompt breaks the match for everything after it."
+    },
+    {
+      "question": "A cascade sends every request to a small model first and escalates on low confidence. When can it cost more than always using the large model?",
+      "choices": ["Never", "When the escalation rate is high, so many requests pay for both models", "When responses are streamed", "When prompts are cached"],
+      "answer": 1,
+      "explain": "Escalated requests pay for the small call and the large call and take longer. Track the escalation rate per route; if it is high, route those requests directly to the large model."
+    },
+    {
+      "question": "What is the main safety risk of a semantic response cache?",
+      "choices": ["It uses too much memory", "A similar but different question, or another user's question, returns a wrong or private answer", "It slows down streaming", "It breaks prefix caching"],
+      "answer": 1,
+      "explain": "Similarity is not equality. Scope keys by tenant and user, include prompt, model and data versions, use a high threshold and TTL, and avoid caching personal answers."
+    }
+  ],
+  "practice": {
+    "prompt": "Your LLM support assistant costs four times the budget and p95 latency is 14 seconds. Traffic will double next quarter. What do you do?",
+    "answer": "First measure: per feature, log input and output tokens, time to first token, total latency, model, cache hits and cost; find the top contributors. Typical fixes: trim prompts (windowed history plus summary, top 5 reranked chunks instead of 30), put static instructions first for prefix caching, and set `max_tokens` per feature with truncation tracking. Stream responses to improve perceived latency. Add a router or cascade so routine questions use a small model, measuring quality with the eval set and watching the escalation rate. Cache exact answers for public FAQ content with scoped, versioned keys and a TTL; avoid caching account-specific answers. Move summarisation and tagging to batch jobs. Put all calls behind a gateway with per-tenant token and rate limits, deadlines, backoff with jitter on 429, a fallback model and a degraded answer. Re-run evals after each change and report cost per resolved conversation, not just per call.",
+    "rubric": [
+      "Starts by measuring tokens, TTFT, total latency and cost per feature",
+      "Reduces input tokens and caps output with max_tokens",
+      "Streams responses and separates interactive from batch work",
+      "Uses routing or a cascade with quality and escalation tracking",
+      "Applies caching with scoping, versioning and TTL, aware of risks",
+      "Adds deadlines, backoff, rate limits and fallbacks via a gateway"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-llm-system-design", "ai-rag", "ai-evals", "design-rate-limiting"],
+    "problems": ["token-bucket-limiter", "lru-cache"],
+    "cases": ["api-rate-limiter"],
+    "guides": ["caching-strategies", "retries-backoff", "circuit-breakers", "graceful-degradation", "rag-in-production", "llm-evals"]
+  }
+}

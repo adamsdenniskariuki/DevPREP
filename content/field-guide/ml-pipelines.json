@@ -1,0 +1,283 @@
+{
+  "id": "ml-pipelines",
+  "kind": "guide",
+  "topic": "ml-production",
+  "level": "se",
+  "title": "ML pipelines: reproducible training, registries and CI/CD",
+  "summary": "Turn notebook training into a pipeline: pinned data snapshots, validation gates, versioned code, data and model in a registry, the right inference mode and automated, gated promotion.",
+  "minutes": 15,
+  "principle": "A production model must be reproducible from versioned inputs: a code commit, an immutable data snapshot, a config and an environment. Build it with an automated pipeline that validates data before training, evaluates against the current model before promotion, and records every version and its lineage in a model registry.",
+  "why": "Most ML code is not the model. It is ingestion, validation, feature building, training, evaluation, packaging and deployment, and every one of those steps can silently change the result. A model trained in a notebook on \"the events table\" cannot be rebuilt next month, because the table, the library versions and the random seed have all moved. When it misbehaves, nobody can say which data it saw.\n\nA pipeline fixes that by making each run a function of versioned inputs. Data is read from a **dated, immutable snapshot**, not a live table. **Data validation** checks schema, row counts, null rates, value ranges and label rates before training starts, because a broken upstream table produces a model that trains fine and predicts nonsense. The trained artifact goes into a **model registry** with its lineage (commit, snapshot, config, metrics) and a stage such as candidate, production or archived, so deployment and rollback are just pointer moves.\n\nThe pipeline also forces a choice of **inference mode**. **Batch inference** scores every known entity on a schedule and stores the results for lookup: cheap and simple, but predictions are as stale as the last run and new entities have none. **Online inference** scores on request with fresh context, but needs low-latency features and serving capacity. Many systems mix the two, for example batch candidate generation with online re-ranking, and **feature freshness** (how old a feature may be when used) is a requirement to state, not an accident.\n\nFinally, **CI/CD for models** treats the pipeline like any other code: unit tests for transforms, a small-data training smoke test in CI, and a release path where each new model must beat the current one on a holdout and then go through a staged rollout. Retraining on a schedule or a trigger (sometimes called continuous training) is safe only because those gates exist.",
+  "diagrams": [
+    {
+      "id": "pip-dag",
+      "type": "flow",
+      "title": "A training pipeline with gates",
+      "alt": "Pipeline flow. Raw data is written to an immutable dated snapshot, validated, turned into features and used to train a model. Evaluation compares it with the champion; a better model goes to the registry and then deployment. Failed validation halts the run with an alert, and a worse model leaves the champion in place.",
+      "caption": "The two decision boxes are what make automatic retraining safe: bad data never trains, and a worse model never ships.",
+      "nodes": [
+        { "id": "raw", "label": "Raw data", "kind": "db", "col": 0, "row": 0 },
+        { "id": "snap", "label": "Snapshot", "kind": "storage", "col": 1, "row": 0, "sub": "dated, immutable" },
+        { "id": "validate", "label": "Validate data", "kind": "decision", "col": 2, "row": 0 },
+        { "id": "feat", "label": "Build features", "kind": "worker", "col": 3, "row": 0 },
+        { "id": "train", "label": "Train", "kind": "worker", "col": 4, "row": 0, "sub": "seeded" },
+        { "id": "halt", "label": "Halt + alert", "kind": "bad", "col": 2, "row": 1 },
+        { "id": "eval", "label": "Evaluate", "kind": "decision", "col": 4, "row": 2, "sub": "vs champion" },
+        { "id": "registry", "label": "Model registry", "kind": "storage", "col": 3, "row": 2, "sub": "with lineage" },
+        { "id": "deploy", "label": "Deploy", "kind": "service", "col": 2, "row": 3, "sub": "shadow, canary" },
+        { "id": "keep", "label": "Keep champion", "kind": "bad", "col": 4, "row": 4 }
+      ],
+      "edges": [
+        { "from": "raw", "to": "snap", "label": "export" },
+        { "from": "snap", "to": "validate" },
+        { "from": "validate", "to": "feat", "label": "pass" },
+        { "from": "validate", "to": "halt", "label": "fail", "style": "fail" },
+        { "from": "feat", "to": "train" },
+        { "from": "train", "to": "eval" },
+        { "from": "eval", "to": "registry", "label": "better" },
+        { "from": "eval", "to": "keep", "label": "worse", "style": "fail" },
+        { "from": "registry", "to": "deploy", "label": "promote" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Export the training window to a dated, read-only snapshot. Every later step reads the snapshot, so rerunning the pipeline next month sees exactly the same rows." },
+        { "edges": [1, 2, 3], "text": "Validate before spending compute: schema, row count against recent runs, null rates, value ranges and label rate. A failure stops the run and alerts the data owner." },
+        { "edges": [4, 5], "text": "Build features with the same definitions serving uses, then train with fixed seeds and pinned library versions." },
+        { "edges": [6, 7], "text": "Evaluate on a time-based holdout against the current production model, overall and per segment. Only a model that is better (and not worse on any important slice) moves on." },
+        { "edges": [8], "text": "The registry records the candidate with its lineage. Promotion moves a stage pointer and starts a staged rollout; rollback moves it back." }
+      ]
+    },
+    {
+      "id": "pip-lineage",
+      "type": "flow",
+      "title": "What a model version points to",
+      "alt": "Lineage diagram centred on model version 12. It links to the code commit that trained it, the feature definitions version, the data snapshot, the training config, the container image and the evaluation report.",
+      "caption": "If any of these is missing you can deploy the model, but you cannot rebuild, explain or safely retrain it.",
+      "nodes": [
+        { "id": "model", "label": "Model v12", "kind": "good", "col": 2, "row": 1, "sub": "registry entry" },
+        { "id": "commit", "label": "Code commit", "kind": "note", "col": 0, "row": 0, "sub": "a1b2c3d" },
+        { "id": "feats", "label": "Feature defs", "kind": "note", "col": 0, "row": 1, "sub": "v5" },
+        { "id": "data", "label": "Data snapshot", "kind": "storage", "col": 0, "row": 2, "sub": "2026-09-30" },
+        { "id": "config", "label": "Train config", "kind": "note", "col": 4, "row": 0, "sub": "params, seed" },
+        { "id": "env", "label": "Container image", "kind": "note", "col": 4, "row": 2, "sub": "pinned libs" },
+        { "id": "report", "label": "Eval report", "kind": "note", "col": 2, "row": 3, "sub": "per-segment" }
+      ],
+      "edges": [
+        { "from": "model", "to": "commit", "label": "code" },
+        { "from": "model", "to": "feats", "label": "features" },
+        { "from": "model", "to": "data", "label": "data" },
+        { "from": "model", "to": "config", "label": "config" },
+        { "from": "model", "to": "env", "label": "environment" },
+        { "from": "model", "to": "report", "label": "metrics" }
+      ]
+    },
+    {
+      "id": "pip-promote",
+      "type": "sequence",
+      "title": "CI/CD for a model change",
+      "alt": "Sequence diagram. A merged change triggers CI, which runs unit tests and a small training smoke test, then starts the pipeline. The pipeline trains on a pinned snapshot, registers a candidate with lineage and evaluation results, the registry promotes it when it beats the champion, and serving starts a canary.",
+      "caption": "Code is tested in CI; models are tested by evaluation gates. Both are needed before anything reaches users.",
+      "actors": [
+        { "id": "ci", "label": "CI" },
+        { "id": "pipe", "label": "Pipeline" },
+        { "id": "reg", "label": "Registry" },
+        { "id": "serve", "label": "Serving" }
+      ],
+      "messages": [
+        { "from": "ci", "to": "pipe", "label": "tests passed: run on snapshot", "note": "Before this, CI ran unit tests on feature transforms and a smoke test that trains on a tiny sample, so broken code never reaches a full run. The pipeline then validates the snapshot, trains and evaluates." },
+        { "from": "pipe", "to": "reg", "label": "register v13 + lineage", "note": "The candidate is stored as a new immutable version with commit, snapshot, config, image and evaluation report." },
+        { "from": "reg", "to": "pipe", "label": "champion is v12", "style": "reply" },
+        { "from": "pipe", "to": "reg", "label": "v13 beats v12: stage candidate", "note": "The gate compares on the same time-based holdout, overall and per segment." },
+        { "from": "reg", "to": "serve", "label": "deploy v13 as canary", "style": "async", "note": "Serving pulls the version by id, never a mutable file path, and logs the version on every prediction." },
+        { "from": "serve", "to": "reg", "label": "canary healthy", "style": "reply" },
+        { "from": "reg", "to": "serve", "label": "production -> v13", "note": "Promotion is a pointer move. If metrics turn, moving it back to v12 is the rollback." }
+      ]
+    },
+    {
+      "id": "pip-inference",
+      "type": "chart",
+      "title": "Inference modes: freshness against complexity",
+      "alt": "Trade-off chart with prediction freshness on the horizontal axis and serving complexity on the vertical axis. Nightly batch scoring is stale and simple. Hourly batch is a little fresher. Batch candidates with online re-ranking sits in the middle. Online scoring with batch features is fresher and more complex, and online scoring with streaming features is freshest and most complex.",
+      "caption": "Rough positions. Choose the least complex mode that meets the freshness the product actually needs.",
+      "x": { "label": "Prediction freshness", "low": "hours old", "high": "per request" },
+      "y": { "label": "Serving complexity", "low": "simple", "high": "complex" },
+      "points": [
+        { "label": "Nightly batch", "x": 1, "y": 1 },
+        { "label": "Hourly batch", "x": 3, "y": 3 },
+        { "label": "Batch + online rerank", "x": 6, "y": 5, "highlight": true },
+        { "label": "Online, batch feats", "x": 8, "y": 7 },
+        { "label": "Online, stream feats", "x": 10, "y": 10 }
+      ]
+    },
+    {
+      "id": "pip-notebook",
+      "type": "compare",
+      "title": "Notebook to production versus a pipeline",
+      "alt": "Side-by-side comparison. Before: a notebook reads a live table, saves a pickle on a laptop and someone copies it to the production server. After: a pipeline reads a snapshot, validates, trains and registers the model, and the deploy step pulls a registered version.",
+      "caption": "Both paths produce a model file. Only one can tell you how to make it again.",
+      "before": {
+        "label": "Manual handoff",
+        "nodes": [
+          { "id": "table", "label": "Live table", "kind": "db", "col": 0, "row": 0 },
+          { "id": "nb", "label": "Notebook", "kind": "client", "col": 1, "row": 0, "sub": "unpinned libs" },
+          { "id": "pkl", "label": "model.pkl", "kind": "bad", "col": 2, "row": 0, "sub": "on a laptop" },
+          { "id": "prod", "label": "Prod server", "kind": "bad", "col": 2, "row": 2 }
+        ],
+        "edges": [
+          { "from": "table", "to": "nb" },
+          { "from": "nb", "to": "pkl" },
+          { "from": "pkl", "to": "prod", "label": "scp", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Pipeline + registry",
+        "nodes": [
+          { "id": "snap", "label": "Snapshot", "kind": "storage", "col": 0, "row": 0 },
+          { "id": "pipe", "label": "Pipeline run", "kind": "worker", "col": 1, "row": 0, "sub": "validate, train" },
+          { "id": "reg", "label": "Registry", "kind": "good", "col": 2, "row": 0, "sub": "v12 + lineage" },
+          { "id": "prod", "label": "Serving", "kind": "good", "col": 2, "row": 2 }
+        ],
+        "edges": [
+          { "from": "snap", "to": "pipe" },
+          { "from": "pipe", "to": "reg", "label": "register" },
+          { "from": "reg", "to": "prod", "label": "pull v12" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Make a training run reproducible",
+      "bad": {
+        "label": "Live table, no seed, file overwritten",
+        "lang": "py",
+        "code": "df = spark.table('events').toPandas()\nmodel = XGBClassifier().fit(df[FEATURES], df.label)\npickle.dump(model, open('/models/model.pkl', 'wb'))"
+      },
+      "good": {
+        "label": "Pinned inputs, recorded lineage",
+        "lang": "py",
+        "code": "cfg = load_config('configs/ctr.yaml')            # params, seed, window\nsnap = f\"s3://ml/snapshots/events/{cfg.snapshot_date}/\"  # read-only\ndf = read_parquet(snap)\nvalidate(df, schema=SCHEMA, baseline=last_good_stats())\nmodel = XGBClassifier(**cfg.params, random_state=cfg.seed).fit(df[FEATURES], df.label)\nregistry.register('ctr', model, lineage={\n    'commit': git_sha(), 'snapshot': snap, 'config': cfg.hash(),\n    'image': os.environ['IMAGE_DIGEST'], 'metrics': evaluate(model, holdout)})"
+      },
+      "why": "Every input that can change the result is pinned and written down: the code commit, the data snapshot, the config and seed, and the environment image. The registry entry is a new version, never an overwrite, so the previous model stays available for comparison and rollback. (`registry.register` stands for whatever registry your platform provides.)"
+    },
+    {
+      "title": "Validate data before training on it",
+      "bad": {
+        "label": "Train on whatever arrived",
+        "lang": "py",
+        "code": "df = read_parquet(snap)\nmodel.fit(df[FEATURES], df.label)  # upstream sent prices in cents today"
+      },
+      "good": {
+        "label": "Cheap checks that stop the run",
+        "lang": "py",
+        "code": "def validate(df, schema, baseline):\n    errors = schema.check(df)                       # columns, types\n    if not 0.7 < len(df) / baseline.rows < 1.3:\n        errors.append(f'row count {len(df)} vs {baseline.rows}')\n    for col, max_null in schema.max_null_rate.items():\n        if df[col].isna().mean() > max_null:\n            errors.append(f'{col} null rate too high')\n    if not baseline.price_p50 / 2 < df.price.median() < baseline.price_p50 * 2:\n        errors.append('price median moved >2x: unit change?')\n    if abs(df.label.mean() - baseline.label_rate) > 3 * baseline.label_rate_std:\n        errors.append('label rate out of range')\n    if errors:\n        raise DataValidationError(errors)"
+      },
+      "why": "A model trained on broken data still trains: loss goes down and a file is produced. Comparing each snapshot with the last good one catches unit changes, missing partitions, exploding nulls and label bugs before they become a model. Thresholds are a starting point and should be tuned on history."
+    }
+  ],
+  "checklist": [
+    "Training reads a dated, immutable data snapshot, never a live table.",
+    "Data validation (schema, row counts, null rates, ranges, label rate) runs before training and can stop the run.",
+    "Seeds, configs and library versions are pinned; the environment is a container image referenced by digest.",
+    "Every model is registered as a new version with lineage: commit, feature definitions, snapshot, config, image, evaluation report.",
+    "Promotion requires beating the current production model on a time-based holdout, overall and per important segment.",
+    "Deployment pulls a registry version and goes through shadow or canary; rollback moves the stage pointer back.",
+    "CI runs unit tests on feature transforms and a small-data training smoke test on every change.",
+    "The inference mode (batch, online or hybrid) and each feature's freshness budget are written down and monitored."
+  ],
+  "antipatterns": [
+    {
+      "title": "Hand-built models copied to production",
+      "bad": { "label": "Notebook, pickle, scp", "diagram": "pip-notebook" },
+      "better": {
+        "label": "Every production model comes from a pipeline run",
+        "lang": "text",
+        "code": "pipeline run 2026-10-01-ctr-17\n  snapshot  s3://ml/snapshots/events/2026-09-30/\n  commit    a1b2c3d\n  result    registered ctr v12 (candidate)"
+      },
+      "why": "A hand-built model has no record of its data, code or environment, so it cannot be rebuilt, audited or retrained when it degrades. Requiring every deployed version to come from a pipeline run makes reproducibility the default."
+    },
+    {
+      "title": "Overwriting the model file in place",
+      "bad": {
+        "label": "One path, latest wins",
+        "lang": "text",
+        "code": "s3://models/ctr/model.pkl   # overwritten nightly\nserving reloads the file every hour"
+      },
+      "better": {
+        "label": "Immutable versions and a stage pointer",
+        "lang": "text",
+        "code": "registry: ctr v11 (archived), v12 (production), v13 (candidate)\nserving:  loads 'ctr@production', logs the version on each prediction\nrollback: set production -> v11"
+      },
+      "why": "When a file is overwritten, the previous model is gone, monitoring cannot tell which version made a prediction, and a half-written upload can be loaded mid-copy. Versions plus a pointer make deploys atomic and rollback instant."
+    },
+    {
+      "title": "Online inference for predictions that could be precomputed",
+      "bad": {
+        "label": "Real-time model for a daily email",
+        "lang": "text",
+        "code": "Daily digest email calls the ranking service per user at send time:\n40M calls in 30 minutes, autoscaling, timeouts, retries."
+      },
+      "better": {
+        "label": "Batch score, store, look up",
+        "lang": "text",
+        "code": "Nightly batch job scores all users after feature refresh,\nwrites top-k items to a key-value store,\nemail sender reads the store. Online scoring kept for the app feed."
+      },
+      "why": "If predictions are consumed on a schedule and request context adds nothing, batch scoring is cheaper, easier to retry and easier to validate before use. Reserve online inference for cases that need fresh context, new entities or per-request inputs."
+    }
+  ],
+  "interview": [
+    "When you design an ML system, draw the training pipeline as its own box with stages: snapshot, validate, features, train, evaluate, register, deploy. Say where it can stop.",
+    "Use the word lineage: \"each model version records the commit, snapshot, config and image that produced it\", and connect it to rollback and debugging.",
+    "Choose an inference mode explicitly and justify it with freshness: batch for scheduled consumers, online for request context or new entities, hybrid for large candidate sets.",
+    "Describe CI/CD for models as two kinds of tests: code tests in CI, and evaluation gates against the champion before a staged rollout.",
+    "At SSE level, mention scheduled or triggered retraining and why it is only safe with data validation and promotion gates in place."
+  ],
+  "quiz": [
+    {
+      "question": "Why should training read a dated snapshot rather than a live table?",
+      "choices": ["Snapshots are faster to query", "So the run can be reproduced exactly and its data identified later", "Live tables cannot be read by Spark", "It removes the need for validation"],
+      "answer": 1,
+      "explain": "A live table changes under you. An immutable snapshot makes the data an input you can name, rerun and inspect when a model misbehaves."
+    },
+    {
+      "question": "Upstream starts sending prices in cents instead of dollars. Which pipeline stage should catch it?",
+      "choices": ["Training, because loss will rise", "Data validation, by comparing distributions with the last good snapshot", "Serving, through latency alerts", "The model registry"],
+      "answer": 1,
+      "explain": "Training will happily fit the new numbers. A range or median check against the last good snapshot flags a 100x shift before compute is spent and before a bad model exists."
+    },
+    {
+      "question": "What is the main benefit of a model registry with stages?",
+      "choices": ["It trains models faster", "Each version is immutable with lineage, and deploy or rollback is a pointer move", "It replaces monitoring", "It stores raw training data"],
+      "answer": 1,
+      "explain": "Versions with lineage make models reproducible and auditable; stages such as candidate and production make promotion and rollback atomic."
+    },
+    {
+      "question": "A product sends a daily recommendation email to all users. Which inference mode fits best?",
+      "choices": ["Online inference at send time", "Batch inference ahead of time, stored for lookup", "On-device inference", "Streaming inference with per-event updates"],
+      "answer": 1,
+      "explain": "The consumer runs on a schedule and needs no request context, so precomputing scores is cheaper, easier to validate and easier to retry."
+    },
+    {
+      "question": "Which pair best describes CI/CD for a model?",
+      "choices": ["Unit tests only", "Code tests in CI, plus evaluation against the champion and a staged rollout before promotion", "Manual review of every prediction", "Retraining every hour"],
+      "answer": 1,
+      "explain": "Code tests catch broken transforms; evaluation gates catch worse models. A staged rollout catches what neither can see offline."
+    }
+  ],
+  "practice": {
+    "prompt": "A data scientist hands you a notebook that trains a churn model from the production events table and a `model.pkl` they copied to a server. Turn this into a production setup that you could retrain monthly and roll back safely.",
+    "answer": "Move the notebook logic into versioned code with configs and pinned dependencies in a container image. Build a pipeline: export the training window to a dated, immutable snapshot; validate it (schema, row counts versus recent runs, null rates, ranges, churn label rate) and halt with an alert on failure; build features from shared definitions so serving computes them the same way; train with fixed seeds; evaluate on a time-based holdout against the current production model, overall and per segment. Register each run as a new version with lineage (commit, snapshot, feature definitions version, config, image digest, evaluation report). Promotion moves a stage pointer and triggers shadow or a canary; rollback moves it back to the previous version, which stays available. Churn scores are consumed by a weekly retention campaign, so use batch inference into a key-value store rather than an online service. In CI, run unit tests on transforms and a small-data training smoke test. Schedule the pipeline monthly, plus a manual trigger, and rely on the gates rather than auto-promoting.",
+    "rubric": [
+      "Uses immutable data snapshots and pinned code, config and environment",
+      "Adds data validation that can stop the run",
+      "Registers versions with lineage and promotes by stage, with a rollback path",
+      "Gates promotion on evaluation against the current model",
+      "Chooses and justifies batch versus online inference",
+      "Describes CI tests and scheduled retraining behind the gates"
+    ]
+  },
+  "links": {
+    "lessons": ["ml-mlops", "ml-data-preparation", "ml-deployment-monitoring", "ml-recsys-design"],
+    "cases": ["job-scheduler", "notification-service"],
+    "guides": ["training-serving-skew", "model-monitoring", "schema-migrations", "testing-strategy"]
+  }
+}

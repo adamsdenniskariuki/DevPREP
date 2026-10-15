@@ -1,0 +1,277 @@
+{
+  "id": "uber-michelangelo",
+  "kind": "case",
+  "topic": "ml-production",
+  "level": "sse",
+  "title": "Uber Michelangelo, 2017: one ML platform from features to monitoring",
+  "summary": "Uber replaced one-off model pipelines with a shared platform: a feature store fed by batch and streaming jobs, one feature DSL for training and serving, versioned models, tagged deploys and live accuracy checks.",
+  "minutes": 15,
+  "organisation": "Uber",
+  "year": 2017,
+  "problem": "In 2017 Uber Engineering described **Michelangelo**, an internal ML-as-a-service platform meant to cover the whole workflow: manage data, train, evaluate, deploy, predict and monitor. By then it had served production use cases for about a year, dozens of teams were building models on it, and it ran across several Uber data centres.\n\nBefore it, data scientists built models with whatever tools they liked (R, scikit-learn, custom algorithms) and separate engineering teams built **bespoke one-off systems** to run each model in production. The post lists the gaps: no reliable, uniform, reproducible pipelines for training and prediction data; no training on anything larger than a desktop machine; no standard place to store and compare experiments; and **no established path to production**, so most teams wrote a custom serving container per project. The authors also say they were seeing signs of the ML anti-patterns from Sculley et al.'s *Hidden Technical Debt in Machine Learning Systems*.\n\nThe running example is UberEATS **estimated time of delivery**: a gradient-boosted tree regression that predicts total delivery time before an order and again at each stage. Its features mix request data (time of day, location), historical aggregates (average prep time over the last seven days) and near-real-time aggregates (average prep time over the last hour). UberEATS microservices call the model over the network.",
+  "constraints": [
+    "Models deployed online cannot read the HDFS data lake, and some features cannot be computed fast enough from production databases at request time; the post's example is that the UberEATS order service cannot be queried for a restaurant's average prep time over a window.",
+    "Some features must be fresh to the hour (recent prep time) while others are fine if refreshed every few hours or daily.",
+    "Training and serving must build exactly the same features, or the model sees different inputs in production than it learned on.",
+    "Models are deployed in several modes: batch predictions in Spark, online predictions behind a load balancer, and (planned) an embedded library.",
+    "Online models sit in the path of Uber's busiest services: the post reports P95 latency under 5 ms without a feature-store read and under 10 ms with one, and the busiest models serving over 250,000 predictions per second.",
+    "Many teams with different problems (classification, regression, time series) had to share one workflow without the platform blocking new model types."
+  ],
+  "decisions": [
+    {
+      "decision": "Build on existing open-source infrastructure (HDFS, Spark, Samza, Cassandra, MLlib, XGBoost, TensorFlow) and Uber's data lake, Kafka brokers and in-house deployment tooling, building in-house only where open source did not fit.",
+      "tradeoff": "Faster to stand up and familiar to operators, but the platform inherits the operational cost of many moving systems and, per the post, Uber forks and customises some of them as needed."
+    },
+    {
+      "decision": "Split data management into offline pipelines (batch training and batch prediction from HDFS) and online pipelines that precompute features into Cassandra for low-latency reads.",
+      "tradeoff": "Online predictions get fast key lookups instead of heavy queries, at the price of maintaining two paths and accepting that online features are only as fresh as their last precompute."
+    },
+    {
+      "decision": "Offer two ways to fill the online store: batch precompute from HDFS on a schedule, or near-real-time aggregates computed by Samza from Kafka, written to Cassandra and logged back to HDFS for future training, with a backfill tool to avoid a cold start.",
+      "tradeoff": "Batch is simple and efficient but only refreshes every few hours or daily; streaming gives hour-level freshness but adds a streaming job per feature and needs backfill to produce training history."
+    },
+    {
+      "decision": "Add a shared **Feature Store**: teams publish features with a little extra metadata (owner, description, SLA) and models consume them by canonical name, with the platform joining HDFS data for training and reading Cassandra for online serving.",
+      "tradeoff": "Reuse across teams (about 10,000 features at the time) and one definition per feature, but curated shared features need owners and SLAs, and a broken upstream feature can now affect many models."
+    },
+    {
+      "decision": "Express feature selection and transformation in a small DSL (a pure-functional subset of Scala) stored in the model configuration and applied identically at training and prediction time.",
+      "tradeoff": "Designed to remove a whole class of training-serving skew from hand-written transforms (the post says it helps guarantee identical features), but modellers must work inside the DSL or write user-defined functions for anything it lacks."
+    },
+    {
+      "decision": "Save every trained model as a versioned record in a Cassandra-backed model repository: who trained it and when, full config, data set references, feature importance, accuracy metrics, charts and learned parameters.",
+      "tradeoff": "Hundreds of exploratory models become comparable and reproducible, at the cost of storing and indexing a lot of metadata for models that never ship."
+    },
+    {
+      "decision": "Deploy models as packaged artefacts through Uber's standard code deployment, allow several models per serving container, and address them by UUID or by a tag such as a stable alias.",
+      "tradeoff": "Same-signature models can replace each other by redeploying to the same tag with no client change, and UUIDs allow gradual traffic shifts and A/B tests, but a tag swap switches immediately, so the safety of that path rests on evaluation before deploy."
+    },
+    {
+      "decision": "Log predictions (optionally holding back a percentage), join them later with observed outcomes from the data pipeline, and publish live accuracy metrics to Uber's time-series monitoring with threshold alerts.",
+      "tradeoff": "Gives a real accuracy signal in production, but only after labels arrive, so it detects decay with a delay that depends on how long outcomes take to observe."
+    }
+  ],
+  "failures": "This is a platform write-up, not a postmortem, so the \"what went wrong\" is the state it replaced. Each team re-solved the same problems in its own way: nothing ensured that features were prepared the same way for training and in production (a guarantee the post stresses the new pipelines provide), models could only be as big as a desktop, experiments were not recorded anywhere shared, and every deployment meant a new custom serving container. The post ties this to the anti-patterns of hidden ML technical debt and says ML impact was limited to what a few people could build quickly.\n\nThe post is also candid about what was not finished. **Library deployment** (serving embedded in another service) was still a plan. **Online learning** was future work; teams were retraining regularly instead. For the UberEATS delivery models, training and deployment were still **triggered manually** through the web UI, although many other teams scheduled retraining and deployment through the API. Monitoring compares predictions with outcomes after the fact, so it catches drift only once labels land.",
+  "lessons": [
+    "Make the training/serving feature path the same code, not two implementations kept in sync by hope. Michelangelo did it with one DSL stored in the model config.",
+    "Separate feature computation from model serving: precompute expensive aggregates into a low-latency store and choose batch or streaming refresh per feature by how fresh it must be.",
+    "Treat features as shared, owned assets with metadata and SLAs, so the next team reuses them instead of re-deriving them slightly differently.",
+    "Record every training run with its config, data references and metrics; reproducibility and comparison are platform features, not personal discipline.",
+    "Decouple clients from model versions with tags or aliases, and keep UUID-level routing for gradual rollout and A/B tests.",
+    "Offline metrics are not enough: log predictions, join them with real outcomes and alert on live accuracy."
+  ],
+  "caveats": "Everything here comes from Uber's 2017 introductory post, written by the platform's own engineering and product managers; it describes the design and plans, not independent measurements. The latency and throughput figures are typical values the post reports, not a benchmark. The post does not say how the platform handled feature-store outages, schema changes in shared features, or how often skew bugs occurred before or after. Michelangelo has changed a lot since 2017, so this describes the system at that time. The trade-off chart and the \"before\" side of the compare diagram are illustrations derived from the post's description, not figures Uber published.",
+  "diagrams": [
+    {
+      "id": "mic-architecture",
+      "type": "flow",
+      "title": "Michelangelo's data, training and serving paths",
+      "alt": "Flow diagram. Kafka feeds Samza streaming jobs, which write near-real-time features to the Cassandra feature store and log them to the HDFS data lake. HDFS feeds Spark batch jobs that bulk-load historical features into Cassandra, and also feeds training jobs that save models to the model repository. Models are deployed to the online serving cluster, which a client service calls and which reads features from Cassandra.",
+      "caption": "Two feature paths (batch and streaming) land in one online store and are also kept in HDFS, so training and serving read the same data.",
+      "nodes": [
+        { "id": "kafka", "label": "Kafka", "kind": "queue", "col": 0, "row": 0, "sub": "logged metrics" },
+        { "id": "samza", "label": "Samza jobs", "kind": "worker", "col": 2, "row": 0, "sub": "last-hour aggs" },
+        { "id": "cass", "label": "Feature store", "kind": "db", "col": 4, "row": 1, "sub": "Cassandra" },
+        { "id": "hdfs", "label": "HDFS data lake", "kind": "storage", "col": 0, "row": 2 },
+        { "id": "spark", "label": "Spark batch jobs", "kind": "worker", "col": 2, "row": 2, "sub": "7-day aggs" },
+        { "id": "train", "label": "Training job", "kind": "worker", "col": 0, "row": 4, "sub": "YARN or Mesos" },
+        { "id": "repo", "label": "Model repository", "kind": "db", "col": 2, "row": 4, "sub": "versioned models" },
+        { "id": "serve", "label": "Online serving", "kind": "service", "col": 4, "row": 3, "sub": "behind an LB" },
+        { "id": "client", "label": "UberEATS svc", "kind": "client", "col": 4, "row": 5 }
+      ],
+      "edges": [
+        { "from": "kafka", "to": "samza", "label": "stream", "style": "async" },
+        { "from": "samza", "to": "cass", "label": "write" },
+        { "from": "samza", "to": "hdfs", "label": "log for training", "style": "async" },
+        { "from": "hdfs", "to": "spark" },
+        { "from": "spark", "to": "cass", "label": "bulk load" },
+        { "from": "hdfs", "to": "train", "label": "training data" },
+        { "from": "train", "to": "repo", "label": "model + report" },
+        { "from": "repo", "to": "serve", "label": "deploy" },
+        { "from": "client", "to": "serve", "label": "predict RPC" },
+        { "from": "serve", "to": "cass", "label": "read features" }
+      ],
+      "steps": [
+        { "edges": [0, 1, 2], "text": "Near-real-time path: services publish metrics to Kafka, Samza computes short-window aggregates such as last-hour prep time, writes them to Cassandra for serving and logs them back to HDFS so future training sees the same values." },
+        { "edges": [3, 4], "text": "Batch path: Spark jobs over the data lake compute slower-moving features such as seven-day prep time and bulk-load them into Cassandra every few hours or daily." },
+        { "edges": [5, 6], "text": "Training jobs read features and labels from HDFS on a YARN or Mesos cluster, then save the model, its config and an evaluation report as a versioned record." },
+        { "edges": [7], "text": "Deploy packages the model artefacts and copies them to serving hosts with Uber's normal code deployment; containers load new models from disk." },
+        { "edges": [8, 9], "text": "At request time the client sends features and a model id or tag; the container fetches any extra features from Cassandra and returns the prediction." }
+      ]
+    },
+    {
+      "id": "mic-predict",
+      "type": "sequence",
+      "title": "One online prediction, from request to monitored outcome",
+      "alt": "Sequence diagram with five actors: the UberEATS service, the serving container, the feature store, the data pipeline and monitoring. The service sends request features with a model tag. The container runs the DSL, fetches stored features, scores the model and returns the delivery estimate. It logs the prediction; later the data pipeline supplies the real delivery time, and monitoring publishes accuracy metrics and alerts.",
+      "caption": "The same DSL runs here as in training, and the logged prediction is what later makes live accuracy measurable.",
+      "actors": [
+        { "id": "svc", "label": "UberEATS svc" },
+        { "id": "box", "label": "Serving box" },
+        { "id": "fs", "label": "Feature store" },
+        { "id": "pipe", "label": "Data pipeline" },
+        { "id": "mon", "label": "Monitoring" }
+      ],
+      "messages": [
+        { "from": "svc", "to": "box", "label": "features + model tag", "note": "The client sends request features such as time of day and delivery location, plus a model UUID or a tag." },
+        { "from": "box", "to": "fs", "label": "fetch stored features", "note": "Compiled DSL expressions transform raw inputs and pull precomputed features, such as average prep time, by canonical name." },
+        { "from": "fs", "to": "box", "label": "7-day and 1-hour aggs", "style": "reply", "note": "Cassandra lookups keep this fast; the post reports P95 under 10 ms for models that read the store. The final feature vector then goes to the model, here a gradient-boosted tree regression." },
+        { "from": "box", "to": "svc", "label": "predicted delivery time", "style": "reply", "note": "The estimate is shown to the customer before ordering and refreshed at each delivery stage." },
+        { "from": "box", "to": "mon", "label": "log prediction", "style": "async", "note": "Predictions are logged, and a percentage can optionally be held back, for later comparison." },
+        { "from": "pipe", "to": "mon", "label": "real delivery time (label)", "style": "async", "note": "Once the delivery happens, the data pipeline produces the outcome and it is joined to the logged prediction." },
+        { "from": "mon", "to": "svc", "label": "alert owning team", "style": "fail", "note": "Metrics such as RMSE and MAE go to time-series monitoring, where teams set threshold alerts. The alert reaches the people who own the model, not the request path; drawn to the service side for simplicity." }
+      ]
+    },
+    {
+      "id": "mic-skew",
+      "type": "compare",
+      "title": "Per-team pipelines versus one shared feature path",
+      "alt": "Side-by-side comparison. Left: a notebook computes features one way for training, a production service re-implements them another way for a custom serving container, and the two drift apart. Right: a shared feature store and one DSL in the model config feed both training jobs and the serving container.",
+      "caption": "Illustrative. The point of the shared path is that the transform is defined once and executed identically in both places.",
+      "before": {
+        "label": "Before: bespoke per project",
+        "nodes": [
+          { "id": "nb", "label": "Notebook code", "kind": "worker", "col": 0, "row": 0, "sub": "desktop training" },
+          { "id": "prod", "label": "Rewritten code", "kind": "bad", "col": 0, "row": 1, "sub": "prod service" },
+          { "id": "model", "label": "Model", "kind": "service", "col": 2, "row": 0 },
+          { "id": "box", "label": "Custom container", "kind": "bad", "col": 2, "row": 1, "sub": "one per project" }
+        ],
+        "edges": [
+          { "from": "nb", "to": "model", "label": "train" },
+          { "from": "prod", "to": "box", "label": "different inputs", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "After: shared store and DSL",
+        "nodes": [
+          { "id": "store", "label": "Feature store", "kind": "db", "col": 0, "row": 0, "sub": "canonical names" },
+          { "id": "dsl", "label": "DSL in config", "kind": "good", "col": 1, "row": 0, "sub": "same transforms" },
+          { "id": "train", "label": "Training job", "kind": "worker", "col": 2, "row": 0 },
+          { "id": "serve", "label": "Serving box", "kind": "good", "col": 2, "row": 1, "sub": "shared container" }
+        ],
+        "edges": [
+          { "from": "store", "to": "dsl" },
+          { "from": "dsl", "to": "train", "label": "offline" },
+          { "from": "dsl", "to": "serve", "label": "online" }
+        ]
+      }
+    },
+    {
+      "id": "mic-deploy",
+      "type": "flow",
+      "title": "Swapping or testing models with tags and UUIDs",
+      "alt": "Flow diagram. The model repository deploys model v1 and model v2 into the same serving container. A client calling by tag gets whichever model was deployed to that tag most recently. Alternatively the client's experimentation config routes a share of traffic to each model by UUID for an A/B test.",
+      "caption": "Tags give clients a stable name; UUIDs let you split traffic deliberately. Both rely on several models living in one container. The tag name eta-prod is illustrative.",
+      "nodes": [
+        { "id": "repo", "label": "Model repository", "kind": "db", "col": 0, "row": 2 },
+        { "id": "v1", "label": "Model v1", "kind": "service", "col": 2, "row": 1, "sub": "old, by UUID" },
+        { "id": "v2", "label": "Model v2", "kind": "good", "col": 2, "row": 3, "sub": "tag: eta-prod" },
+        { "id": "tag", "label": "Client by tag", "kind": "client", "col": 4, "row": 3 },
+        { "id": "exp", "label": "Experiment cfg", "kind": "decision", "col": 4, "row": 1, "sub": "split by UUID" }
+      ],
+      "edges": [
+        { "from": "repo", "to": "v1", "label": "deploy" },
+        { "from": "repo", "to": "v2", "label": "deploy same tag" },
+        { "from": "tag", "to": "v2", "label": "newest on tag" },
+        { "from": "exp", "to": "v1", "label": "share A" },
+        { "from": "exp", "to": "v2", "label": "share B" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "More than one model can be loaded in a serving container at once. Deploying v2 with the same tag as v1 is possible when both expect the same features." },
+        { "edges": [2], "text": "A client that asks for the tag immediately gets the most recently deployed model on it. No client code change, but also no gradual ramp." },
+        { "edges": [3, 4], "text": "For a gradual switch or an A/B test, the client (via Uber's experimentation framework or config) sends portions of traffic to each model UUID and compares metrics." }
+      ]
+    },
+    {
+      "id": "mic-latency",
+      "type": "bars",
+      "title": "Typical online P95 latency ceilings reported (ms)",
+      "alt": "Bar chart with two bars: models that do not read the Cassandra feature store typically see P95 latency below 5 milliseconds, and models that do read it typically see P95 below 10 milliseconds.",
+      "caption": "Figures from the post, stated as upper bounds. The reported ceiling doubles when a model needs Cassandra features (latency also depends on model type), which is why precomputing features matters.",
+      "unit": "ms (P95, upper bound)",
+      "bars": [
+        { "label": "No store lookup", "value": 5 },
+        { "label": "With Cassandra read", "value": 10, "highlight": true }
+      ]
+    },
+    {
+      "id": "mic-freshness",
+      "type": "chart",
+      "title": "Where to compute an online feature",
+      "alt": "Trade-off chart. The x axis is feature freshness and the y axis is operational simplicity. Batch precompute sits at low freshness and high simplicity. Near-real-time streaming sits at high freshness and medium simplicity. Querying production databases at request time would be freshest but least simple and, per the post, often not feasible.",
+      "caption": "Illustrative positioning based on the post: Uber offered batch and streaming, chosen per feature, and avoided live queries against production services.",
+      "x": { "label": "Feature freshness", "low": "daily", "high": "live" },
+      "y": { "label": "Operational simplicity", "low": "complex", "high": "simple" },
+      "points": [
+        { "label": "Batch precompute", "x": 2, "y": 8, "highlight": true },
+        { "label": "Streaming (Samza)", "x": 7, "y": 5, "highlight": true },
+        { "label": "Query prod DB live", "x": 9, "y": 1 }
+      ]
+    }
+  ],
+  "interview": [
+    "When an ML design question asks about serving, say where features come from at request time: \"Expensive aggregates are precomputed into a low-latency store; batch for daily features, streaming for hour-level ones.\"",
+    "Name training-serving skew and how you prevent it: one transform definition, stored with the model, executed by both training and serving.",
+    "Mention a model registry record per training run (config, data snapshot, metrics, owner) so you can reproduce and compare models.",
+    "For rollouts, separate a stable alias from the model version, and describe gradual traffic shifting or A/B testing by version id.",
+    "Close the loop: log predictions, join them with ground truth when it arrives, and alert on live accuracy, not just latency and errors.",
+    "At SSE level, frame it as a platform decision: what you standardise (features, deploy, monitoring) versus what teams keep (model type, custom code)."
+  ],
+  "quiz": [
+    {
+      "question": "Why did Michelangelo precompute online features into Cassandra instead of computing them at request time?",
+      "choices": ["Cassandra was cheaper than HDFS", "Online models cannot read HDFS, and some aggregates cannot be computed fast enough from production services", "Spark cannot run aggregations", "To avoid ever retraining models"],
+      "answer": 1,
+      "explain": "The post's example is a restaurant's average prep time: the order service cannot answer that query at low latency. Precomputing into a key-value store turns it into a fast lookup."
+    },
+    {
+      "question": "What was the main way Michelangelo ensured training and prediction saw the same feature transformations?",
+      "choices": ["Engineers reviewed both code paths each release", "A feature DSL stored in the model configuration and applied identically at training and prediction time", "Serving re-trained the model on each request", "Only raw features were allowed"],
+      "answer": 1,
+      "explain": "Because the DSL expressions are part of the model config, the same transformations run in both places. Two hand-written implementations are the classic source of training-serving skew."
+    },
+    {
+      "question": "A feature must reflect the last hour of activity. Which Michelangelo path fits?",
+      "choices": ["Daily batch precompute from HDFS", "Near-real-time Samza jobs on Kafka writing to Cassandra and logging to HDFS", "A query to the order service per prediction", "Hard-coding the value in the DSL"],
+      "answer": 1,
+      "explain": "Batch precompute is fine for features that can be hours or a day old. Hour-level aggregates came from streaming jobs, which also logged values back to HDFS so training uses the same data, with a backfill tool for history."
+    },
+    {
+      "question": "A new model has the same feature signature as the old one. How could a team switch to it without changing client code?",
+      "choices": ["Delete the old model first", "Deploy the new model to the same tag; the container then serves the newest model on that tag", "Rename the client service", "Retrain the old model with the new parameters"],
+      "answer": 1,
+      "explain": "Clients that call by tag get the model most recently deployed to it. For a gradual move instead, deploy by UUID and shift traffic through configuration or the experimentation framework."
+    },
+    {
+      "question": "How did Michelangelo measure live model accuracy?",
+      "choices": ["By re-running the offline evaluation report daily", "By logging predictions and later joining them with observed outcomes, then publishing metrics with threshold alerts", "By tracking only serving latency", "By asking users to rate predictions"],
+      "answer": 1,
+      "explain": "Offline metrics use historical data. Joining logged predictions with real labels shows whether the pipeline or the world has changed, at the cost of waiting for labels to arrive."
+    }
+  ],
+  "practice": {
+    "prompt": "Your company has a dozen teams each building and serving ML models their own way. Design a shared ML platform that covers features, training, deployment and monitoring, using a delivery-time prediction as the running example.",
+    "answer": "Start from the workflow: manage data, train, evaluate, deploy, predict, monitor. **Features**: offline pipelines over the data lake for training and batch scoring; an online key-value feature store for low-latency serving. Fill it two ways, chosen per feature by freshness: scheduled batch jobs (seven-day prep time) and streaming jobs over the event bus (last-hour prep time) that also log values back to the lake so training sees identical data, with a backfill job for history. A feature registry gives each shared feature a canonical name, owner, description and SLA. **Transforms**: a small declarative language stored in the model config and run by both training and serving, which removes hand-rolled skew. **Training**: config-driven jobs (model type, hyper-parameters, data reference, transforms, resources) on a shared cluster; every run writes a versioned record with config, data references, metrics, feature importance and artefacts so models are comparable and reproducible. **Deploy**: package artefacts and ship them with the normal deployment system; serving containers hold several models, addressed by version id or a stable alias; alias swaps for same-signature upgrades, id-based traffic splits for gradual rollout and A/B tests; stateless containers scale out behind a load balancer. **Monitor**: log predictions, join them with actual delivery times, publish accuracy metrics to time-series monitoring with alerts, plus data-quality checks on pipelines. Mention trade-offs: feature-store latency in the serving budget, ownership of shared features, and label delay in accuracy monitoring.",
+    "rubric": [
+      "Separates offline and online feature paths and explains why online features are precomputed",
+      "Chooses batch vs streaming per feature based on freshness, keeping training and serving data identical",
+      "Prevents training-serving skew with one shared transform definition",
+      "Versioned model registry with config, data references and metrics",
+      "Safe deploys: stable alias plus version-based traffic splitting or A/B tests",
+      "Live accuracy monitoring by joining predictions with real outcomes, with alerts"
+    ]
+  },
+  "links": {
+    "lessons": ["ml-mlops", "ml-deployment-monitoring", "ml-data-preparation"],
+    "cases": ["ride-hailing"],
+    "guides": ["training-serving-skew", "model-monitoring", "ml-experimentation", "ml-pipelines"]
+  },
+  "sources": [
+    {
+      "title": "Meet Michelangelo: Uber's Machine Learning Platform (Jeremy Hermann and Mike Del Balso)",
+      "publisher": "Uber Engineering",
+      "url": "https://www.uber.com/blog/michelangelo-machine-learning-platform/",
+      "date": "2017-09-05"
+    }
+  ]
+}
