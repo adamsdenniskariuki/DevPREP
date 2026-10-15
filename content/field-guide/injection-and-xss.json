@@ -1,0 +1,311 @@
+{
+  "id": "injection-and-xss",
+  "kind": "guide",
+  "topic": "security",
+  "level": "se",
+  "title": "Injection, XSS and CSRF: keep data out of the code path",
+  "summary": "Parameterise SQL and shell calls, encode output for its context, avoid innerHTML, add a strict CSP, and stop cross-site requests with SameSite cookies and CSRF tokens.",
+  "minutes": 16,
+  "principle": "Injection happens whenever untrusted data is glued into something an interpreter parses: SQL, a shell, HTML, JavaScript, a URL. The fix is always the same idea: **keep data and code in separate channels**. Use APIs that take data as parameters (bound SQL parameters, argument arrays, `textContent`), encode output for the exact context it lands in, and add a second layer (CSP, least-privilege accounts) for the day the first one slips. CSRF is the mirror image: the browser sends your user's cookies on a request an attacker wrote, so state-changing requests must prove they came from your own pages.",
+  "why": "**SQL injection.** `\"... WHERE email = '\" + email + \"'\"` lets an input like `' OR '1'='1` change the query's structure. With a bound parameter (`$1`, `?`), the driver sends the value separately and the database never parses it as SQL. Escaping by hand is fragile; identifiers such as column names cannot be parameters, so pick them from an allow-list.\n\n**Command injection.** Passing a string to a shell (`exec`, `shell=True`) lets `;`, `|` and `$(...)` start new commands. Call the program directly with an argument array and validate arguments so they cannot be read as options.\n\n**Cross-site scripting (XSS)** runs attacker script in your origin, where it can act as the user. Three forms:\n- **Stored**: the payload is saved (a comment, a profile name) and served to every viewer.\n- **Reflected**: the payload is in the request (a search query) and echoed back in the response.\n- **DOM-based**: client-side code moves data from `location`, `postMessage` or storage into a dangerous sink such as `innerHTML` or `eval` without the server being involved.\n\nDefences: templating that escapes by default (React, Angular, most server templates), **encoding for the context** (HTML body, attribute, URL, JavaScript string all differ), `textContent` instead of `innerHTML`, a sanitiser such as DOMPurify when you must render user HTML, and a **Content Security Policy** with nonces so injected inline script does not run. `HttpOnly` cookies stop script reading the session cookie, but injected script can still make requests as the user.\n\n**CSRF** works because browsers attach cookies to cross-site requests. Set `SameSite=Lax` or `Strict` on session cookies explicitly (browser defaults differ), never change state on GET, and for cookie-authenticated forms add an unguessable per-session token or check the `Origin` header. APIs that use bearer tokens in an `Authorization` header are not exposed to classic CSRF because the browser does not add that header by itself.",
+  "diagrams": [
+    {
+      "id": "inj-stored-xss-sequence",
+      "type": "sequence",
+      "title": "A stored XSS attack",
+      "alt": "Sequence diagram. An attacker posts a comment containing a script tag. The app saves it unchanged in the database. Later a victim's browser requests the page, the app reads the comment and inserts it into the HTML without encoding, and the victim's browser runs the script, which sends requests to the attacker's server using the victim's session.",
+      "caption": "Validation on the way in helps, but the decisive fix is on the way out: encode at render time so the stored text is shown as text, and use CSP so injected script cannot run anyway.",
+      "actors": [
+        { "id": "atk", "label": "Attacker" },
+        { "id": "app", "label": "App" },
+        { "id": "db", "label": "Database" },
+        { "id": "vic", "label": "Victim browser" }
+      ],
+      "messages": [
+        { "from": "atk", "to": "app", "label": "POST comment <script>…</script>", "note": "The payload hides in a normal-looking field: a comment, a display name, a file name." },
+        { "from": "app", "to": "db", "label": "INSERT comment (as typed)", "note": "Storing the raw text is fine on its own. The bug is what happens when it is rendered." },
+        { "from": "vic", "to": "app", "label": "GET /post/42", "note": "Any user who opens the page, including an admin, is now a target." },
+        { "from": "app", "to": "db", "label": "SELECT comments", "style": "reply" },
+        { "from": "app", "to": "vic", "label": "HTML with raw comment", "style": "fail", "note": "The template concatenates the comment into the page, so the browser parses it as markup, not text." },
+        { "from": "vic", "to": "atk", "label": "script exfiltrates data", "style": "fail", "note": "The script runs with the victim's origin and session: it can read the page, call your APIs as the victim and send results out. `HttpOnly` hides the cookie value but not the session's power." },
+        { "from": "app", "to": "vic", "label": "after fix: encoded, shown as text", "style": "reply", "note": "With HTML encoding the browser displays the characters. A CSP with nonces would also block the inline script if an encoding bug slipped through." }
+      ]
+    },
+    {
+      "id": "inj-sql-compare",
+      "type": "compare",
+      "title": "String-built SQL vs a parameterised query",
+      "alt": "Side-by-side comparison. On the left, the handler concatenates the input ' OR '1'='1 into the SQL text, the database parses it as part of the query, and every user row is returned. On the right, the handler sends fixed SQL with a placeholder and the value separately, the database compares the whole input as one string, and no rows match.",
+      "caption": "With a bound parameter, the query's structure is fixed before any user data arrives. No input can turn into SQL keywords.",
+      "before": {
+        "label": "Concatenated SQL",
+        "nodes": [
+          { "id": "in", "label": "' OR '1'='1", "kind": "client", "col": 0, "row": 0, "sub": "email field" },
+          { "id": "h", "label": "Build SQL string", "kind": "service", "col": 1, "row": 0 },
+          { "id": "db", "label": "Database", "kind": "db", "col": 2, "row": 0, "sub": "parses input" },
+          { "id": "x", "label": "All user rows", "kind": "bad", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "in", "to": "h" },
+          { "from": "h", "to": "db", "label": "one SQL text" },
+          { "from": "db", "to": "x", "label": "WHERE true", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Placeholder plus bound value",
+        "nodes": [
+          { "id": "in", "label": "' OR '1'='1", "kind": "client", "col": 0, "row": 0, "sub": "email field" },
+          { "id": "h", "label": "Fixed SQL + $1", "kind": "service", "col": 1, "row": 0 },
+          { "id": "db", "label": "Database", "kind": "db", "col": 2, "row": 0, "sub": "value is data" },
+          { "id": "ok", "label": "0 rows", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "in", "to": "h" },
+          { "from": "h", "to": "db", "label": "SQL + params" },
+          { "from": "db", "to": "ok", "label": "no match", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "inj-pipeline-flow",
+      "type": "flow",
+      "title": "Untrusted input from request to page",
+      "alt": "Flow diagram. A request goes to schema validation, which rejects malformed input with 400. Valid input goes to the handler, which uses a query with bound parameters against the database. When the data is shown, it passes through context-aware output encoding before reaching the browser, which also enforces a Content Security Policy.",
+      "caption": "Validate on the way in, parameterise at the interpreter, encode on the way out, and let CSP catch what slips. Each layer is cheap and covers a different mistake.",
+      "nodes": [
+        { "id": "req", "label": "Request", "kind": "client", "col": 0, "row": 0, "sub": "untrusted" },
+        { "id": "val", "label": "Validate", "kind": "decision", "col": 1, "row": 0, "sub": "schema, allow-list" },
+        { "id": "svc", "label": "Handler", "kind": "service", "col": 2, "row": 0 },
+        { "id": "bind", "label": "Bind params", "kind": "service", "col": 3, "row": 0, "sub": "$1, $2" },
+        { "id": "db", "label": "Database", "kind": "db", "col": 4, "row": 0, "sub": "least privilege" },
+        { "id": "rej", "label": "400", "kind": "bad", "col": 1, "row": 1, "sub": "invalid input" },
+        { "id": "enc", "label": "Encode output", "kind": "good", "col": 2, "row": 2, "sub": "by context" },
+        { "id": "browser", "label": "Browser", "kind": "client", "col": 0, "row": 2, "sub": "renders text" },
+        { "id": "csp", "label": "CSP header", "kind": "note", "col": 0, "row": 3, "sub": "nonce scripts only" }
+      ],
+      "edges": [
+        { "from": "req", "to": "val" },
+        { "from": "val", "to": "rej", "label": "fails", "style": "fail" },
+        { "from": "val", "to": "svc", "label": "typed values" },
+        { "from": "svc", "to": "bind" },
+        { "from": "bind", "to": "db", "label": "SQL + values" },
+        { "from": "svc", "to": "enc", "label": "data to show" },
+        { "from": "enc", "to": "browser", "label": "safe HTML" },
+        { "from": "csp", "to": "browser", "label": "enforced", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Validate shape, type, length and format against a schema (an allow-list, not a blocklist of 'bad characters'). This rejects junk early, but valid input such as the name `O'Brien` can still contain quotes, so validation is not the injection fix." },
+        { "edges": [2, 3, 4], "text": "At the interpreter boundary, data goes in a separate channel: bound SQL parameters, an argument array for a subprocess. The database account can only touch the tables this service needs." },
+        { "edges": [5, 6], "text": "Encode at the moment of output for the exact context: HTML body, attribute, URL or JavaScript string each need different encoding. Auto-escaping templates do this for you; `innerHTML` and `dangerouslySetInnerHTML` switch it off." },
+        { "edges": [7], "text": "A Content Security Policy that only allows scripts with a per-response nonce means an injected `<script>` or `onerror=` handler does not run, even if an encoding bug slips through." }
+      ]
+    },
+    {
+      "id": "inj-csrf-compare",
+      "type": "compare",
+      "title": "CSRF: a forged form post",
+      "alt": "Side-by-side comparison. On the left, the victim visits an evil site that auto-submits a form to the bank; the browser attaches the session cookie and the bank performs the transfer. On the right, the session cookie is SameSite=Lax and the bank requires a CSRF token, so the cross-site post arrives without the cookie or token and is rejected with 403.",
+      "caption": "The attacker cannot read your cookies but can make the browser send them. SameSite cookies plus a token (or an Origin check) make cross-site posts fail.",
+      "before": {
+        "label": "Cookie sent, no token",
+        "nodes": [
+          { "id": "evil", "label": "evil.example", "kind": "external", "col": 0, "row": 0, "sub": "auto-submit form" },
+          { "id": "b", "label": "Victim browser", "kind": "client", "col": 1, "row": 0, "sub": "adds cookie" },
+          { "id": "bank", "label": "Bank /transfer", "kind": "service", "col": 2, "row": 0 },
+          { "id": "x", "label": "Money moved", "kind": "bad", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "evil", "to": "b", "label": "POST form" },
+          { "from": "b", "to": "bank", "label": "cookie: session" },
+          { "from": "bank", "to": "x", "label": "200", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "SameSite cookie + CSRF token",
+        "nodes": [
+          { "id": "evil", "label": "evil.example", "kind": "external", "col": 0, "row": 0, "sub": "auto-submit form" },
+          { "id": "b", "label": "Victim browser", "kind": "client", "col": 1, "row": 0, "sub": "SameSite=Lax" },
+          { "id": "bank", "label": "Bank /transfer", "kind": "service", "col": 2, "row": 0, "sub": "checks token" },
+          { "id": "ok", "label": "403 rejected", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "evil", "to": "b", "label": "POST form" },
+          { "from": "b", "to": "bank", "label": "no cookie, no token" },
+          { "from": "bank", "to": "ok", "label": "deny", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "inj-defence-chart",
+      "type": "chart",
+      "title": "Injection defences: effort vs protection",
+      "alt": "Chart of injection and XSS defences by effort to adopt and strength of protection. Blocklisting characters is low effort and weak. A WAF is low effort and partial. Manual escaping is medium effort and fragile. Parameterised queries and auto-escaping templates are low effort and strong. A strict nonce-based CSP is more effort and strong as a second layer. Trusted Types is the most effort and strong for DOM XSS.",
+      "caption": "Rough positions, not measurements. The best defences are also the cheapest: use the safe API by default and keep filters and WAFs as extra layers only.",
+      "x": { "label": "Effort to adopt", "low": "trivial", "high": "a project" },
+      "y": { "label": "Protection", "low": "weak", "high": "strong" },
+      "points": [
+        { "label": "Char blocklist", "x": 1, "y": 1 },
+        { "label": "WAF rules", "x": 3, "y": 4 },
+        { "label": "Manual escaping", "x": 5, "y": 3 },
+        { "label": "Bound parameters", "x": 2, "y": 9, "highlight": true },
+        { "label": "Auto-escaping UI", "x": 3, "y": 7 },
+        { "label": "Strict CSP", "x": 7, "y": 7 },
+        { "label": "Trusted Types", "x": 9, "y": 8 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "SQL: bind values, allow-list identifiers",
+      "bad": {
+        "label": "User input concatenated into the query",
+        "lang": "ts",
+        "code": "const sql = `SELECT id, name FROM users\n  WHERE email = '${req.query.email}'\n  ORDER BY ${req.query.sort}`\nconst { rows } = await pool.query(sql)"
+      },
+      "good": {
+        "label": "Placeholders for values, a fixed map for column names",
+        "lang": "ts",
+        "code": "const SORTS = { name: 'name', created: 'created_at' } as const\nconst sort = SORTS[req.query.sort as keyof typeof SORTS] ?? 'created_at'\n\nconst { rows } = await pool.query(\n  `SELECT id, name FROM users WHERE email = $1 ORDER BY ${sort}`,\n  [req.query.email],\n)"
+      },
+      "why": "Values go through `$1` and are never parsed as SQL. Identifiers like a sort column cannot be bound, so the only text spliced into the query comes from a fixed map in your code, never from the request."
+    },
+    {
+      "title": "Shell: call the program, not a shell",
+      "bad": {
+        "label": "A host name typed by the user reaches a shell",
+        "lang": "py",
+        "code": "import subprocess\n\ndef ping(host: str) -> str:\n    # host = \"example.com; cat /etc/passwd\" runs a second command\n    return subprocess.run(f\"ping -c 1 {host}\", shell=True,\n                          capture_output=True, text=True).stdout"
+      },
+      "good": {
+        "label": "Validate, then pass an argument list without a shell",
+        "lang": "py",
+        "code": "import re\nimport subprocess\n\nHOST = re.compile(r\"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$\")\n\ndef ping(host: str) -> str:\n    if not HOST.fullmatch(host):\n        raise ValueError(\"invalid host\")\n    result = subprocess.run([\"ping\", \"-c\", \"1\", host],\n                            capture_output=True, text=True, timeout=5)\n    return result.stdout"
+      },
+      "why": "Without a shell there is nothing to interpret `;`, `|` or `$(...)`: the host is one argument to `ping`. The allow-list also stops argument injection, because a value starting with `-` could otherwise be read as an option. Better still, use a library instead of shelling out."
+    },
+    {
+      "title": "DOM: text, not markup",
+      "bad": {
+        "label": "Search term written into the page as HTML",
+        "lang": "js",
+        "code": "const q = new URLSearchParams(location.search).get('q')\nresults.innerHTML = `<h2>Results for ${q}</h2>`\n// ?q=<img src=x onerror=alert(document.domain)>"
+      },
+      "good": {
+        "label": "Build elements and set textContent",
+        "lang": "js",
+        "code": "const q = new URLSearchParams(location.search).get('q') ?? ''\nconst heading = document.createElement('h2')\nheading.textContent = `Results for ${q}`\nresults.replaceChildren(heading)"
+      },
+      "why": "This is DOM-based XSS: the server never sees the payload, so server-side encoding cannot help. `textContent` treats the value as text. If you truly need user-supplied HTML, sanitise it with a maintained library such as DOMPurify and keep a strict CSP."
+    }
+  ],
+  "checklist": [
+    "Every SQL query uses bound parameters or a query builder/ORM that binds them; raw string building is banned by a lint rule or review.",
+    "Identifiers (table, column, sort direction) come from an allow-list in code, never from the request.",
+    "No `shell=True` or `exec` with user data; programs are called with argument arrays and validated arguments.",
+    "Templates auto-escape; any `innerHTML`, `dangerouslySetInnerHTML`, `v-html` or `eval` is reviewed and, if needed, fed sanitised content only.",
+    "Output is encoded for its context (HTML text, attribute, URL, JavaScript), and user-supplied URLs are checked to be `https:` before use in `href`.",
+    "A Content Security Policy with nonces (or hashes) and `object-src 'none'` is deployed, first in report-only mode, then enforced.",
+    "Session cookies are `HttpOnly`, `Secure` and have an explicit `SameSite` value; GET never changes state.",
+    "Cookie-authenticated state changes require a CSRF token or a verified `Origin` header."
+  ],
+  "antipatterns": [
+    {
+      "title": "Concatenating SQL, then trying to escape it",
+      "bad": {
+        "label": "String-built query",
+        "diagram": "inj-sql-compare"
+      },
+      "better": {
+        "label": "Parameterised query (Python DB-API)",
+        "lang": "py",
+        "code": "cur.execute(\n    \"SELECT id, name FROM users WHERE email = %s\",\n    (email,),\n)"
+      },
+      "why": "Escaping depends on the database, its character set and the exact context in the query, and one missed call is enough. Placeholders keep structure and data apart by construction. Note the placeholder style varies by driver (`%s` for psycopg, `?` for sqlite3, `$1` for node-postgres)."
+    },
+    {
+      "title": "Sanitising input once and trusting it forever",
+      "bad": {
+        "label": "Strip tags on the way in, render raw on the way out",
+        "lang": "js",
+        "code": "// on write\ncomment.body = body.replace(/<script.*?>.*?<\\/script>/gi, '')\n// on read\nel.innerHTML = comment.body   // <img src=x onerror=...> still works"
+      },
+      "better": {
+        "label": "Store as typed; encode for the output context",
+        "lang": "js",
+        "code": "// on write: validate length and type only\n// on read, in an HTML text context:\nel.textContent = comment.body"
+      },
+      "why": "Input filters are blocklists that attackers out-think (event handlers, SVG, odd encodings), and the same data may later land in a different context such as an email, a CSV or JSON. Encoding at output time is correct for the context it is actually used in."
+    },
+    {
+      "title": "State changes on GET",
+      "bad": {
+        "label": "A link deletes data",
+        "lang": "http",
+        "code": "GET /account/delete?confirm=yes\nCookie: session=…\n\n<!-- on any site: <img src=\"https://app.example/account/delete?confirm=yes\"> -->"
+      },
+      "better": {
+        "label": "POST with a CSRF token and a SameSite cookie",
+        "lang": "http",
+        "code": "POST /account/delete\nCookie: session=…   (Set-Cookie had: HttpOnly; Secure; SameSite=Lax)\nContent-Type: application/x-www-form-urlencoded\n\ncsrf_token=7f3c9a…&confirm=yes"
+      },
+      "why": "HTTP says GET is safe, and browsers, crawlers and link previewers send GETs freely. `SameSite=Lax` still sends cookies on top-level GET navigations, so it does not protect a GET that changes state. Use POST, and check a token the attacker's page cannot read."
+    }
+  ],
+  "interview": [
+    "State the root cause in one line: \"Injection is data crossing into a code channel; the fix is a parameterised API, not filtering.\"",
+    "When you draw any endpoint that hits a database, say \"bound parameters\" and \"least-privilege DB user\" without being asked.",
+    "Name the three XSS types and where each is fixed: stored and reflected at server-side output encoding, DOM-based in client code sinks like `innerHTML`.",
+    "Explain why CSP is a second layer, not the first, and that `HttpOnly` limits cookie theft but not what injected script can do.",
+    "For CSRF, distinguish cookie-based sessions (need SameSite plus tokens or an Origin check) from bearer tokens in headers (not sent automatically).",
+    "At SSE level, talk about making the safe path the default: lint rules banning string SQL and `innerHTML`, a vetted sanitiser, CSP rolled out with report-only first."
+  ],
+  "quiz": [
+    {
+      "question": "Why does a bound parameter stop SQL injection where escaping quotes might not?",
+      "choices": ["It removes special characters from input", "The value is sent separately and never parsed as SQL", "It encrypts the value before sending it"],
+      "answer": 1,
+      "explain": "The query text with placeholders is fixed first; the value travels as data. Nothing in the value can change the query structure, whatever characters it contains. Escaping is context-dependent and easy to get wrong once."
+    },
+    {
+      "question": "A page reads `location.hash` and writes it into the page with `innerHTML`. The server never sees the payload. Which XSS type is this?",
+      "choices": ["Stored XSS", "Reflected XSS", "DOM-based XSS"],
+      "answer": 2,
+      "explain": "The data flows from a client-side source to a dangerous sink entirely in the browser. Fix it in the client: use `textContent`, or sanitise if HTML is required, and back it with CSP or Trusted Types."
+    },
+    {
+      "question": "Your session cookie is `HttpOnly`. What does that still NOT protect against if you have an XSS bug?",
+      "choices": ["Script reading `document.cookie` to get the session id", "Script making requests to your API as the logged-in user", "Script sending the cookie value to another site"],
+      "answer": 1,
+      "explain": "`HttpOnly` hides the cookie from script, so the value cannot be stolen. But the browser still attaches it to requests the injected script makes, so the attacker can act as the user while the page is open."
+    },
+    {
+      "question": "A single-page app sends `Authorization: Bearer …` from JavaScript memory, with no cookies. Is it exposed to classic CSRF?",
+      "choices": ["Yes, browsers add the Authorization header to cross-site requests", "No, the browser does not attach that header automatically, so a forged request has no credentials", "Only for GET requests"],
+      "answer": 1,
+      "explain": "CSRF relies on ambient credentials the browser sends by itself, like cookies. A header set by your own script is not ambient. The app is still exposed to XSS, which could read the token from memory."
+    },
+    {
+      "question": "Which is the safest way to run an external tool with a user-supplied file name in Node.js?",
+      "choices": ["exec(`convert ${name} out.png`)", "execFile('convert', [validatedName, 'out.png'])", "exec with the name wrapped in double quotes"],
+      "answer": 1,
+      "explain": "`execFile` runs the program without a shell, so metacharacters are not interpreted. Validate the name too (for example, refuse a leading `-`) to prevent argument injection. Quoting inside a shell string can be broken out of."
+    }
+  ],
+  "practice": {
+    "prompt": "You own a forum with posts, comments, a search page and user profiles that allow a short bio with basic formatting. Session cookies authenticate the web app. How do you prevent SQL injection, XSS and CSRF?",
+    "answer": "Data access: every query uses bound parameters via the driver or an ORM; sort and filter fields map through an allow-list; the app's DB user can only read and write its own tables, not alter schema. Lint rules and review reject string-built SQL. XSS: render with an auto-escaping template engine or React, never `innerHTML` with user data; for the search page encode the echoed query (reflected XSS) and for client code use `textContent` (DOM XSS). For bios, store a restricted markup format such as Markdown and render it to HTML through a maintained sanitiser with a small allow-list of tags and no attributes beyond safe `href`s limited to `https:`. Deploy a nonce-based CSP with `object-src 'none'` and `base-uri 'none'`, first report-only to find breakage, then enforced. CSRF: session cookies are `HttpOnly`, `Secure`, `SameSite=Lax`; all state changes are POST/PUT/DELETE with a synchronizer token or a verified `Origin` header; no GET changes state. Add tests that submit known payloads to each field and assert they render as text, and log CSP violation reports.",
+    "rubric": [
+      "Parameterised queries plus allow-listed identifiers and a least-privilege DB account",
+      "Covers stored, reflected and DOM XSS with context-aware encoding and no raw innerHTML",
+      "Handles rich text with a sanitiser and safe URL schemes rather than a regex filter",
+      "Deploys CSP as a second layer, with a report-only rollout",
+      "CSRF defence: explicit SameSite, tokens or Origin checks, no state-changing GET",
+      "Adds automated tests or lint rules so the safe pattern stays the default"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-databases-indexes", "ai-prompting", "ai-agents-tools"],
+    "cases": ["news-feed", "chat-messaging", "collaborative-editor"],
+    "guides": ["owasp-top-10", "api-auth", "secrets-and-supply-chain", "code-review", "testing-strategy", "webhooks", "api-rate-limits", "observability"]
+  }
+}

@@ -1,0 +1,272 @@
+{
+  "id": "gitlab-database-2017",
+  "kind": "case",
+  "topic": "databases",
+  "level": "se",
+  "title": "GitLab.com, January 2017: wrong host, and backups that silently failed",
+  "summary": "While rebuilding a broken replica, an engineer deleted the primary's data directory. Almost every backup layer turned out to be missing or broken, and GitLab.com came back from a staging snapshot about 18 hours later.",
+  "minutes": 15,
+  "organisation": "GitLab",
+  "year": 2017,
+  "problem": "In January 2017 GitLab.com ran on one PostgreSQL primary (`db1.cluster.gitlab.com`) and one hot-standby secondary (`db2`) that existed only for failover, so the primary carried all of the load. GitLab already saw this primary as a single point of failure.\n\nOn 31 January a spike in load, suspected to be spam plus a background job hard-deleting a wrongly flagged employee account, made the secondary fall behind. The write-ahead log (WAL) segments it needed had already been removed from the primary, and there was no WAL archive, so the replica had to be rebuilt by hand: empty its data directory, then run `pg_basebackup`. During a long, confusing session of that work, an engineer ran the directory wipe on the **primary** instead of the secondary. They stopped it a second or two after noticing, but about 300 GB was already gone.\n\nThe team then reached for backups and found that almost none of the expected safety nets worked. GitLab.com was restored from a copy of the staging database, a process that took roughly 18 hours, and database changes made between 17:20 UTC and the deletion were lost.",
+  "constraints": [
+    "A single primary with one hot standby; the standby was for failover only and was never meant as a disaster-recovery copy.",
+    "No WAL archiving, so a replica that fell too far behind could only be rebuilt manually from scratch.",
+    "Re-seeding a replica with `pg_basebackup` requires an empty data directory on the target, and the procedure was neither automated nor properly documented in the runbooks.",
+    "GitLab's Omnibus package shipped PostgreSQL 9.2 and 9.6 and chose binaries based on the data directory found on the host.",
+    "Staging ran on Azure classic VMs without Premium Storage; its network disks were throttled to around 60 Mbps.",
+    "Git repositories and wikis were stored separately on NFS servers, outside the database."
+  ],
+  "decisions": [
+    {
+      "decision": "Restore from the LVM snapshot an engineer had taken manually at about 17:20 UTC to refresh staging, rather than the regular daily staging snapshot.",
+      "tradeoff": "It cut data loss to roughly six hours instead of almost a full day, but it lived on slow staging disks, so getting it back to production dominated the outage."
+    },
+    {
+      "decision": "Copy the staging database (webhooks already stripped) to production and bring production up from that copy.",
+      "tradeoff": "It was the quickest usable copy, but staging sat on Azure classic disks without Premium Storage, so copying its data directory took around 18 hours."
+    },
+    {
+      "decision": "Rebuild webhooks from a second, separate database made from the snapshot, because the staging copy had its webhooks stripped on purpose.",
+      "tradeoff": "Extra parallel work and a SQL dump-and-import step, but customers' webhooks came back without risking accidental firing from staging."
+    },
+    {
+      "decision": "Bump every database sequence by 100,000 before reopening the site, then re-enable GitLab.com gradually.",
+      "tradeoff": "Leaves a gap in IDs, but no new row can reuse an ID that might have been handed out before the outage."
+    },
+    {
+      "decision": "Run the recovery in public: a public notes document, a live YouTube stream (peak around 5,000 viewers) and status tweets.",
+      "tradeoff": "Strong trust and clear updates, but the first document named the engineer; GitLab said it would redact names in future."
+    },
+    {
+      "decision": "Focus follow-up work on making recovery easy and routine (hourly LVM snapshots, backup monitoring, automated restore tests, PITR research, a named owner for data durability) rather than blocking risky commands.",
+      "tradeoff": "Mistakes remain possible, but they become cheap to undo. GitLab argued that guarding `rm` alone would not protect against corruption or the many other ways to lose data."
+    }
+  ],
+  "failures": "GitLab split its analysis into two problems. **Why was the site down?** The primary's data directory was deleted instead of the secondary's. That happened because replication had stopped and rebuilding it was manual and poorly documented. Replication stopped because the primary discarded WAL segments the lagging secondary still needed. The lag came from extra load caused by spam and by a job deleting an employee who had been reported by a troll and accidentally scheduled for removal.\n\nDuring the rebuild the team also fought misleading signals. `pg_basebackup` appeared to hang with no output; it later complained about too few replication connections, so `max_wal_senders` was raised from 3 to 32. PostgreSQL then refused to restart, citing too many semaphores; `max_connections` had been set to 8000 almost a year earlier, and cutting it to 2000 let it restart. In fact `pg_basebackup` simply waits silently until the primary starts sending data, which neither the runbook nor the official docs made clear.\n\n**Why did recovery take so long?** Nearly every backup layer failed. The daily `pg_dump` to S3 had been producing nothing: it ran on an application server with no data directory, so Omnibus fell back to `pg_dump` 9.2 against a 9.6 database and errored. Cron failure emails were rejected because DMARC was not set up for them, so nobody noticed. Azure disk snapshots were enabled for NFS servers but not for databases. The standby had been wiped as part of the rebuild. The LVM snapshots worked, but they were made for staging, not disaster recovery, and lived on slow disks in a different region. Underneath it all, nobody owned testing the backups.",
+  "lessons": [
+    "A backup you have never restored is a hope, not a backup. Automate restore tests and alert on backup age and size.",
+    "Alerts must travel on a path that is itself monitored. A failure email that bounces is the same as no alert.",
+    "Replicas protect availability, not data: a replica faithfully copies deletions and can be wiped during maintenance. Keep separate, point-in-time recovery copies.",
+    "Make the host and environment unmistakable in the shell prompt, and automate dangerous procedures like replica rebuilds so humans are not typing them under pressure.",
+    "Know your restore time, not just your backup frequency. Snapshots on cheap, throttled disks can turn six hours of data loss into 18 hours of downtime.",
+    "Give data durability a named owner. Nobody was responsible for testing these backups, so nobody noticed they were broken."
+  ],
+  "caveats": "The post gives the end of the data-loss window as 00:00 UTC in its introduction and 23:30 UTC in its data-loss section; we use 17:20 to about 23:30, the deletion time. All times are approximate (the post marks them with ±). Impact counts (about 5,000 projects, 5,000 comments and 700 new accounts) are GitLab's estimates. The post does not state exactly when the site went down or came back for users; \"about 18 hours\" is its own summary. Hour values in the bar chart are rounded from the post's times.",
+  "diagrams": [
+    {
+      "id": "gld-timeline",
+      "type": "timeline",
+      "title": "31 January to 1 February 2017 (times UTC, approximate)",
+      "alt": "Incident timeline. At 17:20 an engineer snapshots production to staging. At 19:00 database load spikes. At 23:00 replication to the secondary fails and the manual rebuild begins. At 23:30 the primary's data directory is deleted by mistake. The team then finds the pg_dump backups empty, chooses the six-hour-old LVM snapshot, copies it for about 18 hours, restores the database at 17:00 on 1 February and finishes webhooks around 18:00.",
+      "caption": "The snapshot that saved six hours of data was taken by chance, for unrelated staging work, six hours before the deletion.",
+      "events": [
+        { "at": "31 Jan 17:20", "label": "Engineer takes a manual LVM snapshot of production to refresh staging for pgpool-II tests", "kind": "mitigate" },
+        { "at": "19:00", "label": "Database load spikes (suspected spam, plus a user-deletion job); many users cannot comment", "kind": "impact" },
+        { "at": "23:00", "label": "Secondary falls behind; WAL it needs is gone from the primary; manual rebuild begins", "kind": "trigger" },
+        { "at": "23:00–23:30", "label": "Secondary wiped; pg_basebackup seems to hang; max_wal_senders and max_connections changed", "kind": "trigger" },
+        { "at": "23:30", "label": "Data directory wiped on the primary by mistake; about 300 GB gone before it is stopped", "kind": "impact" },
+        { "at": "Shortly after", "label": "Team searches for backups: the S3 bucket for pg_dump is empty", "kind": "detect" },
+        { "at": "Next", "label": "Decision: restore from the manual LVM snapshot (about 6 h old) rather than the daily one", "kind": "mitigate" },
+        { "at": "~18 hours", "label": "Data directory copied from staging to production over disks throttled to around 60 Mbps", "kind": "mitigate" },
+        { "at": "1 Feb 17:00", "label": "GitLab.com database restored, without webhooks", "kind": "resolve" },
+        { "at": "1 Feb ~18:00", "label": "Webhooks restored from a separate copy; final checks complete", "kind": "resolve" },
+        { "at": "10 Feb", "label": "Postmortem published with a 5 Whys analysis and follow-up issues", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "gld-topology",
+      "type": "flow",
+      "title": "GitLab.com's database setup and its safety nets",
+      "alt": "Flow diagram. Application servers send queries to the primary db1, which streams WAL to the standby db2. A daily LVM snapshot copies the primary to a staging database. A pg_dump cron job on an application server should upload to an S3 bucket, but it fails, and its error emails are rejected.",
+      "caption": "Four protection paths existed on paper. By the time of the deletion, only the staging snapshot, built for testing rather than recovery, was usable.",
+      "nodes": [
+        { "id": "app", "label": "App servers", "kind": "service", "col": 0, "row": 0, "sub": "pg_dump cron" },
+        { "id": "db1", "label": "db1 primary", "kind": "db", "col": 2, "row": 0, "sub": "PostgreSQL 9.6" },
+        { "id": "db2", "label": "db2 standby", "kind": "db", "col": 4, "row": 0, "sub": "failover only" },
+        { "id": "s3", "label": "S3 backups", "kind": "bad", "col": 0, "row": 2, "sub": "bucket empty" },
+        { "id": "mail", "label": "Cron emails", "kind": "bad", "col": 1, "row": 3, "sub": "rejected (DMARC)" },
+        { "id": "stage", "label": "Staging DB", "kind": "storage", "col": 2, "row": 2, "sub": "slow Azure disks" }
+      ],
+      "edges": [
+        { "from": "app", "to": "db1", "label": "all queries" },
+        { "from": "db1", "to": "db2", "label": "WAL streaming", "style": "async" },
+        { "from": "db1", "to": "stage", "label": "LVM snapshot", "style": "async" },
+        { "from": "app", "to": "s3", "label": "pg_dump 9.2", "style": "fail" },
+        { "from": "app", "to": "mail", "label": "error alert", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Every query goes to the single primary. The standby takes no read traffic, so load spikes land on one machine." },
+        { "edges": [1], "text": "The standby replays WAL from the primary. When it lagged, the primary had already removed segments it needed, and with no WAL archive the only fix was a full manual rebuild." },
+        { "edges": [2], "text": "Once a day an LVM snapshot refreshes staging, with webhooks removed. It was meant for testing, not disaster recovery, but became the only usable copy." },
+        { "edges": [3], "text": "The daily `pg_dump` ran on an app server with no data directory, so Omnibus picked the 9.2 binary. Against a 9.6 server it errored, and nothing reached S3." },
+        { "edges": [4], "text": "Cron did send failure emails, but they were rejected by the receiving server because DMARC was not set up for them. Nobody knew the backups were broken." }
+      ]
+    },
+    {
+      "id": "gld-rebuild",
+      "type": "sequence",
+      "title": "The replica rebuild that hit the wrong host",
+      "alt": "Sequence diagram between the engineer, the secondary db2 and the primary db1. The engineer wipes db2 and runs pg_basebackup, which waits silently, then fails for lack of replication connections. The engineer raises max_wal_senders, PostgreSQL refuses to restart, max_connections is lowered, pg_basebackup still waits, and finally the engineer wipes the data directory on db1 thinking it is db2.",
+      "caption": "Each step was a reasonable reaction to a confusing signal. The final command was typed on the wrong host.",
+      "actors": [
+        { "id": "eng", "label": "Engineer" },
+        { "id": "db2", "label": "db2 (standby)" },
+        { "id": "db1", "label": "db1 (primary)" }
+      ],
+      "messages": [
+        { "from": "eng", "to": "db2", "label": "Wipe data directory", "note": "Around 23:00 replication had broken. Re-seeding a standby with pg_basebackup needs an empty data directory." },
+        { "from": "db2", "to": "db1", "label": "pg_basebackup", "note": "It appears to hang with no useful output, even with --verbose." },
+        { "from": "db1", "to": "db2", "label": "No free replication connections", "style": "fail", "note": "After a few tries it reports that the primary has no spare replication connections." },
+        { "from": "eng", "to": "db1", "label": "max_wal_senders 3 → 32", "note": "The team raises the limit from the default of 3." },
+        { "from": "db1", "to": "eng", "label": "Restart fails: too many semaphores", "style": "fail", "note": "max_connections had been set to 8000 almost a year before. It worked until now." },
+        { "from": "eng", "to": "db1", "label": "max_connections 8000 → 2000", "note": "PostgreSQL restarts cleanly." },
+        { "from": "db2", "to": "db1", "label": "pg_basebackup again", "note": "Still silent; strace shows it waiting in poll. This is normal: it waits until the primary starts sending, but the runbook and docs did not say so." },
+        { "from": "eng", "to": "db1", "label": "Wipe data dir (meant db2)", "style": "fail", "note": "About 23:30. Stopped after a second or two, but roughly 300 GB of primary data is already gone." }
+      ]
+    },
+    {
+      "id": "gld-options",
+      "type": "flow",
+      "title": "Five ways back, and which one worked",
+      "alt": "Flow diagram. From the deleted primary, five recovery options fan out: the standby (already wiped), pg_dump on S3 (empty), Azure disk snapshots (not enabled for databases), the daily LVM snapshot (about 24 hours old) and the manual LVM snapshot (about 6 hours old). Only the manual snapshot leads to the restored production database.",
+      "caption": "Defence in depth only counts if each layer is enabled, monitored and tested. Three of the five here were wiped, broken or never enabled, and both survivors were built for testing.",
+      "nodes": [
+        { "id": "loss", "label": "db1 data gone", "kind": "bad", "col": 2, "row": 0, "sub": "~300 GB at 23:30" },
+        { "id": "sec", "label": "Standby db2", "kind": "bad", "col": 0, "row": 2, "sub": "already wiped" },
+        { "id": "dump", "label": "pg_dump on S3", "kind": "bad", "col": 1, "row": 2, "sub": "nothing there" },
+        { "id": "azure", "label": "Azure snapshots", "kind": "bad", "col": 2, "row": 2, "sub": "not on DB hosts" },
+        { "id": "daily", "label": "Daily LVM snap", "kind": "state", "col": 3, "row": 2, "sub": "~24 h old" },
+        { "id": "manual", "label": "Manual LVM snap", "kind": "good", "col": 4, "row": 2, "sub": "~6 h old" },
+        { "id": "prod", "label": "Prod restored", "kind": "good", "col": 4, "row": 4, "sub": "1 Feb 17:00 UTC" }
+      ],
+      "edges": [
+        { "from": "loss", "to": "sec", "style": "fail" },
+        { "from": "loss", "to": "dump", "style": "fail" },
+        { "from": "loss", "to": "azure", "style": "fail" },
+        { "from": "loss", "to": "daily", "label": "fallback" },
+        { "from": "loss", "to": "manual", "label": "chosen" },
+        { "from": "manual", "to": "prod", "label": "~18 h copy" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Replication is for failover, not recovery, and the standby had just been emptied as part of the rebuild." },
+        { "edges": [1], "text": "The daily logical backup had been failing silently because of a PostgreSQL version mismatch." },
+        { "edges": [2], "text": "Azure disk snapshots were used for the NFS servers but had never been enabled for the database servers." },
+        { "edges": [3, 4], "text": "Two LVM snapshots were available. The one taken by hand at 17:20 cut data loss to about six hours." },
+        { "edges": [5], "text": "Copying the data directory off slow, throttled staging disks took around 18 hours before production could be restored." }
+      ]
+    },
+    {
+      "id": "gld-backup-alerts",
+      "type": "compare",
+      "title": "Silent backup failure versus a backup you can trust",
+      "alt": "Side-by-side comparison. Left: a pg_dump cron job picks the wrong version, uploads nothing to S3, and its error email is rejected. Right: a backup job is followed by an automated restore test, monitored for freshness, with a named owner for data durability (an illustrative design based on GitLab's planned follow-ups).",
+      "caption": "GitLab's follow-ups target exactly this gap: monitoring for backups, automated restore testing and an owner for data durability.",
+      "before": {
+        "label": "January 2017",
+        "nodes": [
+          { "id": "cron", "label": "pg_dump cron", "kind": "worker", "col": 0, "row": 0, "sub": "on app server" },
+          { "id": "ver", "label": "Picks 9.2", "kind": "bad", "col": 1, "row": 0, "sub": "server is 9.6" },
+          { "id": "mail", "label": "Error email", "kind": "bad", "col": 2, "row": 0, "sub": "rejected" },
+          { "id": "s3", "label": "S3 bucket", "kind": "bad", "col": 1, "row": 1, "sub": "empty" }
+        ],
+        "edges": [
+          { "from": "cron", "to": "ver" },
+          { "from": "ver", "to": "mail", "style": "fail" },
+          { "from": "ver", "to": "s3", "label": "no upload", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Planned follow-ups",
+        "nodes": [
+          { "id": "job", "label": "Backup job", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "test", "label": "Restore test", "kind": "service", "col": 1, "row": 0, "sub": "automated" },
+          { "id": "mon", "label": "Backup monitor", "kind": "service", "col": 2, "row": 0, "sub": "Prometheus" },
+          { "id": "owner", "label": "Durability owner", "kind": "good", "col": 1, "row": 1, "sub": "named owner" }
+        ],
+        "edges": [
+          { "from": "job", "to": "test" },
+          { "from": "test", "to": "mon", "label": "result" },
+          { "from": "mon", "to": "owner", "label": "alert" }
+        ]
+      }
+    },
+    {
+      "id": "gld-hours",
+      "type": "bars",
+      "title": "The hours that mattered",
+      "alt": "Bar chart in approximate hours: about 6 hours of database changes lost using the manual snapshot, versus almost 24 hours had only the daily snapshot existed; about 18 hours to copy data from staging; and about 18 hours of downtime for GitLab.com.",
+      "caption": "Rounded from the times in GitLab's post. Recovery point (data lost) and recovery time (downtime) are separate numbers, and both were set by snapshots never meant for recovery.",
+      "unit": "hours (approx.)",
+      "bars": [
+        { "label": "Data lost (used snap)", "value": 6, "highlight": true },
+        { "label": "Data lost (daily snap)", "value": 24 },
+        { "label": "Staging to prod copy", "value": 18 },
+        { "label": "GitLab.com down", "value": 18 }
+      ]
+    }
+  ],
+  "interview": [
+    "When you add a database to a design, state both targets: how much data you can lose (RPO) and how long a restore takes (RTO), and how the backup design meets each.",
+    "Say plainly that replicas are not backups: \"The standby protects availability. For recovery I keep base backups plus a WAL archive for point-in-time restore, in another account or region.\"",
+    "Mention restore drills: an automated job that restores last night's backup somewhere, runs a sanity query and alerts if it fails or the backup is too old.",
+    "For operational safety, prefer recoverability over blocking commands, and add cheap guards like a production-coloured prompt and scripted runbooks for risky steps.",
+    "When telling an outage story, separate \"why did it break\" from \"why did recovery take so long\". The second is usually where the design lessons are."
+  ],
+  "quiz": [
+    {
+      "question": "Why could GitLab not simply fail over to the standby after the deletion?",
+      "choices": ["The standby had been wiped as part of the replica rebuild", "Failover was disabled for maintenance", "The standby had replicated the deletion within seconds"],
+      "answer": 0,
+      "explain": "The team had emptied db2's data directory to re-seed it with pg_basebackup. Even a healthy replica would only help with hardware loss, since it copies deletions too."
+    },
+    {
+      "question": "Why had the daily pg_dump backups been producing nothing?",
+      "choices": ["S3 credentials had expired", "The job ran a 9.2 pg_dump against a 9.6 server and errored", "The backup file was too large for S3"],
+      "answer": 1,
+      "explain": "The job ran on an app server with no data directory, so Omnibus defaulted to PostgreSQL 9.2 tools. Against the 9.6 server it errored, so nothing was uploaded."
+    },
+    {
+      "question": "What made the replica rebuild necessary in the first place?",
+      "choices": ["A disk failure on the standby", "The primary had removed WAL segments the lagging standby still needed, and there was no WAL archive", "A PostgreSQL major version upgrade"],
+      "answer": 1,
+      "explain": "Under heavy load the standby fell behind. Without archived WAL it could not catch up, so it had to be rebuilt from a fresh base backup."
+    },
+    {
+      "question": "The recovery point was about six hours old. Why did the outage last about 18 hours?",
+      "choices": ["The snapshot sat on throttled staging disks, so copying it to production took around 18 hours", "Engineers waited for management sign-off", "The snapshot had to be decrypted first"],
+      "answer": 0,
+      "explain": "Staging used cheap Azure classic storage limited to around 60 Mbps. Restore speed, not backup age, set the length of the outage."
+    },
+    {
+      "question": "Which follow-up most directly prevents another silent backup failure?",
+      "choices": ["Aliasing rm to a safer command", "Automated restore testing plus monitoring of backups, with a named owner", "Adding more cron jobs"],
+      "answer": 1,
+      "explain": "Only a restore proves a backup works. Monitoring catches stale or missing backups, and an owner makes sure someone acts. GitLab chose this over blocking commands."
+    }
+  ],
+  "practice": {
+    "prompt": "You run a single-region PostgreSQL primary with one streaming replica for a SaaS product. Leadership asks for a plan so that an accidental deletion or corruption costs at most 15 minutes of data and under two hours of downtime. Design the backup and recovery setup.",
+    "answer": "Start by naming the targets: RPO 15 minutes, RTO under two hours, and note that the replica does not help with deletion because it copies it. Take nightly physical base backups and continuously archive WAL to object storage in a separate account and region, with versioning and deletion protection; that gives point-in-time recovery to just before the mistake, well inside 15 minutes. Add a delayed replica (for example an hour behind) as a fast path for 'oops' moments. Size restore throughput: keep backups and a warm standby host on storage fast enough that restoring the base backup and replaying WAL finishes in well under two hours, and measure it. Automate a daily restore test into a scratch instance with a sanity query, and export metrics for backup age, size and restore duration with alerts that page an on-call owner, not an email inbox. Script the replica rebuild and other risky runbooks, make production prompts unmistakable, and drill the full recovery quarterly.",
+    "rubric": [
+      "States RPO and RTO and explains that replicas do not protect against deletion",
+      "Base backups plus continuous WAL archiving for point-in-time recovery, stored off-host and in another account or region",
+      "Restore speed is sized and measured, not assumed",
+      "Automated restore tests with monitored, paged alerts on backup age or failure",
+      "Clear ownership, scripted runbooks and regular recovery drills"
+    ]
+  },
+  "links": {
+    "lessons": ["design-replication-partitioning", "design-reliability-observability", "design-databases-indexes"],
+    "cases": ["kv-store", "file-sync"],
+    "guides": ["schema-migrations", "observability", "testing-strategy"]
+  },
+  "sources": [
+    {
+      "title": "Postmortem of database outage of January 31",
+      "publisher": "GitLab Blog",
+      "url": "https://about.gitlab.com/blog/postmortem-of-database-outage-of-january-31/",
+      "date": "2017-02-10"
+    }
+  ]
+}

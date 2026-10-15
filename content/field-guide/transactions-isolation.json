@@ -1,0 +1,301 @@
+{
+  "id": "transactions-isolation",
+  "kind": "guide",
+  "topic": "databases",
+  "level": "sse",
+  "title": "Transactions and isolation levels: anomalies, locks and MVCC",
+  "summary": "Know which anomalies your database's isolation level allows, make read-modify-write safe with atomic updates, row locks or version checks, keep transactions short, and retry on deadlocks and serialization failures.",
+  "minutes": 18,
+  "principle": "Treat isolation as a contract you must look up, not assume: know your database's default level and exactly which anomalies it still allows. Protect every read-modify-write with an atomic statement, a row lock (`SELECT ... FOR UPDATE`) or an optimistic version check; use a constraint or SERIALIZABLE for invariants that span rows; keep transactions short; and make callers retry on deadlocks and serialization failures.",
+  "why": "**ACID** is the promise a transaction makes. **Atomicity**: all of its writes apply or none do. **Consistency**: it moves the data from one valid state to another, as far as declared constraints and your code define valid. **Isolation**: concurrent transactions do not see each other's partial work, to a degree set by the isolation level. **Durability**: once committed, the change survives a crash.\n\nIsolation is the part with knobs. Full isolation (serializable: the result equals some one-at-a-time order) costs waiting or aborts, so databases offer weaker levels. The SQL standard defines four by the anomalies they forbid: **read uncommitted** may show a **dirty read** (another transaction's uncommitted write); **read committed** prevents that but allows a **non-repeatable read** (reading the same row twice gives different values); **repeatable read** prevents that but may allow a **phantom** (re-running a range query returns new rows); **serializable** forbids all three.\n\nTwo anomalies that the standard's table does not name cause most real bugs. A **lost update**: two transactions read a value, both compute a new one, and the second write silently overwrites the first. **Write skew**: two transactions read the same rows, each checks an invariant that holds, then each writes a *different* row, and together they break the invariant (two doctors both leave the on-call rota).\n\nVendors implement the levels differently, so look it up. PostgreSQL defaults to read committed; its read uncommitted behaves like read committed; its repeatable read is **snapshot isolation**, which also prevents phantoms and aborts the second of two concurrent updates to the same row, but allows write skew; its serializable (SSI) detects write skew and aborts a transaction with a serialization failure. MySQL InnoDB defaults to repeatable read: plain reads use a snapshot, but it does not abort concurrent updates to the same row, so an application-side read-modify-write can still lose an update unless it uses a locking read.\n\nMost modern engines use **MVCC** (multi-version concurrency control): writers create new row versions and readers see a consistent snapshot, so readers do not block writers. The cost is cleanup of old versions (VACUUM in PostgreSQL, purge in InnoDB), which a long-running transaction holds back.",
+  "diagrams": [
+    {
+      "id": "txn-lost-update",
+      "type": "sequence",
+      "title": "A lost update under read committed",
+      "alt": "Sequence diagram with two transactions and a database. Both transactions read stock equal to 5 for the same product. Each subtracts one in application code and writes stock equal to 4. Both commit. Two units were sold but stock dropped by only one.",
+      "caption": "Neither transaction saw anything uncommitted, yet one decrement vanished. Read committed does not prevent lost updates.",
+      "actors": [
+        { "id": "t1", "label": "Transaction 1" },
+        { "id": "db", "label": "Database" },
+        { "id": "t2", "label": "Transaction 2" }
+      ],
+      "messages": [
+        { "from": "t1", "to": "db", "label": "SELECT stock WHERE id = 7" },
+        { "from": "db", "to": "t1", "label": "stock = 5", "style": "reply" },
+        { "from": "t2", "to": "db", "label": "SELECT stock WHERE id = 7", "note": "T1 has not written yet, so T2 also sees the committed value 5." },
+        { "from": "db", "to": "t2", "label": "stock = 5", "style": "reply" },
+        { "from": "t1", "to": "db", "label": "UPDATE SET stock = 4; COMMIT", "note": "The application computed 5 - 1 and writes the absolute value." },
+        { "from": "t2", "to": "db", "label": "UPDATE SET stock = 4; COMMIT", "style": "fail", "note": "T2's update is not blocked (T1 has already committed) and simply overwrites T1's value with its own stale result. In PostgreSQL repeatable read, T2 would instead fail with a serialization error and could retry." },
+        { "from": "db", "to": "t1", "label": "final stock = 4, not 3", "style": "fail", "note": "Two units sold, one decrement recorded. The fix is to make the read and the write one atomic step, lock the row, or check a version." }
+      ]
+    },
+    {
+      "id": "txn-write-skew",
+      "type": "sequence",
+      "title": "Write skew: two doctors leave the on-call rota",
+      "alt": "Sequence diagram. The rule is that at least one doctor must be on call. Alice's and Bob's transactions each count on-call doctors and see two. Alice sets her own row to off call, Bob sets his own row to off call. They update different rows, so snapshot isolation sees no conflict, both commit, and nobody is on call.",
+      "caption": "No row was written twice, so snapshot isolation allows it. Serializable (or locking the rows you read) is needed when an invariant spans rows.",
+      "actors": [
+        { "id": "alice", "label": "Alice's txn" },
+        { "id": "db", "label": "Database" },
+        { "id": "bob", "label": "Bob's txn" }
+      ],
+      "messages": [
+        { "from": "alice", "to": "db", "label": "COUNT(*) WHERE on_call", "note": "Invariant: at least one doctor on call for the shift." },
+        { "from": "db", "to": "alice", "label": "2", "style": "reply" },
+        { "from": "bob", "to": "db", "label": "COUNT(*) WHERE on_call", "note": "Bob's snapshot also shows Alice and Bob on call." },
+        { "from": "db", "to": "bob", "label": "2", "style": "reply" },
+        { "from": "alice", "to": "db", "label": "UPDATE alice SET on_call=false", "note": "2 > 1, so Alice may leave." },
+        { "from": "bob", "to": "db", "label": "UPDATE bob SET on_call=false", "note": "Bob reasons the same way from his snapshot, and writes a different row." },
+        { "from": "db", "to": "alice", "label": "COMMIT ok", "style": "reply" },
+        { "from": "db", "to": "bob", "label": "COMMIT ok: 0 on call", "style": "fail", "note": "Under PostgreSQL SERIALIZABLE, one of the two transactions would fail with SQLSTATE 40001 (at the update or at commit) and its retry would see only one doctor on call. Alternatively, both transactions could lock the rows they counted with SELECT ... FOR UPDATE." }
+      ]
+    },
+    {
+      "id": "txn-rmw-vs-atomic",
+      "type": "compare",
+      "title": "Read-modify-write in the app vs one conditional UPDATE",
+      "alt": "Side-by-side comparison. On the left the application reads the stock, subtracts one in code and writes the result back, leaving a window where a concurrent transaction can do the same and one update is lost. On the right a single UPDATE decrements stock only where stock is above zero and the application checks the affected row count.",
+      "caption": "Move the arithmetic and the check into one statement and the race window disappears; zero rows affected means sold out.",
+      "before": {
+        "label": "Read, compute, write back",
+        "nodes": [
+          { "id": "r", "label": "SELECT stock", "kind": "client", "col": 0, "row": 0, "sub": "reads 5" },
+          { "id": "c", "label": "5 - 1 in app", "kind": "bad", "col": 1, "row": 0, "sub": "race window" },
+          { "id": "w", "label": "SET stock = 4", "kind": "db", "col": 2, "row": 0, "sub": "may overwrite" }
+        ],
+        "edges": [
+          { "from": "r", "to": "c" },
+          { "from": "c", "to": "w", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Atomic conditional UPDATE",
+        "nodes": [
+          { "id": "r", "label": "stock - 1", "kind": "client", "col": 0, "row": 0, "sub": "WHERE stock > 0" },
+          { "id": "c", "label": "Row locked", "kind": "good", "col": 1, "row": 0, "sub": "re-checks latest" },
+          { "id": "w", "label": "1 row = sold", "kind": "db", "col": 2, "row": 0, "sub": "0 rows = sold out" }
+        ],
+        "edges": [
+          { "from": "r", "to": "c" },
+          { "from": "c", "to": "w" }
+        ]
+      }
+    },
+    {
+      "id": "txn-levels-chart",
+      "type": "chart",
+      "title": "Isolation strength vs concurrency",
+      "alt": "Trade-off chart with isolation strength on the horizontal axis and concurrency on the vertical axis. Read uncommitted is weakest and most concurrent. Read committed is slightly stronger with high concurrency. Snapshot isolation, which is PostgreSQL repeatable read, is stronger with good concurrency. Serializable snapshot isolation is strongest among MVCC options but adds aborts. Lock-based serializable is strongest and least concurrent.",
+      "caption": "A rough ordering. MVCC levels keep readers and writers apart; SSI pays for full serializability with aborts you must retry, lock-based schemes pay with waiting.",
+      "x": { "label": "Isolation strength", "low": "weak", "high": "serializable" },
+      "y": { "label": "Concurrency", "low": "waits, aborts", "high": "high" },
+      "points": [
+        { "label": "Read uncommitted", "x": 1, "y": 10 },
+        { "label": "Read committed", "x": 3, "y": 9, "highlight": true },
+        { "label": "Snapshot (PG RR)", "x": 6, "y": 7 },
+        { "label": "Serializable (SSI)", "x": 9, "y": 5 },
+        { "label": "Serializable (2PL)", "x": 9, "y": 2 }
+      ]
+    },
+    {
+      "id": "txn-deadlock",
+      "type": "flow",
+      "title": "A deadlock cycle and how the database breaks it",
+      "alt": "Flow diagram. Transaction 1 holds a lock on account A and waits for account B. Transaction 2 holds a lock on account B and waits for account A. The waits form a cycle. The database's deadlock detector finds the cycle and aborts transaction 2, which releases B so transaction 1 can finish.",
+      "caption": "Two transfers locking the same rows in opposite order is the classic deadlock. Lock in a consistent order and retry the victim.",
+      "nodes": [
+        { "id": "t1", "label": "Transaction 1", "kind": "service", "col": 0, "row": 0, "sub": "A → B transfer" },
+        { "id": "a", "label": "Row: account A", "kind": "db", "col": 3, "row": 0 },
+        { "id": "t2", "label": "Transaction 2", "kind": "service", "col": 3, "row": 3, "sub": "B → A transfer" },
+        { "id": "b", "label": "Row: account B", "kind": "db", "col": 0, "row": 3 },
+        { "id": "det", "label": "Deadlock check", "sub": "finds the cycle", "kind": "decision", "col": 1, "row": 5 }
+      ],
+      "edges": [
+        { "from": "t1", "to": "a", "label": "holds lock" },
+        { "from": "t2", "to": "b", "label": "holds lock" },
+        { "from": "t1", "to": "b", "label": "waits for", "style": "async" },
+        { "from": "t2", "to": "a", "label": "waits for", "style": "async" },
+        { "from": "det", "to": "t2", "label": "abort victim", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Transaction 1 debits account A: `UPDATE accounts ... WHERE id = 'A'` takes a row lock on A." },
+        { "edges": [1], "text": "At the same moment transaction 2, a transfer the other way, locks B." },
+        { "edges": [2, 3], "text": "Each now tries to update the row the other holds. T1 waits for T2 and T2 waits for T1: a cycle that will never resolve by itself." },
+        { "edges": [4], "text": "The database detects the cycle (PostgreSQL checks after `deadlock_timeout`, 1 second by default; InnoDB detects it immediately by default) and aborts one transaction with a deadlock error: SQLSTATE 40P01 in PostgreSQL, error 1213 in MySQL. T1 proceeds." },
+        { "edges": [0, 2], "text": "Prevention: lock rows in a consistent order, for example always the lower account id first, keep transactions short, and retry the aborted one with backoff." }
+      ]
+    },
+    {
+      "id": "txn-booking-incident",
+      "type": "timeline",
+      "title": "An illustrative double-booking caused by write skew",
+      "alt": "Timeline of a hypothetical incident. A booking service checks seat availability and inserts a booking in the same transaction at read committed. During a popular on-sale two requests for the same seat interleave and both succeed. Support reports duplicates, engineers find the race, add a unique constraint and a conditional hold, and clean up the affected bookings.",
+      "caption": "Hypothetical but typical: the check and the insert were in one transaction, which felt safe, but nothing stopped two transactions from passing the check together.",
+      "events": [
+        { "at": "Design", "label": "Book seat = SELECT seat is free, then INSERT booking, in one read-committed transaction", "kind": "trigger" },
+        { "at": "On-sale T+0", "label": "Traffic spikes; two requests for seat 14C both see it free and both insert", "kind": "impact" },
+        { "at": "T+2h", "label": "Support reports customers holding tickets for the same seat", "kind": "detect" },
+        { "at": "T+3h", "label": "Root cause: a check-then-insert race; no single row was written twice", "kind": "detect" },
+        { "at": "T+4h", "label": "Add UNIQUE (event_id, seat_id); a duplicate insert now fails as 'seat taken'", "kind": "mitigate" },
+        { "at": "Next day", "label": "Hold seats with a conditional UPDATE WHERE status = 'available'; refund duplicates", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Decrementing stock safely",
+      "bad": {
+        "label": "Read in one statement, write the computed value",
+        "lang": "ts",
+        "code": "await db.query('BEGIN')\nconst { rows } = await db.query(\n  'SELECT stock FROM products WHERE id = $1', [id])\nif (rows[0].stock < 1) throw new SoldOut()\nawait db.query(\n  'UPDATE products SET stock = $2 WHERE id = $1',\n  [id, rows[0].stock - 1])   // stale if another txn sold one\nawait db.query('COMMIT')"
+      },
+      "good": {
+        "label": "One atomic, conditional UPDATE",
+        "lang": "sql",
+        "code": "-- Works under read committed in PostgreSQL and MySQL:\n-- the row is locked and re-checked against the latest version.\nUPDATE products\nSET stock = stock - 1\nWHERE id = $1 AND stock > 0;\n-- 1 row affected -> sold; 0 rows -> sold out"
+      },
+      "why": "The database applies `stock - 1` to the latest committed value while holding the row lock, and the `WHERE stock > 0` check runs against that same value. There is no window between read and write, so no update can be lost and stock cannot go negative."
+    },
+    {
+      "title": "Pessimistic vs optimistic locking for a multi-step edit",
+      "bad": {
+        "label": "Pessimistic: lock the row for the whole step",
+        "lang": "sql",
+        "code": "BEGIN;\nSELECT balance FROM accounts WHERE id = $1 FOR UPDATE;\n-- other writers (and FOR UPDATE readers) of this row now wait\n-- ... application logic, ideally milliseconds, never user think-time ...\nUPDATE accounts SET balance = $2 WHERE id = $1;\nCOMMIT;"
+      },
+      "good": {
+        "label": "Optimistic: version column, check on write",
+        "lang": "sql",
+        "code": "-- read (no lock held while the user edits)\nSELECT id, name, address, version FROM customers WHERE id = $1;\n\n-- write only if nobody changed it since\nUPDATE customers\nSET name = $2, address = $3, version = version + 1\nWHERE id = $1 AND version = $4;\n-- 0 rows affected -> conflict: reload and retry or show a merge"
+      },
+      "why": "Both are correct; they suit different contention. `FOR UPDATE` is simple and right for short, high-contention critical sections such as a money transfer, but must never span user think-time or a network call. A version column holds no locks, so it fits low-contention edits and long workflows (and maps to HTTP `ETag`/`If-Match`), at the cost of handling conflicts in the caller. The \"bad\" side is only bad when used for a long edit."
+    },
+    {
+      "title": "Retrying serialization failures and deadlocks",
+      "bad": {
+        "label": "Surface every abort as a 500",
+        "lang": "ts",
+        "code": "try {\n  await runTransfer(db, from, to, amount)\n} catch (err) {\n  res.status(500).send('Internal error')\n}"
+      },
+      "good": {
+        "label": "Retry the whole transaction on retryable codes",
+        "lang": "ts",
+        "code": "// PostgreSQL: 40001 serialization_failure, 40P01 deadlock_detected\nconst RETRYABLE = new Set(['40001', '40P01'])\nfor (let attempt = 1; ; attempt++) {\n  try {\n    return await db.transaction(tx => runTransfer(tx, from, to, amount))\n  } catch (err) {\n    if (!RETRYABLE.has(err.code) || attempt === 5) throw err\n    await sleep(Math.random() * 20 * 2 ** attempt) // jittered backoff\n  }\n}"
+      },
+      "why": "Under SERIALIZABLE, and with any locking, the database will sometimes abort a transaction to keep the result correct. That is expected, not a bug: re-run the entire transaction, including its reads, a bounded number of times with jitter. Never retry only the failing statement; its inputs came from the aborted snapshot."
+    }
+  ],
+  "checklist": [
+    "You know your database's default isolation level and which anomalies it allows (for example PostgreSQL read committed, MySQL InnoDB repeatable read).",
+    "Every read-modify-write is an atomic UPDATE, uses SELECT ... FOR UPDATE, or checks a version column.",
+    "Invariants that span rows are enforced by a constraint (UNIQUE, EXCLUDE, foreign key) or by SERIALIZABLE, not by a check-then-write.",
+    "Transactions are short: no network calls, user think-time or large batch work while holding locks or an old snapshot.",
+    "Rows are locked in a consistent order (for example by primary key) to avoid deadlocks.",
+    "Callers retry the whole transaction on serialization failures and deadlocks, with bounded, jittered backoff.",
+    "Updates with optimistic locking check affected rows and turn zero into a clear conflict response.",
+    "Long-running transactions are monitored, since they block MVCC cleanup and hold locks."
+  ],
+  "antipatterns": [
+    {
+      "title": "Check-then-insert to enforce uniqueness",
+      "bad": {
+        "label": "SELECT to see if it exists, then INSERT",
+        "lang": "sql",
+        "code": "BEGIN;\nSELECT 1 FROM bookings WHERE event_id = $1 AND seat_id = $2;\n-- no row -> looks free\nINSERT INTO bookings (event_id, seat_id, user_id) VALUES ($1, $2, $3);\nCOMMIT;\n-- two concurrent transactions can both see 'free' and both insert"
+      },
+      "better": {
+        "label": "Let a constraint decide",
+        "lang": "sql",
+        "code": "ALTER TABLE bookings\n  ADD CONSTRAINT bookings_event_seat_key UNIQUE (event_id, seat_id);\n\n-- PostgreSQL: treat the conflict as 'seat taken'\nINSERT INTO bookings (event_id, seat_id, user_id)\nVALUES ($1, $2, $3)\nON CONFLICT (event_id, seat_id) DO NOTHING\nRETURNING id;  -- no row returned -> seat already booked"
+      },
+      "why": "The SELECT finds no row to lock, so under read committed or snapshot isolation nothing stops a second transaction from passing the same check: this is a phantom-driven write skew. A unique index is checked atomically by the database for every insert, at any isolation level."
+    },
+    {
+      "title": "Holding a transaction open across slow work",
+      "bad": {
+        "label": "Lock, call a payment provider, then commit",
+        "lang": "ts",
+        "code": "await tx.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [id])\nconst charge = await paymentProvider.charge(card, amount) // 2-30 s\nawait tx.query('UPDATE orders SET status = $2 WHERE id = $1', [id, 'paid'])\nawait tx.commit()"
+      },
+      "better": {
+        "label": "Short transactions around an idempotent external call",
+        "lang": "ts",
+        "code": "// 1. short txn: mark intent\nawait db.query(\"UPDATE orders SET status = 'charging' WHERE id = $1 AND status = 'new'\", [id])\n// 2. no txn open: call out with an idempotency key\nconst charge = await paymentProvider.charge(card, amount, { idempotencyKey: id })\n// 3. short txn: record the outcome\nawait db.query(\"UPDATE orders SET status = 'paid', charge_id = $2 WHERE id = $1\", [id, charge.id])"
+      },
+      "why": "While the transaction waits on the network it holds row locks (blocking other writers), occupies a connection and, under MVCC, keeps old row versions from being cleaned up. Split the work into short transactions around the external call and make the call idempotent so a crash between steps can be recovered."
+    },
+    {
+      "title": "Assuming 'repeatable read' means the same thing everywhere",
+      "bad": {
+        "label": "Copying an isolation setting between databases",
+        "lang": "text",
+        "code": "\"We use REPEATABLE READ on MySQL, so lost updates can't happen.\"\n\"PostgreSQL serializable and MySQL serializable behave the same.\"\n\"Our ORM's default must be serializable.\""
+      },
+      "better": {
+        "label": "Look up the vendor's actual guarantees",
+        "lang": "text",
+        "code": "PostgreSQL: default READ COMMITTED; REPEATABLE READ = snapshot\n  isolation (aborts concurrent updates of a row, no phantoms,\n  allows write skew); SERIALIZABLE = SSI (aborts with 40001).\nMySQL InnoDB: default REPEATABLE READ; plain SELECTs read a\n  snapshot, locking reads and UPDATEs see the latest row, and\n  concurrent read-modify-write is not aborted -> use FOR UPDATE.\nAlways: write a concurrency test for the invariant you rely on."
+      },
+      "why": "Level names come from the SQL standard, but implementations differ in what they prevent and how (locks, snapshots, abort-on-conflict). Some databases even label snapshot isolation as serializable. Decide based on your engine's documentation and a test that runs two transactions concurrently."
+    }
+  ],
+  "interview": [
+    "When a design has a counter, balance, inventory or seat, say how concurrent writes stay correct: \"`UPDATE ... SET stock = stock - 1 WHERE stock > 0`, check rows affected\".",
+    "Name the anomaly, not just the level: \"read committed would allow a lost update here; I'll use an atomic update\", or \"this is write skew, so I need a unique constraint or SERIALIZABLE\".",
+    "Contrast pessimistic and optimistic locking with when each fits: FOR UPDATE for short, hot critical sections; a version column or ETag for long edits with rare conflicts.",
+    "Mention vendor differences you are sure of, such as PostgreSQL defaulting to read committed and InnoDB to repeatable read, and say you would verify the rest.",
+    "At SSE level, cover failure handling: retry on 40001 and deadlocks, consistent lock ordering, short transactions, and how long-running transactions hurt MVCC cleanup."
+  ],
+  "quiz": [
+    {
+      "question": "Two transactions read `stock = 5`, each writes `stock = 4`, and both commit under read committed. What anomaly is this?",
+      "choices": ["Dirty read", "Lost update", "Phantom read", "Deadlock"],
+      "answer": 1,
+      "explain": "Neither read uncommitted data, but the second write overwrote the first based on a stale read, so one decrement vanished. An atomic `SET stock = stock - 1`, a `FOR UPDATE` lock or a version check prevents it."
+    },
+    {
+      "question": "Which anomaly can snapshot isolation (PostgreSQL REPEATABLE READ) still allow?",
+      "choices": ["Dirty read", "Non-repeatable read", "Write skew", "Reading another transaction's uncommitted insert"],
+      "answer": 2,
+      "explain": "Snapshot isolation only detects conflicts when two transactions write the same row. In write skew they read overlapping data but write different rows, so both commit. PostgreSQL SERIALIZABLE (SSI) detects this pattern and aborts one."
+    },
+    {
+      "question": "When does optimistic locking with a version column fit better than `SELECT ... FOR UPDATE`?",
+      "choices": ["When conflicts are frequent and the critical section is tiny", "When an edit spans user think-time and conflicts are rare", "When you need to prevent dirty reads", "When the table has no primary key"],
+      "answer": 1,
+      "explain": "A version check holds no locks while the user edits, and detects a conflict at write time (0 rows affected). Holding FOR UPDATE across think-time would block other writers for seconds or minutes."
+    },
+    {
+      "question": "Two transfers deadlock: one locks account A then B, the other B then A. What is the best structural fix?",
+      "choices": ["Raise the lock timeout", "Always lock accounts in a consistent order, such as ascending id", "Switch to read uncommitted", "Disable deadlock detection"],
+      "answer": 1,
+      "explain": "With a global lock order, no cycle can form: both transfers try A first, so one simply waits for the other. Still retry on deadlock errors, since other code paths may lock differently."
+    },
+    {
+      "question": "Under PostgreSQL SERIALIZABLE a transaction fails with SQLSTATE 40001. What should the application do?",
+      "choices": ["Return a 500 to the user", "Retry only the statement that failed", "Retry the whole transaction, with a bounded number of attempts", "Lower the isolation level permanently"],
+      "answer": 2,
+      "explain": "A serialization failure means the database aborted the transaction to keep the outcome serializable. Re-run it from the start so its reads come from a fresh snapshot; retrying just the last statement would reuse stale inputs."
+    }
+  ],
+  "practice": {
+    "prompt": "Design the booking path for a concert ticketing service. Thousands of users try to buy the same few hundred seats at on-sale time. A seat must never be sold twice, holds expire after 10 minutes, and payment happens with an external provider. Explain how you keep it correct under concurrency.",
+    "answer": "Model seats as rows with `status` (available, held, sold), `hold_id` and `held_until`. To hold a seat, run one conditional statement: `UPDATE seats SET status = 'held', hold_id = $2, held_until = now() + interval '10 minutes' WHERE id = $1 AND (status = 'available' OR (status = 'held' AND held_until < now()))`; one row affected means the user has the hold, zero means taken. This is atomic at read committed, so I avoid a check-then-write race. As a backstop, `bookings` has a `UNIQUE (event_id, seat_id)` constraint. Payment runs outside any database transaction: mark the order as charging, call the provider with an idempotency key, then in a short transaction set the seat to sold only `WHERE hold_id = $2 AND status = 'held'`, so an expired and re-held seat cannot be sold twice; if that update affects zero rows, refund. Multi-seat holds lock seats in ascending id order to avoid deadlocks, and the service retries whole transactions on deadlock or serialization errors with jittered backoff. I keep transactions to a few statements, never across the payment call. If an invariant spanned rows in a way a constraint cannot express, I would use SERIALIZABLE for that path and accept retries.",
+    "rubric": [
+      "Uses an atomic conditional UPDATE (or row lock) instead of check-then-write",
+      "Backs the invariant with a database constraint such as UNIQUE",
+      "Keeps the external payment call outside the transaction, with idempotency",
+      "Handles hold expiry without double-selling (conditional on hold id or version)",
+      "Avoids deadlocks with consistent lock ordering and retries aborted transactions",
+      "Names the anomaly being prevented and the isolation level relied on"
+    ]
+  },
+  "links": {
+    "lessons": ["design-consistency", "design-databases-indexes", "design-replication-partitioning", "design-api-data-model"],
+    "problems": ["lock-order-deadlock", "time-versioned-store"],
+    "cases": ["ticket-booking", "payments", "kv-store"],
+    "guides": ["idempotency-keys", "consistency-choices", "database-indexes", "schema-migrations", "caching-strategies"]
+  }
+}

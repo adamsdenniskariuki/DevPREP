@@ -1,0 +1,239 @@
+{
+  "id": "equifax-breach-2017",
+  "kind": "case",
+  "topic": "security",
+  "level": "sse",
+  "title": "Equifax 2017: one missed patch, 76 days unseen",
+  "summary": "Attackers got in through an unpatched Apache Struts flaw in a dispute portal, found plain-text credentials, reached 48 more databases and pulled data for 76 days, hidden by an expired inspection certificate.",
+  "minutes": 15,
+  "organisation": "Equifax",
+  "year": 2017,
+  "problem": "Equifax is one of the large U.S. consumer reporting agencies. It ran an online dispute portal where consumers could challenge items on their credit reports, and that portal sat in front of databases holding personal data.\n\nIn March 2017 a vulnerability in Apache Struts, the open-source web framework the portal used, was publicly announced by the U.S. Computer Emergency Readiness Team (US-CERT); it let an attacker run commands on an affected server. Equifax did not patch the portal. Attackers broke in through it in May 2017, and over the next 76 days they queried and quietly copied out personal data before Equifax noticed at the end of July.\n\nAccording to the U.S. Government Accountability Office (GAO), whose 2018 report this case follows, attackers accessed the personal information of at least 145.5 million people in the U.S. The GAO report rests on Equifax's own documents and interviews; GAO did not independently test Equifax's controls.",
+  "constraints": [
+    "The dispute portal was internet-facing and built on Apache Struts, an open-source framework whose vulnerabilities are disclosed publicly.",
+    "Vulnerability notices were circulated to system administrators using a recipient list that had to be kept up to date.",
+    "Much of the network traffic was encrypted, so a network inspection device needed a valid certificate to see inside it.",
+    "The portal's databases sat on a network that also held many unrelated databases.",
+    "The breached data had to be counted from the attackers' own queries, matched against core consumer records."
+  ],
+  "decisions": [
+    {
+      "decision": "Circulate vulnerability notices to a list of system administrators, then rely on a later scan to catch anything missed.",
+      "tradeoff": "Cheap and familiar, but both steps failed silently: the list was out of date, and the scan did not flag the portal."
+    },
+    {
+      "decision": "Inspect encrypted traffic with a dedicated device that decrypts it using a digital certificate.",
+      "tradeoff": "Gives visibility into encrypted channels, but only while the certificate is valid. Once it expired, encrypted traffic passed uninspected and nothing flagged the gap."
+    },
+    {
+      "decision": "After discovery, take the portal offline, bring in an outside cybersecurity firm and notify the FBI before going public.",
+      "tradeoff": "Gave time to understand the scope from intact logs, but the public announcement came more than five weeks after the portal was shut down."
+    },
+    {
+      "decision": "Count victims by re-running the attackers' recorded queries on a separate system and matching the results to core records by Social Security number and name.",
+      "tradeoff": "Gave a defensible number, but it moved twice: one query was wrongly judged empty, and a table holding driver's licence data was found months later."
+    },
+    {
+      "decision": "Remediate with a new patching process that confirms fixes, monitoring at the network boundary, restrictions on server-to-server traffic, new endpoint tooling and a CISO reporting to the CEO.",
+      "tradeoff": "Addresses each contributing factor, but these were reported by Equifax and GAO did not verify them."
+    }
+  ],
+  "failures": "GAO lists four key factors Equifax identified, plus one more that Equifax officials noted.\n\n**Identification.** Equifax circulated the US-CERT notice to administrators using an out-of-date recipient list, so the people who ran the portal never got it. A scan about a week later did not find the vulnerable Struts version on the portal either. Two days after the public notice, unidentified individuals scanned for the flaw, found the portal and confirmed they could run commands; no data was taken then.\n\n**Detection.** From 13 May 2017 attackers came back, sending commands over existing encrypted connections so they blended in with normal traffic. A device that should have inspected that traffic had a digital certificate that had expired about 10 months before the breach, so it let encrypted traffic through unchecked. The breach was found on 29 July only when an administrator noticed the misconfiguration during routine checks and renewed the certificate.\n\n**Segmentation.** The portal's three databases were not isolated from others, so the attackers spread to 48 unrelated databases.\n\n**Data governance.** One data store held usernames and passwords without encryption, which the attackers used to reach those other systems.\n\n**No query limits.** Nothing capped how often databases could be queried, so the attackers ran about 9,000 queries, far more than normal work needs, and took the data out in small pieces over ordinary encrypted web traffic.",
+  "lessons": [
+    "Patch management is a pipeline, not a distribution list. Keep an asset inventory tied to owners, and verify each fix with a scan that knows what is actually deployed.",
+    "Monitoring tools have dependencies too. An expired certificate silently disabled inspection, so alert on certificate expiry and on a monitor that goes quiet.",
+    "Segment networks so one breached app cannot reach unrelated databases, and restrict server-to-server traffic to what is needed.",
+    "Never store credentials in plain text. Use a secrets manager and short-lived, least-privilege credentials.",
+    "Watch for abnormal behaviour like unusual query volume. Rate limits and baselines turn a quiet leak into an alert.",
+    "Keep complete, intact logs. Equifax's investigation was helped by logs of the attackers' commands that had not been damaged or erased."
+  ],
+  "caveats": "Everything here follows GAO-18-559, which reports what Equifax officials and documents told GAO; GAO did not independently verify Equifax's controls or remediation. The report does not give a CVE number for the Struts flaw, so we do not either. The 8 March date for the US-CERT notice is worked out from GAO's statement that attackers scanned on 10 March, two days after the notice. GAO dates the certificate expiry to about 10 months before the breach. The overlap between the extra 2.4 million people and the 145.5 million was unknown when GAO reported. The figure diagrams simplify GAO's description and do not show Equifax's real network.",
+  "diagrams": [
+    {
+      "id": "eqf-timeline",
+      "type": "timeline",
+      "title": "From public notice to final count (2017 to 2018)",
+      "alt": "Timeline. Around 8 March 2017 US-CERT announces the Struts flaw. On 10 March attackers find the vulnerable portal. A week later Equifax's scan misses it. On 13 May the breach begins. On 29 July an expired certificate is replaced and the intrusion is spotted. On 30 July the portal goes offline. On 2 August the FBI is told. On 7 September Equifax announces about 143 million affected, revised to 145.5 million on 2 October, and on 1 March 2018 a further 2.4 million are added.",
+      "caption": "About two months passed between the public patch notice and the start of the breach, and about 76 more days before anyone noticed.",
+      "events": [
+        { "at": "~8 Mar 2017", "label": "US-CERT publicly announces the Apache Struts vulnerability", "kind": "trigger" },
+        { "at": "10 Mar", "label": "Unidentified individuals scan for it, find the portal and confirm they can run commands", "kind": "trigger" },
+        { "at": "About a week later", "label": "Equifax scan fails to detect the flaw on the dispute portal", "kind": "detect" },
+        { "at": "13 May", "label": "Breach begins: attackers return and start querying databases", "kind": "impact" },
+        { "at": "May to July", "label": "About 9,000 queries across 51 databases (3 + 48); data removed in small pieces", "kind": "impact" },
+        { "at": "29 Jul", "label": "Expired certificate on an inspection device renewed; intrusion spotted, IPs blocked", "kind": "detect" },
+        { "at": "30 Jul", "label": "More suspicious activity; dispute portal taken offline", "kind": "mitigate" },
+        { "at": "31 Jul", "label": "Chief Security Officer informs the CEO", "kind": "mitigate" },
+        { "at": "2 Aug", "label": "FBI notified; outside cybersecurity firm starts a forensic investigation", "kind": "mitigate" },
+        { "at": "7 Sep", "label": "Public announcement: about 143 million U.S. consumers affected", "kind": "resolve" },
+        { "at": "2 Oct", "label": "Investigation ends; count revised to 145.5 million", "kind": "resolve" },
+        { "at": "1 Mar 2018", "label": "About 2.4 million more found via driver's licence data in another table", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "eqf-attack-path",
+      "type": "flow",
+      "title": "How the attackers moved through the network",
+      "alt": "Flow diagram. The attacker exploits the Struts flaw in the dispute portal. The portal queries its three databases. A data store with unencrypted credentials lets the attacker reach 48 other databases. Data leaves through the portal in small encrypted batches past an inspection device whose certificate has expired, back to the attacker.",
+      "caption": "Simplified from GAO's description. Each hop crossed a control that was missing or broken.",
+      "nodes": [
+        { "id": "atk", "label": "Attackers", "kind": "bad", "col": 0, "row": 0 },
+        { "id": "portal", "label": "Dispute portal", "kind": "service", "col": 1, "row": 0, "sub": "unpatched Struts" },
+        { "id": "pdb", "label": "3 portal DBs", "kind": "db", "col": 2, "row": 0 },
+        { "id": "creds", "label": "Credential store", "kind": "bad", "col": 2, "row": 2, "sub": "not encrypted" },
+        { "id": "other", "label": "48 other DBs", "kind": "db", "col": 4, "row": 2, "sub": "not segmented" },
+        { "id": "ids", "label": "Inspector", "kind": "bad", "col": 0, "row": 2, "sub": "cert expired" }
+      ],
+      "edges": [
+        { "from": "atk", "to": "portal", "label": "exploit Struts" },
+        { "from": "portal", "to": "pdb", "label": "queries" },
+        { "from": "pdb", "to": "creds", "label": "finds logins" },
+        { "from": "creds", "to": "other", "label": "reused logins" },
+        { "from": "portal", "to": "ids", "label": "small batches", "style": "async" },
+        { "from": "ids", "to": "atk", "label": "not inspected", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The portal ran a Struts version with a publicly known flaw that allowed running commands. Unidentified individuals had confirmed this in March; in a separate incident starting 13 May, attackers broke in." },
+        { "edges": [1], "text": "Using existing encrypted channels, they sent queries and commands from the portal to its three databases, blending in with normal traffic." },
+        { "edges": [2, 3], "text": "They found a data store holding usernames and passwords without encryption, and used them to reach 48 unrelated databases that were not isolated from the portal." },
+        { "edges": [4, 5], "text": "About 9,000 queries later, data left in small pieces over ordinary encrypted web traffic. The device meant to inspect it had an expired certificate, so no alarm fired for 76 days." }
+      ]
+    },
+    {
+      "id": "eqf-patch",
+      "type": "sequence",
+      "title": "The patch notice that never arrived",
+      "alt": "Sequence diagram. US-CERT publishes a Struts alert. Equifax circulates it to administrators using an out-of-date list, so the portal's owners never receive it. Two days after the alert, unidentified individuals scan the portal and confirm they can run commands. A week after the alert, Equifax scans the portal but does not detect the vulnerability. On 13 May attackers return and the breach begins.",
+      "caption": "Two independent safety nets (the notice list and the scan) both failed without anyone knowing.",
+      "actors": [
+        { "id": "cert", "label": "US-CERT" },
+        { "id": "sec", "label": "Equifax security" },
+        { "id": "own", "label": "Portal owners" },
+        { "id": "portal", "label": "Dispute portal" },
+        { "id": "atk", "label": "Attackers" }
+      ],
+      "messages": [
+        { "from": "cert", "to": "sec", "label": "Struts flaw alert", "note": "Public notice of a flaw allowing command execution in Apache Struts." },
+        { "from": "sec", "to": "own", "label": "Notice to admins", "style": "fail", "note": "The distribution list was out of date, so the people responsible for patching the portal did not get it." },
+        { "from": "atk", "to": "portal", "label": "Scan and test exploit", "note": "10 March, two days after the notice. Unidentified individuals confirm they can run commands but take no data." },
+        { "from": "sec", "to": "portal", "label": "Vulnerability scan", "note": "About a week after the notice." },
+        { "from": "portal", "to": "sec", "label": "Flaw not detected", "style": "fail", "note": "The scan did not find the vulnerable version, so nobody knew the portal was exposed." },
+        { "from": "atk", "to": "portal", "label": "Return and break in", "note": "13 May 2017. A separate intrusion begins and runs for 76 days." }
+      ]
+    },
+    {
+      "id": "eqf-segmentation",
+      "type": "compare",
+      "title": "Flat network versus segmented, rate-limited access",
+      "alt": "Comparison. Before: the portal can reach its own databases, a credential store with plain-text passwords and many unrelated databases, with no query limits. After: the portal can reach only its own database through a query limit, credentials live in a secrets manager, and other databases sit behind a blocked boundary.",
+      "caption": "Equifax reported adding server-to-server traffic restrictions and tighter access controls. The right-hand side is a general pattern, not Equifax's actual design.",
+      "before": {
+        "label": "Flat: one foothold reaches all",
+        "nodes": [
+          { "id": "p", "label": "Portal", "kind": "service", "col": 0, "row": 0 },
+          { "id": "d", "label": "Portal DBs", "kind": "db", "col": 1, "row": 0, "sub": "no query limit" },
+          { "id": "c", "label": "Plain creds", "kind": "bad", "col": 1, "row": 1 },
+          { "id": "o", "label": "48 other DBs", "kind": "bad", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "p", "to": "d" },
+          { "from": "p", "to": "c" },
+          { "from": "c", "to": "o", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Segmented and watched",
+        "nodes": [
+          { "id": "p", "label": "Portal", "kind": "service", "col": 0, "row": 0 },
+          { "id": "r", "label": "Query limit", "kind": "good", "col": 1, "row": 0, "sub": "alert on spikes" },
+          { "id": "d", "label": "Portal DB", "kind": "db", "col": 2, "row": 0 },
+          { "id": "v", "label": "Secrets vault", "kind": "good", "col": 0, "row": 1 },
+          { "id": "o", "label": "Other DBs", "kind": "db", "col": 2, "row": 1, "sub": "separate zone" }
+        ],
+        "edges": [
+          { "from": "p", "to": "r" },
+          { "from": "r", "to": "d" },
+          { "from": "p", "to": "v", "label": "short-lived" }
+        ]
+      }
+    },
+    {
+      "id": "eqf-counts",
+      "type": "bars",
+      "title": "How the count of U.S. victims grew",
+      "alt": "Bar chart in millions of people: about 143 announced on 7 September 2017; about 2.5 added after a query was found to have returned data; 145.5 in the revised total on 2 October 2017; and about 2.4 more identified on 1 March 2018 from driver's licence data.",
+      "caption": "GAO's figures. The 2.4 million may overlap with the 145.5 million; Equifax did not yet know how much.",
+      "unit": "million people",
+      "bars": [
+        { "label": "Sep 2017 announcement", "value": 143 },
+        { "label": "Missed query", "value": 2.5 },
+        { "label": "Oct 2017 total", "value": 145.5, "highlight": true },
+        { "label": "Found Mar 2018", "value": 2.4 }
+      ]
+    }
+  ],
+  "interview": [
+    "When asked about securing a public-facing service, start with the boring basics that failed here: patch pipeline, asset inventory, segmentation and encrypted secrets.",
+    "Describe patching as a closed loop: an inventory knows every service's dependencies, a feed of advisories is matched against it automatically, an owner gets a ticket, and a scan verifies the fix.",
+    "Treat detection as defence in depth: if one sensor dies (an expired certificate), others such as database query baselines, egress volume and endpoint agents should still catch the attack.",
+    "In a design, call out blast radius: \"If this web tier is compromised, what can it reach?\" Then narrow it with network policy and least-privilege database accounts.",
+    "Mention monitoring the monitors: alert on certificate expiry, on a sensor reporting no events and on configuration drift."
+  ],
+  "quiz": [
+    {
+      "question": "Why did the people responsible for the portal not patch the Struts flaw in March?",
+      "choices": ["They judged it low risk", "The notice went out on an out-of-date recipient list and never reached them", "No patch existed yet", "The portal was due to be retired"],
+      "answer": 1,
+      "explain": "GAO says the US-CERT notice was circulated using an outdated list of administrators. A follow-up scan also missed the vulnerable portal."
+    },
+    {
+      "question": "What stopped Equifax from spotting the data leaving its network for 76 days?",
+      "choices": ["Logs were deleted by the attackers", "An expired certificate meant a device let encrypted traffic through uninspected", "The firewall was switched off for maintenance"],
+      "answer": 1,
+      "explain": "The inspection device needed a valid certificate to decrypt traffic. It had expired about 10 months before the breach, and the intrusion was seen soon after it was renewed."
+    },
+    {
+      "question": "How did the attackers get from the portal's 3 databases to 48 others?",
+      "choices": ["By exploiting a second Struts server", "Through unencrypted stored credentials and a lack of network segmentation", "By phishing a database administrator"],
+      "answer": 1,
+      "explain": "They found usernames and passwords stored without encryption, and the databases were not isolated from the portal, so the credentials let them spread."
+    },
+    {
+      "question": "Which simple control might have flagged the attack from database behaviour alone?",
+      "choices": ["A limit on, and alerting for, unusually high query rates", "Longer password rules for consumers", "Moving the portal to a new data centre"],
+      "answer": 0,
+      "explain": "GAO notes there were no limits on how often databases could be queried, so about 9,000 queries ran, far beyond normal needs."
+    },
+    {
+      "question": "Why did the count of affected people change after the first announcement?",
+      "choices": ["The attackers returned in October", "One query was wrongly judged empty, and later a separate table with licence data was found", "A court ordered a recount"],
+      "answer": 1,
+      "explain": "Rechecking showed a query had returned data (about 2.5 million more). In March 2018 about 2.4 million more were found from partial licence data."
+    }
+  ],
+  "practice": {
+    "prompt": "You lead security engineering for a company with about 300 internet-facing services built on many open-source frameworks. A critical remote-code-execution flaw is announced in one of those frameworks. Design the process and controls so you patch every affected service within days, and would notice if an attacker got in anyway.",
+    "answer": "Start with an inventory: every deployed service is built through CI, which records a software bill of materials, so you can query which services ship the vulnerable version and who owns each one. An advisory feed is matched against that inventory automatically, opening tickets with a deadline set by severity and exposure, and escalating if missed; email lists are not the source of truth. After patching, a scanner that reads what is actually running confirms the fix, and the build blocks the old version from coming back. While patching, apply temporary mitigations such as WAF rules or disabling the vulnerable feature. For detection, assume one sensor will fail: monitor certificate expiry and silence on inspection devices, baseline database query rates per service account and alert on spikes, watch egress volume, and run endpoint agents. Limit blast radius with network segmentation, per-service least-privilege database accounts, and secrets in a vault rather than in tables or config. Keep tamper-resistant central logs so an investigation can reconstruct what happened.",
+    "rubric": [
+      "An automated, owner-linked inventory (SBOM or equivalent) rather than email lists",
+      "Fix verification by scanning what is really deployed, and blocking regressions",
+      "Interim mitigations while patching",
+      "Layered detection, including monitoring the monitors (certificate expiry, silent sensors)",
+      "Segmentation, least privilege and encrypted or vaulted credentials to cap blast radius",
+      "Retained, intact logs for investigation"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability"],
+    "cases": ["payments"],
+    "guides": ["owasp-top-10", "secrets-and-supply-chain", "observability", "injection-and-xss"]
+  },
+  "sources": [
+    {
+      "title": "Data Protection: Actions Taken by Equifax and Federal Agencies in Response to the 2017 Breach (GAO-18-559)",
+      "publisher": "U.S. Government Accountability Office",
+      "url": "https://www.gao.gov/products/gao-18-559",
+      "date": "2018-08-30"
+    }
+  ]
+}
