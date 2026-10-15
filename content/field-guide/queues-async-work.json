@@ -1,0 +1,296 @@
+{
+  "id": "queues-async-work",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "se",
+  "title": "Queues and async work: at-least-once, done safely",
+  "summary": "Move slow or bursty work off the request path, assume every message can arrive twice, make consumers idempotent, park poison messages in a DLQ, and publish events with an outbox.",
+  "minutes": 15,
+  "principle": "Use a queue when the caller does not need the result right now, or when producers and consumers run at different speeds. Treat delivery as at-least-once: every consumer must be idempotent, every message must be acknowledged only after its work is durable, and every failure path must end somewhere visible (a retry or a dead-letter queue), never in silence.",
+  "why": "A queue decouples time and capacity. A checkout can return in 100 ms while emails, invoices and analytics happen later. A traffic spike becomes a growing backlog instead of timeouts. A consumer outage pauses work instead of losing it.\n\nThe price is a new failure model. Brokers redeliver a message if the consumer does not acknowledge it in time, so a consumer that did the work and then crashed before acking will see the message again. That is **at-least-once delivery**, and it is the normal guarantee. \"Exactly-once\" in practice means at-least-once delivery plus idempotent processing (deduplicate by message id, or make the write naturally idempotent).\n\nTwo more traps appear at scale. **Ordering**: with many parallel consumers, events for the same order can be processed out of sequence unless you partition by a key so one consumer owns that key. **Dual writes**: a service that commits to its database and then publishes an event can crash in between, leaving the two out of sync. The **outbox pattern** writes the event into the same database transaction and lets a relay publish it afterwards.",
+  "diagrams": [
+    {
+      "id": "q-outbox-flow",
+      "type": "flow",
+      "title": "The outbox pattern, end to end",
+      "alt": "Flow diagram. The order service writes the order row and an outbox row in one database transaction. A relay worker polls unsent outbox rows, publishes them to the broker and marks them sent. The broker delivers to a consumer, which records processed message ids in its own table to skip duplicates.",
+      "caption": "One local transaction replaces a dual write. The relay may publish twice after a crash, which is why the consumer deduplicates.",
+      "nodes": [
+        { "id": "svc", "label": "Order service", "kind": "service", "col": 0, "row": 0 },
+        { "id": "db", "label": "Orders DB", "kind": "db", "col": 2, "row": 0, "sub": "orders + outbox" },
+        { "id": "relay", "label": "Outbox relay", "kind": "worker", "col": 2, "row": 2 },
+        { "id": "broker", "label": "Broker", "kind": "queue", "col": 4, "row": 2, "sub": "order-events" },
+        { "id": "consumer", "label": "Email worker", "kind": "worker", "col": 4, "row": 4 },
+        { "id": "seen", "label": "Processed ids", "kind": "db", "col": 2, "row": 4, "sub": "unique msg id" }
+      ],
+      "edges": [
+        { "from": "svc", "to": "db", "label": "1 txn: row + event" },
+        { "from": "relay", "to": "db", "label": "poll / mark sent" },
+        { "from": "relay", "to": "broker", "label": "publish" },
+        { "from": "broker", "to": "consumer", "label": "deliver", "style": "async" },
+        { "from": "consumer", "to": "seen", "label": "dedupe, then act" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The service inserts the order and an outbox row describing the OrderPlaced event in the same transaction. Either both commit or neither does." },
+        { "edges": [1], "text": "A relay reads unsent outbox rows in order (or tails the database change log) and later marks them sent." },
+        { "edges": [2], "text": "It publishes each event. If it crashes after publishing but before marking the row, it publishes again on restart: the outbox gives at-least-once, not exactly-once." },
+        { "edges": [3], "text": "The broker delivers to consumers. Redelivery can also happen here if an ack is lost or late." },
+        { "edges": [4], "text": "The consumer inserts the message id into a processed table with a unique constraint, in the same transaction as its own effect. A duplicate fails the insert and is skipped." }
+      ]
+    },
+    {
+      "id": "q-visibility-seq",
+      "type": "sequence",
+      "title": "Visibility timeout, redelivery and the dead-letter queue",
+      "alt": "Sequence diagram. A producer sends a message. Worker A receives it, which hides it for the visibility timeout, then crashes. After the timeout the message becomes visible and worker B receives it, processes it and deletes it. A second, malformed message fails on every attempt and is moved to the dead-letter queue after the maximum receive count.",
+      "caption": "A message is only gone when a consumer acks (deletes) it. Anything else, a crash, a timeout or an error, means another attempt or the DLQ.",
+      "actors": [
+        { "id": "prod", "label": "Producer" },
+        { "id": "queue", "label": "Queue" },
+        { "id": "wa", "label": "Worker A" },
+        { "id": "wb", "label": "Worker B" },
+        { "id": "dlq", "label": "DLQ" }
+      ],
+      "messages": [
+        { "from": "prod", "to": "queue", "label": "send m1" },
+        { "from": "queue", "to": "wa", "label": "receive m1 (hidden 30s)", "note": "Receiving does not remove the message; it hides it for the visibility timeout." },
+        { "from": "wa", "to": "queue", "label": "crash, no ack", "style": "fail", "note": "Worker A may or may not have finished the side effect. The queue cannot know." },
+        { "from": "queue", "to": "wb", "label": "m1 visible again", "note": "After the timeout another worker gets it. This is the at-least-once redelivery." },
+        { "from": "wb", "to": "queue", "label": "delete m1 (ack)", "style": "reply", "note": "Ack only after the work is durable. Worker B's idempotency check makes a repeat harmless." },
+        { "from": "prod", "to": "queue", "label": "send m2 (malformed)" },
+        { "from": "queue", "to": "wb", "label": "receive m2 (attempts 1-5)" },
+        { "from": "wb", "to": "queue", "label": "error every time", "style": "fail" },
+        { "from": "queue", "to": "dlq", "label": "move m2 after max receives", "note": "A poison message stops blocking and burning workers. An alert on DLQ depth makes it visible." }
+      ]
+    },
+    {
+      "id": "q-message-states",
+      "type": "flow",
+      "title": "The life of a message",
+      "alt": "State machine for a queued message. A queued message becomes in flight when received. It becomes done when acknowledged. If processing fails or the visibility timeout passes, it waits a backoff delay and returns to queued. After the maximum attempts it moves to the dead-letter queue, from which an operator can redrive it once the bug is fixed.",
+      "caption": "Every state has an exit. A message that is neither acked nor dead-lettered is a message that will loop forever.",
+      "nodes": [
+        { "id": "queued", "label": "Queued", "kind": "state", "col": 0, "row": 0 },
+        { "id": "flight", "label": "In flight", "kind": "state", "col": 2, "row": 0, "sub": "hidden" },
+        { "id": "done", "label": "Acked", "kind": "good", "col": 4, "row": 0, "sub": "deleted" },
+        { "id": "wait", "label": "Retry delay", "kind": "state", "col": 1, "row": 2, "sub": "backoff" },
+        { "id": "dlq", "label": "Dead-lettered", "kind": "bad", "col": 3, "row": 2, "sub": "max attempts" }
+      ],
+      "edges": [
+        { "from": "queued", "to": "flight", "label": "receive" },
+        { "from": "flight", "to": "done", "label": "ack" },
+        { "from": "flight", "to": "wait", "label": "nack / timeout", "style": "fail" },
+        { "from": "wait", "to": "queued", "label": "delay passes" },
+        { "from": "flight", "to": "dlq", "label": "too many tries", "style": "fail" },
+        { "from": "dlq", "to": "queued", "label": "redrive", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "The happy path: receive, do the work, ack. The ack is what deletes the message." },
+        { "edges": [2, 3], "text": "A transient failure (or a crash that lets the visibility timeout lapse) puts the message back after a delay. Growing delays stop a failing dependency from being hammered." },
+        { "edges": [4], "text": "After N attempts the message is moved to a dead-letter queue. Alert on DLQ depth; it is the queue's error log." },
+        { "edges": [5], "text": "Once the bug is fixed, redrive the DLQ back into the main queue. Idempotent consumers make this safe even if some had partly succeeded." }
+      ]
+    },
+    {
+      "id": "q-ordering",
+      "type": "compare",
+      "title": "Shared queue vs partitioning by key",
+      "alt": "Side-by-side comparison. On the left, events for order 42 go into one shared queue and two workers take them in parallel, so 'shipped' can be processed before 'paid'. On the right, events are hashed by order id into partitions, each owned by one consumer, so all events for order 42 are processed in order.",
+      "caption": "Order is only guaranteed within a partition. Partition by the entity whose events must stay in sequence.",
+      "before": {
+        "label": "Shared queue, parallel workers",
+        "nodes": [
+          { "id": "p", "label": "Producer", "kind": "service", "col": 0, "row": 1, "sub": "order 42 events" },
+          { "id": "q", "label": "Queue", "kind": "queue", "col": 1, "row": 1 },
+          { "id": "w1", "label": "Worker 1", "kind": "worker", "col": 2, "row": 0, "sub": "gets 'paid'" },
+          { "id": "w2", "label": "Worker 2", "kind": "bad", "col": 2, "row": 2, "sub": "'shipped' first" }
+        ],
+        "edges": [
+          { "from": "p", "to": "q" },
+          { "from": "q", "to": "w1", "label": "slow" },
+          { "from": "q", "to": "w2", "label": "fast", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Partition by order id",
+        "nodes": [
+          { "id": "p", "label": "Producer", "kind": "service", "col": 0, "row": 1, "sub": "key = order id" },
+          { "id": "pa", "label": "Partition 0", "kind": "queue", "col": 1, "row": 0, "sub": "order 42" },
+          { "id": "pb", "label": "Partition 1", "kind": "queue", "col": 1, "row": 2, "sub": "order 7" },
+          { "id": "c1", "label": "Consumer A", "kind": "good", "col": 2, "row": 0, "sub": "in order" },
+          { "id": "c2", "label": "Consumer B", "kind": "good", "col": 2, "row": 2 }
+        ],
+        "edges": [
+          { "from": "p", "to": "pa", "label": "hash(42)" },
+          { "from": "p", "to": "pb", "label": "hash(7)" },
+          { "from": "pa", "to": "c1" },
+          { "from": "pb", "to": "c2" }
+        ]
+      }
+    },
+    {
+      "id": "q-backlog",
+      "type": "bars",
+      "title": "Backlog when arrivals outrun consumers",
+      "alt": "Bar chart of queue backlog when messages arrive at 1,200 per second and consumers process 1,000 per second. The backlog is 12,000 messages after one minute, 120,000 after ten minutes and 720,000 after one hour.",
+      "caption": "Computed from a 200 msg/s shortfall. A queue absorbs bursts, not a sustained deficit: alert on consumer lag and either scale consumers or push back on producers.",
+      "unit": "messages waiting",
+      "bars": [
+        { "label": "After 1 min", "value": 12000 },
+        { "label": "After 10 min", "value": 120000 },
+        { "label": "After 1 hour", "value": 720000, "highlight": true }
+      ]
+    },
+    {
+      "id": "q-choice",
+      "type": "chart",
+      "title": "Choosing an async mechanism",
+      "alt": "Trade-off chart with operational effort on the horizontal axis and replay and ordering ability on the vertical axis. A database table polled by workers is low effort with limited replay. A managed task queue is low effort with little ordering. A pub/sub topic adds fan-out. A log-based stream such as Kafka costs the most to run but supports per-partition ordering and replay.",
+      "caption": "Rough positions. Use a task queue for jobs, a log stream when many consumers need ordered, replayable events.",
+      "x": { "label": "Operational effort", "low": "low", "high": "high" },
+      "y": { "label": "Ordering and replay", "low": "little", "high": "strong" },
+      "points": [
+        { "label": "DB table + poller", "x": 2, "y": 4 },
+        { "label": "Managed task queue", "x": 3, "y": 2, "highlight": true },
+        { "label": "Pub/sub topic", "x": 5, "y": 5 },
+        { "label": "Log stream", "x": 8, "y": 9 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "An idempotent consumer that acks after the work",
+      "bad": {
+        "label": "Ack first, and no duplicate check",
+        "lang": "ts",
+        "code": "queue.on('message', async msg => {\n  await msg.ack()                          // lost if we crash below\n  await sendReceiptEmail(msg.body.orderId) // runs again on redelivery\n})"
+      },
+      "good": {
+        "label": "Dedupe on message id, then ack",
+        "lang": "ts",
+        "code": "queue.on('message', async msg => {\n  const fresh = await db.tx(async tx => {\n    const inserted = await tx.query(\n      'INSERT INTO processed (msg_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING 1',\n      [msg.id])\n    if (!inserted.rowCount) return false\n    await tx.query('INSERT INTO receipts (order_id) VALUES ($1)', [msg.body.orderId])\n    return true\n  })\n  if (fresh) await emailOutbox.enqueue(msg.body.orderId) // email sent by its own idempotent job\n  await msg.ack()\n})"
+      },
+      "why": "Acking before the work loses messages on a crash. Acking after the work without a dedupe check repeats side effects on redelivery. Recording the message id in the same transaction as the effect makes the repeat a no-op, then acking is safe."
+    },
+    {
+      "title": "Publish events with an outbox, not a dual write",
+      "bad": {
+        "label": "Commit, then publish",
+        "lang": "ts",
+        "code": "await db.orders.insert(order)\nawait broker.publish('order-placed', order) // crash here: order exists, event never sent"
+      },
+      "good": {
+        "label": "Event row in the same transaction",
+        "lang": "ts",
+        "code": "await db.tx(async tx => {\n  await tx.orders.insert(order)\n  await tx.outbox.insert({ id: uuid(), topic: 'order-placed', payload: order })\n})\n// relay: SELECT unsent rows in order -> publish -> mark sent"
+      },
+      "why": "Two systems cannot be committed atomically without a distributed transaction. The outbox turns it into one local transaction plus a retryable publish. Publishing first is no better: the event can go out for an order that then fails to commit."
+    }
+  ],
+  "checklist": [
+    "The queue exists for a reason: the caller does not need the result now, or load is bursty.",
+    "Consumers are idempotent (dedupe by message id or naturally idempotent writes) because delivery is at-least-once.",
+    "Messages are acked only after the work is durable.",
+    "Visibility timeout (or ack deadline) is longer than normal processing time, and long jobs extend it.",
+    "Retries use growing delays and a maximum attempt count; failures beyond it go to a dead-letter queue with an alert.",
+    "Events that must stay in order share a partition key; the design does not assume global order.",
+    "Database changes and their events are published via an outbox or change data capture, never a dual write.",
+    "Consumer lag (age of the oldest message) is monitored, with a plan for scaling consumers or throttling producers."
+  ],
+  "antipatterns": [
+    {
+      "title": "Assuming global order from a parallel queue",
+      "bad": { "label": "Shared queue, many workers", "diagram": "q-ordering" },
+      "better": {
+        "label": "Partition key per entity",
+        "lang": "ts",
+        "code": "await producer.send({\n  topic: 'order-events',\n  key: order.id,            // same key -> same partition -> same consumer\n  value: { type: 'paid', version: order.version }\n})\n// consumer also ignores events with version <= stored version"
+      },
+      "why": "Parallel consumers finish in any order. Keying by entity id keeps one entity's events in sequence while different entities still run in parallel. A version number on each event guards against reordering that still slips through, such as a redelivery after a rebalance."
+    },
+    {
+      "title": "Retrying a poison message forever",
+      "bad": {
+        "label": "No attempt limit, no DLQ",
+        "lang": "yaml",
+        "code": "queue: invoices\nmaxReceiveCount: unlimited\n# one bad payload is retried thousands of times,\n# blocks its partition and hides real errors"
+      },
+      "better": {
+        "label": "Bounded attempts, DLQ and an alert",
+        "lang": "yaml",
+        "code": "queue: invoices\nmaxReceiveCount: 5\ndeadLetterQueue: invoices-dlq\nalerts:\n  - invoices-dlq.depth > 0 for 5m\n  - invoices.oldestMessageAge > 10m"
+      },
+      "why": "Some failures are permanent: a schema bug, a deleted customer. Retrying them wastes capacity and, in ordered partitions, blocks every message behind them. A DLQ isolates the message so the rest flow, and the alert gets a human to fix and redrive it."
+    },
+    {
+      "title": "Using a queue to hide a capacity problem",
+      "bad": {
+        "label": "Producers always faster than consumers",
+        "lang": "text",
+        "code": "arrivals: 1,200 msg/s, consumers: 1,000 msg/s\nbacklog grows forever; work completes hours late\nno alert until the queue hits its retention limit"
+      },
+      "better": {
+        "label": "Backpressure and lag-driven scaling",
+        "lang": "text",
+        "code": "autoscale consumers on oldest-message age\nproducers get 429 / slow down when depth > limit\nnon-critical messages carry a TTL and are dropped"
+      },
+      "why": "A queue smooths bursts but cannot fix a sustained deficit. Backpressure pushes the problem to where it can be handled (caller retries later) instead of letting latency grow without bound."
+    }
+  ],
+  "interview": [
+    "When you add a queue, say why in one line: \"Sending email is slow and can lag, so checkout publishes an event and returns.\"",
+    "Say \"at-least-once\" out loud and follow with how consumers are idempotent: a processed-ids table or naturally idempotent writes keyed by the event id.",
+    "Mention the dual-write problem whenever a service writes to its database and publishes an event; answer it with an outbox or CDC.",
+    "Cover the failure path: visibility timeout, bounded retries with backoff, DLQ, and an alert on DLQ depth and consumer lag.",
+    "At SSE level, discuss ordering (partition by key, versions on events), backpressure, and how rebalancing a consumer group causes redelivery."
+  ],
+  "quiz": [
+    {
+      "question": "A worker finishes sending an email, then crashes before acking. What happens with a typical at-least-once queue?",
+      "choices": ["The message is lost", "The message is redelivered after the visibility timeout, so the email may be sent twice", "The broker detects the email was sent and drops the message", "The message goes straight to the DLQ"],
+      "answer": 1,
+      "explain": "The broker only knows the message was not acked. It makes it visible again and another worker processes it. That is why consumers must be idempotent, for example by recording the message id with the side effect."
+    },
+    {
+      "question": "Why is \"insert the order, then publish the event\" unsafe?",
+      "choices": ["Brokers reject events from databases", "A crash between the two leaves an order with no event (or the reverse if you publish first)", "It is slower than an outbox", "Events must be published before writes"],
+      "answer": 1,
+      "explain": "Two separate systems cannot commit atomically. The outbox puts the event in the same database transaction as the order, and a relay publishes it afterwards, retrying until it succeeds."
+    },
+    {
+      "question": "Events for the same order must be handled in sequence, but you need many consumers. What do you do?",
+      "choices": ["Use one consumer for everything", "Partition by order id so each order's events go to one consumer", "Sort messages by timestamp in each worker", "Increase the visibility timeout"],
+      "answer": 1,
+      "explain": "Brokers order messages within a partition. Keying by order id keeps each order in sequence while different orders are processed in parallel."
+    },
+    {
+      "question": "What is a dead-letter queue for?",
+      "choices": ["Storing messages that were processed successfully", "Holding messages that failed too many times, so they stop blocking others and can be inspected and redriven", "Delaying messages for scheduled delivery", "Backing up the main queue"],
+      "answer": 1,
+      "explain": "Poison messages fail every attempt. Moving them aside after N tries keeps workers productive and gives operators a place to debug, fix and replay them."
+    },
+    {
+      "question": "Arrivals are 1,200 msg/s and consumers handle 1,000 msg/s. What is the backlog after 10 minutes?",
+      "choices": ["2,000", "12,000", "120,000", "720,000"],
+      "answer": 2,
+      "explain": "The shortfall is 200 per second; 200 × 600 seconds = 120,000. A sustained deficit grows without limit, so alert on lag and scale consumers or apply backpressure."
+    }
+  ],
+  "practice": {
+    "prompt": "After an order is placed, the system must send a confirmation email, reserve stock in the warehouse system and update analytics. Today all three happen inside the checkout request, which times out under load. Redesign it.",
+    "answer": "Checkout commits the order and an OrderPlaced row in an outbox table in one transaction, then returns. A relay publishes outbox rows to a topic keyed by order id. Three independent consumer groups subscribe: email, warehouse and analytics, so a slow analytics pipeline cannot delay stock reservation. Delivery is at-least-once, so each consumer records the event id in a processed table in the same transaction as its effect; the warehouse call also passes the order id as an idempotency key. Ack after the work commits. Retries use exponential backoff with a cap of about 5 attempts, then a DLQ per consumer with an alert. Stock reservation failures publish a compensating event (cancel order, refund) rather than blocking checkout. Monitor oldest-message age per consumer group and autoscale on it; if the warehouse is down, its partition backlog grows and drains when it recovers.",
+    "rubric": [
+      "Moves the work off the request path with a clear reason",
+      "Uses an outbox (or CDC) instead of a dual write",
+      "Idempotent consumers with ack-after-commit",
+      "Bounded retries with backoff and a DLQ with alerting",
+      "Separate consumer groups or partitioning by order id for isolation and order",
+      "Monitors consumer lag and handles failure with compensation"
+    ]
+  },
+  "links": {
+    "lessons": ["design-queues-events", "design-reliability-observability"],
+    "cases": ["notification-service", "job-scheduler", "ad-click-aggregation"],
+    "guides": ["idempotency-keys", "retries-backoff", "webhooks", "consistency-choices"]
+  }
+}

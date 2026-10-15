@@ -2,6 +2,7 @@ import type { Track } from './curriculum-types'
 import { PROBLEM_PATTERNS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
+import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
 export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral']
 
@@ -235,6 +236,296 @@ export function validateCase(value: unknown, where = 'case', lessonIds?: Set<str
       if ('sse' in item && item.sse !== true) check.fail(`${path}.sse`, 'expected true when present')
     })
     if (!value.rubric.some(item => isRec(item) && item.sse)) check.fail('rubric', 'expected at least one SSE item')
+  }
+  return check.errors
+}
+
+// ---- Field Guide ------------------------------------------------------------------------------
+// Limits keep every diagram legible at 360px: short labels, small grids, few actors.
+export const FLOW_COLS = 5
+export const FLOW_ROWS = 6
+export const FLOW_LABEL_MAX = 18
+export const FLOW_SUB_MAX = 22
+export const EDGE_LABEL_MAX = 22
+export const ACTOR_LABEL_MAX = 16
+export const MESSAGE_LABEL_MAX = 34
+export const CHART_LABEL_MAX = 22
+export const TIMELINE_LABEL_MAX = 90
+export const MIN_DIAGRAMS = 3
+const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+function maxLength(check: Checker, value: unknown, path: string, max: number) {
+  check.text(value, path)
+  if (typeof value === 'string' && value.length > max) check.fail(path, `expected at most ${max} characters`)
+}
+
+function flowBody(check: Checker, value: Rec, path: string, maxCols = FLOW_COLS, minNodes = 2) {
+  const ids = new Set<string>()
+  const cells = new Set<string>()
+  if (!Array.isArray(value.nodes) || value.nodes.length < minNodes || value.nodes.length > 14) check.fail(`${path}.nodes`, `expected ${minNodes}–14 nodes`)
+  else value.nodes.forEach((node, index) => {
+    const at = `${path}.nodes[${index}]`
+    if (!isRec(node)) return check.fail(at, 'expected object')
+    check.keys(node, at, ['id', 'label', 'kind', 'col', 'row'], ['sub'])
+    if (typeof node.id !== 'string' || !node.id || ids.has(node.id)) check.fail(`${at}.id`, 'expected unique id')
+    else ids.add(node.id)
+    maxLength(check, node.label, `${at}.label`, FLOW_LABEL_MAX)
+    if ('sub' in node) maxLength(check, node.sub, `${at}.sub`, FLOW_SUB_MAX)
+    if (!(FLOW_NODE_KINDS as readonly string[]).includes(node.kind as string)) check.fail(`${at}.kind`, 'unknown node kind')
+    const col = node.col as number, row = node.row as number
+    if (!Number.isInteger(col) || col < 0 || col >= maxCols || !Number.isInteger(row) || row < 0 || row >= FLOW_ROWS) check.fail(at, `position outside the ${maxCols}x${FLOW_ROWS} grid`)
+    else if (cells.has(`${col},${row}`)) check.fail(at, 'two nodes share a grid cell')
+    else cells.add(`${col},${row}`)
+  })
+  if (!Array.isArray(value.edges)) check.fail(`${path}.edges`, 'expected array')
+  else value.edges.forEach((edge, index) => {
+    const at = `${path}.edges[${index}]`
+    if (!isRec(edge)) return check.fail(at, 'expected object')
+    check.keys(edge, at, ['from', 'to'], ['label', 'style'])
+    if (!ids.has(edge.from as string) || !ids.has(edge.to as string) || edge.from === edge.to) check.fail(at, 'edge must join two different nodes')
+    if ('label' in edge) maxLength(check, edge.label, `${at}.label`, EDGE_LABEL_MAX)
+    if ('style' in edge && !(EDGE_STYLES as readonly string[]).includes(edge.style as string)) check.fail(`${at}.style`, 'unknown edge style')
+  })
+}
+
+function diagram(check: Checker, value: unknown, path: string) {
+  if (!isRec(value)) return check.fail(path, 'expected object')
+  const base = ['type', 'id', 'title', 'alt', 'caption']
+  if (typeof value.id !== 'string' || !KEBAB.test(value.id)) check.fail(`${path}.id`, 'expected kebab-case id')
+  maxLength(check, value.title, `${path}.title`, 80)
+  check.text(value.alt, `${path}.alt`)
+  check.text(value.caption, `${path}.caption`)
+  if (typeof value.alt === 'string' && value.alt.length < 40) check.fail(`${path}.alt`, 'alt text should describe the picture (40+ characters)')
+  switch (value.type) {
+    case 'flow': {
+      check.keys(value, path, [...base, 'nodes', 'edges'], ['steps'])
+      flowBody(check, value, path, FLOW_COLS, 2)
+      if (Array.isArray(value.edges) && value.edges.length < 1) check.fail(`${path}.edges`, 'expected at least 1 edge')
+      if ('steps' in value) {
+        const edgeCount = Array.isArray(value.edges) ? value.edges.length : 0
+        if (!Array.isArray(value.steps) || value.steps.length < 2) check.fail(`${path}.steps`, 'expected at least 2 steps')
+        else value.steps.forEach((step, index) => {
+          const at = `${path}.steps[${index}]`
+          if (!isRec(step)) return check.fail(at, 'expected object')
+          check.keys(step, at, ['edges', 'text'])
+          check.text(step.text, `${at}.text`)
+          if (!Array.isArray(step.edges) || !step.edges.length || step.edges.some(item => !Number.isInteger(item) || item < 0 || item >= edgeCount)) check.fail(`${at}.edges`, 'expected edge indexes')
+        })
+      }
+      break
+    }
+    case 'sequence': {
+      check.keys(value, path, [...base, 'actors', 'messages'])
+      const ids = new Set<string>()
+      if (!Array.isArray(value.actors) || value.actors.length < 2 || value.actors.length > 5) check.fail(`${path}.actors`, 'expected 2–5 actors')
+      else value.actors.forEach((actor, index) => {
+        const at = `${path}.actors[${index}]`
+        if (!isRec(actor)) return check.fail(at, 'expected object')
+        check.keys(actor, at, ['id', 'label'])
+        if (typeof actor.id !== 'string' || !actor.id || ids.has(actor.id)) check.fail(`${at}.id`, 'expected unique id')
+        else ids.add(actor.id)
+        maxLength(check, actor.label, `${at}.label`, ACTOR_LABEL_MAX)
+      })
+      if (!Array.isArray(value.messages) || value.messages.length < 2 || value.messages.length > 14) check.fail(`${path}.messages`, 'expected 2–14 messages')
+      else value.messages.forEach((message, index) => {
+        const at = `${path}.messages[${index}]`
+        if (!isRec(message)) return check.fail(at, 'expected object')
+        check.keys(message, at, ['from', 'to', 'label'], ['style', 'note'])
+        if (!ids.has(message.from as string) || !ids.has(message.to as string) || message.from === message.to) check.fail(at, 'message must join two different actors')
+        maxLength(check, message.label, `${at}.label`, MESSAGE_LABEL_MAX)
+        if ('note' in message) check.text(message.note, `${at}.note`)
+        if ('style' in message && !(EDGE_STYLES as readonly string[]).includes(message.style as string)) check.fail(`${at}.style`, 'unknown style')
+      })
+      break
+    }
+    case 'compare': {
+      check.keys(value, path, [...base, 'before', 'after'])
+      for (const side of ['before', 'after']) {
+        const body = value[side]
+        if (!isRec(body)) { check.fail(`${path}.${side}`, 'expected object'); continue }
+        check.keys(body, `${path}.${side}`, ['label', 'nodes', 'edges'])
+        maxLength(check, body.label, `${path}.${side}.label`, 40)
+        flowBody(check, body, `${path}.${side}`, 3, 2)
+      }
+      break
+    }
+    case 'chart': {
+      check.keys(value, path, [...base, 'x', 'y', 'points'])
+      for (const axis of ['x', 'y']) {
+        const item = value[axis]
+        if (!isRec(item)) { check.fail(`${path}.${axis}`, 'expected object'); continue }
+        check.keys(item, `${path}.${axis}`, ['label', 'low', 'high'])
+        maxLength(check, item.label, `${path}.${axis}.label`, 30)
+        maxLength(check, item.low, `${path}.${axis}.low`, 16)
+        maxLength(check, item.high, `${path}.${axis}.high`, 16)
+      }
+      if (!Array.isArray(value.points) || value.points.length < 2 || value.points.length > 8) check.fail(`${path}.points`, 'expected 2–8 points')
+      else {
+        const spots = new Set<string>()
+        value.points.forEach((point, index) => {
+          const at = `${path}.points[${index}]`
+          if (!isRec(point)) return check.fail(at, 'expected object')
+          check.keys(point, at, ['label', 'x', 'y'], ['highlight'])
+          maxLength(check, point.label, `${at}.label`, CHART_LABEL_MAX)
+          for (const axis of ['x', 'y']) if (typeof point[axis] !== 'number' || (point[axis] as number) < 0 || (point[axis] as number) > 10) check.fail(`${at}.${axis}`, 'expected 0–10')
+          if ('highlight' in point && point.highlight !== true) check.fail(`${at}.highlight`, 'expected true when present')
+          const spot = `${Math.round(Number(point.x))},${Math.round(Number(point.y))}`
+          if (spots.has(spot)) check.fail(at, 'points overlap; move one at least 1 unit')
+          spots.add(spot)
+        })
+      }
+      break
+    }
+    case 'bars': {
+      check.keys(value, path, [...base, 'unit', 'bars'])
+      maxLength(check, value.unit, `${path}.unit`, 24)
+      if (!Array.isArray(value.bars) || value.bars.length < 2 || value.bars.length > 8) check.fail(`${path}.bars`, 'expected 2–8 bars')
+      else value.bars.forEach((bar, index) => {
+        const at = `${path}.bars[${index}]`
+        if (!isRec(bar)) return check.fail(at, 'expected object')
+        check.keys(bar, at, ['label', 'value'], ['highlight'])
+        maxLength(check, bar.label, `${at}.label`, CHART_LABEL_MAX)
+        if (typeof bar.value !== 'number' || !(bar.value > 0)) check.fail(`${at}.value`, 'expected a positive number')
+        if ('highlight' in bar && bar.highlight !== true) check.fail(`${at}.highlight`, 'expected true when present')
+      })
+      break
+    }
+    case 'timeline': {
+      check.keys(value, path, [...base, 'events'])
+      if (!Array.isArray(value.events) || value.events.length < 3 || value.events.length > 14) check.fail(`${path}.events`, 'expected 3–14 events')
+      else value.events.forEach((event, index) => {
+        const at = `${path}.events[${index}]`
+        if (!isRec(event)) return check.fail(at, 'expected object')
+        check.keys(event, at, ['at', 'label', 'kind'])
+        maxLength(check, event.at, `${at}.at`, 24)
+        maxLength(check, event.label, `${at}.label`, TIMELINE_LABEL_MAX)
+        if (!(TIMELINE_KINDS as readonly string[]).includes(event.kind as string)) check.fail(`${at}.kind`, 'unknown event kind')
+      })
+      break
+    }
+    default: check.fail(`${path}.type`, `expected one of ${DIAGRAM_TYPES.join(', ')}`)
+  }
+}
+
+function snippet(check: Checker, value: unknown, path: string, diagramIds: Set<string>) {
+  if (!isRec(value)) return check.fail(path, 'expected object')
+  check.keys(value, path, ['label'], ['lang', 'code', 'diagram'])
+  maxLength(check, value.label, `${path}.label`, 60)
+  if (('code' in value) === ('diagram' in value)) check.fail(path, 'expected exactly one of code or diagram')
+  if ('code' in value) check.text(value.code, `${path}.code`)
+  if ('lang' in value && !(SNIPPET_LANGS as readonly string[]).includes(value.lang as string)) check.fail(`${path}.lang`, 'unknown language')
+  if ('diagram' in value && !diagramIds.has(value.diagram as string)) check.fail(`${path}.diagram`, 'unknown diagram id')
+}
+
+export const QUIZ_QUESTION_MAX = 200
+export const QUIZ_BACK_MAX = 600
+const GUIDE_BASE = ['id', 'kind', 'topic', 'level', 'title', 'summary', 'minutes', 'diagrams', 'interview', 'quiz', 'practice', 'links']
+const GUIDE_ONLY = ['principle', 'why', 'examples', 'checklist', 'antipatterns']
+const CASE_ONLY = ['organisation', 'year', 'problem', 'constraints', 'decisions', 'failures', 'lessons', 'sources']
+
+/** Validates one content/field-guide/<id>.json guide or case study. Cross-links are checked by the tests. */
+export function validateGuide(value: unknown, where = 'guide'): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  const isCase = value.kind === 'case'
+  if (value.kind !== 'guide' && !isCase) check.fail('kind', 'expected guide or case')
+  check.keys(value, '', [...GUIDE_BASE, ...(isCase ? CASE_ONLY : GUIDE_ONLY)], isCase ? ['caveats'] : [])
+  if (typeof value.id !== 'string' || !KEBAB.test(value.id)) check.fail('id', 'expected kebab-case id')
+  if (!(GUIDE_TOPICS as readonly string[]).includes(value.topic as string)) check.fail('topic', 'unknown topic')
+  if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+  maxLength(check, value.title, 'title', 70)
+  maxLength(check, value.summary, 'summary', 220)
+  if (!Number.isInteger(value.minutes) || (value.minutes as number) < 5 || (value.minutes as number) > 45) check.fail('minutes', 'expected integer 5–45')
+  const diagramIds = new Set<string>()
+  if (!Array.isArray(value.diagrams) || value.diagrams.length < MIN_DIAGRAMS) check.fail('diagrams', `expected at least ${MIN_DIAGRAMS} diagrams`)
+  else {
+    value.diagrams.forEach((item, index) => {
+      diagram(check, item, `diagrams[${index}]`)
+      if (isRec(item) && typeof item.id === 'string') {
+        if (diagramIds.has(item.id)) check.fail(`diagrams[${index}].id`, 'duplicate diagram id')
+        diagramIds.add(item.id)
+      }
+    })
+    if (new Set(value.diagrams.map(item => isRec(item) ? item.type : '')).size < 2) check.fail('diagrams', 'expected at least 2 different diagram types')
+  }
+  check.texts(value.interview, 'interview', 2)
+  if (!Array.isArray(value.quiz) || value.quiz.length < 3 || value.quiz.length > 6) check.fail('quiz', 'expected 3–6 questions')
+  else value.quiz.forEach((item, index) => {
+    const at = `quiz[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['question', 'choices', 'answer', 'explain'])
+    maxLength(check, item.question, `${at}.question`, QUIZ_QUESTION_MAX)
+    check.text(item.explain, `${at}.explain`)
+    const choices = item.choices
+    if (!Array.isArray(choices) || choices.length < 3 || choices.length > 4 || choices.some(choice => !isText(choice)) || new Set(choices).size !== choices.length) check.fail(`${at}.choices`, 'expected 3–4 distinct choices')
+    else {
+      if (!Number.isInteger(item.answer) || (item.answer as number) < 0 || (item.answer as number) >= choices.length) check.fail(`${at}.answer`, 'expected a choice index')
+      else if (`${choices[item.answer as number]}. ${String(item.explain)}`.length > QUIZ_BACK_MAX) check.fail(at, `answer plus explanation longer than ${QUIZ_BACK_MAX - 2} characters`)
+    }
+  })
+  if (!isRec(value.practice)) check.fail('practice', 'expected object')
+  else {
+    check.keys(value.practice, 'practice', ['prompt', 'answer', 'rubric'])
+    check.text(value.practice.prompt, 'practice.prompt')
+    check.text(value.practice.answer, 'practice.answer')
+    check.texts(value.practice.rubric, 'practice.rubric', 3)
+  }
+  if (!isRec(value.links)) check.fail('links', 'expected object')
+  else {
+    check.keys(value.links, 'links', [], ['lessons', 'problems', 'cases', 'guides'])
+    for (const [key, list] of Object.entries(value.links)) if (!Array.isArray(list) || list.some(item => typeof item !== 'string')) check.fail(`links.${key}`, 'expected string array')
+    if (!Object.values(value.links).some(list => Array.isArray(list) && list.length)) check.fail('links', 'expected at least one cross-link')
+  }
+  if (isCase) {
+    maxLength(check, value.organisation, 'organisation', 40)
+    if (!Number.isInteger(value.year) || (value.year as number) < 1990 || (value.year as number) > 2100) check.fail('year', 'expected a year')
+    check.text(value.problem, 'problem')
+    check.text(value.failures, 'failures')
+    if ('caveats' in value) check.text(value.caveats, 'caveats')
+    check.texts(value.constraints, 'constraints', 2)
+    check.texts(value.lessons, 'lessons', 3)
+    if (!Array.isArray(value.decisions) || value.decisions.length < 2) check.fail('decisions', 'expected at least 2 decisions')
+    else value.decisions.forEach((item, index) => {
+      const at = `decisions[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['decision', 'tradeoff'])
+      check.text(item.decision, `${at}.decision`)
+      check.text(item.tradeoff, `${at}.tradeoff`)
+    })
+    if (!Array.isArray(value.sources) || value.sources.length < 1) check.fail('sources', 'expected at least 1 source')
+    else value.sources.forEach((item, index) => {
+      const at = `sources[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['title', 'publisher', 'url'], ['date'])
+      check.text(item.title, `${at}.title`)
+      check.text(item.publisher, `${at}.publisher`)
+      if (typeof item.url !== 'string' || !/^https:\/\/[^\s]+$/.test(item.url)) check.fail(`${at}.url`, 'expected an https URL')
+      if ('date' in item && (typeof item.date !== 'string' || !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(item.date))) check.fail(`${at}.date`, 'expected YYYY, YYYY-MM or YYYY-MM-DD')
+    })
+  } else {
+    check.text(value.principle, 'principle')
+    check.text(value.why, 'why')
+    check.texts(value.checklist, 'checklist', 4)
+    if (!Array.isArray(value.examples) || value.examples.length < 1) check.fail('examples', 'expected at least 1 good/bad example')
+    else value.examples.forEach((item, index) => {
+      const at = `examples[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['title', 'bad', 'good', 'why'])
+      check.text(item.title, `${at}.title`)
+      check.text(item.why, `${at}.why`)
+      snippet(check, item.bad, `${at}.bad`, diagramIds)
+      snippet(check, item.good, `${at}.good`, diagramIds)
+    })
+    if (!Array.isArray(value.antipatterns) || value.antipatterns.length < 2) check.fail('antipatterns', 'expected at least 2 anti-patterns')
+    else value.antipatterns.forEach((item, index) => {
+      const at = `antipatterns[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['title', 'bad', 'better', 'why'])
+      maxLength(check, item.title, `${at}.title`, 80)
+      check.text(item.why, `${at}.why`)
+      snippet(check, item.bad, `${at}.bad`, diagramIds)
+      snippet(check, item.better, `${at}.better`, diagramIds)
+    })
   }
   return check.errors
 }

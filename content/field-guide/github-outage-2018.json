@@ -1,0 +1,251 @@
+{
+  "id": "github-outage-2018",
+  "kind": "case",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "GitHub, October 2018: 43 seconds of partition, 24 hours of repair",
+  "summary": "A 43-second network cut let automated MySQL failover promote primaries across the country. Writes landed in both regions, and GitHub chose a slow, integrity-first recovery over a fast one.",
+  "minutes": 16,
+  "organisation": "GitHub",
+  "year": 2018,
+  "problem": "GitHub stores non-Git metadata (pull requests, issues, authentication, background job coordination) in many functionally sharded MySQL clusters, from hundreds of gigabytes to nearly five terabytes each, with up to dozens of read replicas per cluster. Applications write to each cluster's primary and send most reads to replicas. **Orchestrator**, built on Raft consensus, manages the replication topology and automated failover.\n\nAt 22:52 UTC on 21 October 2018, maintenance to replace failing 100G optical equipment cut the link between GitHub's US East Coast network hub and its primary US East Coast data center. The link was back after 43 seconds. In that window, Orchestrator nodes in the US West Coast data center and the US East Coast public cloud formed a quorum and began failing clusters over so that writes went to the West Coast. When connectivity returned, the application tier, which runs in the East, started writing to the new West Coast primaries. The East Coast databases held a short stretch of writes that had never reached the West, so the two sides had diverged and could not simply be failed back. Service was degraded for 24 hours and 11 minutes.",
+  "constraints": [
+    "Applications in the East depend on low-latency database access; most could not tolerate the extra delay of reaching a database on the other side of the country for most queries.",
+    "Both regions held writes the other lacked: several seconds in the East and, by 23:13 UTC, nearly 40 minutes of new writes in the West.",
+    "Protecting the confidentiality and integrity of user data is GitHub's stated top priority, ahead of availability and time to recovery.",
+    "Backups were taken every four hours but stored remotely in public cloud blob storage, and restoring multiple terabytes took hours.",
+    "Status could only be shown as green, yellow or red, which hid which parts of the platform were working."
+  ],
+  "decisions": [
+    {
+      "decision": "Fail forward instead of discarding the West Coast writes: rebuild East Coast replicas from backups, let them catch up from the West, then fail back to the original topology.",
+      "tradeoff": "No user data was thrown away, but the site stayed degraded for many hours, and pages that wrote across the country were slow in the meantime."
+    },
+    {
+      "decision": "Pause webhook delivery and GitHub Pages builds early (23:19 UTC) to stop jobs writing more metadata.",
+      "tradeoff": "Integrations and Pages sites stopped updating for most of the incident and a large backlog built up, but already-received user data was not put at further risk."
+    },
+    {
+      "decision": "Provision extra MySQL read replicas in the US East Coast public cloud to spread read load so replication could catch up.",
+      "tradeoff": "More capacity and cost under pressure, but lower per-replica utilisation let lagging replicas converge instead of falling further behind at peak traffic."
+    },
+    {
+      "decision": "Stay in red/degraded status until the full backlog was processed and services had settled, even after the database topology was restored.",
+      "tradeoff": "The incident looked longer on the status page, but users were not told things were fixed while webhooks and builds were still hours behind."
+    },
+    {
+      "decision": "Change Orchestrator's configuration so it will not promote primaries across regional boundaries.",
+      "tradeoff": "A full regional failure needs a deliberate, slower decision, but a brief partition can no longer move writes far away from the applications that depend on them."
+    }
+  ],
+  "failures": "Orchestrator did exactly what it was configured to do. The problem was that its configuration allowed a topology (East Coast applications writing to West Coast primaries) the application tier could not support, and GitHub had not previously seen an internal partition of this size. The failover itself caused the split: a few seconds of East writes were stranded, the West took new writes, and the two sides could no longer be reconciled by normal replication.\n\nRecovery was slow for physical reasons. Restoring from remote backups meant transferring, decompressing, checksumming and loading multiple terabytes of backup data. Restore was tested daily, but GitHub had never needed to rebuild an entire cluster from backup before, relying instead on approaches such as delayed replicas. After all primaries were back in the East at 11:12 UTC on 22 October, dozens of read replicas were still hours behind, so users saw inconsistent data. Replication catch-up followed a decaying curve rather than the linear estimate GitHub had published, and rising load as Europe and the US started work slowed it further.\n\nWhen the queues restarted there were over five million webhook events and 80 thousand Pages builds waiting. About 200,000 webhook payloads had outlived an internal TTL and were dropped before the team paused processing and raised the TTL. GitHub's explanatory blog post (07:46 UTC on 22 October) took extra effort to publish because GitHub uses Pages internally and those builds were paused.",
+  "lessons": [
+    "Automated failover must respect application constraints. Promoting a primary in another region is a different decision from promoting one in the same region.",
+    "A partition that lets both sides accept writes turns an availability problem into a data-integrity problem. Decide ahead of time which you will sacrifice.",
+    "Backups you can restore are not the same as backups you can restore quickly. Measure full-cluster rebuild time, including transfer from remote storage.",
+    "Replica lag recovery is not linear, and it gets worse under peak load. Avoid publishing precise ETAs from a linear extrapolation.",
+    "Pausing write-heavy background work buys safety but creates a backlog. Plan how to drain it: TTLs, partner rate limits and ordering.",
+    "Keep incident communication off the systems that are failing, and give status pages per-component granularity."
+  ],
+  "caveats": "The analysis does not state how many clusters were affected, the exact number of seconds of unreplicated East Coast writes (it says \"a brief period\" and \"several seconds\"), or the final outcome of reconciling those writes; at publication, reconciliation was still in progress. The 954 unreplicated writes figure is given only for one of the busiest clusters. The positions on the trade-off chart are a qualitative reading of GitHub's reasoning, not something GitHub measured.",
+  "diagrams": [
+    {
+      "id": "gho-timeline",
+      "type": "timeline",
+      "title": "21–22 October 2018 (times UTC)",
+      "alt": "Incident timeline from 22:52 UTC on 21 October, when a 43-second network cut triggers cross-country failover, through alerts, status red, pausing webhooks and Pages, restoring from backups, primaries back in the East at 11:12, extra replicas at 13:15, failback at 16:24, backlog processing at 16:45, and green status at 23:03 on 22 October.",
+      "caption": "The trigger lasted 43 seconds. Almost everything after it is the cost of choosing data integrity over a quick recovery.",
+      "events": [
+        { "at": "Oct 21 22:52", "label": "Optical work cuts East hub from East DC for 43 s; Orchestrator fails over to West", "kind": "trigger" },
+        { "at": "Oct 21 22:54", "label": "Monitoring starts alerting on numerous faults", "kind": "detect" },
+        { "at": "Oct 21 23:02", "label": "Responders see many cluster topologies containing only West Coast servers", "kind": "detect" },
+        { "at": "Oct 21 23:07–23:13", "label": "Deploy tooling locked; status yellow at 23:09, then red two minutes after 23:11", "kind": "mitigate" },
+        { "at": "Oct 21 23:19", "label": "Webhook delivery and Pages builds paused to protect data", "kind": "mitigate" },
+        { "at": "Oct 22 00:05", "label": "Plan: restore from backups, sync both sites, fall back, then drain queued jobs", "kind": "mitigate" },
+        { "at": "Oct 22 00:41", "label": "Backup restore under way for all affected clusters", "kind": "mitigate" },
+        { "at": "Oct 22 06:51", "label": "Several clusters restored in the East, replicating from West; larger ones still restoring", "kind": "mitigate" },
+        { "at": "Oct 22 11:12", "label": "All primaries back in the East; many read replicas still hours behind", "kind": "impact" },
+        { "at": "Oct 22 13:15", "label": "Near peak load; extra cloud read replicas spread load so replication catches up", "kind": "mitigate" },
+        { "at": "Oct 22 16:24", "label": "Replicas in sync; failover to the original topology, status kept red", "kind": "resolve" },
+        { "at": "Oct 22 16:45", "label": "Backlog processing: 5M+ hook events, 80k Pages builds; ~200k payloads dropped by a TTL", "kind": "impact" },
+        { "at": "Oct 22 23:03", "label": "Backlog done, systems verified, status green", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "gho-split",
+      "type": "flow",
+      "title": "How a 43-second partition split the data",
+      "alt": "Flow diagram. The East Coast app tier writes to the East primary. Orchestrator, with a quorum of West Coast and cloud nodes, promotes a West primary. The app tier then writes to the West primary across the country. The East primary holds seconds of writes never replicated, and the West primary gains about 40 minutes of new writes, leaving diverged data.",
+      "caption": "Neither side had all the writes. That, not the network blip, is why GitHub could not just fail back.",
+      "nodes": [
+        { "id": "app", "label": "East app tier", "kind": "service", "col": 0, "row": 0, "sub": "needs low latency" },
+        { "id": "east", "label": "East primary", "kind": "db", "col": 0, "row": 2, "sub": "MySQL" },
+        { "id": "orch", "label": "Orchestrator", "kind": "service", "col": 2, "row": 4, "sub": "West+cloud quorum" },
+        { "id": "west", "label": "West primary", "kind": "db", "col": 4, "row": 2, "sub": "promoted" },
+        { "id": "split", "label": "Diverged data", "kind": "bad", "col": 2, "row": 2, "sub": "no safe failback" }
+      ],
+      "edges": [
+        { "from": "app", "to": "east", "label": "writes" },
+        { "from": "orch", "to": "west", "label": "promote via Raft" },
+        { "from": "app", "to": "west", "label": "cross-country writes", "style": "fail" },
+        { "from": "east", "to": "split", "label": "unreplicated" },
+        { "from": "west", "to": "split", "label": "~40 min new" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Normally the East Coast applications write to primaries in the same data center and read from nearby replicas." },
+        { "edges": [1], "text": "During the 43-second cut, Orchestrator nodes in the West Coast data center and East Coast public cloud reach a Raft quorum and fail clusters over to the West." },
+        { "edges": [2], "text": "When the link returns, the application tier immediately writes to the new West Coast primaries, paying cross-country latency on most database calls." },
+        { "edges": [3], "text": "The East primaries still hold a brief period of writes that never replicated West." },
+        { "edges": [4], "text": "The West keeps taking writes, nearly 40 minutes of them by 23:13 UTC. Each side now has data the other lacks." }
+      ]
+    },
+    {
+      "id": "gho-recovery",
+      "type": "sequence",
+      "title": "Fail forward, sync, fall back, drain",
+      "alt": "Sequence diagram of the recovery. Responders pause webhooks and Pages builds, restore East clusters from remote backups, let the West replicate new writes to the East, promote East primaries, add read replicas until they catch up, fail back, and then drain the job backlog, raising a TTL after some webhooks were dropped.",
+      "caption": "Each step protects data first. The price is time: restores, replication catch-up and the backlog each took hours.",
+      "actors": [
+        { "id": "team", "label": "Responders" },
+        { "id": "jobs", "label": "Job queues" },
+        { "id": "backup", "label": "Remote backups" },
+        { "id": "east", "label": "East MySQL" },
+        { "id": "west", "label": "West MySQL" }
+      ],
+      "messages": [
+        { "from": "team", "to": "jobs", "label": "pause webhooks and Pages", "note": "23:19 UTC: stop jobs that write metadata, accepting a degraded site." },
+        { "from": "team", "to": "backup", "label": "restore all affected clusters", "note": "Started by 00:41 UTC. Backups run every four hours but live in remote cloud blob storage." },
+        { "from": "backup", "to": "east", "label": "transfer, checksum, load TBs", "note": "Decompressing, checksumming, preparing and loading took most of the time." },
+        { "from": "west", "to": "east", "label": "replicate new writes", "note": "Restored East replicas catch up on what the West accepted since the failover." },
+        { "from": "team", "to": "east", "label": "make East primaries again", "note": "11:12 UTC. Writes are local again, but many replicas are hours behind." },
+        { "from": "team", "to": "east", "label": "add cloud read replicas", "note": "Spreading reads lowers utilisation so replication can catch up at peak load." },
+        { "from": "east", "to": "team", "label": "replicas in sync", "style": "reply", "note": "16:24 UTC: fail back to the original topology." },
+        { "from": "team", "to": "jobs", "label": "resume backlog processing", "note": "Over five million hook events and 80 thousand Pages builds queued." },
+        { "from": "jobs", "to": "team", "label": "~200k webhooks past TTL", "style": "fail", "note": "Payloads older than an internal TTL were dropped." },
+        { "from": "team", "to": "jobs", "label": "pause, raise TTL, resume", "note": "Status turns green at 23:03 UTC once the backlog is done." }
+      ]
+    },
+    {
+      "id": "gho-promotion",
+      "type": "compare",
+      "title": "Orchestrator promotion rules before and after",
+      "alt": "Side-by-side comparison. Before: on a partition, Orchestrator can promote a primary in another region, leaving East apps writing across the country. After: promotion is limited to the same region, so the East apps keep a local primary.",
+      "caption": "Leader election within a region is generally safe. Crossing regions changed the latency the whole app tier depended on.",
+      "before": {
+        "label": "Cross-region promotion allowed",
+        "nodes": [
+          { "id": "app", "label": "East apps", "kind": "service", "col": 0, "row": 0 },
+          { "id": "orch", "label": "Orchestrator", "kind": "service", "col": 1, "row": 1 },
+          { "id": "west", "label": "West primary", "kind": "bad", "col": 2, "row": 0, "sub": "cross-country" }
+        ],
+        "edges": [
+          { "from": "orch", "to": "west", "label": "promote" },
+          { "from": "app", "to": "west", "label": "slow writes", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Promotion stays in region",
+        "nodes": [
+          { "id": "app", "label": "East apps", "kind": "service", "col": 0, "row": 0 },
+          { "id": "orch", "label": "Orchestrator", "kind": "service", "col": 1, "row": 1 },
+          { "id": "east", "label": "East replica", "kind": "good", "col": 2, "row": 0, "sub": "promoted locally" }
+        ],
+        "edges": [
+          { "from": "orch", "to": "east", "label": "promote" },
+          { "from": "app", "to": "east", "label": "local writes" }
+        ]
+      }
+    },
+    {
+      "id": "gho-scale",
+      "type": "bars",
+      "title": "The trigger versus the consequences",
+      "alt": "Bar chart in minutes: the connectivity loss lasted under one minute (43 seconds), the West Coast accepted writes for nearly 40 minutes before responders weighed options, and service was degraded for 1,451 minutes (24 hours 11 minutes).",
+      "caption": "From GitHub's figures: 43 seconds, nearly 40 minutes, and 24 h 11 min. The trigger is barely visible next to the outage.",
+      "unit": "minutes",
+      "bars": [
+        { "label": "Network cut (43 s)", "value": 0.72 },
+        { "label": "West-only writes", "value": 40 },
+        { "label": "Degraded service", "value": 1451, "highlight": true }
+      ]
+    },
+    {
+      "id": "gho-options",
+      "type": "chart",
+      "title": "Recovery options at 23:13 UTC",
+      "alt": "Trade-off chart with data integrity on the vertical axis and speed of recovery on the horizontal axis. Failing back to the East immediately is fast but puts West writes at risk. Running the East apps against West primaries keeps data but leaves the site unusable for many. Restoring, resyncing and failing back is slow but preserves data and is highlighted as GitHub's choice.",
+      "caption": "A qualitative reading of GitHub's reasoning, not a measurement. They picked the slowest option because it was the only one that kept every write.",
+      "x": { "label": "Speed of recovery", "low": "slow", "high": "fast" },
+      "y": { "label": "Data integrity", "low": "writes at risk", "high": "all preserved" },
+      "points": [
+        { "label": "Fail back now", "x": 8, "y": 2 },
+        { "label": "Serve from West", "x": 5, "y": 7 },
+        { "label": "Restore and resync", "x": 2, "y": 9, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "When you propose automated database failover, add the constraint: \"Failover stays inside the region; cross-region promotion is a human decision because the app tier's latency budget can't absorb it.\"",
+    "Name split-brain explicitly: if both sides can accept writes during a partition, say how you prevent it (fencing, quorum in the right place) and how you would reconcile if it happens.",
+    "State your priority order out loud, as GitHub did: data integrity first, ahead of site usability and time to recovery. Then show which design choices follow from it.",
+    "Talk about recovery time objectives for full rebuilds, not just backup frequency: where backups live, how long transfer and load take, and whether delayed replicas exist.",
+    "At SSE level, plan the backlog: pausing producers is safe, but restarting them needs TTLs long enough to survive the outage and rate limits so downstream partners are not flooded."
+  ],
+  "quiz": [
+    {
+      "question": "The network link was restored after 43 seconds. Why did degradation last over 24 hours?",
+      "choices": ["The optical equipment failed again", "Failover moved writes to the West, both regions held writes the other lacked, and safe reconciliation required restoring and resyncing", "Orchestrator crashed and had to be rewritten", "Git object storage was corrupted"],
+      "answer": 1,
+      "explain": "Orchestrator promoted West Coast primaries, the app tier wrote to them, and a few seconds of East writes were never replicated. With divergent data, GitHub restored East replicas from backups and let them catch up before failing back."
+    },
+    {
+      "question": "Why couldn't GitHub simply keep running with primaries on the West Coast?",
+      "choices": ["The West Coast data center was out of disk", "East Coast applications could not cope with cross-country latency on most database calls", "Raft forbids it"],
+      "answer": 1,
+      "explain": "The app tier lived in the East and depended on low-latency database access. Writing across the country made the service unusable for many users."
+    },
+    {
+      "question": "What was the main reason restoring from backup took hours?",
+      "choices": ["Backups were only taken weekly", "Multiple terabytes had to be transferred from remote cloud storage, then decompressed, checksummed, prepared and loaded", "Backups had to be decrypted by hand"],
+      "answer": 1,
+      "explain": "Backups ran every four hours, but they lived in remote blob storage. Transfer took a large share of the time, and preparing and loading the files took most of it."
+    },
+    {
+      "question": "What configuration change addresses the root of the cross-country failover?",
+      "choices": ["Disable Orchestrator entirely", "Prevent Orchestrator from promoting primaries across regional boundaries", "Increase the Raft election timeout to 10 minutes"],
+      "answer": 1,
+      "explain": "GitHub's first technical initiative: keep promotion within a region, where leader election is generally safe, so a partition cannot move writes far from the applications."
+    },
+    {
+      "question": "When the webhook backlog was resumed, about 200,000 payloads were dropped. Why?",
+      "choices": ["They had outlived an internal TTL", "Partners rejected them as duplicates", "The queue ran out of memory"],
+      "answer": 0,
+      "explain": "The queued payloads were older than the TTL. GitHub paused processing and raised the TTL. Outage-length TTLs are part of backlog planning."
+    }
+  ],
+  "practice": {
+    "prompt": "Your service runs its app tier in one region and uses MySQL with automated failover managed by a Raft-based tool that has nodes in two regions. A brief partition causes the tool to promote a primary in the far region. Walk through how you'd respond in the first hour, and what you'd change afterwards.",
+    "answer": "First, stop making it worse: freeze deploys, and pause background jobs that write, accepting reduced functionality. Establish the facts: which clusters moved, whether the old primaries hold writes that never replicated, and how long the new primaries have been taking writes. If both sides have unique writes, failing back immediately would lose the new side's data, so preserve both. Capture binary logs of the stranded writes for later reconciliation, then fail forward: rebuild replicas in the home region from backup or from the new primaries, let them catch up, and fail back once lag is near zero. Communicate a cautious ETA, since replica catch-up is not linear and gets slower under peak load; add read replicas if lag grows. Drain paused jobs gradually and check TTLs so queued work is not dropped. Afterwards: restrict automatic promotion to the same region, keep cross-region promotion a human decision, measure full-cluster restore time from wherever backups live, keep delayed or local replicas for faster rebuilds, and run fault-injection drills of partitions.",
+    "rubric": [
+      "Freezes changes and pauses write-heavy jobs early",
+      "Recognises divergent writes and refuses a fail-back that would lose data",
+      "Plans restore or resync, catch-up, then fail back",
+      "Cautious, non-linear ETA and per-component status communication",
+      "Backlog draining with TTL and downstream load in mind",
+      "Limits automated promotion to within a region and drills partitions afterwards"
+    ]
+  },
+  "links": {
+    "lessons": ["design-replication-partitioning", "design-consistency", "design-reliability-observability", "design-queues-events"],
+    "cases": ["kv-store", "notification-service", "job-scheduler"],
+    "guides": ["consistency-choices", "queues-async-work", "graceful-degradation", "observability"]
+  },
+  "sources": [
+    {
+      "title": "October 21 post-incident analysis",
+      "publisher": "GitHub Blog",
+      "url": "https://github.blog/news-insights/company-news/oct21-post-incident-analysis/",
+      "date": "2018-10-30"
+    }
+  ]
+}

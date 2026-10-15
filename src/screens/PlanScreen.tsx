@@ -6,7 +6,7 @@ import { planStudy } from '../planner'
 import type { PlanItem } from '../planner'
 import { displayDate } from '../format'
 
-const ICONS: Record<PlanItem['kind'], string> = { lesson: 'book', cards: 'repeat', problem: 'code', case: 'layers', mock: 'clock', rest: 'check' }
+const ICONS: Record<PlanItem['kind'], string> = { lesson: 'book', cards: 'repeat', problem: 'code', case: 'layers', guide: 'compass', mock: 'clock', rest: 'check' }
 
 export function PlanItemAction({ app, item }: { app: AppModel; item: PlanItem }) {
   const label = <><Icon name={ICONS[item.kind]} size={16} /><span>{item.title}</span>{item.minutes > 0 && <span className="muted">{item.minutes} min</span>}</>
@@ -14,7 +14,7 @@ export function PlanItemAction({ app, item }: { app: AppModel; item: PlanItem })
     const lesson = lessons.find(entry => entry.id === item.ref)!
     return <button type="button" className="plan-item" onClick={() => app.start(lesson, app.progress.records[lesson.id] ? 'review' : 'learn')}>{label}</button>
   }
-  const href = item.kind === 'cards' ? '#cards' : item.kind === 'problem' ? `#code/${item.ref}` : item.kind === 'case' ? `#design/${item.ref}` : item.kind === 'mock' ? '#mock' : undefined
+  const href = item.kind === 'cards' ? '#cards' : item.kind === 'problem' ? `#code/${item.ref}` : item.kind === 'case' ? `#design/${item.ref}` : item.kind === 'guide' ? `#guide/${item.ref}` : item.kind === 'mock' ? '#mock' : undefined
   return href ? <a className="plan-item" href={href}>{label}</a> : <span className="plan-item">{label}</span>
 }
 

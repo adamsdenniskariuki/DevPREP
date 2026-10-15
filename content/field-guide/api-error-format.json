@@ -1,0 +1,271 @@
+{
+  "id": "api-error-format",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "API error format: status codes and Problem Details",
+  "summary": "Pick the status code that tells the client what to do next, and return one machine-readable error body (RFC 9457) with a stable code and a request id.",
+  "minutes": 12,
+  "principle": "An error response is part of the contract. The status code says **who** must act (4xx: the caller, 5xx: the server) and whether a retry can help. The body says **what** went wrong in one consistent, machine-readable shape with a stable error code, and a request id ties it to your logs. Nothing in it should expose how the server is built.",
+  "why": "Clients branch on errors. A mobile app decides whether to show a form error, ask the user to sign in again, back off, or retry. If one endpoint returns `200 OK` with `{\"error\": ...}`, another returns `500` for a bad email, and a third returns an HTML page from the proxy, every client ends up with brittle string matching.\n\nRFC 9457, Problem Details for HTTP APIs (it obsoletes RFC 7807), defines a standard shape with the media type `application/problem+json`. Its members are `type` (a URI that identifies the problem kind), `title`, `status`, `detail` and `instance`, and you may add extension members such as `code`, `errors` or `request_id`. Using it means clients, gateways and tools can parse your errors without a custom schema per service.\n\nThe status code matters as much as the body. Retry logic, caches, load balancers and monitoring all read it. A `500` for a validation error triggers pointless retries and pages the on-call engineer; a `400` for a database outage tells the client the request will never work.",
+  "diagrams": [
+    {
+      "id": "err-status-tree",
+      "type": "flow",
+      "title": "Choosing the status code",
+      "alt": "Decision tree down the left column. Server fault leads to 500 or 503. Failed authentication or permission leads to 401 or 403. Over the rate limit leads to 429. A body that does not parse leads to 400. A missing resource leads to 404. A request that breaks a business rule or conflicts with current state leads to 422 or 409.",
+      "caption": "Ask the questions in roughly this order. Each answer maps to a code that tells the client its next move.",
+      "nodes": [
+        { "id": "fault", "label": "Server's fault?", "kind": "decision", "col": 0, "row": 0 },
+        { "id": "auth", "label": "Caller allowed?", "kind": "decision", "col": 0, "row": 1 },
+        { "id": "limit", "label": "Under the limit?", "kind": "decision", "col": 0, "row": 2 },
+        { "id": "parse", "label": "Body parses?", "kind": "decision", "col": 0, "row": 3 },
+        { "id": "found", "label": "Resource exists?", "kind": "decision", "col": 0, "row": 4 },
+        { "id": "rules", "label": "Valid right now?", "kind": "decision", "col": 0, "row": 5 },
+        { "id": "s5xx", "label": "500 / 503", "kind": "bad", "col": 2, "row": 0, "sub": "server must act" },
+        { "id": "s401", "label": "401 / 403", "kind": "bad", "col": 2, "row": 1, "sub": "who vs what" },
+        { "id": "s429", "label": "429", "kind": "bad", "col": 2, "row": 2, "sub": "+ Retry-After" },
+        { "id": "s400", "label": "400 Bad Request", "kind": "bad", "col": 2, "row": 3, "sub": "malformed syntax" },
+        { "id": "s404", "label": "404 Not Found", "kind": "bad", "col": 2, "row": 4 },
+        { "id": "s422", "label": "422 / 409", "kind": "bad", "col": 2, "row": 5, "sub": "rule vs state" }
+      ],
+      "edges": [
+        { "from": "fault", "to": "s5xx", "label": "yes" },
+        { "from": "fault", "to": "auth", "label": "no" },
+        { "from": "auth", "to": "s401", "label": "no" },
+        { "from": "auth", "to": "limit", "label": "yes" },
+        { "from": "limit", "to": "s429", "label": "no" },
+        { "from": "limit", "to": "parse", "label": "yes" },
+        { "from": "parse", "to": "s400", "label": "no" },
+        { "from": "parse", "to": "found", "label": "yes" },
+        { "from": "found", "to": "s404", "label": "no" },
+        { "from": "found", "to": "rules", "label": "yes" },
+        { "from": "rules", "to": "s422", "label": "no" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "If the failure is ours (a bug, a dead dependency, overload), answer **5xx**. `503` with `Retry-After` says \"temporarily unavailable\"; `500` is a generic bug. The client did nothing wrong." },
+        { "edges": [1, 2], "text": "**401** means \"I don't know who you are\" (missing, expired or invalid credentials) and must carry a `WWW-Authenticate` header. **403** means \"I know who you are and you may not do this\"." },
+        { "edges": [3, 4], "text": "**429 Too Many Requests** (RFC 6585) tells the client to slow down. Add `Retry-After` so it knows how long." },
+        { "edges": [5, 6], "text": "**400** is for requests the server cannot even read: invalid JSON, a wrong type, a missing required field." },
+        { "edges": [7, 8], "text": "**404** when the target does not exist, or when you do not want to reveal that it exists to this caller." },
+        { "edges": [9, 10], "text": "The request is well formed but cannot be applied. **422** (Unprocessable Content in RFC 9110) for a business-rule failure such as an end date before the start date; **409 Conflict** when it clashes with the resource's current state, such as a stale version or a duplicate username." },
+        { "edges": [1, 3, 5, 7, 9], "text": "Only when every check passes does the handler run. The order matters: checking auth before parsing avoids doing work, or leaking validation hints, for anonymous callers." }
+      ]
+    },
+    {
+      "id": "err-problem-sequence",
+      "type": "sequence",
+      "title": "A validation error travels back with a request id",
+      "alt": "Sequence diagram. The client posts an order through the gateway, which assigns a request id. The orders API rejects the quantity, logs the full detail with the request id, and returns a 422 Problem Details body with a stable code, field errors and the same request id, which the gateway passes back unchanged.",
+      "caption": "The client gets a short, safe explanation; the logs get everything. The request id joins the two when a customer files a ticket.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "gw", "label": "Gateway" },
+        { "id": "api", "label": "Orders API" },
+        { "id": "logs", "label": "Logs" }
+      ],
+      "messages": [
+        { "from": "client", "to": "gw", "label": "POST /orders {qty: -2}", "note": "A well-formed JSON body with a value that breaks a business rule." },
+        { "from": "gw", "to": "api", "label": "forward + X-Request-Id: r-81f", "note": "The edge assigns one id per request (or accepts a trusted one) and every hop logs it." },
+        { "from": "api", "to": "logs", "label": "warn r-81f qty<1 user=42", "style": "async", "note": "Internal context such as user ids, SQL or stack traces goes to logs, never to the response." },
+        { "from": "api", "to": "gw", "label": "422 application/problem+json", "style": "reply", "note": "type, title, status, detail, plus extensions: code \"invalid_quantity\", errors[] and request_id." },
+        { "from": "gw", "to": "client", "label": "422 (body unchanged)", "style": "reply", "note": "The gateway must not swap the JSON for an HTML error page. Its own errors (timeouts, 502s) should use the same format." }
+      ]
+    },
+    {
+      "id": "err-leak-compare",
+      "type": "compare",
+      "title": "Leaking internals vs a safe error body",
+      "alt": "Side-by-side comparison. On the left the API returns a 500 with a raw stack trace and SQL text straight to the client. On the right the API writes the stack trace to logs and returns a 500 Problem Details body with a generic message, a stable code and a request id.",
+      "caption": "The client cannot act on a stack trace, but an attacker can. Send the detail to logs and give the client a handle to find it.",
+      "before": {
+        "label": "Stack trace to the client",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 0 },
+          { "id": "a", "label": "API", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Database", "kind": "db", "col": 2, "row": 0 },
+          { "id": "leak", "label": "500 + stack", "kind": "bad", "col": 0, "row": 1, "sub": "SQL, file paths" }
+        ],
+        "edges": [
+          { "from": "a", "to": "d", "label": "query fails", "style": "fail" },
+          { "from": "a", "to": "leak", "label": "raw exception", "style": "fail" },
+          { "from": "c", "to": "a", "label": "GET" }
+        ]
+      },
+      "after": {
+        "label": "Problem Details + logs",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 0 },
+          { "id": "a", "label": "API", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Database", "kind": "db", "col": 2, "row": 0 },
+          { "id": "safe", "label": "500 problem+json", "kind": "good", "col": 0, "row": 1, "sub": "code + request_id" },
+          { "id": "l", "label": "Logs", "kind": "storage", "col": 2, "row": 1, "sub": "stack, SQL, ids" }
+        ],
+        "edges": [
+          { "from": "c", "to": "a", "label": "GET" },
+          { "from": "a", "to": "d", "label": "query fails", "style": "fail" },
+          { "from": "a", "to": "safe", "label": "generic", "style": "reply" },
+          { "from": "a", "to": "l", "label": "full detail", "style": "async" }
+        ]
+      }
+    },
+    {
+      "id": "err-retry-chart",
+      "type": "chart",
+      "title": "Which errors are worth retrying",
+      "alt": "Chart with who must fix the problem on the horizontal axis, from client to server, and the chance that the same request succeeds later on the vertical axis. 400 and 422 sit at client-side, never succeeds. 404 and 409 are low. 401 succeeds only after a token refresh. 429 succeeds after waiting. 500 is uncertain. 503 and 504 are on the server side and likely to succeed later.",
+      "caption": "Positions are a rough guide. Retry 429 and 503 after a delay; 401 only after refreshing credentials; 4xx validation errors never, because the same request will fail the same way.",
+      "x": { "label": "Who must fix it", "low": "client", "high": "server" },
+      "y": { "label": "Same request works later", "low": "never", "high": "likely" },
+      "points": [
+        { "label": "400 / 422", "x": 1, "y": 1 },
+        { "label": "404", "x": 1, "y": 4 },
+        { "label": "409", "x": 3, "y": 3 },
+        { "label": "401 (refresh)", "x": 2, "y": 7 },
+        { "label": "429", "x": 5, "y": 9, "highlight": true },
+        { "label": "500", "x": 8, "y": 5 },
+        { "label": "503 / 504", "x": 9, "y": 8, "highlight": true }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Return one Problem Details shape for every error",
+      "bad": {
+        "label": "Ad hoc body, wrong status, nothing to branch on",
+        "lang": "http",
+        "code": "HTTP/1.1 200 OK\nContent-Type: application/json\n\n{ \"success\": false, \"message\": \"Something went wrong: qty must be > 0\" }"
+      },
+      "good": {
+        "label": "RFC 9457 body with a stable code and request id",
+        "lang": "http",
+        "code": "HTTP/1.1 422 Unprocessable Content\nContent-Type: application/problem+json\n\n{\n  \"type\": \"https://api.example.com/problems/invalid-quantity\",\n  \"title\": \"Quantity is not valid\",\n  \"status\": 422,\n  \"detail\": \"Quantity must be at least 1.\",\n  \"instance\": \"/orders\",\n  \"code\": \"invalid_quantity\",\n  \"errors\": [{ \"pointer\": \"/items/0/qty\", \"detail\": \"must be >= 1\" }],\n  \"request_id\": \"r-81f\"\n}"
+      },
+      "why": "Clients branch on the status and the stable `code`, never on the human text, so you can reword `title` and `detail` or translate them freely. The `errors` array lets a form highlight the right field, and `request_id` lets support find the log line."
+    },
+    {
+      "title": "Map exceptions to errors in one place",
+      "bad": {
+        "label": "Each handler formats its own errors",
+        "lang": "js",
+        "code": "app.post('/orders', async (req, res) => {\n  try { res.json(await createOrder(req.body)) }\n  catch (e) { res.status(500).send(e.stack) }\n})"
+      },
+      "good": {
+        "label": "Typed errors and one error middleware",
+        "lang": "js",
+        "code": "class ApiError extends Error {\n  constructor(status, code, title, extra = {}) { super(title); Object.assign(this, { status, code, extra }) }\n}\n\napp.use((err, req, res, next) => {\n  const known = err instanceof ApiError\n  if (!known) log.error({ err, requestId: req.id })\n  res.status(known ? err.status : 500).type('application/problem+json').json({\n    type: known ? `https://api.example.com/problems/${err.code}` : 'about:blank',\n    title: known ? err.message : 'Internal error',\n    status: known ? err.status : 500,\n    code: known ? err.code : 'internal',\n    request_id: req.id,\n    ...(known ? err.extra : {}),\n  })\n})"
+      },
+      "why": "Central mapping keeps the format identical across endpoints and makes the safe default automatic: an unexpected exception becomes a generic 500 with a request id, and its details only reach the log."
+    }
+  ],
+  "checklist": [
+    "4xx means the caller must change something; 5xx means the server failed. Never return 200 with an error inside.",
+    "Use the precise code: 400 malformed, 401 unauthenticated, 403 forbidden, 404 missing, 409 state conflict, 422 rule failure, 429 rate limited, 503 temporarily unavailable.",
+    "Every error uses one body shape, ideally RFC 9457 `application/problem+json`, including errors from gateways and proxies.",
+    "Each error kind has a stable, documented machine code (`type` URI and/or `code`) that never changes once published.",
+    "Validation errors list every bad field with a pointer to it, not just the first one.",
+    "Every response carries a request id that also appears in the server logs.",
+    "Bodies never contain stack traces, SQL, internal hostnames or other users' data.",
+    "Retryable errors (429, 503) include `Retry-After`; the docs say which codes are safe to retry."
+  ],
+  "antipatterns": [
+    {
+      "title": "200 OK with an error in the body",
+      "bad": {
+        "label": "Status says success, body says failure",
+        "lang": "http",
+        "code": "HTTP/1.1 200 OK\n\n{ \"ok\": false, \"error\": \"card_declined\" }"
+      },
+      "better": {
+        "label": "Status carries the outcome",
+        "lang": "http",
+        "code": "HTTP/1.1 402 Payment Required\nContent-Type: application/problem+json\n\n{ \"type\": \".../card-declined\", \"title\": \"Card declined\", \"status\": 402, \"code\": \"card_declined\" }"
+      },
+      "why": "Caches, retries, dashboards and alerting all read the status line. A failure disguised as 200 is cached, counted as success in SLO metrics and missed by every generic client library."
+    },
+    {
+      "title": "Clients matching on the error message",
+      "bad": {
+        "label": "Branching on human text",
+        "lang": "js",
+        "code": "if (body.message.includes('already exists')) showLoginLink()"
+      },
+      "better": {
+        "label": "Branching on a stable code",
+        "lang": "js",
+        "code": "if (res.status === 409 && body.code === 'email_taken') showLoginLink()"
+      },
+      "why": "Messages get reworded, translated and fixed for typos, and each change silently breaks clients. A documented code is part of the contract and is versioned like any other field."
+    },
+    {
+      "title": "Using 500 for everything that goes wrong",
+      "bad": {
+        "label": "A bad input becomes a server error",
+        "lang": "http",
+        "code": "POST /users { \"email\": \"not-an-email\" }\n\nHTTP/1.1 500 Internal Server Error"
+      },
+      "better": {
+        "label": "Validate first and blame the right side",
+        "lang": "http",
+        "code": "POST /users { \"email\": \"not-an-email\" }\n\nHTTP/1.1 422 Unprocessable Content\n{ \"code\": \"invalid_email\", \"errors\": [{ \"pointer\": \"/email\" }] }"
+      },
+      "why": "A 500 tells clients to retry and tells your alerts that the service is unhealthy. Bad input then causes retry storms and false pages, while real outages hide among them."
+    }
+  ],
+  "interview": [
+    "When you sketch any endpoint, list its error responses next to the happy path: \"201 on success, 422 for invalid items, 409 if the cart changed, 429 when throttled.\"",
+    "Name the standard: \"Errors use RFC 9457 Problem Details with a stable `code` and a `request_id`.\" It shows you know the contract is more than the 200 path.",
+    "Explain 401 vs 403 and 409 vs 422 crisply; interviewers often probe exactly these pairs.",
+    "Tie errors to client behaviour: which codes are retryable, which carry `Retry-After`, and why a validation error must never be a 5xx.",
+    "At SSE level, mention consistency across services: a shared error library or gateway mapping, a registry of codes, and SLOs that count 5xx but not 4xx."
+  ],
+  "quiz": [
+    {
+      "question": "A signed-in user asks to delete another team's project, which they can see but not modify. Which status fits best?",
+      "choices": ["401 Unauthorized", "403 Forbidden", "400 Bad Request", "409 Conflict"],
+      "answer": 1,
+      "explain": "The server knows who the caller is, so it is not 401. The request is well formed and does not conflict with state. The caller simply lacks permission: 403. If the caller should not even learn that the project exists, 404 is also acceptable."
+    },
+    {
+      "question": "A client updates a document with an If-Match version that is now stale because someone else saved first. What should the API return?",
+      "choices": ["422 Unprocessable Content", "409 Conflict or 412 Precondition Failed", "500 Internal Server Error"],
+      "answer": 1,
+      "explain": "The request is valid but clashes with the resource's current state. 412 is the exact code for a failed If-Match precondition; 409 is common when versions are passed in the body. The client should re-read and retry."
+    },
+    {
+      "question": "Which RFC defines the current standard for machine-readable HTTP API error bodies?",
+      "choices": ["RFC 9457, which obsoletes RFC 7807", "RFC 6585", "RFC 7519"],
+      "answer": 0,
+      "explain": "RFC 9457 Problem Details uses `application/problem+json` with type, title, status, detail and instance. RFC 6585 added status codes such as 429, and RFC 7519 defines JWT."
+    },
+    {
+      "question": "Why include a request id in every error response?",
+      "choices": ["It makes the error retryable", "It lets support match a customer report to the exact server logs", "It replaces the need for a status code"],
+      "answer": 1,
+      "explain": "The body stays short and safe, while the logs hold the details. The request id is the join key between what the customer saw and what the server recorded."
+    },
+    {
+      "question": "Which pair of responses should a well-behaved client retry automatically after waiting?",
+      "choices": ["400 and 422", "401 and 403", "429 and 503"],
+      "answer": 2,
+      "explain": "429 and 503 describe temporary conditions, usually with Retry-After. 400 and 422 will fail identically on retry. 401 needs new credentials first, and 403 will not change by waiting."
+    }
+  ],
+  "practice": {
+    "prompt": "Your company has 30 microservices, each returning errors differently. Design an error format and status-code policy for the public API, and explain how you would roll it out.",
+    "answer": "Adopt RFC 9457 Problem Details (`application/problem+json`) for every error. Required members: `type` (a documented URI per problem kind), `title`, `status`; optional `detail` and `instance`; extensions `code` (a stable snake_case identifier), `errors[]` with JSON pointers for validation failures, and `request_id`. Status policy: 400 malformed, 401 with WWW-Authenticate, 403 forbidden (or 404 to hide existence), 404, 409 state conflicts, 422 rule failures, 429 and 503 with Retry-After, 500 for unknown failures with a generic message. Publish a registry of codes and treat changes as breaking. Ship a shared middleware library so services map typed exceptions in one place, and make the gateway translate its own timeouts and any non-conforming upstream body into the same shape. Never return stack traces or SQL; log them with the request id. Roll out behind the gateway first (normalise at the edge), then migrate services one by one, using contract tests that assert every non-2xx response matches the schema. Count 5xx in SLOs, not 4xx, and alert on spikes of specific codes.",
+    "rubric": [
+      "Chooses a single standard body (RFC 9457 or equivalent) with stable machine codes",
+      "Gives a clear status-code policy separating 4xx and 5xx, including 401 vs 403 and 409 vs 422",
+      "Includes request ids and keeps internals out of responses",
+      "States which errors are retryable and uses Retry-After",
+      "Describes enforcement: shared library, gateway normalisation, contract tests",
+      "Plans an incremental rollout without breaking existing clients"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-reliability-observability"],
+    "cases": ["payments", "api-rate-limiter"],
+    "guides": ["api-auth", "api-rate-limits", "retries-backoff", "idempotency-keys", "observability"]
+  }
+}

@@ -5,6 +5,7 @@ import { tracks } from '../curriculum'
 import type { Track } from '../curriculum-types'
 import { loadCases } from '../cases'
 import { loadProblems } from '../problems'
+import { loadGuides } from '../guides'
 import { displayDate } from '../format'
 import { buildMock, mockScore, MOCK_MINUTES } from '../mocks'
 import type { Mock, MockData, MockLevel } from '../mocks'
@@ -55,7 +56,7 @@ export default function MockScreen({ app }: { app: AppModel }) {
   useEffect(() => { (phase === 'review' ? reviewHeading : app.heading).current?.focus() }, [app.heading, phase])
   useEffect(() => {
     let live = true
-    Promise.all([loadProblems(), loadCases()]).then(([problems, cases]) => { if (live) setData({ problems, cases }) }, () => { if (live) setError('Mock content could not be loaded. Reconnect and try again.') })
+    Promise.all([loadProblems(), loadCases(), loadGuides()]).then(([problems, cases, guides]) => { if (live) setData({ problems, cases, guides }) }, () => { if (live) setError('Mock content could not be loaded. Reconnect and try again.') })
     return () => { live = false }
   }, [])
   useEffect(() => {
@@ -109,7 +110,8 @@ export default function MockScreen({ app }: { app: AppModel }) {
       <span className="eyebrow">QUESTION {index + 1} · {question.title.toUpperCase()}</span>
       <p className="mock-prompt">{question.prompt}</p>
       {phase === 'answer' && question.kind === 'problem' && <a className="text-button" href={`#code/${question.ref}`} target="_blank" rel="noreferrer">Open in code runner <Icon name="arrow" size={14} /></a>}
-      {phase === 'answer' && question.kind === 'case' && <a className="text-button" href="#board" target="_blank" rel="noreferrer">Open a whiteboard <Icon name="arrow" size={14} /></a>}
+      {phase === 'answer' && question.kind === 'guide' && <a className="text-button" href={`#guide/${question.ref}`} target="_blank" rel="noreferrer">Read the Field Guide entry <Icon name="arrow" size={14} /></a>}
+{phase === 'answer' && question.kind === 'case' && <a className="text-button" href="#board" target="_blank" rel="noreferrer">Open a whiteboard <Icon name="arrow" size={14} /></a>}
       {phase === 'answer' ? <>
         <label htmlFor={`answer-${index}`}>Your answer</label>
         <textarea id={`answer-${index}`} rows={6} maxLength={MAX_ANSWER} value={draft.answers[index] ?? ''} onChange={event => { const answers = [...draft.answers]; answers[index] = event.target.value; update({ ...draft, answers }) }} />

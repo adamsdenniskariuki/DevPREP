@@ -1,0 +1,276 @@
+{
+  "id": "api-styles-rest-grpc",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "REST vs gRPC: picking an API style",
+  "summary": "REST over HTTP for public and browser-facing APIs, gRPC for typed, fast service-to-service calls, and GraphQL or messaging when the shape of the problem calls for them.",
+  "minutes": 14,
+  "principle": "Choose the API style per boundary, not per company. Use REST with JSON where reach matters (browsers, partners, public docs, HTTP caches) and gRPC with protobuf where both sides are yours and you want strict contracts, low overhead and streaming. Whatever you pick, respect the semantics of the transport: HTTP methods and status codes mean something to every proxy, cache and client library in between.",
+  "why": "An API style is a set of defaults. REST rides on plain HTTP, so every language, browser, CDN and debugging tool already speaks it. Its methods carry promises: RFC 9110 defines GET, HEAD, OPTIONS and TRACE as **safe** (no intended side effects) and those plus PUT and DELETE as **idempotent** (repeating them has the same effect as doing them once). Caches, crawlers and retry logic rely on those promises.\n\ngRPC trades reach for efficiency. You write the contract in a `.proto` file, generate typed clients and servers, and send compact binary messages over HTTP/2 with built-in deadlines and four call shapes: unary, server streaming, client streaming and bidirectional streaming. The catch is that browsers cannot speak native gRPC directly; you need gRPC-Web plus a proxy, or a REST/JSON gateway in front.\n\nGraphQL fits when many different clients need different slices of a rich graph and over-fetching hurts, at the cost of harder caching and query-cost control. Asynchronous messaging (queues, event streams) fits when the caller does not need the answer now. Interviewers want to hear that you know these trade-offs and pick deliberately.",
+  "diagrams": [
+    {
+      "id": "rg-landscape",
+      "type": "flow",
+      "title": "One system, three styles",
+      "alt": "Architecture diagram. A browser and a mobile app call a public API gateway over HTTPS with JSON. The gateway calls an Orders service over gRPC, and Orders calls Payments over gRPC with a deadline. Orders also publishes an OrderPlaced event to an event stream that an email worker consumes asynchronously.",
+      "caption": "REST at the edge for reach, gRPC inside for typed fast calls, and events for work nobody waits on.",
+      "nodes": [
+        { "id": "web", "label": "Browser", "kind": "client", "col": 0, "row": 0 },
+        { "id": "app", "label": "Mobile app", "kind": "client", "col": 0, "row": 2 },
+        { "id": "gw", "label": "API gateway", "kind": "lb", "col": 1, "row": 1, "sub": "public REST/JSON" },
+        { "id": "orders", "label": "Orders", "kind": "service", "col": 3, "row": 0, "sub": "gRPC server" },
+        { "id": "pay", "label": "Payments", "kind": "service", "col": 3, "row": 2, "sub": "gRPC server" },
+        { "id": "bus", "label": "Event stream", "kind": "queue", "col": 4, "row": 1 },
+        { "id": "mail", "label": "Email worker", "kind": "worker", "col": 4, "row": 3 }
+      ],
+      "edges": [
+        { "from": "web", "to": "gw", "label": "HTTPS + JSON" },
+        { "from": "app", "to": "gw", "label": "HTTPS + JSON" },
+        { "from": "gw", "to": "orders", "label": "gRPC" },
+        { "from": "orders", "to": "pay", "label": "gRPC, 300ms deadline" },
+        { "from": "orders", "to": "bus", "label": "OrderPlaced", "style": "async" },
+        { "from": "bus", "to": "mail", "label": "consume", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "External clients speak REST and JSON. Every browser, language and HTTP tool supports it, and responses to GET can be cached by CDNs." },
+        { "edges": [2], "text": "The gateway translates to gRPC for internal calls. Both sides share one `.proto` contract, so type mismatches fail at build time instead of in production." },
+        { "edges": [3], "text": "Service-to-service calls carry a deadline. gRPC propagates it, so a downstream call does not keep working after the caller has given up." },
+        { "edges": [4, 5], "text": "Sending the confirmation email does not need to block checkout, so Orders publishes an event and a worker handles it later. This is the async messaging alternative." }
+      ]
+    },
+    {
+      "id": "rg-unary-stream",
+      "type": "sequence",
+      "title": "A REST call at the edge becomes gRPC inside",
+      "alt": "Sequence diagram. A browser sends GET /orders/42 to the gateway. The gateway calls GetOrder over gRPC with a deadline and receives the order. It replies 200 with JSON and an ETag. A later conditional GET with If-None-Match receives 304 Not Modified. Separately, a tracking screen opens a server stream and receives several status updates.",
+      "caption": "REST gets HTTP caching for free; gRPC gets typed calls, deadlines and streaming. The gateway lets each side use what it is good at.",
+      "actors": [
+        { "id": "web", "label": "Browser" },
+        { "id": "gw", "label": "Gateway" },
+        { "id": "orders", "label": "Orders (gRPC)" }
+      ],
+      "messages": [
+        { "from": "web", "to": "gw", "label": "GET /orders/42", "note": "GET is safe and idempotent, so the browser, proxies and retry logic may repeat it freely." },
+        { "from": "gw", "to": "orders", "label": "GetOrder(id=42), deadline 300ms", "note": "The gateway maps the URL to a typed RPC and sets a deadline from its own time budget." },
+        { "from": "orders", "to": "gw", "label": "Order{id, status, total}", "style": "reply" },
+        { "from": "gw", "to": "web", "label": "200 OK, JSON, ETag: \"v7\"", "style": "reply", "note": "The protobuf message is rendered as JSON. The ETag lets the client revalidate cheaply." },
+        { "from": "web", "to": "gw", "label": "GET /orders/42, If-None-Match", "note": "A conditional request. If nothing changed, no body needs to travel." },
+        { "from": "gw", "to": "web", "label": "304 Not Modified", "style": "reply" },
+        { "from": "gw", "to": "orders", "label": "WatchOrder(42): server stream", "note": "For a live tracking screen the gateway opens a server-streaming RPC instead of polling." },
+        { "from": "orders", "to": "gw", "label": "status: PACKED", "style": "async" },
+        { "from": "orders", "to": "gw", "label": "status: SHIPPED", "style": "async", "note": "Each update arrives on the same HTTP/2 stream. The gateway can forward them over SSE or WebSocket to the browser." }
+      ]
+    },
+    {
+      "id": "rg-post-tunnel",
+      "type": "compare",
+      "title": "Tunnelling everything through POST",
+      "alt": "Side-by-side comparison. On the left, every operation is POST /api with an action name in the body, so the cache cannot store reads and a retry layer cannot tell reads from writes. On the right, reads use GET on a resource URL and are cached, and only the create uses POST.",
+      "caption": "When every call is POST, proxies, caches and retry policies lose all the information HTTP was giving them.",
+      "before": {
+        "label": "POST /api {action}",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 0 },
+          { "id": "a", "label": "POST /api", "kind": "bad", "col": 1, "row": 0, "sub": "action in body" },
+          { "id": "x", "label": "Cache: miss", "kind": "bad", "col": 2, "row": 0, "sub": "POST not cached" },
+          { "id": "r", "label": "Retry: unsure", "kind": "bad", "col": 1, "row": 1, "sub": "read or write?" }
+        ],
+        "edges": [
+          { "from": "c", "to": "a", "label": "getOrder" },
+          { "from": "a", "to": "x", "style": "fail" },
+          { "from": "a", "to": "r", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Methods carry meaning",
+        "nodes": [
+          { "id": "c", "label": "Client", "kind": "client", "col": 0, "row": 0 },
+          { "id": "g", "label": "GET /orders/42", "kind": "good", "col": 1, "row": 0, "sub": "safe, idempotent" },
+          { "id": "h", "label": "Cache: hit", "kind": "cache", "col": 2, "row": 0 },
+          { "id": "p", "label": "POST /orders", "kind": "good", "col": 1, "row": 1, "sub": "retry with key" }
+        ],
+        "edges": [
+          { "from": "c", "to": "g" },
+          { "from": "g", "to": "h", "label": "cacheable" },
+          { "from": "c", "to": "p", "label": "create" }
+        ]
+      }
+    },
+    {
+      "id": "rg-style-chart",
+      "type": "chart",
+      "title": "Where each style sits",
+      "alt": "Trade-off chart with reach to outside clients on the horizontal axis and contract strictness plus efficiency on the vertical axis. REST with JSON has the widest reach and moderate strictness. gRPC with protobuf is the strictest and most efficient but has narrow browser reach. GraphQL sits between them. Webhooks and message queues sit lower on reach.",
+      "caption": "Positions are a rough guide, not measurements. No style wins both axes, which is why mature systems mix them.",
+      "x": { "label": "Reach to outside clients", "low": "internal only", "high": "anyone" },
+      "y": { "label": "Contract strictness", "low": "loose", "high": "strict, typed" },
+      "points": [
+        { "label": "REST + JSON", "x": 9, "y": 4, "highlight": true },
+        { "label": "REST + OpenAPI", "x": 8, "y": 6 },
+        { "label": "gRPC + protobuf", "x": 3, "y": 9, "highlight": true },
+        { "label": "GraphQL", "x": 7, "y": 7 },
+        { "label": "Webhooks", "x": 6, "y": 3 },
+        { "label": "Queue + schema", "x": 2, "y": 6 }
+      ]
+    },
+    {
+      "id": "rg-decision",
+      "type": "flow",
+      "title": "A quick decision path",
+      "alt": "Decision flow. If the caller needs the answer now, ask whether browsers or third parties call it: if yes use REST, if both sides are internal use gRPC. If many clients need different slices of a graph, consider GraphQL. If the caller does not need the answer now, use a queue or event stream.",
+      "caption": "Start from who calls and whether they wait, not from what is fashionable.",
+      "nodes": [
+        { "id": "start", "label": "New boundary", "kind": "state", "col": 0, "row": 0 },
+        { "id": "wait", "label": "Caller waits?", "kind": "decision", "col": 0, "row": 2 },
+        { "id": "async", "label": "Queue / events", "kind": "good", "col": 0, "row": 4, "sub": "async messaging" },
+        { "id": "who", "label": "Outside callers?", "kind": "decision", "col": 2, "row": 2 },
+        { "id": "rest", "label": "REST + JSON", "kind": "good", "col": 2, "row": 0, "sub": "+ OpenAPI spec" },
+        { "id": "grpc", "label": "gRPC", "kind": "good", "col": 2, "row": 4, "sub": "internal, typed" },
+        { "id": "gql", "label": "GraphQL", "kind": "good", "col": 4, "row": 0, "sub": "many UI shapes" }
+      ],
+      "edges": [
+        { "from": "start", "to": "wait" },
+        { "from": "wait", "to": "async", "label": "no" },
+        { "from": "wait", "to": "who", "label": "yes" },
+        { "from": "who", "to": "rest", "label": "yes" },
+        { "from": "who", "to": "grpc", "label": "no" },
+        { "from": "rest", "to": "gql", "label": "varied reads?", "style": "async" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Use HTTP methods and status codes for what they mean",
+      "bad": {
+        "label": "Verbs in the URL, 200 for everything",
+        "lang": "http",
+        "code": "POST /api/deleteOrder\n{ \"id\": 42 }\n\nHTTP/1.1 200 OK\n{ \"success\": false, \"error\": \"not found\" }"
+      },
+      "good": {
+        "label": "Method says the intent, status says the outcome",
+        "lang": "http",
+        "code": "DELETE /orders/42\n\nHTTP/1.1 404 Not Found\nContent-Type: application/problem+json\n{ \"title\": \"Order not found\", \"status\": 404 }"
+      },
+      "why": "Monitoring, retries and client libraries read the status code, not your body. A 200 with `success: false` hides failures from dashboards, and a POST hides the fact that a delete is idempotent and safe to retry."
+    },
+    {
+      "title": "Write gRPC contracts that can evolve",
+      "bad": {
+        "label": "Reused field numbers, no deadline",
+        "lang": "text",
+        "code": "message Order {\n  string id = 1;\n  // removed: int64 total_cents = 2;\n  string currency = 2;   // reused number 2!\n}\n\n// client\nstub.GetOrder(req)      // no deadline: can hang forever"
+      },
+      "good": {
+        "label": "Reserve old numbers, always set a deadline",
+        "lang": "text",
+        "code": "message Order {\n  reserved 2;\n  reserved \"total_cents\";\n  string id = 1;\n  string currency = 3;\n  Money total = 4;\n}\n\n// client\nstub.GetOrder(req, timeout=0.3)"
+      },
+      "why": "On the wire protobuf identifies fields by number, not name. Reusing a number makes old clients decode new data as the wrong field. Reserving it prevents that. A call without a deadline can hold resources forever when the server is stuck."
+    }
+  ],
+  "checklist": [
+    "Each boundary has a deliberate style: REST for public and browser clients, gRPC for internal typed calls, events for work nobody waits on.",
+    "GET and HEAD never change state; PUT and DELETE are idempotent; POST is used for creates and actions and is made retry-safe with an idempotency key.",
+    "Status codes are specific: 201 with a Location for creates, 204 for empty success, 400/404/409/422 for client errors, 429 for throttling, 5xx only for server faults.",
+    "The contract is written down: an OpenAPI document for REST, `.proto` files for gRPC, both versioned with the code.",
+    "Every gRPC call sets a deadline and the server checks for cancellation.",
+    "Protobuf fields are never renumbered or reused; removed fields are marked `reserved`.",
+    "If browsers need a gRPC service, there is a gRPC-Web proxy or a REST/JSON gateway in front of it."
+  ],
+  "antipatterns": [
+    {
+      "title": "Every call is a POST to one endpoint",
+      "bad": { "label": "RPC tunnelled through POST", "diagram": "rg-post-tunnel" },
+      "better": {
+        "label": "Methods match intent",
+        "lang": "http",
+        "code": "GET    /orders/42        (safe, cacheable)\nPUT    /orders/42/notes  (idempotent replace)\nDELETE /orders/42        (idempotent)\nPOST   /orders           (create, send Idempotency-Key)"
+      },
+      "why": "HTTP intermediaries make decisions from the method. A cache will not store a POST response by default, and a generic retry policy must assume a POST is unsafe to repeat. Tunnelling throws that away and gains nothing."
+    },
+    {
+      "title": "Exposing raw gRPC to browsers and partners",
+      "bad": {
+        "label": "Publish the internal .proto to the world",
+        "lang": "text",
+        "code": "Partner docs: \"Install protoc, generate a stub,\n open an HTTP/2 connection to orders.internal:443\"\n(browsers cannot do this without gRPC-Web)"
+      },
+      "better": {
+        "label": "A public REST facade, gRPC behind it",
+        "lang": "text",
+        "code": "Public:   GET https://api.example.com/v1/orders/42  (JSON)\nInternal: Orders.GetOrder over gRPC\nGateway maps one to the other and owns auth,\nrate limits and the public versioning policy."
+      },
+      "why": "Native gRPC needs HTTP/2 framing and trailers that browser fetch APIs do not expose, and many partners expect plain HTTP and JSON. A facade also stops internal refactors from leaking into the public contract."
+    },
+    {
+      "title": "Choosing GraphQL for a single simple client",
+      "bad": {
+        "label": "GraphQL server for three fixed screens",
+        "lang": "text",
+        "code": "One web app, three pages, stable data needs.\nAdded: schema, resolvers, query-cost limits,\nper-field auth, custom caching layer."
+      },
+      "better": {
+        "label": "A few well-shaped REST endpoints",
+        "lang": "text",
+        "code": "GET /orders?status=open&limit=20\nGET /orders/42\nGET /orders/42/items\nCacheable at the CDN, trivial to rate limit."
+      },
+      "why": "GraphQL pays off when many clients need different shapes of a rich graph. With one client and stable screens you take on query-cost control, N+1 resolver problems and weaker HTTP caching without getting the benefit."
+    }
+  ],
+  "interview": [
+    "State the split up front: \"Public API is REST with JSON and an OpenAPI spec; internal calls are gRPC; side effects like emails go through a queue.\" Then justify each choice in one sentence.",
+    "When you write an endpoint on the whiteboard, write the method and the success status with it, for example `POST /orders -> 201 + Location`, and say which calls are idempotent.",
+    "Mention deadlines and streaming when you choose gRPC; mention gRPC-Web or a gateway if a browser is involved.",
+    "At SSE level, talk about who owns the contract, how it is reviewed and how it evolves without breaking callers."
+  ],
+  "quiz": [
+    {
+      "question": "Which set of HTTP methods does RFC 9110 define as idempotent?",
+      "choices": ["GET, HEAD, OPTIONS, TRACE, PUT and DELETE", "GET and POST only", "PUT, PATCH and POST", "Only DELETE"],
+      "answer": 0,
+      "explain": "The safe methods (GET, HEAD, OPTIONS, TRACE) are idempotent, and so are PUT and DELETE. POST is not, and PATCH is not guaranteed to be. That is why creates need an idempotency key to be retried safely."
+    },
+    {
+      "question": "Why can a browser not call a native gRPC service directly with fetch?",
+      "choices": ["Browsers cannot parse binary data", "Browser APIs do not expose the HTTP/2 framing and trailers gRPC relies on", "gRPC only runs over UDP", "gRPC requires mutual TLS on every call"],
+      "answer": 1,
+      "explain": "gRPC carries status in HTTP/2 trailers and needs control of the framing. Browsers hide those details, so you put gRPC-Web with a proxy, or a REST/JSON gateway, in front."
+    },
+    {
+      "question": "You removed protobuf field 5 (`discount`). What should you do with number 5?",
+      "choices": ["Reuse it for the next new field", "Mark it reserved so nobody reuses it", "Renumber the remaining fields to close the gap"],
+      "answer": 1,
+      "explain": "Protobuf identifies fields on the wire by number. Reusing or renumbering makes old binaries decode data into the wrong field. `reserved 5;` turns that mistake into a compile error."
+    },
+    {
+      "question": "A create endpoint succeeded. Which response best follows HTTP semantics?",
+      "choices": ["200 OK with {\"success\": true}", "201 Created with a Location header for the new resource", "204 No Content with the new id in the body", "202 Accepted always"],
+      "answer": 1,
+      "explain": "201 tells clients and tools a resource was created, and Location says where. 204 means no body at all. 202 fits only when the work is queued and not done yet."
+    },
+    {
+      "question": "When is asynchronous messaging a better fit than a REST or gRPC call?",
+      "choices": ["When the caller needs the result to render the page", "When the caller does not need the answer now and the work can be retried later", "When the payload is small", "Never; queues are only for batch jobs"],
+      "answer": 1,
+      "explain": "A queue decouples the caller from the worker's availability and speed. If the user is not waiting on the result, such as sending an email, a message avoids holding a request open and absorbs bursts."
+    }
+  ],
+  "practice": {
+    "prompt": "You are designing a food-delivery platform. The mobile app, a partner restaurant integration and about 30 internal services all need to talk to each other. Which API styles do you use where, and why?",
+    "answer": "Mobile app and partners: REST over HTTPS with JSON behind an API gateway, described by an OpenAPI spec. It works everywhere, GET responses can be cached, and partners expect it. Use proper methods and status codes, idempotency keys on POST /orders, and a versioned public contract. Internal services: gRPC with protobuf, shared `.proto` files in a contract repo, deadlines on every call and server streaming for live courier location to the gateway, which forwards it to the app over WebSocket or SSE. Restaurant notifications to partners: webhooks, because they do not poll. Side effects such as receipts, analytics and payouts: events on a stream so checkout does not wait on them. I would not add GraphQL unless many client teams start needing very different slices of the same data.",
+    "rubric": [
+      "REST/JSON at the public edge with a written contract (OpenAPI)",
+      "gRPC internally, with deadlines and a shared, reviewed proto contract",
+      "Explains the browser/partner reach problem and the gateway translation",
+      "Uses async messaging or webhooks for work nobody waits on",
+      "Mentions HTTP method semantics and idempotency for retried creates",
+      "Justifies or rejects GraphQL instead of adding it by default"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-queues-events"],
+    "cases": ["chat-messaging", "ride-hailing"],
+    "guides": ["resource-naming", "api-versioning", "api-error-format", "idempotency-keys", "queues-async-work", "webhooks"]
+  }
+}

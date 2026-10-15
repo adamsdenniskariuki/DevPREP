@@ -1,0 +1,234 @@
+{
+  "id": "idempotency-keys",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "Idempotency keys: safe retries for unsafe requests",
+  "summary": "Let clients retry a POST after a timeout without charging twice: store each key with its result and replay that result on a repeat.",
+  "minutes": 12,
+  "principle": "Any request that changes state and might be retried should carry a client-generated idempotency key. The server records the key with the outcome and returns the same outcome for every repeat, so a retry can never apply the change twice.",
+  "why": "Networks fail in the worst place: after the server has done the work but before the client hears back. The client cannot tell \"never arrived\" from \"done, reply lost\", so it retries. GET, PUT and DELETE are idempotent by definition in HTTP, but POST is not: a retried \"create payment\" can create a second payment.\n\nIdempotency keys turn that ambiguity into a lookup. The client picks a unique key (usually a UUID) per logical operation and sends it on every attempt. The server stores the key, a fingerprint of the request and the response. A repeat with the same key gets the stored response instead of a second side effect. Payment APIs such as Stripe use this pattern with an `Idempotency-Key` header, and the IETF has a draft standard for the same header.",
+  "diagrams": [
+    {
+      "id": "retry-sequence",
+      "type": "sequence",
+      "title": "A retry after a lost reply",
+      "alt": "Sequence diagram. The client sends a payment request with key K1, the API stores K1 and charges the card, but the reply is lost. The client retries with the same key K1 and the API returns the stored result without charging again.",
+      "caption": "The second attempt finds K1 already completed and replays the saved response. The card is charged once.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "api", "label": "Payments API" },
+        { "id": "store", "label": "Key store" },
+        { "id": "psp", "label": "Card network" }
+      ],
+      "messages": [
+        { "from": "client", "to": "api", "label": "POST /payments (key K1)", "note": "The client generates K1 once for this checkout and reuses it on every retry." },
+        { "from": "api", "to": "store", "label": "insert K1 as in-progress", "note": "An atomic insert claims the key. A unique constraint stops a parallel duplicate." },
+        { "from": "api", "to": "psp", "label": "charge 40.00" },
+        { "from": "psp", "to": "api", "label": "approved", "style": "reply" },
+        { "from": "api", "to": "store", "label": "save K1 = 201 + body", "note": "The full response is saved before replying, so a repeat can return it byte for byte." },
+        { "from": "api", "to": "client", "label": "201 Created (lost)", "style": "fail", "note": "The connection drops. The client only sees a timeout." },
+        { "from": "client", "to": "api", "label": "retry POST (key K1)", "note": "Same key, same body. This is the dangerous moment the key exists for." },
+        { "from": "api", "to": "store", "label": "lookup K1" },
+        { "from": "store", "to": "api", "label": "completed: 201 + body", "style": "reply" },
+        { "from": "api", "to": "client", "label": "201 Created (replayed)", "style": "reply", "note": "No second charge. The client cannot tell this from the first reply, which is the point." }
+      ]
+    },
+    {
+      "id": "key-states",
+      "type": "flow",
+      "title": "The life of an idempotency key",
+      "alt": "State machine for an idempotency key. A new key moves to in-progress when claimed and to completed when the side effect is done. A repeat while in progress gets 409 Conflict; a repeat after completion replays the stored response; completed keys expire after a retention window.",
+      "caption": "The in-progress state is what stops two parallel retries from both doing the work.",
+      "nodes": [
+        { "id": "new", "label": "Unseen key", "kind": "state", "col": 0, "row": 0 },
+        { "id": "progress", "label": "In progress", "kind": "state", "col": 2, "row": 0, "sub": "claimed atomically" },
+        { "id": "done", "label": "Completed", "kind": "state", "col": 4, "row": 0, "sub": "response stored" },
+        { "id": "conflict", "label": "409 Conflict", "kind": "bad", "col": 2, "row": 2, "sub": "repeat mid-flight" },
+        { "id": "replay", "label": "Replay response", "kind": "good", "col": 4, "row": 2 },
+        { "id": "expired", "label": "Expired", "kind": "state", "col": 4, "row": 4, "sub": "after retention" }
+      ],
+      "edges": [
+        { "from": "new", "to": "progress", "label": "first request" },
+        { "from": "progress", "to": "done", "label": "side effect done" },
+        { "from": "progress", "to": "conflict", "label": "parallel repeat", "style": "fail" },
+        { "from": "done", "to": "replay", "label": "repeat", "style": "reply" },
+        { "from": "replay", "to": "expired", "label": "window ends", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The first request claims the key with an atomic insert. If two requests race, only one insert wins." },
+        { "edges": [2], "text": "A repeat that arrives while the first is still running must not start the work again. Answer 409 so the client backs off and retries." },
+        { "edges": [1], "text": "When the side effect commits, store the status code and body against the key, in the same transaction if you can." },
+        { "edges": [3], "text": "Every later repeat replays the stored response. It does not re-run business logic." },
+        { "edges": [4], "text": "Keys are kept for a retention window (often about a day) and then deleted. Retries after that are treated as new requests." }
+      ]
+    },
+    {
+      "id": "double-charge",
+      "type": "compare",
+      "title": "Retrying without and with a key",
+      "alt": "Side-by-side comparison. Without a key, the client's retry reaches the API as a new request and the card is charged twice. With a key, the retry is matched to the first attempt and the stored result is returned, so the card is charged once.",
+      "caption": "The client code is the same retry loop in both cases. Only the key makes the retry safe.",
+      "before": {
+        "label": "No key: two charges",
+        "nodes": [
+          { "id": "c", "label": "Client retries", "kind": "client", "col": 0, "row": 0 },
+          { "id": "a", "label": "API", "kind": "service", "col": 1, "row": 0 },
+          { "id": "p1", "label": "Charge #1", "kind": "bad", "col": 2, "row": 0 },
+          { "id": "p2", "label": "Charge #2", "kind": "bad", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "c", "to": "a", "label": "POST x2" },
+          { "from": "a", "to": "p1" },
+          { "from": "a", "to": "p2", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Key K1: one charge",
+        "nodes": [
+          { "id": "c", "label": "Client retries", "kind": "client", "col": 0, "row": 0 },
+          { "id": "a", "label": "API", "kind": "service", "col": 1, "row": 0 },
+          { "id": "k", "label": "Key store", "kind": "db", "col": 1, "row": 1 },
+          { "id": "p1", "label": "Charge #1", "kind": "good", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "c", "to": "a", "label": "POST x2, K1" },
+          { "from": "a", "to": "k", "label": "K1 seen?" },
+          { "from": "a", "to": "p1", "label": "once" }
+        ]
+      }
+    },
+    {
+      "id": "dedupe-options",
+      "type": "chart",
+      "title": "Ways to make a create safe to retry",
+      "alt": "Trade-off chart with duplicate protection on the vertical axis and implementation effort on the horizontal axis. Blind retries are low effort and give no protection. Never retrying avoids duplicates but loses requests. A natural unique key is low effort and strong when one exists. Idempotency keys are medium effort and strong. Distributed transactions are strong but costly.",
+      "caption": "Positions are a rough guide, not measurements. Use a natural unique key when the domain has one; otherwise use idempotency keys.",
+      "x": { "label": "Implementation effort", "low": "small", "high": "large" },
+      "y": { "label": "Duplicate protection", "low": "none", "high": "strong" },
+      "points": [
+        { "label": "Blind retries", "x": 1, "y": 1 },
+        { "label": "Never retry", "x": 1, "y": 6 },
+        { "label": "Natural unique key", "x": 3, "y": 8 },
+        { "label": "Idempotency key", "x": 5, "y": 9, "highlight": true },
+        { "label": "Distributed txn", "x": 9, "y": 8 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Accept a key and replay the stored response",
+      "bad": {
+        "label": "Every POST runs the side effect",
+        "lang": "js",
+        "code": "app.post('/payments', async (req, res) => {\n  const payment = await charge(req.body)\n  res.status(201).json(payment)\n})"
+      },
+      "good": {
+        "label": "Claim the key, then replay on repeats",
+        "lang": "js",
+        "code": "app.post('/payments', async (req, res) => {\n  const key = req.get('Idempotency-Key')\n  if (!key) return res.status(400).json({ error: 'Idempotency-Key required' })\n  const hash = fingerprint(req.body)\n  const claimed = await keys.claim(req.account, key, hash) // unique (account, key)\n  if (!claimed) {\n    const saved = await keys.get(req.account, key)\n    if (saved.hash !== hash) return res.status(422).json({ error: 'key reused with a different body' })\n    if (saved.state === 'in_progress') return res.status(409).json({ error: 'request in progress' })\n    return res.status(saved.status).json(saved.body)\n  }\n  const payment = await charge(req.body)\n  await keys.complete(req.account, key, 201, payment)\n  res.status(201).json(payment)\n})"
+      },
+      "why": "The claim is an atomic insert against a unique index, so two racing requests cannot both charge. Storing a fingerprint catches a client bug that reuses one key for a different payment."
+    }
+  ],
+  "checklist": [
+    "The client generates one key per logical operation (a UUID) and reuses it on every retry of that operation.",
+    "The server claims the key atomically, using a unique constraint or a conditional write, before doing any side effect.",
+    "The key is scoped to the caller (account or API key), so two customers cannot collide.",
+    "A fingerprint of the request is stored, and a reused key with a different body is rejected.",
+    "The stored response (status and body) is replayed exactly, including errors that happened after the side effect.",
+    "A repeat that arrives while the first attempt is running gets a retryable conflict, not a second execution.",
+    "Keys expire after a documented retention window, and the docs tell clients how long retries are safe."
+  ],
+  "antipatterns": [
+    {
+      "title": "Check-then-insert without a unique constraint",
+      "bad": {
+        "label": "Read, then write: two racers both see not found",
+        "lang": "sql",
+        "code": "SELECT 1 FROM idem_keys WHERE key = $1;\n-- (not found)\nINSERT INTO idem_keys (key, state) VALUES ($1, 'in_progress');"
+      },
+      "better": {
+        "label": "One atomic statement decides the winner",
+        "lang": "sql",
+        "code": "INSERT INTO idem_keys (account_id, key, hash, state)\nVALUES ($1, $2, $3, 'in_progress')\nON CONFLICT (account_id, key) DO NOTHING\nRETURNING key;  -- no row back: someone else owns it"
+      },
+      "why": "Between the SELECT and the INSERT a parallel retry can pass the same check. Only the database's unique index can settle the race; application-level checks cannot."
+    },
+    {
+      "title": "The server generates the key",
+      "bad": {
+        "label": "Key minted per request on the server",
+        "lang": "http",
+        "code": "POST /payments\n\nHTTP/1.1 201 Created\nIdempotency-Key: 7f3c...   (new on every attempt)"
+      },
+      "better": {
+        "label": "Client mints the key once per operation",
+        "lang": "http",
+        "code": "POST /payments\nIdempotency-Key: 9b1e2c4a-...   (same on every retry)\n\nHTTP/1.1 201 Created"
+      },
+      "why": "The retry problem exists because the client never got the reply. A key the server invents travels in that lost reply, so the retry cannot carry it. Only a client-generated key ties the attempts together."
+    },
+    {
+      "title": "Recording only successful responses",
+      "bad": {
+        "label": "Store the key only on 2xx",
+        "lang": "js",
+        "code": "const result = await charge(body)\nif (result.ok) await keys.complete(account, key, 201, result)\n// declined card: key left in_progress or deleted"
+      },
+      "better": {
+        "label": "Store the final outcome, success or failure",
+        "lang": "js",
+        "code": "const result = await charge(body)\nconst status = result.ok ? 201 : 402\nawait keys.complete(account, key, status, result)\n// release the key only if nothing happened at all"
+      },
+      "why": "If a declined charge is not recorded, a retry runs the charge again, and it may be approved the second time. The contract is \"same key, same answer\". Release the key only when the attempt failed before any side effect, such as a validation error."
+    }
+  ],
+  "interview": [
+    "When you design any create or payment endpoint, say early: \"Clients will retry on timeouts, so POST takes an Idempotency-Key.\"",
+    "Name the race: two retries in parallel. Explain that a unique index on (caller, key) is what makes the claim atomic.",
+    "Cover the edge cases: the same key with a different body, a repeat while the first attempt is in progress, and key expiry.",
+    "At SSE level, connect it to the rest of the system: the same idea gives effectively-once processing for queue consumers (dedupe on message id) and for webhooks you receive."
+  ],
+  "quiz": [
+    {
+      "question": "Why must the client, not the server, generate the idempotency key?",
+      "choices": ["A server-made key travels in the reply that may be lost", "Clients generate better random numbers", "HTTP forbids servers from setting headers on POST"],
+      "answer": 0,
+      "explain": "Retries happen because the client never saw the reply. Only a key the client chose before the first attempt can link a retry to it."
+    },
+    {
+      "question": "Two retries with the same key arrive at the same moment. What prevents a double charge?",
+      "choices": ["A SELECT to check whether the key exists", "An atomic insert against a unique index on the key", "A short sleep before charging"],
+      "answer": 1,
+      "explain": "Only one insert can win the unique index. A read-then-write check has a gap in which both requests see \"not found\"."
+    },
+    {
+      "question": "A client reuses key K1 with a different amount. What should the server do?",
+      "choices": ["Charge the new amount", "Replay the first response silently", "Reject it as a key reused with a different request"],
+      "answer": 2,
+      "explain": "Comparing a stored fingerprint of the request catches the client bug. Silently replaying would hide it, and charging would break the contract."
+    },
+    {
+      "question": "Which HTTP methods are idempotent by definition, so retries are safe without a key?",
+      "choices": ["GET, PUT and DELETE", "POST and PATCH", "Only GET"],
+      "answer": 0,
+      "explain": "RFC 9110 defines PUT and DELETE as idempotent, along with the safe methods such as GET. POST is not, and PATCH is not guaranteed to be."
+    }
+  ],
+  "practice": {
+    "prompt": "Design the retry safety for a \"create order\" endpoint that charges a card and reserves stock. Clients are mobile apps on flaky networks.",
+    "answer": "Require an Idempotency-Key header, generated by the app once per checkout and reused on retries. Store (account, key, request hash, state, status, body) with a unique index on (account, key). Claim with an atomic insert; return 409 to a repeat while in progress and 422 to the same key with a different body; otherwise replay the stored response. Run the charge and the reservation behind the claim and save the final outcome (including declines) before replying. Keep keys for about 24 hours and document it. Make the downstream calls idempotent too by passing the order id, so a crash between steps can be resumed safely.",
+    "rubric": [
+      "Client-generated key reused across retries",
+      "Atomic claim via a unique index, not check-then-insert",
+      "Handles in-progress repeats and mismatched bodies",
+      "Stores and replays the final outcome, including failures",
+      "Mentions a retention window and downstream idempotency"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-queues-events"],
+    "cases": ["payments", "ticket-booking"]
+  }
+}

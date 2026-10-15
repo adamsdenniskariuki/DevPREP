@@ -1,0 +1,237 @@
+{
+  "id": "stripe-idempotency",
+  "kind": "case",
+  "topic": "api",
+  "level": "se",
+  "title": "Stripe: designing an API that is safe to retry",
+  "summary": "How Stripe makes charges safe on unreliable networks: idempotency keys on every POST so retries never double-charge, plus client retries with exponential backoff and jitter.",
+  "minutes": 12,
+  "organisation": "Stripe",
+  "year": 2017,
+  "problem": "Networks fail all the time at some background rate, even between well-run servers. Any call between two machines can fail in three places: the connection may never be made, the server may fail partway through the work, or the work may succeed but the reply may be lost. In the first case the client knows a retry is safe. In the other two it cannot tell whether the operation happened.\n\nFor most operations that is fine if the endpoint is **idempotent**: calling it many times has the same effect as calling it once. HTTP defines PUT and DELETE that way. But some operations must happen exactly once and are not naturally idempotent. Charging a customer is the obvious one: a blind retry after an ambiguous failure can charge them twice. Stripe's 2017 post describes how its API and client libraries make these calls safe to retry, and how clients should retry without making an outage worse.",
+  "constraints": [
+    "Network failures are routine, not exceptional, so the design must assume some calls will fail ambiguously.",
+    "Charging money must happen exactly once per intended operation, even if the client retries.",
+    "The client cannot distinguish \"never processed\" from \"processed, reply lost\" after a broken connection.",
+    "Retries during a real server outage can add load and slow recovery, especially if many clients retry at the same moment.",
+    "The approach has to be simple enough to implement in any client language and technology stack."
+  ],
+  "decisions": [
+    {
+      "decision": "Accept a client-generated `Idempotency-Key` header on mutating (POST) endpoints and tie every retry with that key to the original request's state.",
+      "tradeoff": "The server must store keys and results and decide what each retry means, but clients get one simple rule: on any failure, retry with the same key."
+    },
+    {
+      "decision": "On a retry, act on what happened the first time: process normally if the key is new, roll back or resume work that failed midway, and replay the stored result if the work already succeeded.",
+      "tradeoff": "Handling the midway case well depends on transactional (ACID) storage or explicit state recovery, which adds design work on the server."
+    },
+    {
+      "decision": "Lean on HTTP semantics where possible: design naturally idempotent PUT and DELETE endpoints that ignore duplicates and return success.",
+      "tradeoff": "Only works when the request fully describes the end state; operations like charges still need keys."
+    },
+    {
+      "decision": "Have client libraries retry automatically with the same key, using exponential backoff and random jitter.",
+      "tradeoff": "Successful retries take longer to land, but clients stop hammering a struggling server in synchronised waves."
+    }
+  ],
+  "failures": "This is a design, not an incident; the failures are the ones it is built to survive. A **connection failure** before the request arrives leaves nothing on the server, so a retry with the same key is treated as new. A **failure midway** leaves work in limbo: if the first attempt was rolled back by an ACID database it can be retried wholesale, otherwise the server must recover state and continue. A **lost response** is the dangerous one: the charge happened but the client does not know, so without a key a retry would charge again; with a key the server replays the cached result.\n\nThe second failure mode is self-inflicted. If a server is having hard downtime, eager retries add load and can deepen the outage. Even with exponential backoff, if many clients failed at nearly the same moment their retries can stay aligned and arrive together, the **thundering herd** problem. Random jitter spreads them out.",
+  "lessons": [
+    "Classify each failure by what the client knows: definitely not sent, maybe processed, or processed with the reply lost. Only the first is safe to retry blindly.",
+    "Make writes idempotent: by HTTP semantics (PUT, DELETE) when the request describes the end state, and with client-generated idempotency keys when it does not.",
+    "Clients should keep retrying until they reach a known outcome; otherwise client and server state can drift apart.",
+    "Retry responsibly: exponential backoff so a downed server is not hammered, and jitter so clients do not retry in lockstep.",
+    "Robust retries need both halves: retry logic on clients and idempotency on servers."
+  ],
+  "caveats": "The 2017 blog post explains the principles but not Stripe's storage schema or concurrency handling. Details such as the 255-character key limit, keys being pruned after at least 24 hours, rejecting a reused key with different parameters, and not saving results when validation fails or a concurrent request is executing come from Stripe's current API reference for v1, not the 2017 post, and may change. That reference also says v1 replays the first saved response for a key, even a 500 error, rather than resuming the work; the redo-or-resume behaviour is the post's general model and is closer to what the reference describes for API v2. The backoff numbers in the bar chart illustrate the 2^n rule; they are not Stripe's library settings.",
+  "diagrams": [
+    {
+      "id": "sti-failure-points",
+      "type": "flow",
+      "title": "Three places a call can fail",
+      "alt": "Flow diagram. A client calls an API server, which does work against its database. Failures can happen at three points: the connection can fail before reaching the server, the work can fail midway, or the work can succeed but the reply can be lost on the way back.",
+      "caption": "Only the first failure is clearly safe to retry. The other two leave the client unsure whether the charge happened.",
+      "nodes": [
+        { "id": "client", "label": "Client", "kind": "client", "col": 0, "row": 2 },
+        { "id": "api", "label": "API server", "kind": "service", "col": 2, "row": 2 },
+        { "id": "db", "label": "Charge state", "kind": "db", "col": 4, "row": 2, "sub": "ACID storage" },
+        { "id": "f1", "label": "Connect fails", "kind": "bad", "col": 1, "row": 0, "sub": "safe to retry" },
+        { "id": "f2", "label": "Fails midway", "kind": "bad", "col": 3, "row": 0, "sub": "work in limbo" },
+        { "id": "f3", "label": "Reply lost", "kind": "bad", "col": 2, "row": 4, "sub": "done, but unseen" }
+      ],
+      "edges": [
+        { "from": "client", "to": "api", "label": "POST /charges" },
+        { "from": "api", "to": "db", "label": "do the work" },
+        { "from": "client", "to": "f1", "style": "fail" },
+        { "from": "api", "to": "f2", "style": "fail" },
+        { "from": "api", "to": "f3", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "The happy path: the client sends a charge, the server does the work and replies." },
+        { "edges": [2], "text": "The connection fails before the server sees anything. The client can be fairly sure a retry is safe." },
+        { "edges": [3], "text": "The server fails partway through. If the work was rolled back in an ACID transaction it can be redone; otherwise state must be recovered and the call continued." },
+        { "edges": [4], "text": "The charge succeeds but the connection breaks before the reply. The client sees the same error as before, yet retrying blindly would charge twice." }
+      ]
+    },
+    {
+      "id": "sti-retry-sequence",
+      "type": "sequence",
+      "title": "Retrying a charge with one key and growing waits",
+      "alt": "Sequence diagram. A client library sends a charge with key K. The connection fails, so it waits a short time and retries with K; the server charges and saves the result but the reply is lost. It waits about twice as long plus jitter and retries with K again, and the server returns the saved result without charging again.",
+      "caption": "Same key on every attempt, longer waits between them. The customer is charged once.",
+      "actors": [
+        { "id": "lib", "label": "Client library" },
+        { "id": "api", "label": "Stripe API" },
+        { "id": "store", "label": "Key and result" }
+      ],
+      "messages": [
+        { "from": "lib", "to": "api", "label": "POST /v1/charges, key K", "style": "fail", "note": "The connection fails before the server sees the request. The library waits a short initial time." },
+        { "from": "lib", "to": "api", "label": "retry 1 (key K)", "note": "Same key. The server has never seen K, so it treats this as a new request." },
+        { "from": "api", "to": "store", "label": "record K, run charge" },
+        { "from": "store", "to": "api", "label": "charge done, result saved", "style": "reply", "note": "The result is stored against K before the reply goes out." },
+        { "from": "api", "to": "lib", "label": "200 OK (lost)", "style": "fail", "note": "The connection breaks. The client only sees an error, the same as a failed charge." },
+        { "from": "lib", "to": "api", "label": "retry 2 (key K)", "note": "The wait roughly doubles and random jitter is added, so many clients do not retry together." },
+        { "from": "api", "to": "store", "label": "look up K" },
+        { "from": "store", "to": "api", "label": "saved result", "style": "reply" },
+        { "from": "api", "to": "lib", "label": "200 OK (replayed)", "style": "reply", "note": "The cached result comes back. The customer is charged only once." }
+      ]
+    },
+    {
+      "id": "sti-server-retry",
+      "type": "flow",
+      "title": "What the server does with a retried key",
+      "alt": "Decision flow. A request with an idempotency key arrives and the server checks whether it has seen the key. If not, it processes the request normally. If the earlier attempt failed midway, it retries the rolled-back work or recovers state and continues. If the earlier attempt succeeded, it replays the cached result.",
+      "caption": "The key turns an ambiguous retry into a lookup with three clear outcomes.",
+      "nodes": [
+        { "id": "req", "label": "Request + key", "kind": "client", "col": 0, "row": 1 },
+        { "id": "check", "label": "Key seen?", "kind": "decision", "col": 2, "row": 1 },
+        { "id": "new", "label": "Process normally", "kind": "good", "col": 4, "row": 0, "sub": "first time seen" },
+        { "id": "mid", "label": "Redo or resume", "kind": "state", "col": 4, "row": 1, "sub": "rolled back or not" },
+        { "id": "done", "label": "Replay result", "kind": "good", "col": 4, "row": 2, "sub": "no second charge" }
+      ],
+      "edges": [
+        { "from": "req", "to": "check" },
+        { "from": "check", "to": "new", "label": "no" },
+        { "from": "check", "to": "mid", "label": "failed midway" },
+        { "from": "check", "to": "done", "label": "succeeded" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Every attempt carries the same client-generated key, so the server can correlate it with earlier attempts." },
+        { "edges": [1], "text": "After a connection failure the server sees the key for the first time and processes it as a normal request." },
+        { "edges": [2], "text": "After a midway failure, work rolled back by an ACID database is retried wholesale; otherwise the server recovers state and continues." },
+        { "edges": [3], "text": "After a lost response, the server returns the cached result of the successful operation." }
+      ]
+    },
+    {
+      "id": "sti-herd",
+      "type": "compare",
+      "title": "Retrying in lockstep versus with jitter",
+      "alt": "Side-by-side comparison. Without jitter, three clients that failed together retry at the same moments and hammer a degraded server. With exponential backoff plus random jitter, the same clients retry at spread-out times and the server has room to recover.",
+      "caption": "Backoff alone keeps clients that failed together in step. Random jitter breaks the alignment.",
+      "before": {
+        "label": "Same schedule: thundering herd",
+        "nodes": [
+          { "id": "a", "label": "Client A", "kind": "client", "col": 0, "row": 0, "sub": "retry at t" },
+          { "id": "b", "label": "Client B", "kind": "client", "col": 0, "row": 1, "sub": "retry at t" },
+          { "id": "c", "label": "Client C", "kind": "client", "col": 0, "row": 2, "sub": "retry at t" },
+          { "id": "s", "label": "Degraded server", "kind": "bad", "col": 2, "row": 1, "sub": "hit all at once" }
+        ],
+        "edges": [
+          { "from": "a", "to": "s", "style": "fail" },
+          { "from": "b", "to": "s", "style": "fail" },
+          { "from": "c", "to": "s", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Backoff plus jitter",
+        "nodes": [
+          { "id": "a", "label": "Client A", "kind": "client", "col": 0, "row": 0, "sub": "t + random" },
+          { "id": "b", "label": "Client B", "kind": "client", "col": 0, "row": 1, "sub": "t + random" },
+          { "id": "c", "label": "Client C", "kind": "client", "col": 0, "row": 2, "sub": "t + random" },
+          { "id": "s", "label": "Server", "kind": "good", "col": 2, "row": 1, "sub": "room to recover" }
+        ],
+        "edges": [
+          { "from": "a", "to": "s", "style": "async" },
+          { "from": "b", "to": "s", "style": "async" },
+          { "from": "c", "to": "s", "style": "async" }
+        ]
+      }
+    },
+    {
+      "id": "sti-backoff",
+      "type": "bars",
+      "title": "Exponential backoff: wait grows as 2^n",
+      "alt": "Bar chart of relative wait time after each consecutive failure under a 2 to the n rule: 2 units after the first failure, 4 after the second, 8 after the third, 16 after the fourth and 32 after the fifth.",
+      "caption": "Illustrative units, not Stripe's settings. Each failure doubles the wait; jitter then adds a random amount to each.",
+      "unit": "wait units",
+      "bars": [
+        { "label": "After failure 1", "value": 2 },
+        { "label": "After failure 2", "value": 4 },
+        { "label": "After failure 3", "value": 8 },
+        { "label": "After failure 4", "value": 16 },
+        { "label": "After failure 5", "value": 32, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "When you design a payment or order endpoint, list the three failure points (connect, midway, reply lost) and say which ones make a retry ambiguous.",
+    "Say: \"POST endpoints accept an Idempotency-Key the client generates; retries reuse it and the server replays the stored result.\"",
+    "Prefer naturally idempotent designs first: a PUT that fully describes the resource can be repeated safely without any key.",
+    "Cover the client side too: retries until a known outcome, exponential backoff, and jitter to avoid a thundering herd.",
+    "Mention practical rules from Stripe's API reference: random keys such as V4 UUIDs, keys kept for at least 24 hours, and a reused key with different parameters is rejected."
+  ],
+  "quiz": [
+    {
+      "question": "Which failure leaves a client certain that retrying is safe even without an idempotency key?",
+      "choices": ["The connection could not be established at all", "The connection dropped midway through the exchange", "The request timed out after it was sent"],
+      "answer": 0,
+      "explain": "If the connection was never made, the server never saw the request. A drop or timeout after sending leaves the outcome unknown."
+    },
+    {
+      "question": "A charge succeeded but the reply was lost. The client retries with the same key. What should the server do?",
+      "choices": ["Charge again and refund the first charge", "Return the cached result of the successful charge", "Return 404 because the request already exists"],
+      "answer": 1,
+      "explain": "The key ties the retry to the first attempt. Replaying the stored result gives the client its answer without a second charge."
+    },
+    {
+      "question": "Why does Stripe recommend adding random jitter to exponential backoff?",
+      "choices": ["To make retries faster on average", "So clients that failed at the same time don't keep retrying at the same time", "Because HTTP requires it"],
+      "answer": 1,
+      "explain": "Backoff spaces out one client's attempts, but many clients that failed together stay aligned. Jitter spreads them and avoids a thundering herd on a struggling server."
+    },
+    {
+      "question": "Which operation is naturally idempotent without an idempotency key?",
+      "choices": ["POST /charges with an amount", "PUT a DNS record with its full type, value and TTL", "POST /emails to send a message"],
+      "answer": 1,
+      "explain": "The PUT fully describes the end state, so repeating it changes nothing; the server can treat a duplicate as success. Charges and sends are side effects that need a key."
+    }
+  ],
+  "practice": {
+    "prompt": "Design the client and server behaviour for a \"send payout\" API used by mobile apps on flaky networks, so that a payout is never sent twice and clients do not overwhelm the API during an outage.",
+    "answer": "The client generates a random key (for example a V4 UUID) once per payout and sends it in an Idempotency-Key header on every attempt. The server stores the key, scoped to the account, with a fingerprint of the parameters and the outcome. On a retry: if the key is new, process normally; if the first attempt failed midway, rely on a database transaction so the work either rolled back and can be redone, or recover the saved state and continue; if it succeeded, replay the stored response. Reject a reused key with different parameters. Keep keys for a documented window such as 24 hours. The client library retries on network errors and 5xx responses until it gets a definite outcome, waiting a base delay times 2^n plus random jitter, with a cap on the wait and on total attempts, and surfaces a pending state to the user rather than giving up silently.",
+    "rubric": [
+      "Client-generated key, reused on every retry of the same payout",
+      "Server handles new, midway-failed and completed keys differently",
+      "Replays the stored result rather than re-executing",
+      "Rejects key reuse with different parameters and documents retention",
+      "Exponential backoff with jitter and a cap on retries"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-reliability-observability"],
+    "cases": ["payments", "ticket-booking"],
+    "guides": ["idempotency-keys", "retries-backoff", "circuit-breakers", "api-error-format", "api-rate-limits"]
+  },
+  "sources": [
+    {
+      "title": "Designing robust and predictable APIs with idempotency",
+      "publisher": "Stripe Blog",
+      "url": "https://stripe.com/blog/idempotency",
+      "date": "2017-02-22"
+    },
+    {
+      "title": "Idempotent requests (API reference)",
+      "publisher": "Stripe Docs",
+      "url": "https://docs.stripe.com/api/idempotent_requests"
+    }
+  ]
+}

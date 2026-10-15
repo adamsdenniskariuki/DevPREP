@@ -1,0 +1,275 @@
+{
+  "id": "webhooks",
+  "kind": "guide",
+  "topic": "api",
+  "level": "sse",
+  "title": "Designing webhooks that survive the real internet",
+  "summary": "Sign every delivery with HMAC and a timestamp, deliver at least once with backoff, let receivers dedupe by event id, never promise ordering, and give customers a way to replay what they missed.",
+  "minutes": 16,
+  "principle": "A webhook is an API call you make to a server you do not control. Assume it will be slow, down, misconfigured or spoofed. Make each delivery **verifiable** (HMAC signature over a timestamp and the raw body), **repeatable** (at-least-once delivery with a stable event id), **order-independent** (receivers re-fetch or compare versions), and **recoverable** (retries with backoff, a dead-letter state and a replay UI).",
+  "why": "Polling wastes calls and adds latency, so platforms push events instead: \"payment succeeded\", \"repo pushed\", \"subscription cancelled\". But the push crosses the public internet to an endpoint someone else runs. Their server may return 500 during a deploy, time out under load, or be pointed at the wrong URL for a week.\n\nThat forces a set of contracts. Delivery is **at least once**: if the provider is unsure whether a delivery landed (a timeout after the receiver committed), it must resend, so receivers dedupe by event id. Ordering is **not guaranteed**: retries and parallel workers mean `subscription.updated` can arrive before `subscription.created`. Anyone can POST to a public URL, so every request is **signed** with a per-endpoint secret, and the signature covers a timestamp so a captured request cannot be replayed later.\n\nPayload design is a trade-off. **Thin** events carry ids and the receiver fetches current state from the API, so they are always fresh and leak less data, at the cost of an extra call. **Fat** events carry the full object, which saves the call but may be stale by the time it is processed out of order.\n\nOn the provider side, at scale, webhooks are a queue-backed delivery system with per-endpoint isolation: one customer's dead endpoint must not delay everyone else's events.",
+  "diagrams": [
+    {
+      "id": "wh-delivery-sequence",
+      "type": "sequence",
+      "title": "A delivery that times out, retries, and is deduplicated",
+      "alt": "Sequence diagram. The provider's dispatcher posts a signed event to the receiver. The receiver verifies the signature and timestamp, records the event id, queues the work and replies 200, but the reply times out at the dispatcher. The dispatcher retries later with the same event id. The receiver verifies it, finds the id already recorded and replies 200 without queuing the work again.",
+      "caption": "The provider cannot tell a lost reply from a lost request, so it resends. The receiver's event-id check makes the duplicate harmless.",
+      "actors": [
+        { "id": "disp", "label": "Dispatcher" },
+        { "id": "recv", "label": "Receiver" },
+        { "id": "seen", "label": "Seen-ids table" },
+        { "id": "q", "label": "Work queue" }
+      ],
+      "messages": [
+        { "from": "disp", "to": "recv", "label": "POST evt_91 + sig + ts", "note": "Headers carry the event id, a timestamp and an HMAC-SHA256 signature over `timestamp.body`." },
+        { "from": "recv", "to": "seen", "label": "insert evt_91 (new)", "note": "A unique constraint on the event id. The signature and timestamp were checked first." },
+        { "from": "recv", "to": "q", "label": "enqueue evt_91", "style": "async", "note": "Real work happens later in a worker, so the endpoint can reply in milliseconds." },
+        { "from": "recv", "to": "disp", "label": "200 (reply lost)", "style": "fail", "note": "A network blip or a slow proxy: the dispatcher hits its timeout and records a failed attempt." },
+        { "from": "disp", "to": "recv", "label": "retry evt_91, new ts + sig", "note": "Same event id; the timestamp and signature are fresh for this attempt." },
+        { "from": "recv", "to": "seen", "label": "insert evt_91" },
+        { "from": "seen", "to": "recv", "label": "conflict: already seen", "style": "reply" },
+        { "from": "recv", "to": "disp", "label": "200 (no new work)", "style": "reply", "note": "Duplicates still get 2xx. An error here would make the provider keep retrying an event that was handled." }
+      ]
+    },
+    {
+      "id": "wh-delivery-states",
+      "type": "flow",
+      "title": "The life of one delivery attempt",
+      "alt": "State machine. A queued event moves to delivering. A 2xx response marks it delivered. A 5xx or timeout marks the attempt failed and moves it to a backoff wait, then back to delivering. After the last attempt it moves to dead letter, from which a customer can replay it from the dashboard, putting it back in the queue.",
+      "caption": "Retries are automatic but bounded. The dead-letter state plus a replay button turns a long outage on the customer side into a recoverable one.",
+      "nodes": [
+        { "id": "queued", "label": "Event queued", "kind": "state", "col": 0, "row": 2 },
+        { "id": "deliv", "label": "Delivering", "kind": "state", "col": 2, "row": 0, "sub": "10s timeout" },
+        { "id": "done", "label": "Delivered", "kind": "good", "col": 4, "row": 0, "sub": "2xx received" },
+        { "id": "backoff", "label": "Backoff wait", "kind": "state", "col": 1, "row": 2, "sub": "1m, 5m, 30m..." },
+        { "id": "failed", "label": "Attempt failed", "kind": "bad", "col": 3, "row": 2, "sub": "5xx / timeout" },
+        { "id": "dead", "label": "Dead letter", "kind": "bad", "col": 3, "row": 4, "sub": "kept for 30 days" },
+        { "id": "replay", "label": "Replay", "kind": "good", "col": 0, "row": 4, "sub": "from dashboard" }
+      ],
+      "edges": [
+        { "from": "queued", "to": "deliv", "label": "dispatch" },
+        { "from": "deliv", "to": "done", "label": "2xx" },
+        { "from": "deliv", "to": "failed", "label": "5xx / timeout", "style": "fail" },
+        { "from": "failed", "to": "backoff", "label": "attempts left" },
+        { "from": "backoff", "to": "deliv", "label": "retry", "style": "async" },
+        { "from": "failed", "to": "dead", "label": "last attempt", "style": "fail" },
+        { "from": "dead", "to": "replay", "label": "customer fixes" },
+        { "from": "replay", "to": "queued", "label": "re-enqueue", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Events are written to a durable queue in the same transaction as the state change (an outbox), so a crash cannot lose them. A dispatcher picks them up per endpoint." },
+        { "edges": [1], "text": "Any 2xx within the timeout counts as delivered. Receivers should answer fast and do the real work asynchronously." },
+        { "edges": [2, 3, 4], "text": "A 5xx, a timeout or a connection error schedules a retry with exponential backoff and jitter, spread over hours or days so a receiver's long deploy or outage is survivable." },
+        { "edges": [5], "text": "After the final attempt the event goes to a dead-letter state. Providers often also disable an endpoint that has failed continuously and email its owner." },
+        { "edges": [6, 7], "text": "Once the customer fixes their endpoint they replay the missed events from a dashboard or an API (\"resend all failed since Tuesday\"). Because receivers dedupe by event id, replaying too much is safe." }
+      ]
+    },
+    {
+      "id": "wh-signing-compare",
+      "type": "compare",
+      "title": "Unsigned vs signed webhooks",
+      "alt": "Side-by-side comparison. On the left, an attacker posts a fake payment succeeded event to the receiver's public URL and the receiver ships the order. On the right, the receiver checks an HMAC signature over the timestamp and raw body and rejects the forged request, and also rejects a captured real request replayed with an old timestamp.",
+      "caption": "A public URL is not a secret. Verify the signature on the raw bytes and reject stale timestamps before you trust a single field.",
+      "before": {
+        "label": "No signature: anyone can POST",
+        "nodes": [
+          { "id": "atk", "label": "Attacker", "kind": "bad", "col": 0, "row": 0 },
+          { "id": "r", "label": "Receiver", "kind": "service", "col": 1, "row": 0 },
+          { "id": "ship", "label": "Order shipped", "kind": "bad", "col": 2, "row": 0, "sub": "never paid" }
+        ],
+        "edges": [
+          { "from": "atk", "to": "r", "label": "fake paid event", "style": "fail" },
+          { "from": "r", "to": "ship" }
+        ]
+      },
+      "after": {
+        "label": "HMAC over timestamp + body",
+        "nodes": [
+          { "id": "atk", "label": "Attacker", "kind": "bad", "col": 0, "row": 0 },
+          { "id": "r", "label": "Verify HMAC", "kind": "decision", "col": 1, "row": 0, "sub": "and ts < 5 min" },
+          { "id": "no", "label": "401 rejected", "kind": "good", "col": 2, "row": 0 },
+          { "id": "p", "label": "Provider", "kind": "external", "col": 0, "row": 1, "sub": "has the secret" },
+          { "id": "ok", "label": "Accepted", "kind": "good", "col": 1, "row": 1 }
+        ],
+        "edges": [
+          { "from": "atk", "to": "r", "label": "forged / replayed", "style": "fail" },
+          { "from": "r", "to": "no" },
+          { "from": "p", "to": "ok", "label": "valid sig" }
+        ]
+      }
+    },
+    {
+      "id": "wh-payload-chart",
+      "type": "chart",
+      "title": "Thin vs fat event payloads",
+      "alt": "Chart with payload size on the horizontal axis and how fresh the data is when the receiver processes it on the vertical axis. An id-only thin event is small and always fresh because the receiver fetches current state. A full snapshot is large and can be stale when events arrive out of order. A snapshot with a version number is large but lets the receiver discard stale updates. A changed-fields delta is medium size and fragile when events are missed.",
+      "caption": "Rough positions. Thin events plus a fetch are the safest default; fat events need a version so receivers can drop stale ones.",
+      "x": { "label": "Payload size", "low": "ids only", "high": "full object" },
+      "y": { "label": "Freshness when processed", "low": "maybe stale", "high": "always current" },
+      "points": [
+        { "label": "Thin: id + type", "x": 1, "y": 9, "highlight": true },
+        { "label": "Delta: changed fields", "x": 4, "y": 3 },
+        { "label": "Fat snapshot", "x": 9, "y": 4 },
+        { "label": "Fat + version", "x": 8, "y": 7 }
+      ]
+    },
+    {
+      "id": "wh-retry-bars",
+      "type": "bars",
+      "title": "An example retry schedule",
+      "alt": "Bar chart of an example retry schedule after an immediate first attempt, showing minutes after the event for each retry: attempt 2 after 1 minute, attempt 3 after 5 minutes, attempt 4 after 30 minutes, attempt 5 after 2 hours, attempt 6 after 8 hours and attempt 7 after 24 hours.",
+      "caption": "Illustrative, not any provider's real schedule. Exponential gaps cover a full day of receiver downtime with only seven attempts.",
+      "unit": "minutes after event",
+      "bars": [
+        { "label": "Attempt 2", "value": 1 },
+        { "label": "Attempt 3", "value": 5 },
+        { "label": "Attempt 4", "value": 30 },
+        { "label": "Attempt 5", "value": 120 },
+        { "label": "Attempt 6", "value": 480 },
+        { "label": "Attempt 7", "value": 1440, "highlight": true }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Verify the signature before trusting anything",
+      "bad": {
+        "label": "Parse and act on whatever arrives",
+        "lang": "js",
+        "code": "app.post('/webhooks', express.json(), async (req, res) => {\n  if (req.body.type === 'payment.succeeded') await shipOrder(req.body.data.orderId)\n  res.sendStatus(200)\n})"
+      },
+      "good": {
+        "label": "Raw body, HMAC, timestamp window, constant-time compare",
+        "lang": "js",
+        "code": "import crypto from 'node:crypto'\n\napp.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res) => {\n  const ts = Number(req.get('Webhook-Timestamp'))\n  const sig = Buffer.from(req.get('Webhook-Signature') ?? '', 'hex')\n  if (!ts || Math.abs(Date.now() / 1000 - ts) > 300) return res.sendStatus(401)\n  const expected = crypto.createHmac('sha256', SECRET)\n    .update(`${ts}.`).update(req.body).digest()\n  if (sig.length !== expected.length || !crypto.timingSafeEqual(sig, expected)) return res.sendStatus(401)\n  const event = JSON.parse(req.body)\n  // ... dedupe and enqueue, see next example\n  res.sendStatus(200)\n})"
+      },
+      "why": "The signature must be computed over the exact bytes received; re-serialising parsed JSON can change whitespace or key order and break it. Including the timestamp in the signed string, and rejecting anything older than a few minutes, stops an attacker from replaying a captured genuine request. A constant-time comparison avoids leaking the signature through timing."
+    },
+    {
+      "title": "Acknowledge fast, dedupe by event id, process async",
+      "bad": {
+        "label": "Do all the work inside the request",
+        "lang": "js",
+        "code": "const event = JSON.parse(req.body)\nawait chargeLoyaltyPoints(event)   // 20 s, may time out\nawait sendEmail(event)\nres.sendStatus(200)                 // provider already gave up and will retry"
+      },
+      "good": {
+        "label": "Record the id, enqueue, reply 200",
+        "lang": "js",
+        "code": "const event = JSON.parse(req.body)\nconst inserted = await db.query(\n  'INSERT INTO webhook_events (id, type, body) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING RETURNING id',\n  [event.id, event.type, event])\nif (inserted.rowCount) await queue.publish('webhooks', event.id)\nres.sendStatus(200)   // duplicates also get 200 so the provider stops retrying"
+      },
+      "why": "Slow handlers cause timeouts, timeouts cause retries, and retries cause duplicate work. Storing the event id under a unique constraint and replying immediately makes the endpoint fast and idempotent. Workers then process events at their own pace and can re-fetch current state to cope with out-of-order arrival."
+    }
+  ],
+  "checklist": [
+    "Every event has a unique, stable id, a type, a created timestamp and an API version; retries reuse the same id.",
+    "Each delivery is signed with a per-endpoint secret using HMAC-SHA256 over a timestamp and the raw body; secrets can be rotated with an overlap period.",
+    "Receivers reject stale timestamps (a few minutes) and compare signatures in constant time.",
+    "Delivery is documented as at-least-once and unordered; receivers dedupe by event id and use versions or re-fetching to handle order.",
+    "Retries use exponential backoff with jitter over hours, then dead-letter; continuously failing endpoints are disabled with a notification.",
+    "Receivers reply 2xx within a few seconds and do work asynchronously.",
+    "Endpoints are verified on registration (for example a challenge the endpoint must echo), and the provider blocks private and internal addresses to prevent SSRF.",
+    "Customers can see delivery attempts and responses, and replay or resend events from a dashboard or API.",
+    "Each endpoint has its own queue or concurrency limit so one slow customer cannot delay others."
+  ],
+  "antipatterns": [
+    {
+      "title": "Relying on event order",
+      "bad": {
+        "label": "Apply each event as the new truth",
+        "lang": "text",
+        "code": "arrives 1st: subscription.updated  {status: \"active\"}    (sent 2nd)\narrives 2nd: subscription.updated  {status: \"past_due\"}  (sent 1st, retried)\nresult: receiver stores \"past_due\", which is stale"
+      },
+      "better": {
+        "label": "Compare versions or re-fetch",
+        "lang": "text",
+        "code": "on event: if event.data.version <= stored.version -> ignore\nor: treat the event as a hint, GET /subscriptions/{id} for current state"
+      },
+      "why": "Retries, parallel dispatchers and network delays all reorder deliveries. Providers rarely guarantee order because doing so would let one failed event block every later one for that customer. Receivers must make the latest state win, not the latest arrival."
+    },
+    {
+      "title": "Unbounded retries on a shared queue",
+      "bad": {
+        "label": "One global queue, retry forever",
+        "lang": "text",
+        "code": "dispatcher pool: 50 workers, one FIFO queue\ncustomer X endpoint times out after 30 s on every call\n-> workers stuck on X, everyone else's events are delayed for hours"
+      },
+      "better": {
+        "label": "Per-endpoint isolation and bounded retries",
+        "lang": "text",
+        "code": "per-endpoint queues (or fair scheduling) + per-endpoint concurrency cap\nshort timeouts (about 10 s), capped attempts, then dead-letter\nauto-disable after N days of failures, notify the owner"
+      },
+      "why": "Webhook traffic is many independent tenants sharing one delivery fleet. Without isolation, the slowest endpoint sets the latency for all. This is the bulkhead pattern applied to outbound calls."
+    },
+    {
+      "title": "Shipping secrets or full PII in fat payloads",
+      "bad": {
+        "label": "Everything in the event body",
+        "lang": "json",
+        "code": "{ \"type\": \"user.updated\", \"data\": { \"id\": \"u_1\", \"email\": \"a@b.com\", \"ssn\": \"...\", \"card\": { \"number\": \"...\" } } }"
+      },
+      "better": {
+        "label": "Ids plus the minimum, fetch the rest with auth",
+        "lang": "json",
+        "code": "{ \"id\": \"evt_91\", \"type\": \"user.updated\", \"created\": 1760530000, \"data\": { \"object\": \"user\", \"id\": \"u_1\" } }"
+      },
+      "why": "Webhook bodies end up in receivers' logs, queues and debugging tools, and a misconfigured endpoint URL sends them to the wrong place. A thin event leaks nothing sensitive, and the follow-up fetch goes through normal API authorization and returns current data."
+    }
+  ],
+  "interview": [
+    "Open with the delivery contract: \"At-least-once, unordered, signed, with a stable event id. Receivers must dedupe and must not depend on order.\"",
+    "Explain signing precisely: HMAC-SHA256 over `timestamp.raw_body` with a per-endpoint secret, a 5-minute timestamp window against replay, constant-time comparison, and overlapping secrets for rotation.",
+    "On the provider side, draw an outbox feeding per-endpoint queues, dispatchers with short timeouts, backoff retries, a dead-letter store and a replay API.",
+    "Mention the security trap on the provider side: customer-supplied URLs are an SSRF vector, so resolve and block internal IP ranges and send from known egress IPs.",
+    "On the receiver side, show the fast path: verify, insert event id with a unique constraint, enqueue, return 200; process async and re-fetch state for ordering."
+  ],
+  "quiz": [
+    {
+      "question": "Why does a webhook signature usually cover a timestamp as well as the body?",
+      "choices": ["To make the signature longer", "So a captured genuine request cannot be replayed later", "So receivers can sort events by time"],
+      "answer": 1,
+      "explain": "A valid body and signature never expire on their own. Signing the timestamp and rejecting requests older than a few minutes stops an attacker who recorded one delivery from re-sending it days later."
+    },
+    {
+      "question": "A receiver processes each webhook in 25 seconds before returning 200, and the provider times out at 10 seconds. What happens?",
+      "choices": ["Nothing; the provider waits", "The provider retries, so the receiver repeats the work unless it dedupes", "The provider drops the event permanently"],
+      "answer": 1,
+      "explain": "From the provider's side a timeout looks like a failure, so it sends the same event again. Receivers should store the event id, reply quickly and process asynchronously."
+    },
+    {
+      "question": "Which delivery guarantee do most webhook providers offer?",
+      "choices": ["Exactly once, in order", "At least once, not necessarily in order", "At most once, in order"],
+      "answer": 1,
+      "explain": "Exactly-once over an unreliable network would need the receiver's cooperation anyway. Providers resend when unsure (at least once) and do not block later events behind failed ones (no ordering). Receivers achieve effectively-once by deduping on event id."
+    },
+    {
+      "question": "Why must the receiver compute the HMAC over the raw request bytes rather than re-serialised JSON?",
+      "choices": ["Raw bytes are faster to hash", "Re-serialising can change whitespace or key order, so the HMAC no longer matches", "JSON cannot be hashed"],
+      "answer": 1,
+      "explain": "The provider signed specific bytes. Any transformation, even an equivalent JSON object, produces a different hash. Capture the raw body before any parsing middleware runs."
+    },
+    {
+      "question": "What is the main advantage of thin events (ids only) over fat events (full objects)?",
+      "choices": ["They never need retries", "The receiver fetches current state, so out-of-order or late events cannot apply stale data", "They do not need signatures"],
+      "answer": 1,
+      "explain": "A thin event is a nudge: \"object X changed\". The receiver reads the latest version through the authenticated API, which also avoids putting sensitive data in webhook payloads. The cost is one extra call per event."
+    }
+  ],
+  "practice": {
+    "prompt": "Design the webhook system for a payments platform: customers register HTTPS endpoints and receive events such as payment.succeeded and refund.created. Cover the payload, security, delivery guarantees and operations.",
+    "answer": "Payload: `{id, type, created, api_version, data: {object, id, ...minimal fields}}`; each event has a unique id reused across retries; I'd lean thin with key fields, plus a version so receivers can discard stale updates, and document that consumers should fetch the object for authoritative state. Security: per-endpoint secret; headers carry the event id, a timestamp and HMAC-SHA256 over `timestamp.raw_body`; receivers reject timestamps older than 5 minutes and compare in constant time; rotation by signing with old and new secrets during an overlap window. On registration, require HTTPS, verify the endpoint with a challenge, and block private IP ranges to prevent SSRF. Delivery: state change and event are written together via an outbox; a dispatcher reads per-endpoint queues with a concurrency cap and a ~10 s timeout; any 2xx is success; otherwise exponential backoff with jitter for about three days, then dead-letter; auto-disable after persistent failure and email the owner. Guarantees documented as at-least-once and unordered; receivers dedupe on event id and reply 200 quickly, processing async. Operations: a dashboard of attempts with status codes and response snippets, a replay/resend API, an events list API so receivers can reconcile, metrics on delivery latency and failure rate per endpoint.",
+    "rubric": [
+      "Stable event ids with at-least-once delivery and receiver-side dedupe",
+      "HMAC signature over timestamp and raw body, replay window, secret rotation",
+      "States that ordering is not guaranteed and how receivers cope (versions or re-fetch)",
+      "Retries with exponential backoff and jitter, dead-letter, endpoint disabling",
+      "Per-endpoint isolation so one slow receiver cannot block others",
+      "Replay/resend tooling and SSRF protection for customer URLs"
+    ]
+  },
+  "links": {
+    "lessons": ["design-queues-events", "design-reliability-observability"],
+    "cases": ["notification-service", "payments", "job-scheduler"],
+    "guides": ["idempotency-keys", "queues-async-work", "retries-backoff", "api-auth", "api-error-format"]
+  }
+}

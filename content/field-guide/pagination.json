@@ -1,0 +1,259 @@
+{
+  "id": "pagination",
+  "kind": "guide",
+  "topic": "api",
+  "level": "se",
+  "title": "Pagination: offset vs cursor, done right",
+  "summary": "Page through large lists with a stable sort and an opaque cursor so deep pages stay fast and inserts or deletes do not duplicate or skip items; cap page sizes and avoid exact totals you cannot afford.",
+  "minutes": 13,
+  "principle": "Every list endpoint is paginated from day one, ordered by a stable sort that ends in a unique tie-breaker (usually the id), and capped at a documented maximum page size. Prefer cursor (keyset) pagination: return an opaque `nextCursor` that encodes where the last page ended, and continue from there with an indexed range query instead of skipping rows with OFFSET.",
+  "why": "Offset pagination (`?page=500&size=20` -> `OFFSET 9980 LIMIT 20`) is easy to build and lets users jump to page N, but it has two problems. The database still has to walk past every skipped row, so deep pages get slower in proportion to the offset. And the window is positional: if a row is inserted or deleted before the current position between two requests, every later row shifts, so the client sees a duplicate or silently misses one.\n\nKeyset (cursor) pagination asks a different question: \"give me the next 20 rows after this sort key\". With an index on the sort columns, `WHERE (created_at, id) < (:t, :id) ORDER BY created_at DESC, id DESC LIMIT 20` costs about the same on page 1 and page 5,000, and it is anchored to a value rather than a position, so concurrent inserts and deletes do not shift it. The trade-off: no random jumps to page N, and the sort must be on indexed, deterministic columns.\n\nWrap the keyset values in an **opaque** cursor (for example base64 of a small, versioned and ideally signed JSON blob). Clients pass it back unchanged, and you stay free to change what is inside. Finally, exact total counts are often the most expensive part of a list page; return `hasMore` or an estimate unless the product truly needs the exact number.",
+  "diagrams": [
+    {
+      "id": "pag-offset-keyset",
+      "type": "compare",
+      "title": "OFFSET walks past rows; keyset seeks to them",
+      "alt": "Side-by-side comparison. With offset pagination, a request for page 500 makes the database read and discard 9,980 rows before returning 20. With keyset pagination, the database seeks in the index directly to the last seen sort key and reads only the next 20 rows.",
+      "caption": "Same 20 rows returned. The offset query does work proportional to how deep you are; the keyset query does not.",
+      "before": {
+        "label": "OFFSET 9980 LIMIT 20",
+        "nodes": [
+          { "id": "q", "label": "page=500", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Skip 9,980 rows", "kind": "bad", "col": 1, "row": 0, "sub": "read, then discard" },
+          { "id": "r", "label": "Return 20", "kind": "db", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "q", "to": "s" },
+          { "from": "s", "to": "r", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "WHERE key < cursor",
+        "nodes": [
+          { "id": "q", "label": "cursor=eyJ0Ij…", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Index seek", "kind": "good", "col": 1, "row": 0, "sub": "(created_at, id)" },
+          { "id": "r", "label": "Read 20", "kind": "db", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "q", "to": "s" },
+          { "from": "s", "to": "r" }
+        ]
+      }
+    },
+    {
+      "id": "pag-rows-read",
+      "type": "bars",
+      "title": "Rows the database touches per 20-row page",
+      "alt": "Bar chart of rows read to serve one 20-row page. Offset page 1 reads 20 rows, offset page 100 reads 2,000, offset page 5,000 reads 100,000, while keyset pagination reads about 20 rows at any depth.",
+      "caption": "Offset cost is offset plus limit, so it grows linearly with depth. Keyset stays flat. Actual latency also depends on row width and caching.",
+      "unit": "rows read",
+      "bars": [
+        { "label": "Offset, page 1", "value": 20 },
+        { "label": "Offset, page 100", "value": 2000 },
+        { "label": "Offset, page 5,000", "value": 100000 },
+        { "label": "Keyset, any page", "value": 20, "highlight": true }
+      ]
+    },
+    {
+      "id": "pag-cursor-flow",
+      "type": "sequence",
+      "title": "Fetching two pages with an opaque cursor",
+      "alt": "Sequence diagram. The client requests orders with limit 20. The API queries the database for 21 rows ordered by created time and id descending, returns 20 with a next cursor that encodes the last row's sort key, and sets hasMore. The client sends the cursor back; the API decodes and validates it and runs a range query after that key.",
+      "caption": "Fetching limit plus one row tells you whether another page exists without a COUNT query.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "api", "label": "Orders API" },
+        { "id": "db", "label": "Database" }
+      ],
+      "messages": [
+        { "from": "client", "to": "api", "label": "GET /orders?limit=20", "note": "The API clamps limit to a documented maximum, for example 100." },
+        { "from": "api", "to": "db", "label": "ORDER BY created_at, id LIMIT 21", "note": "Sort descending on both columns. The id tie-breaker makes the order total, so no two rows compare equal." },
+        { "from": "db", "to": "api", "label": "21 rows", "style": "reply", "note": "The 21st row only proves there is more. It is not returned." },
+        { "from": "api", "to": "client", "label": "20 items, nextCursor, hasMore", "style": "reply", "note": "nextCursor is base64 of {v:1, t:last.created_at, id:last.id}, ideally signed. Clients must treat it as opaque." },
+        { "from": "client", "to": "api", "label": "GET /orders?limit=20&cursor=…", "note": "The client sends the cursor back unchanged, with the same filters. The API decodes and verifies it; a tampered, expired or wrong-version cursor gets 400, not 500." },
+        { "from": "api", "to": "db", "label": "WHERE (created_at, id) < (t, id)", "note": "An index range seek. Cost does not depend on how many pages came before." },
+        { "from": "db", "to": "api", "label": "next 21 rows", "style": "reply" },
+        { "from": "api", "to": "client", "label": "20 items, nextCursor", "style": "reply" }
+      ]
+    },
+    {
+      "id": "pag-shift",
+      "type": "flow",
+      "title": "What inserts and deletes do between page requests",
+      "alt": "Flow diagram. After page 1 is served, either a new row is inserted at the top or a row on page 1 is deleted. With offset pagination the insert makes page 2 repeat the last row of page 1 and the delete makes page 2 skip a row. With a keyset cursor both cases continue correctly from the last seen row.",
+      "caption": "Offsets point at positions, which move. Cursors point at values, which do not.",
+      "nodes": [
+        { "id": "p1", "label": "Page 1 served", "kind": "state", "col": 0, "row": 2, "sub": "rows 1–20" },
+        { "id": "ins", "label": "Row inserted", "kind": "note", "col": 1, "row": 0, "sub": "at the top" },
+        { "id": "del", "label": "Row deleted", "kind": "note", "col": 1, "row": 4, "sub": "from page 1" },
+        { "id": "dup", "label": "OFFSET 20", "kind": "bad", "col": 3, "row": 0, "sub": "row 20 again" },
+        { "id": "key", "label": "After cursor", "kind": "good", "col": 3, "row": 2, "sub": "next unseen row" },
+        { "id": "skip", "label": "OFFSET 20", "kind": "bad", "col": 3, "row": 4, "sub": "old row 21 lost" }
+      ],
+      "edges": [
+        { "from": "p1", "to": "ins" },
+        { "from": "p1", "to": "del" },
+        { "from": "ins", "to": "dup", "label": "offset paging", "style": "fail" },
+        { "from": "del", "to": "skip", "label": "offset paging", "style": "fail" },
+        { "from": "ins", "to": "key", "label": "keyset" },
+        { "from": "del", "to": "key", "label": "keyset" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Between the client's two requests someone inserts a newer row. In a newest-first list it lands at the top." },
+        { "edges": [2], "text": "Everything shifts down by one. `OFFSET 20` now starts at what was row 20, which the client already has: a duplicate." },
+        { "edges": [1, 3], "text": "If instead a row on page 1 is deleted, everything shifts up. `OFFSET 20` starts at old row 22, so old row 21 is never shown." },
+        { "edges": [4, 5], "text": "A keyset cursor says \"rows after (t, id)\". Neither change moves that anchor, so the next page starts at the first row the client has not seen." }
+      ]
+    },
+    {
+      "id": "pag-strategy-chart",
+      "type": "chart",
+      "title": "Pagination strategies",
+      "alt": "Trade-off chart with deep-page performance on the horizontal axis and support for jumping to an arbitrary page on the vertical axis. Offset with page numbers allows jumps but is slow when deep. Keyset and opaque cursors are fast at any depth but only move forward or back. Snapshot or search-after tokens and time-window bucketing sit in between.",
+      "caption": "Positions are a rough guide. Infinite scroll and API sync want cursors; admin tables with page numbers can live with offset if you cap the depth.",
+      "x": { "label": "Deep-page performance", "low": "degrades", "high": "constant" },
+      "y": { "label": "Jump to page N", "low": "next/prev only", "high": "any page" },
+      "points": [
+        { "label": "Offset + page numbers", "x": 2, "y": 9 },
+        { "label": "Offset, capped depth", "x": 5, "y": 7 },
+        { "label": "Keyset cursor", "x": 9, "y": 2, "highlight": true },
+        { "label": "Time-range buckets", "x": 7, "y": 5 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "A keyset page query with a tie-breaker",
+      "bad": {
+        "label": "Sort on a non-unique column, page by offset",
+        "lang": "sql",
+        "code": "SELECT * FROM orders\nWHERE customer_id = $1\nORDER BY created_at DESC        -- ties have no defined order\nLIMIT 20 OFFSET $2;             -- cost grows with $2"
+      },
+      "good": {
+        "label": "Unique sort key, range seek, limit + 1",
+        "lang": "sql",
+        "code": "-- index: (customer_id, created_at DESC, id DESC)\nSELECT id, created_at, total_cents FROM orders\nWHERE customer_id = $1\n  AND (created_at, id) < ($2, $3)   -- from the decoded cursor\nORDER BY created_at DESC, id DESC\nLIMIT 21;                           -- 21st row => hasMore"
+      },
+      "why": "Two rows with the same `created_at` can come back in either order, so a page boundary between them can repeat or drop one. Adding `id` makes the order total, and the matching composite index turns the WHERE into a seek. Row-value comparison syntax varies by database; expand it to `created_at < $2 OR (created_at = $2 AND id < $3)` where needed."
+    },
+    {
+      "title": "Response shape: opaque cursor and bounded page size",
+      "bad": {
+        "label": "Leaky, unbounded and counted",
+        "lang": "http",
+        "code": "GET /orders?limit=100000&lastId=98123\n\n{ \"items\": [ ...100000 items... ], \"total\": 48211934 }"
+      },
+      "good": {
+        "label": "Clamped limit, opaque cursor, hasMore",
+        "lang": "http",
+        "code": "GET /orders?limit=50&cursor=eyJ2IjoxLCJ0IjoiMjAyNi0xMC0xNVQxMjowMDowMFoiLCJpZCI6Im9fOTgxMjMifQ\n\n{\n  \"items\": [ ...50 items... ],\n  \"nextCursor\": \"eyJ2IjoxLCJ0Ijoi...\",\n  \"hasMore\": true\n}"
+      },
+      "why": "A cap (with a documented default and maximum) protects the database and the client's memory. An opaque cursor lets you add a tie-breaker, change sort columns or sign it later without breaking clients. Dropping the exact total avoids a full count on every page."
+    }
+  ],
+  "checklist": [
+    "Every list endpoint is paginated, with a documented default page size and a hard maximum the server enforces.",
+    "The sort order is total: it ends with a unique column such as the id.",
+    "There is a composite index that matches the filter plus sort columns, so the page query is a range seek.",
+    "Cursors are opaque, versioned and validated; a bad cursor returns 400.",
+    "The cursor is bound to the query's filters and sort; changing filters starts from the first page.",
+    "`hasMore` is computed by fetching limit + 1, not with a COUNT.",
+    "Exact totals are omitted, estimated or cached unless the product truly needs them.",
+    "The docs state the consistency guarantee: no duplicates or skips across pages, but rows inserted behind the cursor will not appear in this pass."
+  ],
+  "antipatterns": [
+    {
+      "title": "Deep OFFSET pagination on a large table",
+      "bad": { "label": "OFFSET grows with every page", "diagram": "pag-offset-keyset" },
+      "better": {
+        "label": "Seek from the last sort key",
+        "lang": "sql",
+        "code": "SELECT id, created_at FROM events\nWHERE (created_at, id) > ($1, $2)\nORDER BY created_at, id\nLIMIT 100;"
+      },
+      "why": "OFFSET makes the database produce and throw away every skipped row, so an export job or a crawler that walks the whole list does quadratic work overall. A seek reads only what it returns."
+    },
+    {
+      "title": "Exposing raw keys as the cursor",
+      "bad": {
+        "label": "Client builds the cursor itself",
+        "lang": "http",
+        "code": "GET /orders?after_created_at=2026-10-15T12:00:00Z\n# clients now depend on the sort column; adding a\n# tie-breaker or changing the sort breaks them"
+      },
+      "better": {
+        "label": "Server-issued opaque token",
+        "lang": "http",
+        "code": "GET /orders?cursor=eyJ2IjoxLCJ0IjoiMjAyNi0xMC0xNVQxMjowMDowMFoiLCJpZCI6Im9fOTgxMjMifQ\n# base64 of {\"v\":1,\"t\":\"2026-10-15T12:00:00Z\",\"id\":\"o_98123\"}\n# signed with an HMAC so it cannot be forged"
+      },
+      "why": "An opaque cursor is part of your implementation, not your contract. A version field lets you change its contents, and a signature stops clients from crafting cursors that bypass filters or probe data."
+    },
+    {
+      "title": "COUNT(*) on every page request",
+      "bad": {
+        "label": "Exact total with each page",
+        "lang": "sql",
+        "code": "SELECT COUNT(*) FROM orders WHERE status = 'open';\n-- runs on every page view; on a large table this can\n-- cost more than fetching the page itself"
+      },
+      "better": {
+        "label": "hasMore, or an estimate when needed",
+        "lang": "text",
+        "code": "Lists: fetch limit + 1 and return hasMore.\nBadges: a cached or approximate count (\"10,000+\"),\nrefreshed asynchronously.\nExact totals only where the product needs them."
+      },
+      "why": "An exact count has to examine every matching row (or index entry). Most UIs only need to know whether there is a next page, and a rounded number reads just as well to users."
+    }
+  ],
+  "interview": [
+    "When you add a list endpoint, add the paging contract in the same breath: `GET /feed?limit=20&cursor=…` returning `items`, `nextCursor` and `hasMore`, with a max limit.",
+    "Name the sort key and its tie-breaker, and the composite index that serves it.",
+    "Explain why offset breaks under concurrent inserts and deep pages, and say when offset is still fine (small admin tables that need page numbers).",
+    "At SSE level, mention cursor signing and versioning, binding cursors to filters, and how you avoid expensive exact counts."
+  ],
+  "quiz": [
+    {
+      "question": "Why does `OFFSET 100000 LIMIT 20` get slow on a large table?",
+      "choices": ["LIMIT forces a full table sort every time", "The database must read and discard the 100,000 skipped rows", "OFFSET disables all indexes", "Large offsets are rejected by HTTP"],
+      "answer": 1,
+      "explain": "Even with an index, the database has to step past every skipped row to find the 100,001st. Keyset pagination seeks directly to the last seen key instead."
+    },
+    {
+      "question": "Your feed is sorted by `created_at DESC`. Why add `id` as a tie-breaker?",
+      "choices": ["To make the response smaller", "Rows with equal timestamps have no defined order, so pages can repeat or skip them", "Because ids are always sorted alphabetically", "To make the cursor shorter"],
+      "answer": 1,
+      "explain": "A total order is required for stable page boundaries. With ties, two queries may return equal-timestamp rows in different orders, so a boundary between them is ambiguous."
+    },
+    {
+      "question": "A new item is inserted at the top while a user reads page 1 of a newest-first list. With offset paging, what happens on page 2?",
+      "choices": ["Nothing changes", "The last item of page 1 appears again", "The new item appears on page 2", "Page 2 returns an error"],
+      "answer": 1,
+      "explain": "Every row shifts down one position, so OFFSET 20 now starts at the old row 20. A keyset cursor would continue after the last row seen, unaffected by the insert."
+    },
+    {
+      "question": "What is the main benefit of making the cursor opaque?",
+      "choices": ["It is faster to parse", "The server can change what it encodes (and sign it) without breaking clients", "It allows jumping to any page", "It removes the need for an index"],
+      "answer": 1,
+      "explain": "Clients just pass it back. You can add a tie-breaker, change the sort or add a version and signature, and no client code depends on the format."
+    },
+    {
+      "question": "How can you return `hasMore` without running a COUNT query?",
+      "choices": ["Fetch limit + 1 rows and check whether the extra row exists", "Always return true", "Use OFFSET instead", "Ask the client to count"],
+      "answer": 0,
+      "explain": "If the extra row comes back there is another page; drop it from the response. This costs one row instead of a count over every match."
+    }
+  ],
+  "practice": {
+    "prompt": "Design pagination for a social app's home feed and for an admin \"all users\" table. The feed is newest-first with constant new posts; the admin table has 50 million rows and support staff want to sort and page.",
+    "answer": "Feed: keyset pagination. Sort by (created_at DESC, post_id DESC) with a composite index. `GET /feed?limit=20&cursor=…` returns items, nextCursor and hasMore; the cursor is base64 of a versioned, HMAC-signed payload with the last sort key and a hash of the filters. Fetch 21 rows to compute hasMore. New posts that arrive while scrolling do not cause duplicates; the client fetches them separately with a \"newer than first item\" query for a \"new posts\" banner. Default limit 20, maximum 50. Admin table: support needs sorting, but page numbers on 50M rows are expensive. Offer keyset paging per allowed sort column (each with an index and id tie-breaker), and filters to narrow results. If page numbers are required, cap the depth (for example 100 pages) and push users to filters. Show an estimated count (\"about 50M\") from table statistics instead of COUNT(*). Invalid or tampered cursors return 400.",
+    "rubric": [
+      "Uses keyset/cursor pagination for the high-churn feed",
+      "Stable sort with a unique tie-breaker and a matching index",
+      "Opaque, versioned (ideally signed) cursor bound to filters",
+      "Enforced default and maximum page size",
+      "Avoids exact COUNT on huge tables (hasMore or estimates)",
+      "Explains when offset is acceptable and how to cap it"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-databases-indexes"],
+    "cases": ["news-feed", "photo-sharing"],
+    "guides": ["resource-naming", "api-styles-rest-grpc", "consistency-choices", "caching-strategies", "api-rate-limits"]
+  }
+}

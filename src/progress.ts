@@ -5,6 +5,7 @@ import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
 import { problemIds } from './problems'
 import { caseIds } from './cases'
+import { guideIds } from './guides'
 import { cardIds } from './flashcards'
 import { COMPETENCY_IDS } from './stories'
 import type { Competency } from './stories'
@@ -52,6 +53,8 @@ export interface Progress {
   solved?: Record<string, SolvedProblem>
   /** Best self-scored rubric percentage per system design case study. */
   designs?: Record<string, DesignScore>
+  /** Best Field Guide quiz percentage per guide or case study read to the end. */
+  guides?: Record<string, DesignScore>
   /** Spaced-repetition state per flashcard that has been reviewed at least once. */
   cards?: Record<string, CardState>
   /** Finished mock interviews, oldest first. */
@@ -155,7 +158,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -208,6 +211,7 @@ export function parseBackup(text: string): Progress {
   const solved = Object.hasOwn(root, 'solved') ? parseSolved(root.solved) : undefined
   const designs = Object.hasOwn(root, 'designs') ? parseDesigns(root.designs) : undefined
   const cards = Object.hasOwn(root, 'cards') ? parseCards(root.cards) : undefined
+  const guides = Object.hasOwn(root, 'guides') ? parseGuides(root.guides) : undefined
   const mocks = Object.hasOwn(root, 'mocks') ? parseMocks(root.mocks) : undefined
   const stories = Object.hasOwn(root, 'stories') ? parseStories(root.stories) : undefined
   return {
@@ -219,6 +223,7 @@ export function parseBackup(text: string): Progress {
     ...(cards ? { cards } : {}),
     ...(mocks ? { mocks } : {}),
     ...(stories ? { stories } : {}),
+    ...(guides ? { guides } : {}),
   }
 }
 
@@ -320,6 +325,25 @@ export function recordDesign(progress: Progress, caseId: string, score: number, 
   if (!Number.isInteger(score) || score < 0 || score > 100) throw new Error('Score must be a whole percentage.')
   const best = Math.max(progress.designs?.[caseId]?.best ?? 0, score)
   return { ...progress, updatedAt: now.toISOString(), designs: { ...progress.designs, [caseId]: { best, at: now.toISOString() } } }
+}
+
+function parseGuides(value: unknown): Record<string, DesignScore> {
+  const raw = object(value)
+  const guides: Record<string, DesignScore> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!guideIds.has(id)) invalid('unknown Field Guide entry. This backup may need a newer app version.')
+    const score = object(entry, ['best', 'at'])
+    guides[id] = { best: integer(score.best, 0, 100), at: timestamp(score.at) }
+  }
+  return guides
+}
+
+/** Marks a Field Guide entry as read with its quiz score, keeping the best score. */
+export function recordGuide(progress: Progress, guideId: string, score: number, now = new Date()): Progress {
+  if (!guideIds.has(guideId)) throw new Error('Unknown Field Guide entry.')
+  if (!Number.isInteger(score) || score < 0 || score > 100) throw new Error('Score must be a whole percentage.')
+  const best = Math.max(progress.guides?.[guideId]?.best ?? 0, score)
+  return { ...progress, updatedAt: now.toISOString(), guides: { ...progress.guides, [guideId]: { best, at: now.toISOString() } } }
 }
 
 function parseSolved(value: unknown): Record<string, SolvedProblem> {

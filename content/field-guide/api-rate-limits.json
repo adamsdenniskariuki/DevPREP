@@ -1,0 +1,272 @@
+{
+  "id": "api-rate-limits",
+  "kind": "guide",
+  "topic": "api",
+  "level": "sse",
+  "title": "Rate limits as part of the API contract",
+  "summary": "Limit per key, user and IP; answer 429 with Retry-After; publish the limits; make clients back off with jitter; and keep counters correct across many gateway nodes.",
+  "minutes": 15,
+  "principle": "A rate limit is a promise in both directions: the API promises a documented budget per caller, and clients promise to slow down when told. Enforce it at the edge per identity, reject with `429 Too Many Requests` and a `Retry-After`, tell clients how much budget is left, and design the counters so the limiter itself never becomes the outage.",
+  "why": "Without limits, one buggy script, one retry loop or one scraper can consume capacity meant for everyone. Limits protect availability, cost and fairness, and they give you a lever during incidents.\n\nThe contract side matters as much as the algorithm. Clients need to know **what** is limited (per API key, per user, per IP for anonymous traffic, sometimes per endpoint), **how much** (for example 600 requests per minute with a burst of 100), and **what happens** when they exceed it. HTTP already has the pieces: `429` is defined in RFC 6585 and `Retry-After` in RFC 9110. Many APIs also send remaining-budget headers; the common ones are vendor-specific `X-RateLimit-*` names, and the IETF has a draft for standard `RateLimit` / `RateLimit-Policy` fields, still a draft at the time of writing, so follow it loosely and document what you send.\n\n**Rate limits** smooth traffic over seconds or minutes. **Quotas** cap usage over a billing period (say 1M calls per month) and are usually tied to plans and billing. They need different storage, different errors and different messages to the customer.\n\nAt scale the hard part is distribution: dozens of gateway nodes must share one budget per key without a network round trip that doubles latency, and they must decide what to do when the shared counter store is down.",
+  "diagrams": [
+    {
+      "id": "rl-429-sequence",
+      "type": "sequence",
+      "title": "A client hits the limit and backs off",
+      "alt": "Sequence diagram. The client sends a request; the gateway increments the counter for its API key, sees budget left and forwards it, returning 200 with remaining-budget headers. A later request finds the budget exhausted and gets 429 with Retry-After of 20 seconds without reaching the API. The client waits about 20 seconds plus jitter and retries successfully.",
+      "caption": "The rejected request never reaches the backend, and the client waits as long as the server asked instead of guessing.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "gw", "label": "Gateway" },
+        { "id": "ctr", "label": "Counter store" },
+        { "id": "api", "label": "API" }
+      ],
+      "messages": [
+        { "from": "client", "to": "gw", "label": "GET /reports (key k_7)" },
+        { "from": "gw", "to": "ctr", "label": "take 1 token for k_7", "note": "One atomic operation per request, keyed by the caller's identity, not by the client's IP when a key is present." },
+        { "from": "ctr", "to": "gw", "label": "ok, 3 left", "style": "reply" },
+        { "from": "gw", "to": "api", "label": "forward" },
+        { "from": "gw", "to": "client", "label": "200 + remaining: 3", "style": "reply", "note": "Remaining-budget headers let well-behaved clients slow down before they hit the wall." },
+        { "from": "client", "to": "gw", "label": "GET /reports (burst of 5)" },
+        { "from": "gw", "to": "ctr", "label": "take 1 token for k_7" },
+        { "from": "ctr", "to": "gw", "label": "empty, refill in 20s", "style": "reply" },
+        { "from": "gw", "to": "client", "label": "429 + Retry-After: 20", "style": "fail", "note": "Cheap to produce: no backend work. The body says which limit was hit, in the usual error format." },
+        { "from": "client", "to": "gw", "label": "retry after 20s + jitter", "note": "The client waits for the hinted time plus a random extra so a crowd of throttled clients does not return in the same instant." },
+        { "from": "gw", "to": "client", "label": "200 (bucket refilled)", "style": "reply" }
+      ]
+    },
+    {
+      "id": "rl-algo-chart",
+      "type": "chart",
+      "title": "Limiter algorithms: memory vs accuracy",
+      "alt": "Chart with memory per key on the horizontal axis and accuracy at window edges on the vertical axis. Fixed window uses one counter and is least accurate at the boundary. Token bucket and sliding window counter use a couple of numbers and are accurate enough. Sliding log stores every timestamp and is exact but uses the most memory.",
+      "caption": "Rough positions. Token bucket is the usual default: tiny state, allows a controlled burst, and maps directly to \"N per second, burst B\" in the docs.",
+      "x": { "label": "Memory per key", "low": "one number", "high": "every request" },
+      "y": { "label": "Accuracy at edges", "low": "2x bursts", "high": "exact" },
+      "points": [
+        { "label": "Fixed window", "x": 1, "y": 2 },
+        { "label": "Token bucket", "x": 2, "y": 8, "highlight": true },
+        { "label": "Sliding counter", "x": 4, "y": 6 },
+        { "label": "Sliding log", "x": 9, "y": 10 }
+      ]
+    },
+    {
+      "id": "rl-boundary-bars",
+      "type": "bars",
+      "title": "Worst-case requests admitted in 2 seconds across a window edge",
+      "alt": "Bar chart for a limit of 100 requests per minute. A fixed window can admit 200 requests in the two seconds around a window boundary, 100 at the end of one window and 100 at the start of the next. A sliding log admits 100. A token bucket with capacity 100 admits about 103: the full bucket plus about 3 tokens refilled during the 2 seconds.",
+      "caption": "Computed for a 100 per minute limit. Fixed windows can let through double the limit at the boundary; the others cap the burst near the limit.",
+      "unit": "requests",
+      "bars": [
+        { "label": "Fixed window", "value": 200 },
+        { "label": "Token bucket (B=100)", "value": 103, "highlight": true },
+        { "label": "Sliding log", "value": 100 }
+      ]
+    },
+    {
+      "id": "rl-distributed",
+      "type": "flow",
+      "title": "One budget shared by many gateway nodes",
+      "alt": "Flow diagram. Clients reach a load balancer that spreads requests over gateway A and gateway B. Both gateways atomically update the same per-key counter in a shared store such as Redis before forwarding allowed requests to the API service. If the store is unreachable, each gateway falls back to a local, conservative limit.",
+      "caption": "Per-node limits multiply by the number of nodes and drift as you scale; a shared counter keeps one budget per key.",
+      "nodes": [
+        { "id": "c", "label": "Clients", "kind": "client", "col": 2, "row": 0 },
+        { "id": "lb", "label": "Load balancer", "kind": "lb", "col": 2, "row": 1 },
+        { "id": "ga", "label": "Gateway A", "kind": "service", "col": 1, "row": 2, "sub": "local fallback" },
+        { "id": "gb", "label": "Gateway B", "kind": "service", "col": 3, "row": 2, "sub": "local fallback" },
+        { "id": "ctr", "label": "Shared counters", "kind": "cache", "col": 2, "row": 3, "sub": "Redis, atomic op" },
+        { "id": "api", "label": "API service", "kind": "service", "col": 2, "row": 5 }
+      ],
+      "edges": [
+        { "from": "c", "to": "lb" },
+        { "from": "lb", "to": "ga" },
+        { "from": "lb", "to": "gb" },
+        { "from": "ga", "to": "ctr", "label": "take(k_7)" },
+        { "from": "gb", "to": "ctr", "label": "take(k_7)" },
+        { "from": "ga", "to": "api", "label": "allowed" },
+        { "from": "gb", "to": "api", "label": "allowed" }
+      ],
+      "steps": [
+        { "edges": [0, 1, 2], "text": "Requests from one API key land on any gateway node. A purely local limit of 100/min per node would really allow 100 × N, and N changes with autoscaling." },
+        { "edges": [3, 4], "text": "Each node updates the same counter with one atomic operation (a Lua script or `INCR` with expiry in Redis), so the budget is global. Shard counters by key so no single hot key overloads one store node." },
+        { "edges": [5, 6], "text": "Allowed requests go on; rejected ones get 429 at the edge. To cut the extra round trip, nodes can take small batches of tokens locally and sync, trading a little accuracy for latency." },
+        { "edges": [3, 4], "text": "Decide the failure mode up front. Most public APIs **fail open** to a conservative per-node limit if the counter store is down, rather than rejecting all traffic because the limiter broke." }
+      ]
+    },
+    {
+      "id": "rl-retry-compare",
+      "type": "compare",
+      "title": "Clients ignoring 429 vs honouring Retry-After",
+      "alt": "Side-by-side comparison. On the left, clients that get 429 retry immediately in a tight loop, so the gateway sees even more traffic and keeps rejecting. On the right, clients wait for the Retry-After delay plus random jitter, so retries arrive spread out and succeed.",
+      "caption": "Immediate retries turn a limit into a self-inflicted storm. Jitter spreads the herd so retries land when budget exists.",
+      "before": {
+        "label": "Tight retry loop",
+        "nodes": [
+          { "id": "c", "label": "1,000 clients", "kind": "client", "col": 0, "row": 0 },
+          { "id": "g", "label": "Gateway", "kind": "lb", "col": 2, "row": 0 },
+          { "id": "x", "label": "429 storm", "kind": "bad", "col": 1, "row": 1, "sub": "retry at once" }
+        ],
+        "edges": [
+          { "from": "c", "to": "g", "label": "retry now" },
+          { "from": "g", "to": "x", "label": "429", "style": "fail" },
+          { "from": "x", "to": "c", "label": "loop", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Retry-After + jitter",
+        "nodes": [
+          { "id": "c", "label": "1,000 clients", "kind": "client", "col": 0, "row": 0 },
+          { "id": "w", "label": "Wait 20s + rand", "kind": "note", "col": 1, "row": 1 },
+          { "id": "g", "label": "Gateway", "kind": "lb", "col": 2, "row": 0 },
+          { "id": "ok", "label": "200", "kind": "good", "col": 2, "row": 1, "sub": "spread out" }
+        ],
+        "edges": [
+          { "from": "c", "to": "w", "label": "on 429" },
+          { "from": "w", "to": "g", "label": "retry once" },
+          { "from": "g", "to": "ok", "style": "reply" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "A 429 the client can act on",
+      "bad": {
+        "label": "Generic error, no timing, wrong status",
+        "lang": "http",
+        "code": "HTTP/1.1 503 Service Unavailable\nContent-Type: text/html\n\n<h1>Too busy</h1>"
+      },
+      "good": {
+        "label": "429, Retry-After, budget headers and a typed body",
+        "lang": "http",
+        "code": "HTTP/1.1 429 Too Many Requests\nRetry-After: 20\nX-RateLimit-Limit: 600\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 20\nContent-Type: application/problem+json\n\n{\n  \"type\": \"https://api.example.com/problems/rate-limited\",\n  \"title\": \"Rate limit exceeded\",\n  \"status\": 429,\n  \"code\": \"rate_limited\",\n  \"limit\": \"600 requests per minute per API key\",\n  \"request_id\": \"r-3c9\"\n}"
+      },
+      "why": "429 says \"you, slow down\" while 503 says \"we are broken\", and clients and dashboards treat them differently. `Retry-After` gives an exact wait. The `X-RateLimit-*` names are a common convention, not a standard (the IETF `RateLimit` fields are still a draft), so document whichever headers you send and keep them stable."
+    },
+    {
+      "title": "Client-side backoff that respects the server",
+      "bad": {
+        "label": "Retry immediately, forever",
+        "lang": "js",
+        "code": "async function call(url) {\n  while (true) {\n    const res = await fetch(url)\n    if (res.status !== 429) return res\n  }\n}"
+      },
+      "good": {
+        "label": "Honour Retry-After, else capped backoff with jitter",
+        "lang": "js",
+        "code": "async function call(url, maxAttempts = 5) {\n  for (let attempt = 0; ; attempt++) {\n    const res = await fetch(url)\n    if (res.status !== 429 && res.status !== 503) return res\n    if (attempt + 1 >= maxAttempts) return res\n    const hinted = Number(res.headers.get('Retry-After'))\n    const backoff = Math.min(30_000, 500 * 2 ** attempt)\n    const waitMs = hinted > 0 ? hinted * 1000 : backoff\n    await sleep(waitMs + Math.random() * 1000)\n  }\n}"
+      },
+      "why": "A tight loop multiplies load exactly when the server is saturated. Waiting for the server's hint, adding jitter so clients do not retry in lockstep, and capping attempts turns a 429 into a short delay instead of an outage. (`Retry-After` may also be an HTTP date; a full client handles both forms.)"
+    }
+  ],
+  "checklist": [
+    "Limits are keyed by the most specific identity available: API key or user first, IP only for anonymous traffic.",
+    "Limits are documented per plan and endpoint class (for example writes stricter than reads, expensive searches stricter still).",
+    "Exceeding the limit returns 429 with `Retry-After` and the standard error body, never 500 or 503.",
+    "Remaining-budget headers are sent on successful responses so clients can pace themselves; header names are documented.",
+    "The algorithm allows a defined burst (token bucket or sliding window) rather than a fixed window that admits 2x at boundaries.",
+    "Counters are shared across gateway nodes with atomic updates, and the fail-open or fail-closed behaviour when the store is down is decided and tested.",
+    "Quotas (per month, per plan) are tracked separately from per-second rate limits and have their own error code.",
+    "Official SDKs back off with jitter and honour `Retry-After` by default."
+  ],
+  "antipatterns": [
+    {
+      "title": "Limiting only by IP address",
+      "bad": {
+        "label": "One budget per source IP",
+        "lang": "text",
+        "code": "limit key = client_ip\n- a whole office behind one NAT shares 100 req/min\n- an attacker with 10,000 IPs gets 10,000x the budget"
+      },
+      "better": {
+        "label": "Identity first, IP as a backstop",
+        "lang": "text",
+        "code": "authenticated:  key = api_key (or user_id), plan-based limit\nanonymous:      key = ip, low limit, plus captcha on login\nglobal:         per-endpoint ceiling to protect the backend"
+      },
+      "why": "IPs are shared by many honest users (corporate NAT, mobile carriers) and cheap to rotate for attackers. Limits tied to a key are fair, explainable to customers and enforceable through the account."
+    },
+    {
+      "title": "Per-node limits behind an autoscaling fleet",
+      "bad": {
+        "label": "Each gateway counts in its own memory",
+        "lang": "text",
+        "code": "limit 100/min per node\n3 nodes  -> effective limit up to 300/min\n12 nodes -> effective limit up to 1,200/min (after autoscale)"
+      },
+      "better": {
+        "label": "Shared counter with a local fallback",
+        "lang": "text",
+        "code": "normal:     atomic take() on shared store, key = api_key\nstore down: fail open to per-node limit = 100 / expected_nodes\nalways:     alert when the fallback is active"
+      },
+      "why": "Local counters make the real limit depend on fleet size and load-balancer luck, so customers see inconsistent 429s. A shared counter gives one budget; a deliberate fallback keeps the limiter from becoming a single point of failure."
+    },
+    {
+      "title": "Treating a monthly quota like a rate limit",
+      "bad": {
+        "label": "Quota exhaustion looks like throttling",
+        "lang": "http",
+        "code": "HTTP/1.1 429 Too Many Requests\nRetry-After: 60\n\n(client retries every minute for the rest of the month)"
+      },
+      "better": {
+        "label": "Distinct error and no false retry hint",
+        "lang": "http",
+        "code": "HTTP/1.1 429 Too Many Requests\nContent-Type: application/problem+json\n\n{ \"code\": \"quota_exceeded\", \"title\": \"Monthly quota used up\", \"resets_at\": \"2026-11-01T00:00:00Z\", \"upgrade_url\": \"...\" }"
+      },
+      "why": "Rate limits clear in seconds, so retrying makes sense. A used-up quota will not clear until the period resets or the plan changes. A distinct code stops pointless retries and lets the client show the right message (some APIs use 403 for quotas; either way, make it distinguishable)."
+    }
+  ],
+  "interview": [
+    "State the contract first: \"Limits are per API key, 600/min with bursts of 100, 429 with Retry-After, budget headers on every response.\"",
+    "Pick an algorithm and justify it in one line: token bucket for small state and controlled bursts; mention the fixed-window 2x boundary problem.",
+    "Move to distribution unprompted: shared counters in Redis with atomic scripts, sharded by key, and what happens when Redis is down (fail open with local limits and an alert).",
+    "Separate rate limits from quotas and from load shedding: the first protects fairness per caller, the last protects the service from total overload regardless of who is calling.",
+    "Cover the client side: SDKs with jittered exponential backoff that honour Retry-After, and why tight retry loops cause storms."
+  ],
+  "quiz": [
+    {
+      "question": "A fixed window limiter allows 100 requests per minute. What is the worst case number admitted within two seconds?",
+      "choices": ["100", "About 103", "200"],
+      "answer": 2,
+      "explain": "A client can send 100 in the last second of one window and 100 in the first second of the next. Sliding windows and token buckets avoid this doubling."
+    },
+    {
+      "question": "Which response best tells a client it is being throttled and when to try again?",
+      "choices": ["503 with an HTML page", "429 with a Retry-After header", "400 with \"slow down\" in the message", "500 with a retry hint in the body"],
+      "answer": 1,
+      "explain": "429 Too Many Requests (RFC 6585) is the specific code, and Retry-After (RFC 9110) gives the wait in seconds or as a date. 503 means the service itself is unavailable."
+    },
+    {
+      "question": "Your gateway runs 10 nodes, each enforcing 100 requests per minute in local memory. What limit does a client effectively get?",
+      "choices": ["100 per minute", "Up to about 1,000 per minute, depending on load balancing", "10 per minute"],
+      "answer": 1,
+      "explain": "Each node has its own budget, so a client spread across all nodes gets up to N times the limit, and the number changes as the fleet scales. A shared counter fixes this."
+    },
+    {
+      "question": "The shared Redis used for rate-limit counters becomes unreachable. What is the usual choice for a public API?",
+      "choices": ["Reject every request until Redis recovers", "Fail open to a conservative local per-node limit and alert", "Disable authentication too"],
+      "answer": 1,
+      "explain": "Rejecting everything makes the limiter a single point of failure for the whole API. A local fallback still protects the backend roughly while the store recovers. Security-critical limits, such as login attempts, may justify failing closed."
+    },
+    {
+      "question": "What is the key difference between a rate limit and a quota?",
+      "choices": ["Quotas are enforced by clients, rate limits by servers", "Rate limits smooth traffic over seconds or minutes; quotas cap total usage over a billing period", "There is no difference"],
+      "answer": 1,
+      "explain": "A rate-limited client should wait seconds and retry. A client that used its monthly quota must wait for the reset or upgrade, so it needs a different error and no short retry hint."
+    }
+  ],
+  "practice": {
+    "prompt": "Design rate limiting for a public REST API with free and paid plans, served by an autoscaling fleet of gateways in two regions. Cover the contract, the algorithm and failure handling.",
+    "answer": "Contract: limits per API key by plan (for example free 60/min, paid 1,200/min, burst 2x), stricter classes for expensive endpoints, IP-based limits only for unauthenticated routes such as login. Monthly quotas are tracked separately for billing. Over the limit: 429 with Retry-After and a Problem Details body with `rate_limited`; quota exhaustion uses a distinct `quota_exceeded` code with the reset time. Successful responses carry remaining-budget headers (documented; I'd follow the IETF RateLimit draft loosely or keep the common X-RateLimit names). Algorithm: token bucket per (key, endpoint class), state = tokens + last refill time, updated atomically with a Redis Lua script. Distribution: Redis cluster sharded by key, one per region; give each region a share of the global budget or accept slight overshoot rather than cross-region calls on the hot path. Gateways can lease small token batches to save round trips. Failure: if Redis is down, fail open to a conservative per-node limit and alert; login and other abuse-sensitive limits fail closed. Clients: SDKs honour Retry-After and use capped exponential backoff with jitter. Operate: dashboards of 429s by key and plan, ability to raise a customer's limit quickly, and global load shedding as a separate safety net.",
+    "rubric": [
+      "Limits keyed by API key/user with documented plan tiers; IP only for anonymous traffic",
+      "429 with Retry-After and a clear body; quota distinct from rate limit",
+      "Chooses and justifies an algorithm (token bucket or sliding window) and notes fixed-window bursts",
+      "Shared, atomic counters across nodes and a plan for multiple regions",
+      "Explicit fail-open/fail-closed behaviour when the counter store fails",
+      "Client backoff with jitter and observability of throttling"
+    ]
+  },
+  "links": {
+    "lessons": ["design-rate-limiting", "design-cache-data-flow"],
+    "problems": ["token-bucket-limiter", "hit-counter-window"],
+    "cases": ["api-rate-limiter"],
+    "guides": ["api-error-format", "retries-backoff", "graceful-degradation", "circuit-breakers", "api-auth"]
+  }
+}

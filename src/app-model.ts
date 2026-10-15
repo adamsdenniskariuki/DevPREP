@@ -6,7 +6,7 @@ import type { CodeLanguage } from './problem-types'
 import type { Activity, MockResult, Mode, Profile, Progress, Story } from './progress'
 import type { Grade } from './flashcards'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -42,6 +42,8 @@ export interface AppModel {
   solveProblem: (problemId: string, lang: CodeLanguage) => number
   /** Saves a self-scored case study and returns the XP it added (0 if the best score did not improve the total). */
   scoreDesign: (caseId: string, percent: number) => number
+  /** Records a Field Guide quiz score (best kept) and returns the XP gained. */
+  readGuide: (guideId: string, percent: number) => number
   /** Grades a flashcard and returns the XP it earned. */
   gradeCard: (cardId: string, grade: Grade) => number
   /** Saves a finished mock interview and returns the XP it earned. */

@@ -1,0 +1,306 @@
+{
+  "id": "circuit-breakers",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "Circuit breakers: stop calling what is already down",
+  "summary": "Trip a per-dependency breaker after repeated failures so callers fail fast, probe for recovery in half-open, and pair it with timeouts, bulkheads and fallbacks.",
+  "minutes": 14,
+  "principle": "Wrap every remote dependency in a timeout and a circuit breaker. When the recent failure rate crosses a threshold, the breaker opens and calls fail immediately (ideally into a fallback) instead of waiting on a dependency that is already struggling. After a cool-down it lets a few probe calls through and closes again only if they succeed.",
+  "why": "A slow dependency is more dangerous than a dead one. Every call to it holds a thread, a connection or a socket until it times out, so a single sick service can exhaust the caller's resources and take the caller down too. Retries make it worse: they multiply the load on exactly the service that needs less of it.\n\nA breaker turns \"wait 30 seconds, then fail\" into \"fail in a microsecond\". That protects the caller's capacity, gives the dependency room to recover, and lets you return a degraded answer quickly. It is not a fix on its own: it needs **timeouts** so failures are detected at all, **bulkheads** so one dependency cannot use every thread, a **fallback** so open means something useful, and a **retry policy** that respects the breaker.",
+  "diagrams": [
+    {
+      "id": "cb-states",
+      "type": "flow",
+      "title": "The three breaker states",
+      "alt": "State machine. Closed lets calls through and counts outcomes in a rolling window. When failures cross the threshold it moves to Open, which rejects calls into a fallback. After a cool-down it moves to Half-open, which lets a few probes through. Successful probes return it to Closed; a failed probe sends it back to Open.",
+      "caption": "Half-open is the important state: it tests recovery with a trickle of traffic instead of the full flood.",
+      "nodes": [
+        { "id": "closed", "label": "Closed", "kind": "state", "col": 0, "row": 1, "sub": "calls flow" },
+        { "id": "open", "label": "Open", "kind": "state", "col": 4, "row": 1, "sub": "fail fast" },
+        { "id": "half", "label": "Half-open", "kind": "state", "col": 2, "row": 3, "sub": "a few probes" },
+        { "id": "window", "label": "Rolling window", "kind": "note", "col": 0, "row": 3, "sub": "e.g. last 10s" },
+        { "id": "fallback", "label": "Fallback", "kind": "good", "col": 4, "row": 3, "sub": "cached or default" }
+      ],
+      "edges": [
+        { "from": "closed", "to": "window", "label": "record outcome", "style": "async" },
+        { "from": "closed", "to": "open", "label": "failure rate > 50%", "style": "fail" },
+        { "from": "open", "to": "fallback", "label": "reject call" },
+        { "from": "open", "to": "half", "label": "cool-down ends", "style": "async" },
+        { "from": "half", "to": "closed", "label": "probes succeed", "style": "reply" },
+        { "from": "half", "to": "open", "label": "probe fails", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "While **closed**, every call goes through and its outcome (success, error, timeout) is recorded in a rolling window, by count or by time." },
+        { "edges": [1], "text": "When the window has enough calls (a minimum volume, so 2 failures out of 3 do not trip it) and the failure rate crosses the threshold, the breaker **opens**." },
+        { "edges": [2], "text": "While open, calls are rejected without touching the network. The caller gets a fast error it can turn into a fallback: a cached value, a default or a partial page." },
+        { "edges": [3], "text": "After a cool-down (often 5 to 60 seconds) the breaker moves to **half-open** and admits a small, fixed number of probe calls." },
+        { "edges": [4], "text": "If the probes succeed, the breaker closes and the window resets. Traffic returns." },
+        { "edges": [5], "text": "If a probe fails, it opens again for another cool-down. Some libraries grow the cool-down each time so a long outage is probed less often." }
+      ]
+    },
+    {
+      "id": "cb-trip-sequence",
+      "type": "sequence",
+      "title": "A breaker trips, fails fast, then recovers",
+      "alt": "Sequence diagram. The checkout service calls inventory through a breaker. Calls time out and the breaker opens. The next request is rejected by the breaker in microseconds and served a fallback. After the cool-down one probe goes through, succeeds and the breaker closes.",
+      "caption": "Once open, the inventory service sees no traffic at all from this caller, which is often exactly what it needs to recover.",
+      "actors": [
+        { "id": "user", "label": "User" },
+        { "id": "checkout", "label": "Checkout" },
+        { "id": "breaker", "label": "Breaker" },
+        { "id": "inv", "label": "Inventory" }
+      ],
+      "messages": [
+        { "from": "user", "to": "checkout", "label": "GET /cart" },
+        { "from": "checkout", "to": "breaker", "label": "call stock (closed)" },
+        { "from": "breaker", "to": "inv", "label": "GET /stock (2s timeout)" },
+        { "from": "inv", "to": "breaker", "label": "timeout", "style": "fail", "note": "This is the 30th timeout in the window. The failure rate is now over the threshold." },
+        { "from": "breaker", "to": "checkout", "label": "error; state = open", "style": "fail", "note": "The breaker opens. The cool-down timer starts." },
+        { "from": "user", "to": "checkout", "label": "GET /cart" },
+        { "from": "checkout", "to": "breaker", "label": "call stock" },
+        { "from": "breaker", "to": "checkout", "label": "rejected (open)", "style": "fail", "note": "No network call. The checkout thread is free again in microseconds instead of 2 seconds." },
+        { "from": "checkout", "to": "user", "label": "cart, stock \"checking\"", "style": "reply", "note": "The fallback hides stock badges instead of failing the whole page." },
+        { "from": "checkout", "to": "breaker", "label": "call stock (half-open)", "note": "The cool-down has passed. This request becomes a probe." },
+        { "from": "breaker", "to": "inv", "label": "GET /stock (probe)" },
+        { "from": "inv", "to": "breaker", "label": "200 OK", "style": "reply" },
+        { "from": "breaker", "to": "checkout", "label": "stock; state = closed", "style": "reply", "note": "Enough probes succeeded, so normal traffic resumes." }
+      ]
+    },
+    {
+      "id": "cb-retry-storm",
+      "type": "compare",
+      "title": "Retries without a breaker versus with one",
+      "alt": "Side-by-side comparison. Without a breaker, a hundred callers retry three times against a slow database, threads pile up waiting and the caller fails too. With a breaker and a short timeout, the caller makes one bounded attempt, the open breaker routes to a fallback, and the database gets room to recover.",
+      "caption": "The breaker caps how much extra load a failing dependency receives. Retries alone multiply it.",
+      "before": {
+        "label": "Retries only: the storm",
+        "nodes": [
+          { "id": "c", "label": "Callers x100", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Service", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Slow database", "kind": "bad", "col": 2, "row": 0, "sub": "3x the load" },
+          { "id": "t", "label": "Threads stuck", "kind": "bad", "col": 1, "row": 1, "sub": "30s each" }
+        ],
+        "edges": [
+          { "from": "c", "to": "s" },
+          { "from": "s", "to": "d", "label": "retry x3", "style": "fail" },
+          { "from": "s", "to": "t", "label": "waiting", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Timeout + breaker + fallback",
+        "nodes": [
+          { "id": "c", "label": "Callers x100", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Service", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Database", "kind": "db", "col": 2, "row": 0, "sub": "recovering" },
+          { "id": "b", "label": "Breaker open", "kind": "decision", "col": 1, "row": 1 },
+          { "id": "f", "label": "Fallback", "kind": "good", "col": 2, "row": 1, "sub": "cached value" }
+        ],
+        "edges": [
+          { "from": "c", "to": "s" },
+          { "from": "s", "to": "d", "label": "probes only", "style": "async" },
+          { "from": "s", "to": "b", "label": "check" },
+          { "from": "b", "to": "f", "label": "fail fast" }
+        ]
+      }
+    },
+    {
+      "id": "cb-bulkheads",
+      "type": "flow",
+      "title": "Bulkheads: one pool and one breaker per dependency",
+      "alt": "Architecture diagram. An API service splits its outbound calls into separate pools, each with its own breaker: payments with 20 slots, search with 10 slots and recommendations with 5 slots. Search is timing out, so its pool fills and its breaker opens, while payments and recommendations keep working.",
+      "caption": "A sick search service can only exhaust the 10 slots it was given. Payments never notice.",
+      "nodes": [
+        { "id": "api", "label": "API service", "kind": "service", "col": 0, "row": 2 },
+        { "id": "pp", "label": "Payments pool", "kind": "worker", "col": 2, "row": 0, "sub": "20 slots, breaker" },
+        { "id": "sp", "label": "Search pool", "kind": "bad", "col": 2, "row": 2, "sub": "10 slots, open" },
+        { "id": "rp", "label": "Recs pool", "kind": "worker", "col": 2, "row": 4, "sub": "5 slots, breaker" },
+        { "id": "pay", "label": "Payments", "kind": "external", "col": 4, "row": 0 },
+        { "id": "search", "label": "Search", "kind": "bad", "col": 4, "row": 2, "sub": "timing out" },
+        { "id": "recs", "label": "Recommendations", "kind": "service", "col": 4, "row": 4 }
+      ],
+      "edges": [
+        { "from": "api", "to": "pp" },
+        { "from": "api", "to": "sp" },
+        { "from": "api", "to": "rp" },
+        { "from": "pp", "to": "pay", "label": "healthy" },
+        { "from": "sp", "to": "search", "label": "rejected", "style": "fail" },
+        { "from": "rp", "to": "recs", "label": "healthy" }
+      ],
+      "steps": [
+        { "edges": [0, 1, 2], "text": "The API never calls a dependency from a shared pool. Each dependency gets its own bounded concurrency limit (a semaphore or thread pool) and its own breaker." },
+        { "edges": [4], "text": "Search slows down. Its 10 slots fill up, extra calls are rejected immediately, and its breaker opens on the timeouts." },
+        { "edges": [3, 5], "text": "Payments and recommendations keep their own slots, so checkout and the home page keep working. This is the bulkhead: the leak is sealed in one compartment." }
+      ]
+    },
+    {
+      "id": "cb-thread-time",
+      "type": "bars",
+      "title": "Caller time held per 100 calls to a dead dependency",
+      "alt": "Bar chart of thread-seconds the caller spends on 100 calls to a dependency that never answers. With a 30 second default timeout: 3000 seconds. With a 2 second timeout: 200 seconds. With an open breaker: about 0.01 seconds.",
+      "caption": "Simple arithmetic (calls × time each call waits). Timeouts cut the cost by an order of magnitude; an open breaker removes it.",
+      "unit": "thread-seconds",
+      "bars": [
+        { "label": "30s default timeout", "value": 3000 },
+        { "label": "2s timeout", "value": 200 },
+        { "label": "Breaker open", "value": 0.01, "highlight": true }
+      ]
+    },
+    {
+      "id": "cb-options",
+      "type": "chart",
+      "title": "Protections against a failing dependency",
+      "alt": "Trade-off chart with protection from cascading failure on the vertical axis and effort on the horizontal axis. No protection is lowest. Retries alone are low effort but can make things worse. Timeouts only give moderate protection. A breaker with timeouts is strong for moderate effort. Adding bulkheads and fallbacks gives the strongest protection for the most effort.",
+      "caption": "Positions are a rough guide. Timeouts are the floor; a breaker plus bulkhead plus fallback is the usual target for critical paths.",
+      "x": { "label": "Effort", "low": "small", "high": "large" },
+      "y": { "label": "Protection from cascades", "low": "none", "high": "strong" },
+      "points": [
+        { "label": "Retries alone", "x": 1, "y": 0 },
+        { "label": "No protection", "x": 0, "y": 1 },
+        { "label": "Timeouts only", "x": 2, "y": 4 },
+        { "label": "Breaker + timeouts", "x": 4, "y": 7, "highlight": true },
+        { "label": "+ bulkhead, fallback", "x": 6, "y": 9 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Wrap a dependency call in timeout, breaker and fallback",
+      "bad": {
+        "label": "Bare call: no timeout, no breaker, no fallback",
+        "lang": "js",
+        "code": "async function getStock(sku) {\n  const res = await fetch(`${INVENTORY}/stock/${sku}`)\n  return res.json()\n}"
+      },
+      "good": {
+        "label": "Per-dependency breaker with a fallback",
+        "lang": "js",
+        "code": "const inventoryBreaker = new CircuitBreaker({\n  failureRateThreshold: 0.5,   // open when half the calls fail\n  minimumCalls: 20,            // ...out of at least 20 in the window\n  windowMs: 10_000,\n  openMs: 15_000,              // cool-down before half-open\n  halfOpenProbes: 3,\n  isFailure: err => err.timeout || err.status >= 500, // not 4xx\n})\n\nasync function getStock(sku) {\n  try {\n    return await inventoryBreaker.run(() =>\n      fetchJson(`${INVENTORY}/stock/${sku}`, { timeoutMs: 800 }))\n  } catch (err) {\n    metrics.inc('stock_fallback', { reason: err.code })\n    return stockCache.get(sku) ?? { sku, status: 'unknown' }\n  }\n}"
+      },
+      "why": "The timeout turns a hang into a countable failure. The breaker only counts timeouts and 5xx, because a 404 is the caller's problem, not a sign the service is sick. The fallback means an open breaker degrades the page instead of breaking it, and the metric makes every fallback visible."
+    },
+    {
+      "title": "Make retries respect the breaker",
+      "bad": {
+        "label": "Retry loop outside the breaker, no budget",
+        "lang": "js",
+        "code": "for (let i = 0; i < 5; i++) {\n  try { return await callInventory() }\n  catch { await sleep(100) } // retries even when open\n}"
+      },
+      "good": {
+        "label": "Retry inside, stop as soon as it opens",
+        "lang": "js",
+        "code": "return retry(() => inventoryBreaker.run(callInventory), {\n  attempts: 2,\n  backoff: jitteredExponential(100),\n  retryIf: err => err.code !== 'BREAKER_OPEN' && err.retryable,\n})"
+      },
+      "why": "An open breaker is a decision that the dependency is down. Retrying a rejection just burns time; retrying around the breaker defeats it. Keep attempts small and add jitter so callers do not retry in lockstep."
+    }
+  ],
+  "checklist": [
+    "Every remote call has an explicit timeout shorter than the caller's own deadline.",
+    "There is one breaker per dependency (and per endpoint when endpoints fail independently), never one global breaker.",
+    "The breaker trips on a failure rate with a minimum call volume, not on a single error.",
+    "Only failures that signal an unhealthy dependency count: timeouts, connection errors and 5xx, not 4xx.",
+    "Half-open admits a small fixed number of probes; the rest of the traffic still fails fast.",
+    "Each dependency has a bulkhead: a bounded pool or concurrency limit of its own.",
+    "An open breaker leads to a defined fallback, and fallbacks and state changes are metered and alertable.",
+    "Retries are capped, jittered, and do not retry a breaker-open rejection."
+  ],
+  "antipatterns": [
+    {
+      "title": "One breaker for every dependency",
+      "bad": {
+        "label": "A shared breaker for the whole HTTP client",
+        "lang": "js",
+        "code": "const http = withBreaker(fetch) // shared by payments, search, recs\n// search times out -> breaker opens -> payments rejected too"
+      },
+      "better": {
+        "label": "Breakers keyed by dependency (and endpoint)",
+        "lang": "js",
+        "code": "const breakers = new Map()\nconst breakerFor = host =>\n  breakers.get(host) ?? breakers.set(host, new CircuitBreaker(cfg)).get(host)\nawait breakerFor('search').run(() => searchCall())"
+      },
+      "why": "A breaker models the health of one thing. Shared, it turns a search outage into a payments outage, which is the cascade it was meant to prevent."
+    },
+    {
+      "title": "A breaker without a timeout",
+      "bad": {
+        "label": "Breaker counts only thrown errors",
+        "lang": "js",
+        "code": "breaker.run(() => fetch(url)) // a hung socket never throws"
+      },
+      "better": {
+        "label": "Timeout first, so a hang becomes a failure",
+        "lang": "js",
+        "code": "breaker.run(() => fetch(url, { signal: AbortSignal.timeout(800) }))"
+      },
+      "why": "The most common failure is slowness, not errors. If a call can wait forever it never reaches the breaker's failure count, and threads pile up while the breaker stays closed."
+    },
+    {
+      "title": "Counting client errors as failures",
+      "bad": {
+        "label": "Every non-2xx trips the breaker",
+        "lang": "js",
+        "code": "isFailure: res => !res.ok   // 404s and 400s count"
+      },
+      "better": {
+        "label": "Count only signs of an unhealthy dependency",
+        "lang": "js",
+        "code": "isFailure: err => err.timeout || err.connectError || err.status >= 500"
+      },
+      "why": "One buggy client sending bad requests would open the breaker and cut off every healthy request. 4xx says the request was wrong, not that the service is down."
+    }
+  ],
+  "interview": [
+    "When you draw a call to another service, say: \"This call gets a timeout, a breaker and a fallback,\" and name the fallback (cached data, default, hide the widget).",
+    "Explain the three states and why half-open sends only a few probes: it tests recovery without re-flooding a service that just came back.",
+    "Mention bulkheads in the same breath: per-dependency pools so one slow dependency cannot consume every thread.",
+    "Connect breakers and retries: retries add load, breakers remove it. Retries must be capped, jittered, and must not retry a breaker rejection.",
+    "At SSE level, talk about tuning and observability: minimum call volume, which errors count, alerting on state changes, and that breakers live per client instance so state is local unless you share it deliberately."
+  ],
+  "quiz": [
+    {
+      "question": "What does the half-open state do?",
+      "choices": ["Lets a few probe calls through to test whether the dependency has recovered", "Sends half of the normal traffic to the dependency", "Rejects all calls until an operator resets it"],
+      "answer": 0,
+      "explain": "Half-open admits a small fixed number of probes. Success closes the breaker; a failure reopens it. Sending half the traffic could knock over a service that is barely back."
+    },
+    {
+      "question": "Why does a breaker need a timeout on the wrapped call?",
+      "choices": ["Timeouts make the dependency faster", "A hung call never fails, so the breaker never sees a failure to count", "Breakers only work with UDP"],
+      "answer": 1,
+      "explain": "Slowness is the common failure mode. Without a timeout the call just waits, the failure count never rises, and the caller runs out of threads while the breaker stays closed."
+    },
+    {
+      "question": "A client sends many malformed requests and gets 400s. What should the breaker do?",
+      "choices": ["Open, because the failure rate is high", "Close permanently", "Ignore them, because 4xx do not show the dependency is unhealthy"],
+      "answer": 2,
+      "explain": "Only timeouts, connection errors and 5xx should count. Otherwise one bad caller could cut every healthy request off from a working service."
+    },
+    {
+      "question": "What does a bulkhead add on top of a breaker?",
+      "choices": ["It caches responses", "It caps how many concurrent calls one dependency can hold, so it cannot exhaust shared threads", "It encrypts traffic between services"],
+      "answer": 1,
+      "explain": "Before a breaker trips, a slow dependency can still fill every thread. A per-dependency pool or semaphore limits the damage to that dependency's share."
+    },
+    {
+      "question": "Why should a breaker require a minimum number of calls before it can trip?",
+      "choices": ["So 2 failures out of 3 calls at night do not open it", "To save memory", "Because the HTTP spec requires it"],
+      "answer": 0,
+      "explain": "With little traffic, a percentage swings wildly. A minimum volume makes sure the failure rate is meaningful before the breaker cuts traffic off."
+    }
+  ],
+  "practice": {
+    "prompt": "Your product page calls pricing, inventory, reviews and recommendations. Last week a slow recommendations service made the whole page time out. Design the protection.",
+    "answer": "Give each dependency its own timeout inside the page's overall deadline (for example 800 ms total: pricing 300 ms, inventory 300 ms, reviews and recs 200 ms each, called in parallel). Wrap each in its own breaker that trips on a failure rate, say 50% over at least 20 calls in 10 seconds, counting only timeouts, connection errors and 5xx. Use a bulkhead per dependency: a concurrency limit so recommendations can hold at most a few slots. Define fallbacks by criticality: pricing has no safe fallback, so the page fails if pricing is down; inventory falls back to a cached value or \"check availability\"; reviews and recommendations are hidden. Retries: at most one, jittered, only on idempotent reads, and never on a breaker rejection. Emit metrics on breaker state changes and fallback rate, and alert when a breaker stays open.",
+    "rubric": [
+      "Timeouts per dependency within an overall page deadline",
+      "A separate breaker per dependency with a rate threshold and minimum volume",
+      "Bulkheads (concurrency limits) per dependency",
+      "Fallbacks chosen by criticality, with critical data allowed to fail",
+      "Retries capped, jittered and not retrying breaker rejections",
+      "Metrics and alerts on breaker state and fallback rate"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "design-queues-events"],
+    "cases": ["payments", "notification-service"],
+    "guides": ["retries-backoff", "graceful-degradation", "observability", "idempotency-keys"]
+  }
+}

@@ -576,3 +576,18 @@ test('code runner works offline: JavaScript from the precache, Python after its 
   await offline.getByRole('button', { name: 'Run tests' }).click()
   await expect(offline.locator('.run-summary')).toContainText(/All \d+ tests passed/, { timeout: 120_000 })
 })
+
+test('the Field Guide, its diagrams and the anti-pattern gallery open offline from the precache', async ({ page, context }) => {
+  const { guides } = JSON.parse(await readFile('content/field-guide/index.json', 'utf8'))
+  const entry = JSON.parse(await readFile(`content/field-guide/${guides[0]}.json`, 'utf8'))
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await context.setOffline(true)
+  await page.goto(`/DevPREP/#guide/${entry.id}`)
+  await expect(page.getByRole('heading', { level: 1, name: entry.title })).toBeVisible()
+  await expect(page.locator('.dg-figure svg[role="img"]').first()).toBeVisible()
+  await expect(page.locator('.dg-figure')).toHaveCount(entry.diagrams.length)
+  await page.goto('/DevPREP/#antipatterns')
+  await expect(page.getByRole('heading', { level: 1, name: 'Anti-pattern gallery' })).toBeVisible()
+  await expect(page.locator('.fg-anti').first()).toBeVisible()
+})

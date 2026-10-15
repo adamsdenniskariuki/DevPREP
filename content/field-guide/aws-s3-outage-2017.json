@@ -1,0 +1,250 @@
+{
+  "id": "aws-s3-outage-2017",
+  "kind": "case",
+  "topic": "system-design",
+  "level": "sse",
+  "title": "AWS S3 outage, 2017: one mistyped input, hours of recovery",
+  "summary": "A routine capacity-removal command took out far more S3 servers than intended in US-EAST-1. Restarting subsystems at scale took hours, and services built on S3, even AWS's status-page admin console, were hit too.",
+  "minutes": 14,
+  "organisation": "Amazon Web Services",
+  "year": 2017,
+  "problem": "On the morning of 28 February 2017 the S3 team was debugging, in the Northern Virginia (US-EAST-1) Region, a billing system that was running slower than expected. Following an established playbook, an authorised engineer ran a command meant to take a small number of servers out of a subsystem used by S3 billing. One input was typed wrongly, and the command removed a much larger set of servers.\n\nThose servers also supported two critical subsystems. The **index** subsystem holds the metadata and location of every object in the region and is needed for every GET, LIST, PUT and DELETE. The **placement** subsystem allocates storage for new objects on PUT and depends on the index. Losing that much capacity forced both to do a full restart, and S3 could not serve requests until they were back. Services in the region that store data in S3, including the S3 console, new EC2 instance launches, EBS volumes being restored from S3 snapshots, and Lambda, were hit as well.",
+  "constraints": [
+    "Removing and replacing capacity is a core, everyday operation; the subsystems are designed to lose significant capacity with little customer impact.",
+    "The index subsystem is needed for every GET, LIST, PUT and DELETE in the region, so S3 cannot serve those requests without it.",
+    "Placement cannot recover until the index is working, which forces a strict recovery order.",
+    "After years of fast growth, neither subsystem had been fully restarted in the larger regions for many years, so restart time at current scale had not been exercised.",
+    "A restart must run safety checks that validate metadata integrity, and after years of massive growth those took longer than expected."
+  ],
+  "decisions": [
+    {
+      "decision": "Change the removal tool to take capacity out more slowly.",
+      "tradeoff": "Routine maintenance takes longer, but a wrong input now has time to be noticed and stopped before it removes a large share of a fleet."
+    },
+    {
+      "decision": "Refuse any removal that would take a subsystem below its minimum required capacity, and audit other operational tools for the same kind of check.",
+      "tradeoff": "Each subsystem needs an accurate, maintained floor, and operators sometimes get blocked; in exchange, a typo can no longer push a subsystem into a cold restart."
+    },
+    {
+      "decision": "Start the planned further partitioning of the index subsystem into smaller cells immediately rather than later in the year.",
+      "tradeoff": "Cells add routing and operational complexity, but each one is small enough to restart quickly and to have its recovery tested, which shrinks blast radius and recovery time."
+    },
+    {
+      "decision": "Run the Service Health Dashboard's administration console across multiple AWS regions.",
+      "tradeoff": "More infrastructure for an admin console, but the status page no longer depends on the very service it reports on."
+    }
+  ],
+  "failures": "Several things lined up. The tool trusted its input and let a large fraction of capacity go at once, with no check against a minimum. The affected subsystems needed a full restart, and that had not been done in the larger regions for many years; restart plus integrity checks ran longer than expected. Because placement depends on the index, PUT stayed down the longest. Recovery of downstream AWS services trailed S3 because some had built up backlogs while S3 was unavailable.\n\nCommunication failed too. The administration console for the AWS Service Health Dashboard itself depended on S3, so from the start of the event until 11:37 AM PST AWS could not update individual service status there and fell back to the @AWSCloud Twitter account and a banner on the dashboard.",
+  "lessons": [
+    "Guardrails belong in the tool, not in the operator: rate-limit destructive actions and refuse anything that crosses a capacity floor.",
+    "An operation you never rehearse at full scale has an unknown duration. Cold-start and restart paths need regular testing as the system grows.",
+    "Cells (small, independent partitions) limit how much a single mistake can break and make recovery easier to test.",
+    "Map hard dependencies, including tooling: a status page or console that runs on the system it reports on fails exactly when you need it.",
+    "Recovery is ordered by dependencies (index before placement) and does not end when the core service is up; dependents still have backlogs to drain."
+  ],
+  "caveats": "The public summary does not name the exact command, the size of the mistaken input, the minimum-capacity thresholds, or how many servers were removed. It does not say when the S3 API first became unavailable beyond the 9:37 AM PST command, and it gives no per-service recovery times for EC2, EBS or Lambda. The durations in the bar chart are computed from the timestamps in the report, not stated by AWS.",
+  "diagrams": [
+    {
+      "id": "s3o-timeline",
+      "type": "timeline",
+      "title": "28 February 2017 in US-EAST-1 (times PST)",
+      "alt": "Incident timeline. At 9:37 AM PST a command removes more S3 servers than intended and the index and placement subsystems need a full restart. Until 11:37 AM the status dashboard cannot be updated per service. At 12:26 PM the index serves GET, LIST and DELETE again, at 1:18 PM it is fully recovered, and at 1:54 PM placement recovers and S3 is normal.",
+      "caption": "Over four hours separate a one-line mistake from full recovery. Most of that is restart time for subsystems not fully restarted in years.",
+      "events": [
+        { "at": "9:37 AM PST", "label": "Playbook command meant to remove a few billing servers removes a much larger set", "kind": "trigger" },
+        { "at": "After 9:37 AM", "label": "Index and placement subsystems need a full restart; S3 cannot serve requests", "kind": "impact" },
+        { "at": "After 9:37 AM", "label": "S3 console, EC2 launches, EBS restores from snapshots and Lambda are affected", "kind": "impact" },
+        { "at": "Until 11:37 AM", "label": "Status dashboard admin console depends on S3; updates go out via Twitter and a banner", "kind": "detect" },
+        { "at": "12:26 PM PST", "label": "Index has enough capacity to serve GET, LIST and DELETE again", "kind": "mitigate" },
+        { "at": "1:18 PM PST", "label": "Index fully recovered; GET, LIST and DELETE normal", "kind": "mitigate" },
+        { "at": "1:54 PM PST", "label": "Placement finishes recovery; PUT works and S3 operates normally", "kind": "resolve" },
+        { "at": "After 1:54 PM", "label": "Dependent AWS services work through backlogs built up during the outage", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "s3o-blast-radius",
+      "type": "flow",
+      "title": "How one command reached every S3 caller",
+      "alt": "Flow diagram. An operator runs a capacity tool aimed at billing servers, but too many servers are removed. Those servers supported the index and placement subsystems; placement needs the index. The S3 API needs both. Other AWS services and the status dashboard's admin console depend on the S3 API.",
+      "caption": "The intended target was a billing subsystem. The damage travelled through shared servers into the index, then up through every dependency.",
+      "nodes": [
+        { "id": "op", "label": "Operator", "kind": "client", "col": 0, "row": 0, "sub": "playbook command" },
+        { "id": "tool", "label": "Removal tool", "kind": "service", "col": 1, "row": 0, "sub": "one input wrong" },
+        { "id": "billing", "label": "Billing servers", "kind": "service", "col": 2, "row": 0, "sub": "intended target" },
+        { "id": "removed", "label": "Extra servers", "kind": "bad", "col": 1, "row": 1, "sub": "removed by mistake" },
+        { "id": "index", "label": "Index", "kind": "db", "col": 0, "row": 2, "sub": "object metadata" },
+        { "id": "place", "label": "Placement", "kind": "service", "col": 2, "row": 2, "sub": "allocates storage" },
+        { "id": "api", "label": "S3 API", "kind": "service", "col": 1, "row": 3, "sub": "GET LIST PUT DEL" },
+        { "id": "deps", "label": "Other AWS", "kind": "external", "col": 0, "row": 4, "sub": "EC2, EBS, Lambda" },
+        { "id": "shd", "label": "Status console", "kind": "external", "col": 2, "row": 4, "sub": "admin needs S3" }
+      ],
+      "edges": [
+        { "from": "op", "to": "tool", "label": "remove a few" },
+        { "from": "tool", "to": "billing" },
+        { "from": "tool", "to": "removed", "label": "too many", "style": "fail" },
+        { "from": "removed", "to": "index", "style": "fail" },
+        { "from": "removed", "to": "place", "style": "fail" },
+        { "from": "place", "to": "index", "label": "needs" },
+        { "from": "api", "to": "index" },
+        { "from": "api", "to": "place", "label": "PUT" },
+        { "from": "deps", "to": "api" },
+        { "from": "shd", "to": "api" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "An engineer follows an established playbook to remove a small number of servers from a subsystem used by S3 billing." },
+        { "edges": [2], "text": "One input is entered incorrectly and the tool removes a larger set of servers. Nothing in the tool stops it." },
+        { "edges": [3, 4], "text": "Those servers also supported the index and placement subsystems. Losing that much capacity forces both into a full restart." },
+        { "edges": [5], "text": "Placement needs a healthy index, so it can only start recovering after the index does. PUT is the last API to come back." },
+        { "edges": [6, 7], "text": "GET, LIST, PUT and DELETE all need the index, so S3 cannot serve requests while the restart runs." },
+        { "edges": [8, 9], "text": "Services that store data in S3 fail with it, including the admin console for AWS's own status dashboard." }
+      ]
+    },
+    {
+      "id": "s3o-guardrail",
+      "type": "compare",
+      "title": "The removal tool before and after the fix",
+      "alt": "Side-by-side comparison. Before: a mistyped command goes to a removal tool with no floor check, which removes capacity fast and pushes the index below its minimum, causing a full restart. After: the tool removes slowly and checks minimum capacity; a removal below the floor is rejected and only a safe removal proceeds.",
+      "caption": "The fix assumes operators will make mistakes and makes the tool refuse the dangerous ones.",
+      "before": {
+        "label": "Before: trusts the input",
+        "nodes": [
+          { "id": "cmd", "label": "Mistyped input", "kind": "client", "col": 0, "row": 0 },
+          { "id": "tool", "label": "Removal tool", "kind": "service", "col": 1, "row": 0, "sub": "no floor check" },
+          { "id": "sub", "label": "Below minimum", "kind": "bad", "col": 2, "row": 0, "sub": "index, placement" },
+          { "id": "restart", "label": "Full restart", "kind": "bad", "col": 2, "row": 1, "sub": "hours" }
+        ],
+        "edges": [
+          { "from": "cmd", "to": "tool" },
+          { "from": "tool", "to": "sub", "label": "fast", "style": "fail" },
+          { "from": "sub", "to": "restart", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "After: slower, with a floor",
+        "nodes": [
+          { "id": "cmd", "label": "Mistyped input", "kind": "client", "col": 0, "row": 0 },
+          { "id": "tool", "label": "Removal tool", "kind": "service", "col": 1, "row": 0, "sub": "removes slowly" },
+          { "id": "check", "label": "Min capacity?", "kind": "decision", "col": 1, "row": 1 },
+          { "id": "ok", "label": "Safe removal", "kind": "good", "col": 2, "row": 1 },
+          { "id": "stop", "label": "Rejected", "kind": "good", "col": 1, "row": 2, "sub": "would go below" }
+        ],
+        "edges": [
+          { "from": "cmd", "to": "tool" },
+          { "from": "tool", "to": "check" },
+          { "from": "check", "to": "ok", "label": "above" },
+          { "from": "check", "to": "stop", "label": "below" }
+        ]
+      }
+    },
+    {
+      "id": "s3o-cells",
+      "type": "compare",
+      "title": "One big subsystem versus cells",
+      "alt": "Side-by-side comparison. Before: a single large index subsystem; when it loses capacity, the whole region's index restarts slowly. After: the index is split into smaller cells; a problem in one cell restarts only that cell quickly while the others keep serving.",
+      "caption": "AWS's stated direction: smaller cells reduce blast radius, improve recovery and let teams test recovery thoroughly.",
+      "before": {
+        "label": "One large index",
+        "nodes": [
+          { "id": "api", "label": "S3 API", "kind": "service", "col": 0, "row": 0 },
+          { "id": "idx", "label": "Whole index", "kind": "bad", "col": 1, "row": 0, "sub": "one big unit" },
+          { "id": "slow", "label": "Slow restart", "kind": "bad", "col": 2, "row": 0, "sub": "all callers wait" }
+        ],
+        "edges": [
+          { "from": "api", "to": "idx" },
+          { "from": "idx", "to": "slow", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Index split into cells",
+        "nodes": [
+          { "id": "api", "label": "S3 API", "kind": "service", "col": 0, "row": 1 },
+          { "id": "c1", "label": "Cell A", "kind": "good", "col": 1, "row": 0, "sub": "serving" },
+          { "id": "c2", "label": "Cell B", "kind": "bad", "col": 1, "row": 1, "sub": "fast restart" },
+          { "id": "c3", "label": "Cell C", "kind": "good", "col": 1, "row": 2, "sub": "serving" }
+        ],
+        "edges": [
+          { "from": "api", "to": "c1" },
+          { "from": "api", "to": "c2", "style": "fail" },
+          { "from": "api", "to": "c3" }
+        ]
+      }
+    },
+    {
+      "id": "s3o-recovery-bars",
+      "type": "bars",
+      "title": "Minutes after the 9:37 AM command until each milestone",
+      "alt": "Bar chart of minutes elapsed after the 9:37 AM PST command: status dashboard per-service updates possible at 120 minutes, index serving GET, LIST and DELETE at 169 minutes, index fully recovered at 221 minutes, placement and PUT recovered at 257 minutes.",
+      "caption": "Computed from the timestamps in AWS's summary. Even the first partial S3 recovery took close to three hours.",
+      "unit": "minutes after 9:37",
+      "bars": [
+        { "label": "Status page updates", "value": 120 },
+        { "label": "GET, LIST, DELETE", "value": 169 },
+        { "label": "Index fully back", "value": 221 },
+        { "label": "Placement and PUT", "value": 257, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "When you design any admin or capacity tool, say: \"It rate-limits removals and refuses to go below a per-subsystem minimum, so one bad input can't take the fleet down.\"",
+    "Name recovery time as a design goal, not just availability: \"How long does a cold restart of this metadata service take at today's size, and when did we last test it?\"",
+    "Propose cells (independent partitions with their own capacity) for any regional metadata or control-plane service, and explain that they bound blast radius and make recovery testable.",
+    "Call out dependency loops in tooling: the status page, deploy system and runbooks must not depend on the system they are used to fix.",
+    "At SSE level, describe recovery ordering: which subsystems must be healthy first, and how dependents drain backlogs afterwards."
+  ],
+  "quiz": [
+    {
+      "question": "What turned a routine maintenance command into a region-wide S3 outage?",
+      "choices": ["A hardware failure in the billing system", "A mistyped input removed far more servers than intended, including ones the index and placement subsystems needed", "A DDoS attack on the S3 API", "A bad software deploy to the index subsystem"],
+      "answer": 1,
+      "explain": "The command was meant to remove a few servers from a billing subsystem. One wrong input removed a larger set that also supported index and placement, and both needed a full restart."
+    },
+    {
+      "question": "Why did PUT requests recover last?",
+      "choices": ["PUT traffic was deliberately throttled", "PUT needs the placement subsystem, which could only recover after the index was working", "PUT requests were replayed from a queue first"],
+      "answer": 1,
+      "explain": "Placement allocates storage for new objects and requires a healthy index. The index came back first (GET, LIST, DELETE), then placement finished and PUT worked again."
+    },
+    {
+      "question": "Which change most directly stops the same typo from causing the same outage?",
+      "choices": ["Better on-call training", "A tool that removes capacity slowly and refuses to go below a subsystem's minimum", "Adding more servers to S3", "Moving billing to a separate region"],
+      "answer": 1,
+      "explain": "AWS changed the tool itself: slower removal plus a minimum-capacity safeguard. Guardrails in the tool work even when a human gets the input wrong."
+    },
+    {
+      "question": "Why couldn't AWS update per-service status on its Service Health Dashboard early in the event?",
+      "choices": ["The dashboard's admin console depended on S3", "The dashboard was deliberately frozen during incidents", "Engineers lacked permission to edit it"],
+      "answer": 0,
+      "explain": "Its admin console depended on S3, so until 11:37 AM PST AWS used Twitter and a banner instead. The fix was to run that console across multiple regions."
+    },
+    {
+      "question": "What do cells give a large service like S3, according to AWS's summary?",
+      "choices": ["Lower storage cost per object", "Smaller units whose recovery can be tested, reducing blast radius and recovery time", "Strong consistency across regions"],
+      "answer": 1,
+      "explain": "Breaking a service into small partitions lets teams assess and test recovery even for the biggest subsystems, and smaller cells reduce the blast radius of a failure."
+    }
+  ],
+  "practice": {
+    "prompt": "You own the fleet-management tooling for a regional metadata service that every request depends on. Design safeguards so a single operator mistake cannot cause a regional outage, and explain how you would keep recovery time bounded as the service grows.",
+    "answer": "Make destructive actions safe by default. The capacity tool computes, before acting, how much capacity each affected subsystem will have left and refuses any change that drops one below a configured minimum; removals happen in small batches with a pause and health check between them, so a wrong input is caught early. Show a dry-run summary (\"this removes 38% of index capacity\") and require a second approver above a threshold. Audit every other operational tool for the same checks. For recovery, split the metadata service into cells, each owning a slice of keys with its own capacity, so a failure or restart affects one cell and restart time stays roughly constant as total data grows. Regularly test cold restarts of a cell in production-like conditions and track restart time as an SLO. Document the recovery order between subsystems and make sure the status page, deploy system and runbooks run outside the service and ideally in another region.",
+    "rubric": [
+      "Minimum-capacity check enforced by the tool before any removal",
+      "Rate-limited or batched removal with health checks between batches",
+      "Cells or partitions to bound blast radius and restart time",
+      "Regularly tested cold restart with a measured recovery time",
+      "Status and incident tooling independent of the service it reports on",
+      "Recovery order between dependent subsystems is explicit"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "design-replication-partitioning", "design-requirements-capacity"],
+    "cases": ["kv-store", "file-sync", "photo-sharing"],
+    "guides": ["graceful-degradation", "observability", "circuit-breakers"]
+  },
+  "sources": [
+    {
+      "title": "Summary of the Amazon S3 Service Disruption in the Northern Virginia (US-EAST-1) Region",
+      "publisher": "Amazon Web Services",
+      "url": "https://aws.amazon.com/message/41926/"
+    }
+  ]
+}

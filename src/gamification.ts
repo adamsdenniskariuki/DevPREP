@@ -5,9 +5,11 @@ import { localDay } from './progress'
 import type { Activity, Progress } from './progress'
 import { caseIndex } from './cases'
 import { patternProgress, problemIndex } from './problems'
+import { guideIndex } from './guides'
+import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -34,6 +36,19 @@ export function designXp(progress: Pick<Progress, 'designs'>): number {
 }
 
 /** XP from flashcards: each review counts, so XP grows with practice rather than with cards seen. */
+/** Field Guide: XP for each entry read and quizzed, plus a bonus for a perfect quiz. */
+export function guideXp(progress: Pick<Progress, 'guides'>): number {
+  return Object.values(progress.guides ?? {}).reduce((sum, score) => sum + XP_RULES.guide + (score.best === 100 ? XP_RULES.guidePerfect : 0), 0)
+}
+
+/** Read and total Field Guide entries per topic that has content, in topic order. */
+export function guideTopicProgress(progress: Pick<Progress, 'guides'>) {
+  return GUIDE_TOPICS.map(topic => {
+    const items = guideIndex.filter(item => item.topic === topic)
+    return { topic, label: TOPIC_LABELS[topic], total: items.length, read: items.filter(item => progress.guides?.[item.id]).length }
+  }).filter(row => row.total > 0)
+}
+
 export function cardXp(progress: Pick<Progress, 'cards'>): number {
   return Object.values(progress.cards ?? {}).reduce((sum, card) => sum + card.reviews * XP_RULES.card, 0)
 }
@@ -107,14 +122,16 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
   const designs = Object.entries(progress.designs ?? {})
   const designDays = designs.map(([, score]) => localDay(new Date(score.at)))
   const cards = Object.values(progress.cards ?? {})
   const mocks = progress.mocks ?? []
-  const practiceDays = [...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
+  const guides = Object.entries(progress.guides ?? {})
+  const guideDays = guides.map(([, score]) => localDay(new Date(score.at)))
+  const practiceDays = [...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
@@ -137,6 +154,11 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'first-design', title: 'Architect', description: 'Score your first system design case.', earned: designs.length >= 1 },
     { id: 'designs-10', title: 'Blueprint pro', description: 'Score 10 system design cases.', earned: designs.length >= 10 },
     { id: 'senior-design', title: 'Staff-ready', description: `Score ${STRONG_DESIGN}% or more on an SSE case.`, earned: designs.some(([id, score]) => score.best >= STRONG_DESIGN && caseIndex.find(item => item.id === id)?.level === 'sse') },
+    { id: 'first-guide', title: 'Field notes', description: 'Finish a Field Guide entry and its quiz.', earned: guides.length >= 1 },
+    { id: 'guides-10', title: 'Well read', description: 'Finish 10 Field Guide entries.', earned: guides.length >= 10 },
+    { id: 'case-reader', title: 'Postmortem reader', description: 'Finish 3 real-world case studies.', earned: guides.filter(([id]) => guideIndex.find(item => item.id === id)?.kind === 'case').length >= 3 },
+    { id: 'quiz-perfect-5', title: 'Sharp eye', description: 'Score 100% on 5 Field Guide quizzes.', earned: guides.filter(([, score]) => score.best === 100).length >= 5 },
+    ...guideTopicProgress(progress).map(row => ({ id: `guide-topic-${row.topic}`, title: `${row.label} guide`, description: `Finish all ${row.total} ${row.label} entries in the Field Guide.`, earned: row.read === row.total })),
     { id: 'first-cards', title: 'Card shark', description: 'Review your first flashcard.', earned: cards.length >= 1 },
     { id: 'cards-mastered-50', title: 'Long-term memory', description: 'Move 50 flashcards to a two-week interval or longer.', earned: cards.filter(card => card.box >= 4).length >= 50 },
     { id: 'first-mock', title: 'Under the clock', description: 'Finish a mock interview.', earned: mocks.length >= 1 },

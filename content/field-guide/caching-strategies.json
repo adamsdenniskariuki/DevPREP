@@ -1,0 +1,295 @@
+{
+  "id": "caching-strategies",
+  "kind": "guide",
+  "topic": "system-design",
+  "level": "se",
+  "title": "Caching strategies: what to cache, how to keep it honest",
+  "summary": "Pick a read and write pattern on purpose, bound staleness with TTLs and invalidation, protect the database from stampedes and hot keys, and prove the cache helps by measuring hit ratio.",
+  "minutes": 14,
+  "principle": "A cache is a copy of data you are allowed to serve slightly out of date. Decide per data set how stale it may be, choose the read/write pattern that fits, give every key a TTL as a safety net, and design for the moment the cache is empty or wrong, not only for the happy path.",
+  "why": "Caches turn a 5 ms database read into a sub-millisecond lookup and let one database serve many times the traffic. That win is also the trap: once the system depends on the hit ratio, a mass expiry, a cold restart or one viral key can push the full load back onto a database that was sized for the misses only.\n\nThe four common patterns trade write cost against freshness. **Cache-aside**: the app reads the cache, loads from the database on a miss and fills the cache. **Read-through**: the cache library does that load for you. **Write-through**: every write goes to the cache and the database before it is acknowledged, so reads stay fresh but writes get slower. **Write-behind** (write-back): the write lands in the cache and is flushed to the database later, which is fast but can lose acknowledged writes if the cache node dies.\n\nMost systems use cache-aside with a TTL plus a delete on write. It is simple, the cache is optional (a cache outage degrades latency, not correctness), and stale data is bounded by the TTL even when an invalidation is missed.",
+  "diagrams": [
+    {
+      "id": "cache-aside-seq",
+      "type": "sequence",
+      "title": "Cache-aside: a miss, then a hit",
+      "alt": "Sequence diagram. A client asks the service for product 42. The service checks the cache, misses, reads the row from the database and stores it in the cache with a TTL. A second request for product 42 is answered from the cache without touching the database.",
+      "caption": "The application owns the miss path. The TTL is set on fill, so even a missed invalidation heals on its own.",
+      "actors": [
+        { "id": "client", "label": "Client" },
+        { "id": "svc", "label": "Product service" },
+        { "id": "cache", "label": "Cache" },
+        { "id": "db", "label": "Database" }
+      ],
+      "messages": [
+        { "from": "client", "to": "svc", "label": "GET /products/42" },
+        { "from": "svc", "to": "cache", "label": "get product:42", "note": "Keys are namespaced and versioned, e.g. product:v3:42, so a format change cannot read old entries." },
+        { "from": "cache", "to": "svc", "label": "miss", "style": "reply" },
+        { "from": "svc", "to": "db", "label": "SELECT ... WHERE id = 42", "note": "Only misses reach the database. Its size is set by the miss rate, not total traffic." },
+        { "from": "db", "to": "svc", "label": "row", "style": "reply" },
+        { "from": "svc", "to": "cache", "label": "set product:42, TTL 300s±10%", "note": "A jittered TTL stops keys filled at the same time from expiring at the same time." },
+        { "from": "svc", "to": "client", "label": "200 OK", "style": "reply" },
+        { "from": "client", "to": "svc", "label": "GET /products/42 (again)" },
+        { "from": "svc", "to": "cache", "label": "get product:42" },
+        { "from": "cache", "to": "svc", "label": "hit", "style": "reply", "note": "A hit costs one network round trip to the cache and no database work." },
+        { "from": "svc", "to": "client", "label": "200 OK", "style": "reply" }
+      ]
+    },
+    {
+      "id": "cache-stampede-fix",
+      "type": "flow",
+      "title": "Protecting the database from a stampede",
+      "alt": "Flow diagram. Many clients hit a service for the same hot key. The service sends all requests for that key through a single-flight step, so only one load reaches the database on a miss while the others wait for its result. A background refresher reloads the key from the database and writes it to the cache before the TTL expires.",
+      "caption": "Coalescing caps the database at one load per key per miss; early refresh means the hot key rarely misses at all.",
+      "nodes": [
+        { "id": "clients", "label": "Clients", "kind": "client", "col": 0, "row": 1, "sub": "1,000 req/s" },
+        { "id": "svc", "label": "Service", "kind": "service", "col": 1, "row": 1 },
+        { "id": "sf", "label": "Single-flight", "kind": "service", "col": 2, "row": 1, "sub": "one load per key" },
+        { "id": "cache", "label": "Cache", "kind": "cache", "col": 4, "row": 0, "sub": "hot key" },
+        { "id": "db", "label": "Database", "kind": "db", "col": 4, "row": 2 },
+        { "id": "refresh", "label": "Refresher", "kind": "worker", "col": 2, "row": 4, "sub": "before expiry" }
+      ],
+      "edges": [
+        { "from": "clients", "to": "svc", "label": "same key" },
+        { "from": "svc", "to": "sf", "label": "get" },
+        { "from": "sf", "to": "cache", "label": "lookup" },
+        { "from": "sf", "to": "db", "label": "1 load on miss" },
+        { "from": "refresh", "to": "db", "label": "reload", "style": "async" },
+        { "from": "refresh", "to": "cache", "label": "set new TTL", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "A popular key gets a thousand requests a second. If it expires, every one of them misses at once: that is a cache stampede (thundering herd)." },
+        { "edges": [2, 3], "text": "Single-flight (request coalescing) lets the first miss load from the database while the other callers for the same key wait on that one result. Across many instances, a short lock key in the cache does the same job." },
+        { "edges": [4, 5], "text": "Early refresh reloads hot keys shortly before they expire, either in the background or by letting one lucky request refresh when the TTL is nearly up. The key never actually goes cold." },
+        { "edges": [2], "text": "Jitter the TTLs too. Keys filled together after a deploy or cold start should not all expire in the same second." }
+      ]
+    },
+    {
+      "id": "cache-invalidation-race",
+      "type": "compare",
+      "title": "Updating the cache on write vs deleting the key",
+      "alt": "Side-by-side comparison. On the left two writers update the database and then set the cache; their cache writes land in the opposite order, so the database ends at v2 while the cache keeps v1 forever. On the right the writer commits to the database and then deletes the key, and the next reader loads v2 from the database.",
+      "caption": "Deleting is safer than setting: the next miss reloads the truth. A TTL still bounds the rare race that remains.",
+      "before": {
+        "label": "Set cache after write: order race",
+        "nodes": [
+          { "id": "a", "label": "Writer A", "kind": "client", "col": 0, "row": 0, "sub": "writes v1" },
+          { "id": "b", "label": "Writer B", "kind": "client", "col": 0, "row": 2, "sub": "writes v2" },
+          { "id": "db", "label": "Database", "kind": "db", "col": 2, "row": 0, "sub": "ends at v2" },
+          { "id": "c", "label": "Cache", "kind": "bad", "col": 2, "row": 2, "sub": "stuck at v1" }
+        ],
+        "edges": [
+          { "from": "a", "to": "db", "label": "v1 first" },
+          { "from": "b", "to": "c", "label": "set v2" },
+          { "from": "a", "to": "c", "label": "set v1 (late)", "style": "fail" },
+          { "from": "b", "to": "db", "label": "v2 second" }
+        ]
+      },
+      "after": {
+        "label": "Write database, then delete key",
+        "nodes": [
+          { "id": "w", "label": "Writer", "kind": "client", "col": 0, "row": 0 },
+          { "id": "db", "label": "Database", "kind": "db", "col": 2, "row": 0, "sub": "source of truth" },
+          { "id": "c", "label": "Cache", "kind": "good", "col": 2, "row": 2, "sub": "key deleted" },
+          { "id": "r", "label": "Next reader", "kind": "client", "col": 0, "row": 2 }
+        ],
+        "edges": [
+          { "from": "w", "to": "db", "label": "1 commit v2" },
+          { "from": "w", "to": "c", "label": "2 delete key" },
+          { "from": "r", "to": "c", "label": "miss" },
+          { "from": "r", "to": "db", "label": "load v2", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "cache-hit-ratio",
+      "type": "bars",
+      "title": "Average read latency as the hit ratio rises",
+      "alt": "Bar chart of average read latency. With no cache, reads take 5 ms. With a 0.5 ms cache in front, the average is 3 ms at a 50% hit ratio, 1.5 ms at 80%, 1 ms at 90%, 0.75 ms at 95% and 0.55 ms at 99%.",
+      "caption": "Computed from a 0.5 ms cache hit and a 5 ms database read (a miss pays both). The last few percent of hit ratio matter most, and the database still sees every miss.",
+      "unit": "ms average read",
+      "bars": [
+        { "label": "No cache", "value": 5 },
+        { "label": "50% hits", "value": 3 },
+        { "label": "80% hits", "value": 1.5 },
+        { "label": "90% hits", "value": 1 },
+        { "label": "95% hits", "value": 0.75 },
+        { "label": "99% hits", "value": 0.55, "highlight": true }
+      ]
+    },
+    {
+      "id": "cache-pattern-chart",
+      "type": "chart",
+      "title": "Write patterns: write cost vs stale-read risk",
+      "alt": "Trade-off chart with added write latency on the horizontal axis and risk of stale reads on the vertical axis. TTL-only cache-aside is cheap but has high staleness risk. Cache-aside with delete on write is cheap with low risk. Write-through adds write latency for the lowest staleness. Write-behind has cheap writes and fresh cache reads but can lose writes.",
+      "caption": "A rough guide, not a measurement. Write-behind looks great on this chart because the chart hides its real cost: acknowledged writes live only in the cache until flushed.",
+      "x": { "label": "Write latency added", "low": "none", "high": "large" },
+      "y": { "label": "Risk of stale reads", "low": "low", "high": "high" },
+      "points": [
+        { "label": "TTL only", "x": 1, "y": 8 },
+        { "label": "Aside + delete", "x": 2, "y": 4, "highlight": true },
+        { "label": "Write-through", "x": 7, "y": 2 },
+        { "label": "Write-behind", "x": 4, "y": 1 }
+      ]
+    },
+    {
+      "id": "cache-layers",
+      "type": "flow",
+      "title": "Where caches sit in a typical read path",
+      "alt": "Flow diagram of a read path. A browser goes to a CDN for static and public responses, then to an API service with a small in-process cache, then to a shared distributed cache, and finally to the database. Each layer is closer to the user and holds less data.",
+      "caption": "Each layer has its own TTL and invalidation story. The closer to the user, the harder it is to purge, so cache only public or slowly changing data at the edge.",
+      "nodes": [
+        { "id": "browser", "label": "Browser", "kind": "client", "col": 0, "row": 1, "sub": "Cache-Control" },
+        { "id": "cdn", "label": "CDN", "kind": "cdn", "col": 1, "row": 1, "sub": "public only" },
+        { "id": "api", "label": "API service", "kind": "service", "col": 2, "row": 1 },
+        { "id": "local", "label": "In-process", "kind": "cache", "col": 2, "row": 3, "sub": "seconds TTL" },
+        { "id": "shared", "label": "Shared cache", "kind": "cache", "col": 3, "row": 1, "sub": "Redis/Memcached" },
+        { "id": "db", "label": "Database", "kind": "db", "col": 4, "row": 1 }
+      ],
+      "edges": [
+        { "from": "browser", "to": "cdn" },
+        { "from": "cdn", "to": "api", "label": "miss" },
+        { "from": "api", "to": "local", "label": "1st check" },
+        { "from": "api", "to": "shared", "label": "2nd" },
+        { "from": "shared", "to": "db", "label": "miss" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Cache-aside with a jittered TTL and a delete on write",
+      "bad": {
+        "label": "No TTL, and the write sets the cache",
+        "lang": "ts",
+        "code": "async function getProduct(id: string) {\n  const hit = await cache.get(`product:${id}`)\n  if (hit) return JSON.parse(hit)\n  const row = await db.products.find(id)\n  await cache.set(`product:${id}`, JSON.stringify(row)) // lives forever\n  return row\n}\n\nasync function updateProduct(id: string, patch: Patch) {\n  await cache.set(`product:${id}`, JSON.stringify(patch)) // before the DB, partial value\n  await db.products.update(id, patch)\n}"
+      },
+      "good": {
+        "label": "Versioned key, jittered TTL, delete after commit",
+        "lang": "ts",
+        "code": "const key = (id: string) => `product:v3:${id}`\nconst ttl = () => Math.round(300 * (0.9 + Math.random() * 0.2)) // 270-330 s\n\nasync function getProduct(id: string) {\n  const hit = await cache.get(key(id))\n  if (hit) return JSON.parse(hit)\n  const row = await singleFlight(key(id), () => db.products.find(id))\n  if (row) await cache.set(key(id), JSON.stringify(row), { ex: ttl() })\n  return row\n}\n\nasync function updateProduct(id: string, patch: Patch) {\n  await db.products.update(id, patch) // commit first\n  await cache.del(key(id))            // next read reloads the truth\n}"
+      },
+      "why": "Without a TTL, any missed invalidation is permanent. Setting the cache before the database can publish a value that then fails to commit. Deleting after commit, plus a jittered TTL and coalesced loads, keeps staleness bounded and protects the database when keys expire."
+    },
+    {
+      "title": "Measure the cache, do not assume it works",
+      "bad": {
+        "label": "One global hit ratio on a dashboard",
+        "lang": "text",
+        "code": "cache_hit_ratio = 0.97   (all keys, all services)\n\n# hides: the checkout path at 40%, evictions spiking,\n# and a hot key taking 30% of one shard's traffic"
+      },
+      "good": {
+        "label": "Hit ratio per key prefix, plus the signals around it",
+        "lang": "text",
+        "code": "cache_requests_total{prefix=\"product\", result=\"hit|miss\"}\ncache_evictions_total{shard}\ncache_load_seconds{prefix}           # time to fill on a miss\ndb_queries_total{source=\"cache_miss\"}\ntop_keys{shard} (sampled)           # hot-key detection"
+      },
+      "why": "A single average is dominated by cheap, popular keys. Per-prefix hit ratio shows which feature actually benefits; evictions show the cache is too small; miss-driven database load tells you what happens if the cache is flushed."
+    }
+  ],
+  "checklist": [
+    "For each cached data set, the acceptable staleness is written down, and the TTL matches it.",
+    "Every key has a TTL, with jitter, even when invalidation exists. No key lives forever.",
+    "Writes commit to the database first, then delete (not set) the cache key.",
+    "Keys are namespaced and versioned, so a schema change cannot read old shapes.",
+    "Hot keys are protected: single-flight loads, early refresh, or a small in-process copy with a short TTL.",
+    "The database can survive a cold cache, or there is a warm-up plan and load shedding.",
+    "Never cached: secrets, per-user data under a shared key, auth decisions without the user in the key, or anything that must be exact (balances, stock at checkout).",
+    "Hit ratio is measured per key prefix, alongside evictions and miss-driven database load."
+  ],
+  "antipatterns": [
+    {
+      "title": "Updating the cache in place on every write",
+      "bad": { "label": "Two writers race to set the cache", "diagram": "cache-invalidation-race" },
+      "better": {
+        "label": "Delete after commit; the next read refills",
+        "lang": "ts",
+        "code": "await db.tx(async tx => {\n  await tx.products.update(id, patch)\n})\nawait cache.del(key(id))\n// optional: a delayed second delete ~1 s later\n// closes the reader-refills-old-value window"
+      },
+      "why": "Two concurrent set-after-write calls can land in the opposite order from the database commits, leaving the cache wrong until the TTL. A delete is idempotent and order-independent. A small race remains (a slow reader can refill an old value after the delete), which a short TTL or a delayed second delete bounds."
+    },
+    {
+      "title": "Caching per-user data under a shared key",
+      "bad": {
+        "label": "The key ignores who is asking",
+        "lang": "ts",
+        "code": "// GET /account/summary\nconst cached = await cache.get('account-summary')\nif (cached) return cached   // user B sees user A's data"
+      },
+      "better": {
+        "label": "Put the identity and permissions in the key, or do not cache",
+        "lang": "ts",
+        "code": "const k = `account-summary:v1:${user.id}`\nconst cached = await cache.get(k)\n// and on HTTP responses:\n// Cache-Control: private, max-age=60"
+      },
+      "why": "Missing user scoping in a cache key is a data leak, not a performance bug. At the HTTP layer, `Cache-Control: private` stops shared caches such as CDNs from storing a personalised response."
+    },
+    {
+      "title": "All keys expire at the same moment",
+      "bad": {
+        "label": "Fixed TTL after a bulk warm-up",
+        "lang": "ts",
+        "code": "for (const p of topProducts) {\n  await cache.set(key(p.id), json(p), { ex: 3600 })\n}\n// one hour later: every top product misses at once"
+      },
+      "better": {
+        "label": "Jitter the TTL and refresh hot keys early",
+        "lang": "ts",
+        "code": "for (const p of topProducts) {\n  const ex = 3600 + Math.floor(Math.random() * 600)\n  await cache.set(key(p.id), json(p), { ex })\n}\n// plus a refresher for the top N keys"
+      },
+      "why": "Synchronized expiry turns a warm cache into a cold one in a single second, and the database gets the full read load. Spreading expiry over a window costs nothing."
+    }
+  ],
+  "interview": [
+    "State the pattern and staleness up front: \"Product pages use cache-aside with a 5 minute jittered TTL; we delete the key after each update, so worst-case staleness is the TTL.\"",
+    "Say what is not cached and why: balances, inventory at checkout and auth decisions read from the source of truth.",
+    "Size the database for the miss rate and say what happens on a cold cache: coalesced loads, warm-up, and load shedding until the hit ratio recovers.",
+    "Name the hot-key problem before the interviewer does: a celebrity profile or flash-sale item lands on one cache shard; replicate it, add a short in-process cache, or split the key.",
+    "At SSE level, talk about measurement: hit ratio per key prefix, eviction rate and miss-driven database QPS, and the alert you would set."
+  ],
+  "quiz": [
+    {
+      "question": "Which pattern can lose a write that was already acknowledged to the client?",
+      "choices": ["Cache-aside", "Write-through", "Write-behind", "Read-through"],
+      "answer": 2,
+      "explain": "Write-behind acknowledges once the cache has the write and flushes to the database later. If the cache node fails before the flush, the write is gone. Write-through only acknowledges after both stores have it."
+    },
+    {
+      "question": "After updating a row, why delete the cache key instead of setting the new value?",
+      "choices": ["Deletes are faster than sets", "A delete cannot leave a value that is newer in the cache than in the database, and racing deletes do not reorder", "Caches do not support overwriting keys", "It avoids the need for a TTL"],
+      "answer": 1,
+      "explain": "Two set-after-write calls can land in the reverse of commit order, pinning a stale value. A delete is idempotent, so order does not matter; the next read loads the committed value. You still keep a TTL to bound the small remaining race."
+    },
+    {
+      "question": "A hot key expires and 5,000 requests miss in the same second. Which fix stops them all hitting the database?",
+      "choices": ["A longer TTL on every key", "Request coalescing so one load serves all waiting callers", "Adding read replicas", "Switching to write-through"],
+      "answer": 1,
+      "explain": "Coalescing (single-flight, or a short lock key) means only the first miss loads; the rest wait for its result. Longer TTLs delay the stampede but do not prevent it, and replicas just spread an avoidable load."
+    },
+    {
+      "question": "Cache hits take 0.5 ms and database reads 5 ms. Roughly what is the average read latency at a 90% hit ratio?",
+      "choices": ["0.5 ms", "1 ms", "2.75 ms", "4.5 ms"],
+      "answer": 1,
+      "explain": "Every read pays the 0.5 ms cache check; the 10% that miss also pay 5 ms. 0.5 + 0.1 × 5 = 1 ms. Going from 90% to 99% halves it again, which is why the last few points of hit ratio matter."
+    },
+    {
+      "question": "Which of these should you not put in a shared cache keyed only by URL?",
+      "choices": ["A public product image", "The logged-in user's account page", "A list of country codes", "A blog post"],
+      "answer": 1,
+      "explain": "Personalised responses keyed only by URL are served to the wrong user. Include the user in the key, or mark the HTTP response `Cache-Control: private` so shared caches skip it."
+    }
+  ],
+  "practice": {
+    "prompt": "Product detail pages get 50,000 reads per second and about 20 updates per second. The database handles 5,000 reads per second. Design the caching, including what happens during a flash sale on one product.",
+    "answer": "Use cache-aside with a shared cache (for example Redis) keyed `product:v1:{id}`. Product text and images tolerate a few minutes of staleness, so TTL 5 minutes with ±10% jitter; on update, commit to the database and delete the key. Price and stock are shown from the cache but re-checked against the database at add-to-cart and checkout. Sizing: at 50k reads/s and a 5k/s database budget we need at least a 90% hit ratio, so target 98%+ and alert below 95%, measured per key prefix. Protect misses with single-flight loads per key. For the flash-sale product, expect a hot key: keep a 1-2 second in-process copy in each service instance, refresh it early from the shared cache, and if needed replicate the key across shards. Plan a cold-start: warm the top N products before a deploy and shed non-critical traffic if the database nears its limit. Never cache per-user carts under shared keys.",
+    "rubric": [
+      "Chooses a named pattern (cache-aside) and justifies staleness per field",
+      "Uses TTL with jitter plus delete-after-commit invalidation",
+      "Does the hit-ratio arithmetic against the database budget",
+      "Handles stampede and hot key (coalescing, early refresh, local copy or replication)",
+      "Keeps exact data (stock, price at checkout) on the source of truth",
+      "Defines metrics and a cold-cache plan"
+    ]
+  },
+  "links": {
+    "lessons": ["design-cache-data-flow", "design-databases-indexes"],
+    "problems": ["lru-cache", "lfu-cache"],
+    "cases": ["url-shortener", "news-feed", "typeahead"],
+    "guides": ["consistency-choices", "graceful-degradation", "observability"]
+  }
+}
