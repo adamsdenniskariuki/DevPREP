@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordMock, recordSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
 import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
 import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
@@ -10,9 +10,10 @@ import { displayDate } from './format'
 import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, cardXp, daysUntil, designXp, gameStats, mockXp, solveXp, weakAreas } from './gamification'
+import { activityXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, solveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { caseIds } from './cases'
+import { guideIds } from './guides'
 import type { CodeLanguage } from './problem-types'
 import { TOUR_KEY } from './appearance'
 import Icon from './components/Icon'
@@ -34,25 +35,28 @@ const DesignScreen = lazy(() => import('./screens/DesignScreen'))
 const FlashcardsScreen = lazy(() => import('./screens/FlashcardsScreen'))
 const MockScreen = lazy(() => import('./screens/MockScreen'))
 const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
+const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
 
 const navigation = [
   { id: 'home', label: 'Home', icon: 'home' },
   { id: 'tracks', label: 'Tracks', icon: 'map' },
   { id: 'practice', label: 'Practice', icon: 'repeat' },
+  { id: 'guide', label: 'Field Guide', icon: 'compass' },
   { id: 'progress', label: 'Progress', icon: 'chart' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan']
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns']
 /** Hashes from earlier releases keep working as bookmarks. */
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 
-function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string } {
+function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string } {
   const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
   const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
   if (!route || rest.length) return { route: 'unknown' }
   if (sub === undefined) return { route }
   if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
   if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
+  if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   const track = tracks.find(item => item.id === sub)?.id
   return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
 }
@@ -70,6 +74,7 @@ export default function App() {
   const [track, setTrack] = useState<Track | 'all'>('all')
   const [problemId, setProblemId] = useState(() => parseHash().problemId)
   const [caseId, setCaseId] = useState(() => parseHash().caseId)
+  const [guideId, setGuideId] = useState(() => parseHash().guideId)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
   const [backupError, setBackupError] = useState('')
@@ -95,6 +100,7 @@ export default function App() {
       setRoute(parsed.route)
       setProblemId(parsed.problemId)
       setCaseId(parsed.caseId)
+      setGuideId(parsed.guideId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -102,7 +108,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId])
   useEffect(() => {
     if (pendingImport) importDialog.current?.showModal()
     else importDialog.current?.close()
@@ -129,6 +135,7 @@ export default function App() {
     setRoute(next)
     setProblemId(undefined)
     setCaseId(undefined)
+    setGuideId(undefined)
   }
 
   const latest = useRef(progress)
@@ -147,6 +154,13 @@ export default function App() {
     store.update(value => recordDesign(value, id, percent))
     latest.current = after
     return designXp(after) - designXp(before)
+  }
+  function readGuide(id: string, percent: number) {
+    const before = latest.current
+    const after = recordGuide(before, id, percent)
+    store.update(value => recordGuide(value, id, percent))
+    latest.current = after
+    return guideXp(after) - guideXp(before)
   }
 
   function gradeCard(id: string, grade: Grade) {
@@ -260,10 +274,10 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, readGuide, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route
+  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
 
   return <div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
@@ -315,7 +329,8 @@ export default function App() {
             {route === 'tracks' && <TracksScreen app={app} />}
             {route === 'practice' && <PracticeScreen app={app} />}
             {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
-            {(route === 'design' || route === 'board') && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} board={route === 'board'} /></Suspense>}
+            {(route === 'guide' || route === 'antipatterns') && <Suspense fallback={<p role="status">Loading the Field Guide…</p>}><FieldGuideScreen app={app} guideId={guideId} gallery={route === 'antipatterns'} /></Suspense>}
+{(route === 'design' || route === 'board') && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} board={route === 'board'} /></Suspense>}
             {route === 'cards' && <Suspense fallback={<p role="status">Loading flashcards…</p>}><FlashcardsScreen app={app} /></Suspense>}
             {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
             {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}

@@ -75,6 +75,39 @@ export function problemCard(problem) {
   }
 }
 
+export const GUIDES_OUTPUT = 'src/generated/guides.json'
+export const GUIDE_INDEX_OUTPUT = 'src/generated/guide-index.json'
+/** Must match TOPIC_TRACK in src/guide-types.ts (checked by a test). */
+export const GUIDE_TOPIC_TRACK = { api: 'system-design', 'system-design': 'system-design', algorithms: 'dsa', 'code-quality': 'dsa', testing: 'dsa', security: 'system-design', databases: 'system-design', 'ml-production': 'ml', 'llm-apps': 'ai' }
+
+export function buildGuides(root = 'content') {
+  const dir = join(root, 'field-guide')
+  const { guides: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const guides = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/field-guide/index.json lists ${id} but the file is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/field-guide has entries not listed in index.json: ${[...files].join(', ')}`)
+  const index = guides.map(entry => ({
+    id: entry.id, kind: entry.kind, topic: entry.topic, level: entry.level, title: entry.title, summary: entry.summary, minutes: entry.minutes,
+    diagrams: entry.diagrams.length, antipatterns: entry.antipatterns?.length ?? 0, quiz: entry.quiz.length, links: entry.links,
+    ...(entry.organisation ? { organisation: entry.organisation } : {}),
+  }))
+  return { guides, index }
+}
+
+/** Every Field Guide quiz question becomes a recall card in the deck of the track its topic feeds. */
+export function guideCards(entry) {
+  const track = GUIDE_TOPIC_TRACK[entry.topic]
+  return entry.quiz.map((item, n) => ({
+    id: `${track}-fg-${entry.id}-${n + 1}`,
+    front: item.question,
+    back: `${item.choices[item.answer]}. ${item.explain}`,
+    level: entry.level,
+  }))
+}
+
 export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
@@ -88,6 +121,10 @@ export function buildFlashcards(root = 'content') {
   if (files.size) throw new Error(`content/flashcards has decks for unknown tracks: ${[...files].join(', ')}`)
   const dsa = decks.find(deck => deck.track === 'dsa')
   dsa.cards = [...dsa.cards, ...buildProblems(root).problems.map(problemCard)]
+  if (existsSync(join(root, 'field-guide', 'index.json'))) for (const entry of buildGuides(root).guides) {
+    const deck = decks.find(item => item.track === GUIDE_TOPIC_TRACK[entry.topic])
+    deck.cards = [...deck.cards, ...guideCards(entry)]
+  }
   const index = decks.map(deck => ({ track: deck.track, title: deck.title, cards: deck.cards.map(card => card.id) }))
   return { decks, index }
 }
@@ -108,6 +145,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const designs = buildCases()
   writeIfChanged(CASES_OUTPUT, designs.cases)
   writeIfChanged(CASE_INDEX_OUTPUT, designs.index)
+  const field = buildGuides()
+  writeIfChanged(GUIDES_OUTPUT, field.guides)
+  writeIfChanged(GUIDE_INDEX_OUTPUT, field.index)
   const cards = buildFlashcards()
   writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
   writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)

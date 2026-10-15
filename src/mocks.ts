@@ -2,12 +2,14 @@ import { lessons } from './curriculum'
 import type { Lesson, Track } from './curriculum-types'
 import type { DesignCase } from './case-types'
 import type { Problem } from './problem-types'
+import type { FieldGuideEntry } from './guide-types'
+import { TOPIC_TRACK } from './guide-types'
 import { COMPETENCIES, SSE_SIGNALS } from './stories'
 
 export type MockLevel = 'se' | 'sse'
 export interface MockQuestion {
-  kind: 'problem' | 'case' | 'task' | 'followup' | 'behavioral'
-  /** Problem, case, lesson or competency id the question came from. */
+  kind: 'problem' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide'
+  /** Problem, case, lesson, Field Guide or competency id the question came from. */
   ref: string
   title: string
   prompt: string
@@ -69,6 +71,8 @@ function followUps(pool: Lesson[], count: number, random: () => number, skip?: s
 export interface MockData {
   problems: Map<string, Problem>
   cases: Map<string, DesignCase>
+  /** Field Guide entries. When given, technical mocks add one practice question from a guide on that track. */
+  guides?: Map<string, FieldGuideEntry>
 }
 
 /** Builds a mock interview for a track from existing content. The same seed always gives the same mock. */
@@ -111,6 +115,13 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
     const lesson = pick(trackLessons, random)
     questions.push({ kind: 'task', ref: lesson.id, title: lesson.title, prompt: lesson.task, answer: lesson.solution, rubric: lesson.checklist })
     questions.push(...followUps(trackLessons, 2, random, lesson.id))
+  }
+  if (track !== 'behavioral' && data.guides) {
+    const pool = [...data.guides.values()].filter(entry => TOPIC_TRACK[entry.topic] === track && (level === 'sse' || entry.level === 'se'))
+    if (pool.length) {
+      const entry = pick(pool, random)
+      questions.push({ kind: 'guide', ref: entry.id, title: entry.title, prompt: entry.practice.prompt, answer: entry.practice.answer, rubric: entry.practice.rubric })
+    }
   }
   return { track, level, seed, minutes: MOCK_MINUTES[track], questions }
 }

@@ -6,11 +6,13 @@ import { weakAreas } from './gamification'
 import { getLearningPath, pathLessonIds } from './learning-paths'
 import type { Progress } from './progress'
 import { MOCK_MINUTES } from './mocks'
+import { guideIndex } from './guides'
+import { TOPIC_TRACK } from './guide-types'
 
-export type PlanKind = 'lesson' | 'cards' | 'problem' | 'case' | 'mock' | 'rest'
+export type PlanKind = 'lesson' | 'cards' | 'problem' | 'case' | 'guide' | 'mock' | 'rest'
 export interface PlanItem {
   kind: PlanKind
-  /** Lesson, problem or case id; the track for mocks. */
+  /** Lesson, problem, case or Field Guide id; the track for mocks. */
   ref?: string
   title: string
   minutes: number
@@ -75,9 +77,26 @@ export function problemQueue(progress: Progress) {
 }
 
 /**
+ * Unread Field Guide entries in plan order: topics that feed focus or weak tracks first, then entries
+ * at the user's level (SSE first on the senior path, SE first otherwise), then content order.
+ */
+export function guideQueue(progress: Progress) {
+  const senior = progress.selectedPath === 'senior'
+  const tracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
+  const rank = (track: Track) => { const at = tracks.indexOf(track); return at < 0 ? tracks.length : at }
+  return guideIndex
+    .map((item, order) => ({ item, order }))
+    .filter(({ item }) => !progress.guides?.[item.id])
+    .sort((a, b) => rank(TOPIC_TRACK[a.item.topic]) - rank(TOPIC_TRACK[b.item.topic])
+      || Number((a.item.level === 'sse') !== senior) - Number((b.item.level === 'sse') !== senior)
+      || a.order - b.order)
+    .map(({ item }) => item)
+}
+
+/**
  * Builds a day-by-day plan from today until the interview (or a default week).
  * Every day has flashcards; lessons are spread evenly (up to 3 a day); coding problems and
- * design cases alternate; mocks land weekly and on the two days before the interview,
+ * design cases alternate; every third day adds a Field Guide entry; mocks land weekly and on the two days before the interview,
  * which itself is a light review day.
  */
 export function planStudy(progress: Progress, today: string): StudyPlan {
@@ -94,7 +113,8 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
   const problems = problemQueue(progress)
   const cases = caseIndex.filter(item => !progress.designs?.[item.id]).sort((a, b) => Number(senior ? b.level === 'sse' : a.level === 'sse') - Number(senior ? a.level === 'sse' : b.level === 'sse'))
   const mockTracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
-  let lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0
+  const guides = guideQueue(progress)
+  let lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0, guideAt = 0
   const days: PlanDay[] = []
   for (let index = 0; index < total; index++) {
     const value = start + index
@@ -114,6 +134,10 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
     } else if (index % 2 === 1 && caseAt < cases.length) {
       const item = cases[caseAt++]
       items.push({ kind: 'case', ref: item.id, title: item.title, minutes: item.minutes })
+    }
+    if (index % 3 === 2 && guideAt < guides.length) {
+      const item = guides[guideAt++]
+      items.push({ kind: 'guide', ref: item.id, title: item.title, minutes: item.minutes })
     }
     const daysLeft = dated ? dayNumber(saved!) - value : Infinity
     if (index % 7 === 6 || daysLeft === 1 || daysLeft === 2) {
