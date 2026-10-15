@@ -1,0 +1,264 @@
+{
+  "id": "log4shell-2021",
+  "kind": "case",
+  "topic": "security",
+  "level": "sse",
+  "title": "Log4Shell, December 2021: a log line that runs code",
+  "summary": "A 2013 Log4j feature let text in a log message trigger a JNDI lookup to a remote server and load code. The fix shipped fast; finding every buried copy of the library took far longer.",
+  "minutes": 18,
+  "organisation": "Apache Software Foundation",
+  "year": 2021,
+  "problem": "Apache Log4j 2 is an open-source Java logging library, first released in 2012 and maintained by volunteers at the Apache Software Foundation (ASF). It is built into thousands of other packages, so it ends up inside applications, frameworks and vendor products, often several layers down.\n\nIn July 2013 the project accepted a community-contributed feature that added Java Naming and Directory Interface (JNDI) lookups. Log4j could expand lookup expressions inside log messages, so if attacker-supplied text was logged, it could make Log4j contact a directory server (such as LDAP) chosen by the attacker and run code loaded from it. That made almost any logged field, from a login name to a request header, a possible way in.\n\nThe flaw was reported privately to ASF on 24 November 2021 and became public around 9 to 10 December as CVE-2021-44228, rated 10.0, the highest CVSS score. The U.S. Cyber Safety Review Board (CSRB), reviewing the event in 2022, found that a central obstacle was that nobody had a list of where it was used, so organisations struggled to find every copy before they could upgrade it.",
+  "constraints": [
+    "Log4j is a transitive dependency for many teams: it often arrives inside a framework or vendor product that the organisation did not build.",
+    "ASF develops fixes in public repositories, so a fix can reveal the flaw before an advisory is ready.",
+    "Exploitation needed no credentials and no user interaction, only the ability to get a string into a log message.",
+    "Many affected systems were vendor products, so customers had to wait for each vendor to patch.",
+    "Security scanning by researchers and attacks looked alike on the network, which made triage hard."
+  ],
+  "decisions": [
+    {
+      "decision": "ASF judged a coordinated embargo impractical and reviewed the fix in public pull requests from 29 November.",
+      "tradeoff": "Fits open-source development and let the fix move quickly, but release candidates and public commits can be studied by anyone. The Board suggests, without proof, that the flaw was spotted that way."
+    },
+    {
+      "decision": "When the flaw was being discussed publicly on 9 December, ASF sped up and released 2.15.0 and the CVE the next day.",
+      "tradeoff": "Defenders got a fix immediately, but 2.15.0 was incomplete, and three more Log4j 2 CVEs followed within three weeks, contributing to what the Board calls patching fatigue."
+    },
+    {
+      "decision": "Many organisations applied quick mitigations (egress filtering, WAF rules, deleting the JndiLookup class, hot patches, disconnecting assets) while they searched for affected systems.",
+      "tradeoff": "Helped in the short term, but the Board stresses that these did not fix the underlying issue. Upgrading was still needed."
+    },
+    {
+      "decision": "CISA added the CVE to its Known Exploited Vulnerabilities catalogue on 10 December and on 17 December ordered federal civilian agencies to act within two weeks (Emergency Directive 22-02).",
+      "tradeoff": "Set a clear deadline and priority, but agencies still had to find every instance, and one cabinet department reported spending 33,000 hours on its response."
+    },
+    {
+      "decision": "CISA set up a guidance page and a public GitHub list of affected products, collecting vendor statements in one place.",
+      "tradeoff": "Gave defenders one shared reference, but it relied on vendors reporting accurately and quickly, and could not replace each organisation's own inventory."
+    }
+  ],
+  "failures": "**The flaw.** Log4j's JNDI support, added in 2013 for version 2.0-beta9, did not guard against JNDI endpoints controlled by an attacker. With message lookup substitution switched on, anyone who could control a logged message or parameter could make Log4j fetch and run code from an LDAP server. The Board notes that a focused security review in 2013 might have caught it, but the volunteer project lacked resources; ASF told the Board automated testing would not have found it.\n\n**The fix chain.** Version 2.15.0 (10 December) stopped formatting lookups in messages by default and restricted LDAP access through JNDI. Within days, CVE-2021-45046 showed the fix was incomplete for some non-default configurations, fixed in 2.16.0. CVE-2021-45105, a denial of service through self-referencing lookups, was fixed in 2.17.0. CVE-2021-44832 allowed code execution by someone who could already change the logging configuration. Log4j 1.x, end-of-life since 2015, was separately affected only when configured with JNDI (CVE-2021-4104).\n\n**Finding it.** Log4j is so deeply embedded that common scanning tools struggled to find it, and ASF cannot know who uses it. Organisations depended on vendors to tell them whether products were affected. Those with mature asset inventories responded best. The Board found that none of the organisations it spoke to that used software bills of materials (SBOMs) had used them to find Log4j, because today's SBOMs vary in format, often lack component versions and are rarely consumed automatically.\n\n**Exploitation.** The earliest known exploitation was over two days starting 1 December, consistent with someone testing the reporter's proof of concept. After disclosure, one company saw a spike in scanning less than two hours after publication; five days later Cloudflare saw 400 exploit attempts per second. Botnets, coin miners, ransomware and nation-state actors followed. The Board knew of no significant attack on critical infrastructure, but says data is lacking and that Log4j is now an endemic vulnerability that may stay in systems for a decade or longer.",
+  "lessons": [
+    "Never interpret untrusted data as instructions. A logger that expands expressions inside messages turns every logged field into an input to an interpreter.",
+    "You cannot patch what you cannot find. Keep an accurate inventory of software and its direct and indirect dependencies, linked to owners.",
+    "SBOMs only help if they are complete, include versions and are consumed automatically; generate them in CI and make them queryable.",
+    "Use mitigations to buy time, but upgrade. And block regressions so the vulnerable version cannot come back through a new build.",
+    "Egress control limits damage: a server that cannot open arbitrary outbound connections cannot fetch an attacker's payload.",
+    "Have a documented vulnerability response process before you need it, including how to work with vendors and how to handle a burst of follow-up fixes without burning out the team.",
+    "Critical open-source projects are often maintained by volunteers. Funding and security reviews for them are part of your own supply-chain risk."
+  ],
+  "caveats": "The CSRB report and the Apache security page are the sources; neither publishes the exact exploit string, so we describe the mechanism in general terms. \"Log4Shell\" is a popular nickname rather than Apache's name for the CVE. The CSRB says CVE-2021-44832 was fixed in 2.17.1, while the current Apache page lists 2.17.0 as the first fixed Java 8 version, so we say only that it was fixed in the 2.17 line. Public disclosure is dated 9 December (discussion on social media) or 10 December (release and CVE) depending on the source. The Board's view that the flaw may have been spotted from the release candidate is its own unverified hypothesis. Apache also issued fixes for older Java versions (2.3.1, 2.12.2 and later 2.12.3); we do not give their release dates. The dependency diagram is illustrative, not a real product.",
+  "diagrams": [
+    {
+      "id": "l4s-timeline",
+      "type": "timeline",
+      "title": "From a 2013 feature to four CVEs in three weeks",
+      "alt": "Timeline. July 2013: JNDI lookup support is added. 24 November 2021: an Alibaba Cloud engineer reports the flaw to Apache. 29 to 30 November: fixes are reviewed in public pull requests. 1 December: earliest known exploitation. 6 December: release candidate tagged. 9 December: flaw discussed publicly. 10 December: 2.15.0 and CVE-2021-44228 published, added to CISA's exploited list. 13 December: CISA guidance site. 14 December: CVE-2021-45046 and 2.16.0. 17 December: Emergency Directive 22-02. 18 December: CVE-2021-45105 and 2.17.0. 28 December: CVE-2021-44832.",
+      "caption": "Dates from the CSRB report. The bug was eight years old; the response was compressed into about five weeks.",
+      "events": [
+        { "at": "18 Jul 2013", "label": "JNDI lookup support committed for Log4j 2.0-beta9", "kind": "trigger" },
+        { "at": "24 Nov 2021", "label": "Alibaba Cloud Security engineer reports the flaw privately to ASF", "kind": "detect" },
+        { "at": "29–30 Nov", "label": "Fixes reviewed in public pull requests", "kind": "mitigate" },
+        { "at": "1 Dec", "label": "Earliest known exploitation, over about two days", "kind": "impact" },
+        { "at": "6 Dec", "label": "2.15.0 release candidate tagged, no advisory yet", "kind": "mitigate" },
+        { "at": "9 Dec", "label": "Reporter warns ASF the flaw is being discussed publicly", "kind": "trigger" },
+        { "at": "10 Dec", "label": "2.15.0 and CVE-2021-44228 (CVSS 10.0) published; CISA statement", "kind": "resolve" },
+        { "at": "10–14 Dec", "label": "Mass scanning; 400 attempts per second seen by Cloudflare by day five", "kind": "impact" },
+        { "at": "13 Dec", "label": "CISA launches a guidance page and a GitHub list of affected products", "kind": "mitigate" },
+        { "at": "14 Dec", "label": "CVE-2021-45046: 2.15.0 fix incomplete; fixed in 2.16.0", "kind": "trigger" },
+        { "at": "17 Dec", "label": "Emergency Directive 22-02 gives federal agencies two weeks", "kind": "mitigate" },
+        { "at": "18 Dec", "label": "CVE-2021-45105 (denial of service); fixed in 2.17.0", "kind": "trigger" },
+        { "at": "28 Dec", "label": "CVE-2021-44832 (config-file code execution); fixed in 2.17 line", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "l4s-lookup",
+      "type": "flow",
+      "title": "How a logged string became remote code execution",
+      "alt": "Flow diagram. The attacker sends a request containing a lookup expression. The web app logs it. Log4j core expands the lookup and makes a JNDI request to the attacker's LDAP server, which returns a reference to remote code. Log4j loads and runs it inside the app's process.",
+      "caption": "A generalised view of the mechanism the Apache and CSRB descriptions give. The app did nothing unusual; it simply logged user input.",
+      "nodes": [
+        { "id": "atk", "label": "Attacker", "kind": "bad", "col": 0, "row": 0 },
+        { "id": "app", "label": "Java app", "kind": "service", "col": 1, "row": 0, "sub": "logs user input" },
+        { "id": "core", "label": "log4j-core", "kind": "worker", "col": 2, "row": 0, "sub": "expands lookups" },
+        { "id": "ldap", "label": "Attacker LDAP", "kind": "external", "col": 4, "row": 0 },
+        { "id": "rce", "label": "Code runs", "kind": "bad", "col": 2, "row": 2, "sub": "inside the app" }
+      ],
+      "edges": [
+        { "from": "atk", "to": "app", "label": "crafted field" },
+        { "from": "app", "to": "core", "label": "log message" },
+        { "from": "core", "to": "ldap", "label": "JNDI lookup" },
+        { "from": "ldap", "to": "rce", "label": "remote code", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The attacker puts a lookup expression in any field the app might log: a user name, a header, a chat message." },
+        { "edges": [1], "text": "The app logs the field as usual. Nothing in the app's own code looks dangerous." },
+        { "edges": [2], "text": "Vulnerable log4j-core versions expanded lookups inside messages, including JNDI lookups, and contacted the LDAP server named in the text." },
+        { "edges": [3], "text": "The server pointed Log4j at code that was then loaded and run with the app's privileges. Blocking outbound connections from servers breaks this step." }
+      ]
+    },
+    {
+      "id": "l4s-disclosure",
+      "type": "sequence",
+      "title": "Disclosure in the open",
+      "alt": "Sequence diagram between the reporter, the Apache Log4j team, the public and CISA. The reporter emails ASF on 24 November. ASF reviews fixes in public pull requests and tags a release candidate. On 9 December the reporter warns that the flaw is public. On 10 December ASF releases 2.15.0 and the CVE, and CISA issues a statement and adds it to the exploited list.",
+      "caption": "Open-source fixes are visible as soon as they are written, so advisories may need to ship at the same moment as the fix.",
+      "actors": [
+        { "id": "rep", "label": "Reporter" },
+        { "id": "asf", "label": "Apache Log4j" },
+        { "id": "pub", "label": "Public" },
+        { "id": "cisa", "label": "CISA" }
+      ],
+      "messages": [
+        { "from": "rep", "to": "asf", "label": "Private report (24 Nov)", "note": "An Alibaba Cloud Security engineer emails ASF's security team." },
+        { "from": "asf", "to": "pub", "label": "Fix in public PRs", "note": "29 to 30 November. ASF judged an embargo impractical." },
+        { "from": "asf", "to": "pub", "label": "2.15.0-rc1 tagged (6 Dec)", "note": "No advisory yet." },
+        { "from": "rep", "to": "asf", "label": "Flaw discussed online", "style": "fail", "note": "9 December: a post with a redacted proof of concept appears on WeChat." },
+        { "from": "asf", "to": "pub", "label": "2.15.0 + CVE (10 Dec)", "note": "ASF accelerates the release. NVD scores it CVSS 10.0." },
+        { "from": "cisa", "to": "pub", "label": "Statement, KEV listing", "note": "Same day CISA comments and adds the CVE to its Known Exploited Vulnerabilities catalogue." }
+      ]
+    },
+    {
+      "id": "l4s-deps",
+      "type": "flow",
+      "title": "Why it was so hard to find",
+      "alt": "Flow diagram of a typical estate. An in-house app depends on a web framework that depends on a utility library that bundles log4j-core. A vendor appliance ships its own copy of log4j-core inside a closed package. A scanner that checks only the app's direct dependencies sees neither copy.",
+      "caption": "Illustrative. The CSRB notes Log4j is often embedded in other components, unknown to the layers above, so common scanning struggled to find it.",
+      "nodes": [
+        { "id": "scan", "label": "Scanner", "kind": "note", "col": 0, "row": 2, "sub": "direct deps only" },
+        { "id": "app", "label": "In-house app", "kind": "service", "col": 1, "row": 2 },
+        { "id": "fw", "label": "Web framework", "kind": "worker", "col": 2, "row": 2 },
+        { "id": "lib", "label": "Utility library", "kind": "worker", "col": 3, "row": 2 },
+        { "id": "l1", "label": "log4j-core", "kind": "bad", "col": 4, "row": 2, "sub": "transitive" },
+        { "id": "vend", "label": "Vendor product", "kind": "external", "col": 1, "row": 0, "sub": "closed package" },
+        { "id": "l2", "label": "log4j-core", "kind": "bad", "col": 4, "row": 0, "sub": "bundled copy" }
+      ],
+      "edges": [
+        { "from": "scan", "to": "app", "label": "checks" },
+        { "from": "app", "to": "fw" },
+        { "from": "fw", "to": "lib" },
+        { "from": "lib", "to": "l1" },
+        { "from": "vend", "to": "l2", "label": "ships inside", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Teams know their app's direct dependencies, and simple scanners look there." },
+        { "edges": [2, 3], "text": "Log4j usually arrives several layers down, pulled in by something else. Nobody on the app team chose it." },
+        { "edges": [4], "text": "Vendor products may bundle their own copy. Customers had to wait for each vendor to say whether it was affected and to ship a fix." }
+      ]
+    },
+    {
+      "id": "l4s-inventory",
+      "type": "compare",
+      "title": "Response without and with a dependency inventory",
+      "alt": "Comparison. Without an inventory: an advisory arrives, teams are asked by email and vendors are chased, and the search takes weeks. With an inventory: an advisory is matched against SBOMs generated in CI, producing a list of affected services with owners, who patch and verify.",
+      "caption": "The Board found organisations with mature asset processes responded best, and recommends accurate inventories plus better SBOM tooling.",
+      "before": {
+        "label": "No inventory",
+        "nodes": [
+          { "id": "adv", "label": "Advisory", "kind": "external", "col": 0, "row": 0 },
+          { "id": "ask", "label": "Ask every team", "kind": "state", "col": 1, "row": 0, "sub": "chase vendors" },
+          { "id": "slow", "label": "Weeks of search", "kind": "bad", "col": 2, "row": 0, "sub": "gaps remain" }
+        ],
+        "edges": [
+          { "from": "adv", "to": "ask" },
+          { "from": "ask", "to": "slow", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "SBOM-backed inventory",
+        "nodes": [
+          { "id": "adv", "label": "Advisory", "kind": "external", "col": 0, "row": 0 },
+          { "id": "sbom", "label": "SBOM query", "kind": "db", "col": 1, "row": 0, "sub": "from CI builds" },
+          { "id": "list", "label": "Owner list", "kind": "good", "col": 2, "row": 0, "sub": "patch, verify" }
+        ],
+        "edges": [
+          { "from": "adv", "to": "sbom" },
+          { "from": "sbom", "to": "list" }
+        ]
+      }
+    },
+    {
+      "id": "l4s-cvss",
+      "type": "bars",
+      "title": "The December 2021 Log4j 2 CVEs by severity",
+      "alt": "Bar chart of CVSS 3 base scores from the Apache security page: CVE-2021-44228 scores 10.0, CVE-2021-45046 scores 9.0, CVE-2021-44832 scores 6.6, and CVE-2021-45105 scores 5.9.",
+      "caption": "Scores as listed by Apache. The follow-ups were less severe than the original, but each one meant another upgrade across every affected system.",
+      "unit": "CVSS 3 base score",
+      "bars": [
+        { "label": "CVE-2021-44228", "value": 10, "highlight": true },
+        { "label": "CVE-2021-45046", "value": 9 },
+        { "label": "CVE-2021-44832", "value": 6.6 },
+        { "label": "CVE-2021-45105", "value": 5.9 }
+      ]
+    }
+  ],
+  "interview": [
+    "Use Log4Shell to explain injection beyond SQL: any component that interprets data (a logger, a template engine, a deserialiser) is a parser that attacker input can reach.",
+    "When designing a service, mention egress control: application servers should only reach the hosts they need, which turns many remote-code exploits into failed callbacks.",
+    "On supply chain, say how you would answer \"are we affected?\" within an hour: SBOMs generated at build time, stored centrally and queryable by package and version.",
+    "Distinguish mitigation from remediation: WAF rules and config flags buy time, but the vulnerable code must be upgraded, and builds should block it from coming back.",
+    "Mention the human side: follow-up CVEs arrived in waves, so plan rotations and a clear vulnerability response process to avoid burning out the team."
+  ],
+  "quiz": [
+    {
+      "question": "What did an attacker need in order to exploit CVE-2021-44228?",
+      "choices": ["Valid credentials for the app", "The ability to get text into a message that a vulnerable Log4j logged", "Write access to the logging configuration", "Physical access to the server"],
+      "answer": 1,
+      "explain": "Lookups in logged messages were expanded, so any attacker-controlled field that got logged could trigger a JNDI request to their server. No privileges or user interaction were needed."
+    },
+    {
+      "question": "Why was 2.15.0 not the end of the story?",
+      "choices": ["It was never released", "Its fix was incomplete in some non-default configurations, leading to CVE-2021-45046 and 2.16.0", "It broke all logging"],
+      "answer": 1,
+      "explain": "Apache found that configurations using certain Thread Context lookups were still exposed. More CVEs followed, which the Board linked to patching fatigue."
+    },
+    {
+      "question": "According to the CSRB, why was finding affected systems so hard?",
+      "choices": ["Log4j was often embedded deep inside other components and vendor products, and inventories were incomplete", "Apache refused to publish affected versions", "Log4j only ran on mainframes"],
+      "answer": 0,
+      "explain": "Log4j is a transitive dependency in thousands of packages, and ASF cannot know its users. Organisations with good asset inventories responded best."
+    },
+    {
+      "question": "Which quick control would have blocked the common exploit path even on an unpatched server?",
+      "choices": ["Rotating TLS certificates", "Restricting outbound connections from servers (egress filtering)", "Adding more CPU"],
+      "answer": 1,
+      "explain": "The exploit made the server reach out to an attacker's LDAP server. The Board lists egress filtering among the mitigations organisations used."
+    },
+    {
+      "question": "What did the Board find about SBOMs during the response?",
+      "choices": ["They found every instance within hours", "Organisations it spoke to had not used them to find Log4j, because current SBOMs are inconsistent and rarely automated", "They were banned for federal use"],
+      "answer": 1,
+      "explain": "SBOM fields vary, often lack versions and are rarely consumed automatically. The Board recommends improving SBOM tooling so they become useful in a crisis."
+    }
+  ],
+  "practice": {
+    "prompt": "A critical remote-code-execution flaw is announced in a widely used open-source library that may be a transitive dependency of many of your 200 services and several vendor products. You are incident lead. Lay out your first 24 hours and the longer-term changes you would make.",
+    "answer": "First hour: open an incident, name an owner, and set up a single status channel and document. Read the advisory: affected versions, conditions and the official fix. Then find exposure: query build-time SBOMs or dependency graphs for the package and version range, including transitive dependencies; scan deployed artefacts and container images for the JAR or file; and list vendor products and ask vendors for statements, tracking them in one place. Prioritise internet-facing and high-privilege systems. Apply mitigations while you upgrade: egress filtering so servers cannot reach unknown hosts, WAF rules, disabling the vulnerable feature or removing the class, and taking unpatchable systems offline. Upgrade to the fixed version, redeploy, then verify by rescanning what is running. Watch logs and network traffic for exploit attempts and for signs of successful callbacks, and treat hits as possible compromise. Expect follow-up CVEs and plan shift rotations. Longer term: generate SBOMs in CI and store them centrally, block known-vulnerable versions in the build, keep an asset inventory with owners, default-deny egress, write a vulnerability response playbook, and fund or contribute to the critical open-source projects you depend on.",
+    "rubric": [
+      "Clear incident structure: owner, status channel, single tracker",
+      "Finds exposure including transitive dependencies and vendor products, not just direct dependencies",
+      "Separates quick mitigations (egress, WAF, disabling the feature) from the real fix (upgrade and verify)",
+      "Hunts for exploitation and treats hits as possible compromise",
+      "Plans for follow-up CVEs, regressions and team fatigue",
+      "Long-term: SBOMs in CI, inventory with owners, default-deny egress, documented response process"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability"],
+    "guides": ["secrets-and-supply-chain", "injection-and-xss", "owasp-top-10", "observability", "testing-strategy"]
+  },
+  "sources": [
+    {
+      "title": "Review of the December 2021 Log4j Event",
+      "publisher": "Cyber Safety Review Board (CISA)",
+      "url": "https://www.cisa.gov/sites/default/files/publications/CSRB-Report-on-Log4-July-11-2022_508.pdf",
+      "date": "2022-07-11"
+    },
+    {
+      "title": "Security (Apache Log4j vulnerabilities)",
+      "publisher": "Apache Logging Services",
+      "url": "https://logging.apache.org/security.html"
+    }
+  ]
+}

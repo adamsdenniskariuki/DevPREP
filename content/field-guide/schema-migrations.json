@@ -1,0 +1,307 @@
+{
+  "id": "schema-migrations",
+  "kind": "guide",
+  "topic": "databases",
+  "level": "se",
+  "title": "Schema migrations without downtime: expand, migrate, contract",
+  "summary": "Change a live schema in small backward-compatible steps: add before you use, backfill in batches, build indexes and constraints online, cap lock waits, and remove old structure only after no running code needs it.",
+  "minutes": 17,
+  "principle": "Every schema change must be compatible with both the code that is running now and the code you are about to deploy. Split breaking changes into expand (add new structure), migrate (dual-write, backfill in batches, switch reads) and contract (remove the old structure) across separate deploys. Use online operations with short lock timeouts, and keep a rollback path open until the contract step.",
+  "why": "During a rolling deploy, old and new versions of your service run side by side against **one** database, and a deploy can be rolled back at any moment. So a migration that suits only the new code (renaming a column, adding a NOT NULL column the old code does not write, dropping a column the old code still reads) causes errors the moment it runs. The fix is the **expand/contract** pattern, also called parallel change: additive changes go out before the code that uses them, destructive changes go out after the code stops using them, and data moves in between.\n\nThe other risk is **locks**. Many DDL statements need a strong table lock, even if only briefly. In PostgreSQL, `ALTER TABLE` takes an ACCESS EXCLUSIVE lock; if a long-running query holds any lock on the table, the ALTER waits, and every new query on that table queues behind the waiting ALTER. A metadata-only change can still cause an outage this way. Set a short `lock_timeout` and retry instead.\n\nSome operations rewrite or scan the whole table: changing a column's type, adding a NOT NULL or CHECK constraint that must be validated, building an ordinary index (which blocks writes in PostgreSQL). Each has an online alternative: add constraints as `NOT VALID` and validate separately, use `CREATE INDEX CONCURRENTLY` (PostgreSQL) or online DDL and tools such as gh-ost or pt-online-schema-change (MySQL), and **backfill in small batches** rather than one giant UPDATE that holds row locks for minutes, bloats the table and lags replicas.\n\nFinally, treat migrations as versioned code: numbered files in the repo, applied in order by a tool that records what ran (Flyway, Liquibase, Alembic, Rails, golang-migrate and others), run once per environment as a pipeline step, and never edited after they have been applied anywhere.",
+  "diagrams": [
+    {
+      "id": "mig-expand-contract-timeline",
+      "type": "timeline",
+      "title": "Renaming users.name to full_name across deploys",
+      "alt": "Timeline of an expand and contract rename. Deploy 1 adds a nullable full_name column. Deploy 2 ships code that writes both columns. A batched backfill copies old rows. After verification, a flag switches reads to full_name. Deploy 3 stops writing name. Deploy 4, days later, drops the old column.",
+      "caption": "Every step is backward compatible with the step before, so any single deploy can be rolled back without data loss until the final drop.",
+      "events": [
+        { "at": "Deploy 1", "label": "Expand: ADD COLUMN full_name text (nullable, metadata-only)", "kind": "trigger" },
+        { "at": "Deploy 2", "label": "Code writes name and full_name; still reads name", "kind": "mitigate" },
+        { "at": "Day 1–2", "label": "Backfill: copy name to full_name in batches of 5,000 rows", "kind": "mitigate" },
+        { "at": "Day 2", "label": "Verify: zero rows where full_name IS NULL; compare samples", "kind": "detect" },
+        { "at": "Day 3", "label": "Feature flag switches reads to full_name; watch errors", "kind": "mitigate" },
+        { "at": "Deploy 3", "label": "Code stops writing name; add NOT NULL on full_name online", "kind": "mitigate" },
+        { "at": "Deploy 4", "label": "Contract: DROP COLUMN name, after a soak period", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "mig-phases-flow",
+      "type": "flow",
+      "title": "The expand / migrate / contract state machine",
+      "alt": "Flow diagram of migration phases. Expand adds new structure, then the application dual-writes, then a batched backfill copies existing rows, then a verification step checks the data. Reads switch to the new structure, and finally contract removes the old structure. From the read switch an arrow leads to a rollback point that flips reads back.",
+      "caption": "Until contract, the old structure is complete and current, so rolling back is a flag flip, not a data restore.",
+      "nodes": [
+        { "id": "expand", "label": "Expand", "kind": "state", "col": 0, "row": 0, "sub": "add column/table" },
+        { "id": "dual", "label": "Dual write", "kind": "state", "col": 2, "row": 0, "sub": "old + new" },
+        { "id": "backfill", "label": "Backfill", "kind": "worker", "col": 4, "row": 0, "sub": "batched, resumable" },
+        { "id": "verify", "label": "Verify", "kind": "decision", "col": 4, "row": 2, "sub": "counts, samples" },
+        { "id": "read", "label": "Switch reads", "kind": "state", "col": 2, "row": 2, "sub": "behind a flag" },
+        { "id": "contract", "label": "Contract", "kind": "good", "col": 0, "row": 2, "sub": "drop old" },
+        { "id": "back", "label": "Roll back", "kind": "note", "col": 2, "row": 4, "sub": "flag off" }
+      ],
+      "edges": [
+        { "from": "expand", "to": "dual", "label": "deploy code" },
+        { "from": "dual", "to": "backfill", "label": "then copy old" },
+        { "from": "backfill", "to": "verify" },
+        { "from": "verify", "to": "read", "label": "all rows match" },
+        { "from": "read", "to": "contract", "label": "after soak" },
+        { "from": "read", "to": "back", "label": "errors?", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Expand: an additive, backward-compatible change. Old code ignores the new column; nothing reads it yet." },
+        { "edges": [1], "text": "Deploy code that writes both the old and new structure on every write. Start the backfill only after this is fully rolled out, or rows written by old instances will be missed." },
+        { "edges": [2], "text": "Backfill existing rows in small, idempotent batches (`WHERE full_name IS NULL`) so the job can stop and resume safely." },
+        { "edges": [3], "text": "Verify before trusting the new structure: no unmigrated rows, and spot-checks that old and new agree." },
+        { "edges": [5], "text": "Switch reads behind a flag. If anything looks wrong, flip it back: the old column is still complete because writes still go to both." },
+        { "edges": [4], "text": "Contract only after a soak period: stop writing the old structure in one deploy, drop it in a later one." }
+      ]
+    },
+    {
+      "id": "mig-rename-compare",
+      "type": "compare",
+      "title": "Renaming a column: one step vs expand/contract",
+      "alt": "Side-by-side comparison. On the left, a single migration renames the column while old application instances are still running, so their queries against the old name fail until the rollout finishes, and a rollback breaks too. On the right, the rename is done as add column, dual write and backfill, then drop, so every running version keeps working.",
+      "caption": "A one-step rename is only safe if you can stop all traffic. With rolling deploys, add the new name before you remove the old one.",
+      "before": {
+        "label": "RENAME COLUMN in one deploy",
+        "nodes": [
+          { "id": "m", "label": "RENAME COLUMN", "kind": "db", "col": 0, "row": 0, "sub": "name → full_name" },
+          { "id": "old", "label": "Old instances", "kind": "bad", "col": 1, "row": 0, "sub": "SELECT name fails" },
+          { "id": "rb", "label": "Rollback broken", "kind": "bad", "col": 2, "row": 0, "sub": "old code, new col" }
+        ],
+        "edges": [
+          { "from": "m", "to": "old", "style": "fail" },
+          { "from": "old", "to": "rb", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Expand, migrate, contract",
+        "nodes": [
+          { "id": "m", "label": "ADD full_name", "kind": "db", "col": 0, "row": 0, "sub": "nullable" },
+          { "id": "old", "label": "Dual write", "kind": "good", "col": 1, "row": 0, "sub": "+ batch backfill" },
+          { "id": "rb", "label": "DROP name", "kind": "good", "col": 2, "row": 0, "sub": "when unused" }
+        ],
+        "edges": [
+          { "from": "m", "to": "old" },
+          { "from": "old", "to": "rb" }
+        ]
+      }
+    },
+    {
+      "id": "mig-backfill-bars",
+      "type": "bars",
+      "title": "Longest time any one transaction holds row locks",
+      "alt": "Bar chart for backfilling 50 million rows at an assumed 40,000 rows per second. A single UPDATE holds its row locks for about 1,250 seconds. Batches of 100,000 rows hold them for about 2.5 seconds each, batches of 10,000 for about 0.25 seconds, and batches of 1,000 for about 0.025 seconds.",
+      "caption": "Illustrative, assuming 40k rows/s. Total work is similar, but small batches keep each lock short, let replicas keep up and can pause or resume.",
+      "unit": "seconds per transaction",
+      "bars": [
+        { "label": "One UPDATE, 50M rows", "value": 1250 },
+        { "label": "Batches of 100k", "value": 2.5 },
+        { "label": "Batches of 10k", "value": 0.25, "highlight": true },
+        { "label": "Batches of 1k", "value": 0.025 }
+      ]
+    },
+    {
+      "id": "mig-lock-queue",
+      "type": "flow",
+      "title": "How a quick ALTER TABLE still causes an outage",
+      "alt": "Flow diagram in PostgreSQL. A long-running report query holds a lock on the users table. An ALTER TABLE needs an exclusive lock, so it waits. Ordinary application queries now queue behind the waiting ALTER, and the site stalls. The fix sets a short lock timeout so the ALTER gives up and is retried later.",
+      "caption": "The ALTER itself would take milliseconds; the wait for its lock is what blocks everyone. Always set lock_timeout for DDL.",
+      "nodes": [
+        { "id": "long", "label": "Long report", "kind": "worker", "col": 0, "row": 0, "sub": "running 20 min" },
+        { "id": "table", "label": "users table", "kind": "db", "col": 2, "row": 0 },
+        { "id": "alter", "label": "ALTER TABLE", "kind": "bad", "col": 0, "row": 2, "sub": "needs exclusive" },
+        { "id": "app", "label": "App queries", "kind": "client", "col": 0, "row": 4, "sub": "piling up" },
+        { "id": "fix", "label": "lock_timeout 5s", "kind": "good", "col": 2, "row": 4, "sub": "give up, retry" }
+      ],
+      "edges": [
+        { "from": "long", "to": "table", "label": "holds lock" },
+        { "from": "alter", "to": "table", "label": "waits", "style": "async" },
+        { "from": "app", "to": "alter", "label": "queued behind", "style": "fail" },
+        { "from": "alter", "to": "fix", "label": "with timeout" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "A long query or an idle-in-transaction session holds an ACCESS SHARE lock on the table. That is normal and harmless on its own." },
+        { "edges": [1], "text": "The migration's ALTER TABLE needs ACCESS EXCLUSIVE, which conflicts with every other lock, so it waits." },
+        { "edges": [2], "text": "New SELECTs and writes conflict with the queued exclusive request, so they wait behind it. Connection pools fill up and the service stalls, even though the ALTER has not started." },
+        { "edges": [3], "text": "Run DDL with `SET lock_timeout = '5s'` (and a statement timeout). If the lock is not granted quickly, the migration fails fast and is retried, and normal traffic keeps flowing." }
+      ]
+    },
+    {
+      "id": "mig-deploy-seq",
+      "type": "sequence",
+      "title": "Ordering schema and code changes in a rolling deploy",
+      "alt": "Sequence diagram with a pipeline, old app instances, new app instances and the database. The pipeline first runs the additive migration. It then rolls out new instances that dual-write while old instances keep writing only the old column. Once the rollout is complete, the pipeline starts a batched backfill, verifies it, and flips reads to the new column. Dropping the old column is a later, separate step.",
+      "caption": "Schema first for additive changes, code first for destructive ones, and start the backfill only when no instance writes the old shape alone.",
+      "actors": [
+        { "id": "ci", "label": "Pipeline" },
+        { "id": "old", "label": "App (old)" },
+        { "id": "new", "label": "App (new)" },
+        { "id": "db", "label": "Database" }
+      ],
+      "messages": [
+        { "from": "ci", "to": "db", "label": "migrate: ADD COLUMN full_name", "note": "Additive and nullable, so the old code is unaffected. Run with a short lock_timeout." },
+        { "from": "ci", "to": "new", "label": "rolling deploy (dual write)", "note": "For a while both versions run. A rollback now is safe: old code ignores the new column." },
+        { "from": "old", "to": "db", "label": "INSERT … name only", "note": "Old instances still write rows without full_name. This is why the backfill waits." },
+        { "from": "new", "to": "db", "label": "INSERT … name, full_name" },
+        { "from": "ci", "to": "db", "label": "backfill in batches", "note": "Starts only after every instance dual-writes, so no new row can be left behind." },
+        { "from": "db", "to": "ci", "label": "0 rows with NULL full_name", "style": "reply" },
+        { "from": "ci", "to": "new", "label": "flag: read full_name", "note": "A runtime flag, not a deploy, so reverting is instant." },
+        { "from": "new", "to": "db", "label": "SELECT full_name …" },
+        { "from": "ci", "to": "db", "label": "later: DROP COLUMN name", "note": "Only after a release that no longer writes or reads name has fully replaced the dual-writing one, and after a soak period." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Adding an index to a large, busy table (PostgreSQL)",
+      "bad": {
+        "label": "Plain CREATE INDEX",
+        "lang": "sql",
+        "code": "CREATE INDEX orders_customer_id_idx ON orders (customer_id);\n-- Takes a SHARE lock: reads continue, but every INSERT,\n-- UPDATE and DELETE on orders waits until the build ends."
+      },
+      "good": {
+        "label": "CREATE INDEX CONCURRENTLY, outside a transaction",
+        "lang": "sql",
+        "code": "-- Must not run inside a transaction block: turn off your\n-- migration tool's per-migration transaction for this file.\nSET lock_timeout = '5s';\nCREATE INDEX CONCURRENTLY orders_customer_id_idx\n  ON orders (customer_id);\n\n-- If it fails it leaves an INVALID index behind; drop and retry:\n-- DROP INDEX CONCURRENTLY orders_customer_id_idx;"
+      },
+      "why": "A concurrent build scans the table twice and waits for existing transactions, so it is slower, but writes continue throughout. Check for a leftover invalid index after a failure (for example `\\d orders` in psql shows INVALID). MySQL InnoDB builds secondary indexes with online DDL by default in modern versions; check `ALGORITHM` and `LOCK` support for your version."
+    },
+    {
+      "title": "Making a column NOT NULL on a large table (PostgreSQL 12+)",
+      "bad": {
+        "label": "SET NOT NULL directly",
+        "lang": "sql",
+        "code": "ALTER TABLE orders ALTER COLUMN region SET NOT NULL;\n-- Scans every row to check for NULLs while holding\n-- ACCESS EXCLUSIVE: no reads or writes for the whole scan."
+      },
+      "good": {
+        "label": "NOT VALID check, validate, then SET NOT NULL",
+        "lang": "sql",
+        "code": "SET lock_timeout = '5s';\n-- 1. Instant: enforced for new writes, old rows not checked yet\nALTER TABLE orders\n  ADD CONSTRAINT orders_region_not_null\n  CHECK (region IS NOT NULL) NOT VALID;\n\n-- 2. Scans the table under a weaker lock; reads and writes continue\nALTER TABLE orders VALIDATE CONSTRAINT orders_region_not_null;\n\n-- 3. Uses the validated constraint as proof, so no second scan\nALTER TABLE orders ALTER COLUMN region SET NOT NULL;\nALTER TABLE orders DROP CONSTRAINT orders_region_not_null;"
+      },
+      "why": "Splitting enforcement from validation moves the long scan to `VALIDATE CONSTRAINT`, which takes a SHARE UPDATE EXCLUSIVE lock that does not block normal reads and writes. From PostgreSQL 12, SET NOT NULL can skip its scan when a valid CHECK constraint already proves there are no NULLs. The same NOT VALID then VALIDATE pattern works for foreign keys."
+    },
+    {
+      "title": "Backfilling a new column",
+      "bad": {
+        "label": "One UPDATE for the whole table",
+        "lang": "sql",
+        "code": "UPDATE users SET full_name = name;\n-- One transaction touching 50M rows: row locks held for\n-- minutes, a huge burst of WAL, replica lag, table bloat,\n-- and if it fails at 90% everything rolls back."
+      },
+      "good": {
+        "label": "Small, idempotent, resumable batches by key range",
+        "lang": "sql",
+        "code": "-- Run by a job in a loop: $1 starts at MIN(id) and advances by\n-- 5000 until it passes MAX(id). Each statement commits on its own.\nUPDATE users\nSET full_name = name\nWHERE id >= $1 AND id < $1 + 5000\n  AND full_name IS NULL;\n-- The job sleeps between batches, watches replica lag, records\n-- its last id so it can resume, and can be paused."
+      },
+      "why": "Each batch is a short transaction, so locks are brief, replicas keep up and the job can stop and resume. The `full_name IS NULL` guard makes reruns harmless. Ranging over the primary key keeps every batch an index range scan; `LIMIT` on UPDATE is not available in PostgreSQL, which is why the range is explicit."
+    }
+  ],
+  "checklist": [
+    "Every migration is compatible with both the currently deployed code and the next version.",
+    "Breaking changes (rename, type change, split or merge) are done as expand, migrate, contract across separate deploys.",
+    "Additive schema changes deploy before the code that uses them; drops deploy after the code stops using them.",
+    "DDL runs with a short lock_timeout (and statement timeout) and is retried, so it never queues traffic behind it.",
+    "Indexes are built online (CREATE INDEX CONCURRENTLY in PostgreSQL, online DDL or gh-ost / pt-online-schema-change in MySQL).",
+    "Constraints on existing data are added NOT VALID and validated separately.",
+    "Backfills run in small, idempotent, resumable batches that watch replica lag.",
+    "Migrations are versioned files, applied once per environment by a tool that records them, and never edited after being applied.",
+    "Rollback is planned per step: before contract it is a code or flag revert; after contract it needs a forward fix or a restore."
+  ],
+  "antipatterns": [
+    {
+      "title": "Renaming or retyping a column in one step",
+      "bad": { "label": "RENAME COLUMN during a rolling deploy", "diagram": "mig-rename-compare" },
+      "better": {
+        "label": "Expand / contract over several deploys",
+        "lang": "sql",
+        "code": "-- Deploy 1 (expand)\nALTER TABLE users ADD COLUMN full_name text;\n-- Deploy 2: code writes name and full_name\n-- Job: batched backfill WHERE full_name IS NULL\n-- Flag: reads switch to full_name\n-- Deploy 3: code stops writing name\n-- Deploy 4 (contract), after a soak period\nALTER TABLE users DROP COLUMN name;"
+      },
+      "why": "Old instances keep running during a rolling deploy and come back on rollback, and they only know the old name. Keeping both columns valid for a while costs some extra writes and a cleanup ticket, and buys a zero-downtime change with a cheap rollback at every step."
+    },
+    {
+      "title": "Relying on down migrations as the rollback plan",
+      "bad": {
+        "label": "\"We can always run the down migration\"",
+        "lang": "sql",
+        "code": "-- up\nALTER TABLE orders DROP COLUMN legacy_status;\n-- down\nALTER TABLE orders ADD COLUMN legacy_status text;\n-- The column comes back empty: the data is gone."
+      },
+      "better": {
+        "label": "Make each step reversible by design",
+        "lang": "text",
+        "code": "Expand steps: additive, so rolling back the code is enough.\nMigrate steps: behind a flag, so rollback is a flag flip.\nContract steps: run only after a soak period, with a\n  verified backup or point-in-time recovery window.\nPrefer roll-forward fixes once data has changed shape."
+      },
+      "why": "A down migration can restore structure but not data that was dropped or transformed, and running it under pressure is risky. Expand/contract keeps the old structure complete until you are confident, so most rollbacks need no schema change at all."
+    },
+    {
+      "title": "Running migrations from every app instance at startup",
+      "bad": {
+        "label": "Each pod migrates on boot",
+        "lang": "text",
+        "code": "on startup:\n  run_pending_migrations()   # 40 pods race to apply the same DDL\n  start_http_server()\n# A slow migration also blocks every pod from becoming ready."
+      },
+      "better": {
+        "label": "One migration step in the pipeline",
+        "lang": "yaml",
+        "code": "deploy:\n  - name: migrate (expand only)\n    run: migrate up            # once, with lock_timeout set\n  - name: rolling deploy\n    run: deploy app --strategy rolling\n  # contract migrations ship in a later release"
+      },
+      "why": "Running migrations once, as an explicit pipeline step, gives a single place to see failures, avoids races (though many tools also take an advisory lock), and keeps slow DDL from delaying pod readiness. It also makes the schema-before-code ordering visible and reviewable."
+    }
+  ],
+  "interview": [
+    "When a design changes a schema, say how it ships: \"add the column nullable, dual-write, backfill in batches, switch reads behind a flag, then drop the old one in a later release\".",
+    "Call out that old and new code run together during rolling deploys and rollbacks, so each migration must work with both.",
+    "Name the lock risk: DDL waiting for an exclusive lock blocks the queries behind it, so use lock_timeout and online operations such as CREATE INDEX CONCURRENTLY.",
+    "For big data moves, describe the backfill: batch size, idempotent WHERE clause, throttling on replica lag, resumability and verification.",
+    "At SSE depth, discuss rollback per phase, migration versioning and review, and how you would test a migration against a production-sized copy."
+  ],
+  "quiz": [
+    {
+      "question": "Why is `ALTER TABLE users RENAME COLUMN name TO full_name` risky during a rolling deploy?",
+      "choices": ["Renames always rewrite the table", "Old instances still query `name` and fail until they are replaced, and a rollback would fail too", "PostgreSQL does not support renaming columns", "It drops the column's index"],
+      "answer": 1,
+      "explain": "The rename itself is quick, but running code depends on the old name. Expand/contract (add, dual-write, backfill, switch reads, drop) keeps every running version working."
+    },
+    {
+      "question": "A migration adds a nullable column (a metadata-only change in PostgreSQL), yet the site stalls for minutes. What is the most likely cause?",
+      "choices": ["The column was too wide", "The ALTER waited for its exclusive lock behind a long transaction, and new queries queued behind the ALTER", "Adding a column rewrites every row", "The index was rebuilt"],
+      "answer": 1,
+      "explain": "Even brief DDL needs an ACCESS EXCLUSIVE lock. While it waits for a long-running query, conflicting requests queue behind it. A short lock_timeout makes the migration fail fast and retry instead."
+    },
+    {
+      "question": "Why should the backfill start only after every instance is dual-writing?",
+      "choices": ["Backfills are faster at night", "Otherwise old instances can write rows without the new column after the backfill has passed them", "Dual writes lock the table", "The backfill needs the new code to run"],
+      "answer": 1,
+      "explain": "If an old instance inserts or updates a row after the backfill has processed that key range, the new column stays empty or stale. Once all instances dual-write, the backfill only has to cover history."
+    },
+    {
+      "question": "In PostgreSQL, how do you add an index to a large table without blocking writes?",
+      "choices": ["CREATE INDEX inside a transaction", "CREATE INDEX CONCURRENTLY, outside a transaction block", "LOCK TABLE then CREATE INDEX", "VACUUM FULL first"],
+      "answer": 1,
+      "explain": "A concurrent build lets writes continue, at the cost of a slower build that cannot run in a transaction block. If it fails, it leaves an INVALID index that you drop and recreate."
+    },
+    {
+      "question": "Which statement about rollback is most accurate?",
+      "choices": ["Down migrations can always restore the previous state", "Before the contract step, rollback is usually a code or flag revert; after a drop, data may need a restore or a forward fix", "Schema changes can never be rolled back", "Rollback means re-running the up migration"],
+      "answer": 1,
+      "explain": "Expand/contract keeps the old structure complete until the end, so early rollbacks need no schema change. Once a column is dropped, a down migration recreates an empty column, not the data."
+    }
+  ],
+  "practice": {
+    "prompt": "Your payments table has 200 million rows and stores `amount` as a floating-point column. You need to move to `amount_cents bigint NOT NULL` with zero downtime, while the service runs rolling deploys several times a day. Walk through the migration.",
+    "answer": "Expand: add `amount_cents bigint` as nullable (metadata-only), with `lock_timeout` set so it cannot queue traffic. Deploy code that writes both `amount` and `amount_cents` (computed with explicit rounding rules) on every insert and update, still reading `amount`. Once every instance is dual-writing, run a backfill job: `UPDATE payments SET amount_cents = round(amount * 100) WHERE id >= $1 AND id < $1 + 10000 AND amount_cents IS NULL`, one short transaction per batch, throttled on replica lag, recording progress so it can resume. Verify: no NULLs remain, and a reconciliation job compares sums per day between the two columns and flags rounding mismatches for review. Then enforce the constraint online: in PostgreSQL add `CHECK (amount_cents IS NOT NULL) NOT VALID`, `VALIDATE CONSTRAINT`, then `SET NOT NULL`. Switch reads to `amount_cents` behind a flag and watch errors and reconciliation; rolling back is a flag flip because `amount` is still written. After a soak, deploy code that stops writing `amount`, and in a later release drop it. Any index on the new column is built with `CREATE INDEX CONCURRENTLY`. All steps are versioned migrations run once by the pipeline, and I would rehearse on a production-sized snapshot to time the backfill and validation.",
+    "rubric": [
+      "Uses expand / migrate / contract across separate deploys",
+      "Dual-writes before backfilling, and explains why that order matters",
+      "Backfills in small, idempotent, throttled, resumable batches",
+      "Adds NOT NULL (and indexes) online, with lock timeouts",
+      "Verifies data before switching reads and keeps a rollback path until contract",
+      "Treats migrations as versioned, pipeline-run code and rehearses on realistic data"
+    ]
+  },
+  "links": {
+    "lessons": ["design-databases-indexes", "design-api-data-model", "design-replication-partitioning", "design-reliability-observability"],
+    "cases": ["payments", "ticket-booking", "kv-store"],
+    "guides": ["database-indexes", "transactions-isolation", "consistency-choices", "idempotency-keys", "caching-strategies"]
+  }
+}

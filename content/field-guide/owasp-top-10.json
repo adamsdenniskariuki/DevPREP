@@ -1,0 +1,281 @@
+{
+  "id": "owasp-top-10",
+  "kind": "guide",
+  "topic": "security",
+  "level": "se",
+  "title": "OWASP Top 10: the web risks every engineer should name",
+  "summary": "A tour of the OWASP Top 10:2025 (and how it maps to the 2021 list interviewers still quote): what each risk is, the one defence to name, and how layers of defence catch what one layer misses.",
+  "minutes": 18,
+  "principle": "The OWASP Top 10 is an awareness list of the most critical web application risk **categories**, not a checklist or a standard. Learn each category as a pair: *what goes wrong* and *the default defence*. Then design so no single mistake is fatal: deny by default, keep data separate from code, verify everything you trust, fail closed, and log and alert on security events.",
+  "why": "OWASP publishes the list every few years from testing data contributed by security firms plus a community survey. The current edition is **Top 10:2025**; the **2021** edition is still widely quoted, so know both names.\n\n- **A01 Broken Access Control** — users act outside their permissions (IDOR, missing checks on POST/PUT/DELETE, CORS mistakes). In 2025 it also absorbs **SSRF** (A10 in 2021). Defence: deny by default and enforce ownership server-side on every object.\n- **A02 Security Misconfiguration** (A05 in 2021) — default accounts, open buckets, verbose errors, unneeded features, XXE. Defence: hardened, repeatable configuration as code, checked in CI.\n- **A03 Software Supply Chain Failures** (expands 2021's A06 Vulnerable and Outdated Components) — vulnerable or compromised dependencies, build systems and distribution. Defence: inventory (SBOM), lockfiles, patching, verified provenance.\n- **A04 Cryptographic Failures** (A02 in 2021) — missing or weak crypto, leaked keys, weak randomness. Defence: TLS everywhere, vetted libraries, a CSPRNG, keys in a KMS.\n- **A05 Injection** (A03 in 2021, includes XSS) — untrusted input is run by an interpreter. Defence: parameterised APIs and context-aware output encoding.\n- **A06 Insecure Design** (A04 in 2021) — the control was never designed in. Defence: threat modelling and abuse cases before code.\n- **A07 Authentication Failures** (2021: Identification and Authentication Failures) — credential stuffing, weak recovery, session fixation. Defence: MFA, rate limiting, a standard identity provider.\n- **A08 Software or Data Integrity Failures** — trusting unsigned updates, CI artifacts or deserialised data. Defence: verify signatures; never deserialise untrusted data into objects.\n- **A09 Security Logging and Alerting Failures** (2021: …and Monitoring) — attacks go unnoticed. Defence: log security events and alert on them.\n- **A10 Mishandling of Exceptional Conditions** (new in 2025) — errors leak data or **fail open**. Defence: handle errors where they occur and fail closed.\n\nOWASP ranks most categories from data (prevalence plus average exploit and impact scores of related CVEs) and promotes some from the survey, because the data lags behind what practitioners see.",
+  "diagrams": [
+    {
+      "id": "owt-incidence-bars",
+      "type": "bars",
+      "title": "Average incidence rate, OWASP Top 10:2025",
+      "alt": "Bar chart of the average incidence rate OWASP published for eight 2025 categories: Cryptographic Failures 3.80 percent, Broken Access Control 3.74, Injection 3.08, Security Misconfiguration 3.00, Mishandling of Exceptional Conditions 2.95, Authentication Failures 2.92, Software or Data Integrity Failures 2.75, Insecure Design 1.86.",
+      "caption": "Figures from OWASP's 2025 category pages: the average share of tested apps with at least one weakness in the category. Rank also weighs exploit and impact scores, so incidence alone does not set the order. Supply Chain (A03) and Logging (A09) are omitted; OWASP says testing data under-represents both.",
+      "unit": "% of apps (avg)",
+      "bars": [
+        { "label": "A04 Crypto failures", "value": 3.8 },
+        { "label": "A01 Access control", "value": 3.74, "highlight": true },
+        { "label": "A05 Injection", "value": 3.08 },
+        { "label": "A02 Misconfiguration", "value": 3.0 },
+        { "label": "A10 Exceptional cond.", "value": 2.95 },
+        { "label": "A07 Authentication", "value": 2.92 },
+        { "label": "A08 Integrity", "value": 2.75 },
+        { "label": "A06 Insecure design", "value": 1.86 }
+      ]
+    },
+    {
+      "id": "owt-fix-chart",
+      "type": "chart",
+      "title": "Where the fix lives vs how often scanners find it",
+      "alt": "Chart placing eight OWASP categories by where the fix mostly lives, from application code on the left to platform and process on the right, and by how reliably automated scanners find them. Injection sits in code and is often found by tools. Broken access control and insecure design sit in code and design and are rarely found by tools. Misconfiguration is platform-side and often found. Supply chain is platform-side and partly found. Logging failures are process-side and rarely found.",
+      "caption": "Rough positions from experience, not OWASP data. The categories in the lower half are the ones you only catch with design review, threat modelling and tests that encode your own rules.",
+      "x": { "label": "Where the fix lives", "low": "app code", "high": "platform/process" },
+      "y": { "label": "Found by scanners", "low": "rarely", "high": "often" },
+      "points": [
+        { "label": "Injection", "x": 2, "y": 8 },
+        { "label": "Access control", "x": 2, "y": 2, "highlight": true },
+        { "label": "Exceptional cond.", "x": 3, "y": 5 },
+        { "label": "Crypto failures", "x": 5, "y": 7 },
+        { "label": "Insecure design", "x": 5, "y": 1 },
+        { "label": "Misconfiguration", "x": 8, "y": 9 },
+        { "label": "Supply chain", "x": 9, "y": 5 },
+        { "label": "Logging/alerting", "x": 8, "y": 2 }
+      ]
+    },
+    {
+      "id": "owt-layers-flow",
+      "type": "flow",
+      "title": "Defence in depth on one request",
+      "alt": "Flow from a browser through an edge layer with TLS and a WAF, an API gateway that authenticates and rate limits, a service that validates input and checks object ownership, and a database reached with parameterised queries by a least-privilege account. The gateway and service send security events to a log pipeline that raises alerts.",
+      "caption": "Each layer assumes the one before it can fail. A WAF does not replace parameterised queries, and a gateway token check does not replace the per-object ownership check.",
+      "nodes": [
+        { "id": "browser", "label": "Browser", "kind": "client", "col": 0, "row": 0, "sub": "CSP, cookies" },
+        { "id": "edge", "label": "Edge", "kind": "cdn", "col": 1, "row": 0, "sub": "TLS, WAF" },
+        { "id": "gw", "label": "API gateway", "kind": "lb", "col": 2, "row": 0, "sub": "authn, rate limit" },
+        { "id": "svc", "label": "Service", "kind": "service", "col": 3, "row": 0, "sub": "validate, authz" },
+        { "id": "db", "label": "Database", "kind": "db", "col": 4, "row": 0, "sub": "least privilege" },
+        { "id": "logs", "label": "Security logs", "kind": "storage", "col": 3, "row": 2, "sub": "who, what, result" },
+        { "id": "alert", "label": "Alerting", "kind": "worker", "col": 4, "row": 2, "sub": "page on anomalies" },
+        { "id": "deny", "label": "Deny", "kind": "bad", "col": 2, "row": 2, "sub": "401 / 403 / 429" }
+      ],
+      "edges": [
+        { "from": "browser", "to": "edge", "label": "HTTPS" },
+        { "from": "edge", "to": "gw" },
+        { "from": "gw", "to": "svc", "label": "verified identity" },
+        { "from": "svc", "to": "db", "label": "bound params" },
+        { "from": "gw", "to": "deny", "label": "bad token", "style": "fail" },
+        { "from": "svc", "to": "logs", "label": "auth events", "style": "async" },
+        { "from": "logs", "to": "alert", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "TLS protects data in transit (A04). A WAF at the edge can drop obvious attack payloads, but it pattern-matches and can be bypassed, so treat it as a speed bump, not the fix." },
+        { "edges": [4], "text": "The gateway authenticates every request and rate limits by caller, which blunts credential stuffing (A07). Missing or invalid tokens stop here." },
+        { "edges": [2], "text": "Only a verified identity crosses into the service, never a user id taken from the body." },
+        { "edges": [3], "text": "The service validates input against a schema, checks the caller owns the object (A01), and talks to the database with parameterised queries (A05) using an account that cannot drop tables." },
+        { "edges": [5, 6], "text": "Login failures, access-control denials and admin actions are logged with who, what and the result, and alerts fire on spikes (A09). Logs without alerts only help after someone else tells you about the breach." }
+      ]
+    },
+    {
+      "id": "owt-idor-compare",
+      "type": "compare",
+      "title": "IDOR: trusting the id in the URL",
+      "alt": "Side-by-side comparison. On the left, user A changes the URL to order 7, the service loads order 7 by id alone and returns user B's order and address. On the right, the service loads order 7 filtered by the caller's user id from the token, finds no row and returns 404.",
+      "caption": "An insecure direct object reference is the classic A01 bug. Put the owner in the query so the check cannot be skipped.",
+      "before": {
+        "label": "Load by id from the URL",
+        "nodes": [
+          { "id": "u", "label": "User A", "kind": "client", "col": 0, "row": 0, "sub": "edits URL" },
+          { "id": "s", "label": "GET /orders/7", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Orders DB", "kind": "db", "col": 2, "row": 0 },
+          { "id": "x", "label": "B's order", "kind": "bad", "col": 1, "row": 1, "sub": "name, address" }
+        ],
+        "edges": [
+          { "from": "u", "to": "s" },
+          { "from": "s", "to": "d", "label": "id = 7" },
+          { "from": "s", "to": "x", "label": "200", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Load by id and owner from the token",
+        "nodes": [
+          { "id": "u", "label": "User A", "kind": "client", "col": 0, "row": 0, "sub": "edits URL" },
+          { "id": "s", "label": "GET /orders/7", "kind": "service", "col": 1, "row": 0 },
+          { "id": "d", "label": "Orders DB", "kind": "db", "col": 2, "row": 0 },
+          { "id": "ok", "label": "404 Not Found", "kind": "good", "col": 1, "row": 1 }
+        ],
+        "edges": [
+          { "from": "u", "to": "s" },
+          { "from": "s", "to": "d", "label": "id=7 AND owner=A" },
+          { "from": "s", "to": "ok", "label": "no row", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "owt-ssrf-sequence",
+      "type": "sequence",
+      "title": "SSRF to the cloud metadata endpoint, then blocked",
+      "alt": "Sequence diagram. An attacker asks a link-preview feature to fetch the cloud metadata address 169.254.169.254. The app fetches it from inside the network and returns role credentials to the attacker. After the fix, the same request goes through a URL guard that resolves the host, sees a link-local address, and the app returns 400 without making the call.",
+      "caption": "Server-side request forgery turns your server into the attacker's proxy inside your network. Validate the resolved address against an allow-list, block private and link-local ranges, and harden the metadata service.",
+      "actors": [
+        { "id": "atk", "label": "Attacker" },
+        { "id": "app", "label": "App server" },
+        { "id": "guard", "label": "URL guard" },
+        { "id": "meta", "label": "Metadata svc" }
+      ],
+      "messages": [
+        { "from": "atk", "to": "app", "label": "POST /preview url=169.254.169.254", "note": "A link-preview or webhook feature fetches any URL a user supplies. The attacker points it at the cloud instance metadata address, which is only reachable from inside." },
+        { "from": "app", "to": "meta", "label": "GET /latest/meta-data/iam/…", "style": "fail", "note": "The request comes from the server, so network firewalls that block outsiders do not apply." },
+        { "from": "meta", "to": "app", "label": "temporary role credentials", "style": "reply", "note": "With an old-style metadata service a plain GET is enough to read the instance role's credentials." },
+        { "from": "app", "to": "atk", "label": "200 preview (with credentials)", "style": "fail", "note": "The response is echoed back. The attacker can now call cloud APIs as your server's role until the credentials expire." },
+        { "from": "atk", "to": "app", "label": "same request, after the fix", "note": "The fix is in the fetch path, not in a blocklist of strings like '169.254', which encodings and redirects bypass." },
+        { "from": "app", "to": "guard", "label": "check https://169.254.169.254", "note": "Allow only `https`, resolve the hostname, and reject loopback, private, link-local and other internal ranges. Connect to the vetted IP, not the name, so DNS rebinding cannot swap it, and do not follow redirects blindly." },
+        { "from": "guard", "to": "app", "label": "deny: link-local", "style": "reply", "note": "The metadata service is never contacted. Log the denial; repeated attempts are a signal worth alerting on." },
+        { "from": "app", "to": "atk", "label": "400 url_not_allowed", "style": "reply", "note": "Defence in depth: also require the token-based metadata API (for example AWS IMDSv2, which needs a PUT to get a session token first) and give the instance role the least privilege it needs." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Fail closed when a security check errors (A10)",
+      "bad": {
+        "label": "An outage in the policy service grants access",
+        "lang": "ts",
+        "code": "let allowed = true\ntry {\n  allowed = await policy.canEdit(user, doc)\n} catch (err) {\n  log.warn('policy check failed', err)   // falls through with allowed = true\n}\nif (allowed) await docs.update(doc.id, patch)"
+      },
+      "good": {
+        "label": "Default deny; errors become a 503, never a yes",
+        "lang": "ts",
+        "code": "let allowed = false\ntry {\n  allowed = await policy.canEdit(user, doc)\n} catch (err) {\n  log.error('policy check failed', { err, userId: user.id, docId: doc.id })\n  throw new ApiError(503, 'authorization_unavailable')\n}\nif (!allowed) throw new ApiError(404, 'not_found')\nawait docs.update(doc.id, patch)"
+      },
+      "why": "Exceptional conditions are where access control quietly breaks. Start from deny, treat any failure to decide as a refusal, and log it. A 503 is an availability problem; a wrong yes is a breach."
+    },
+    {
+      "title": "Validate outbound URLs by resolved address (SSRF)",
+      "bad": {
+        "label": "Fetch whatever the user typed",
+        "lang": "ts",
+        "code": "app.post('/preview', async (req, res) => {\n  const page = await fetch(req.body.url)   // any scheme, host, port, redirect\n  res.json({ html: await page.text() })\n})"
+      },
+      "good": {
+        "label": "https only, resolve, block internal ranges",
+        "lang": "ts",
+        "code": "import { lookup } from 'node:dns/promises'\nimport { BlockList } from 'node:net'\n\nconst internal = new BlockList()\nfor (const [net, bits] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16]] as const)\n  internal.addSubnet(net, bits, 'ipv4')\nfor (const [net, bits] of [['::1', 128], ['::ffff:0:0', 96], ['fc00::', 7], ['fe80::', 10]] as const)\n  internal.addSubnet(net, bits, 'ipv6')\n\nexport async function vetUrl(raw: string) {\n  const url = new URL(raw)\n  if (url.protocol !== 'https:') throw new ApiError(400, 'url_not_allowed')\n  const addrs = await lookup(url.hostname, { all: true })\n  for (const { address, family } of addrs)\n    if (internal.check(address, family === 6 ? 'ipv6' : 'ipv4')) throw new ApiError(400, 'url_not_allowed')\n  return { url, address: addrs[0].address }   // connect to this IP; disable automatic redirects\n}"
+      },
+      "why": "Checking the string is not enough: `http://2852039166/`, a DNS name that resolves to 169.254.169.254, or a redirect all reach the same place. Resolve first, check every address, then connect to the address you checked. Where you can, prefer an allow-list of known partner hosts and an egress proxy that enforces the same rules."
+    }
+  ],
+  "checklist": [
+    "Every endpoint denies by default and checks ownership of the specific object, not just the caller's role (A01).",
+    "Outbound fetches of user-supplied URLs go through one guard that resolves and blocks internal ranges; the metadata service requires tokens (A01, SSRF).",
+    "Infrastructure and app config are code, reviewed and scanned; no default accounts, directory listing or stack traces in production (A02).",
+    "Dependencies are pinned in a lockfile, inventoried in an SBOM, scanned, and patched on a schedule (A03).",
+    "TLS everywhere, passwords hashed with a slow algorithm (Argon2id, bcrypt or scrypt), randomness from a CSPRNG, keys in a KMS (A04).",
+    "Queries, commands and templates are parameterised or encoded for their context (A05).",
+    "New features get a lightweight threat model: who could abuse this, and what control stops them (A06).",
+    "Login is rate limited, MFA is available, sessions rotate on login and die on logout (A07).",
+    "Updates, CI artifacts and serialised data are verified before use (A08); security events are logged and alerted on (A09); errors fail closed (A10)."
+  ],
+  "antipatterns": [
+    {
+      "title": "Role check without an ownership check",
+      "bad": {
+        "label": "Logged-in customers may read orders, any order",
+        "diagram": "owt-idor-compare"
+      },
+      "better": {
+        "label": "Scope the lookup by the verified caller",
+        "lang": "ts",
+        "code": "const order = await db.query(\n  'SELECT * FROM orders WHERE id = $1 AND customer_id = $2',\n  [req.params.id, req.auth.userId],\n)\nif (order.rowCount === 0) throw new ApiError(404, 'not_found')"
+      },
+      "why": "Attackers simply change ids. Random UUIDs make guessing harder but are not authorization; any id that leaks in a URL, email or log is still usable."
+    },
+    {
+      "title": "Detailed errors in production",
+      "bad": {
+        "label": "Stack trace and SQL sent to the client",
+        "lang": "json",
+        "code": "{\n  \"error\": \"QueryFailedError: column \\\"emial\\\" does not exist\",\n  \"query\": \"SELECT * FROM users WHERE emial = ...\",\n  \"stack\": \"at PostgresDriver.query (/app/node_modules/...)\"\n}"
+      },
+      "better": {
+        "label": "Generic message plus a correlation id; details in logs",
+        "lang": "json",
+        "code": "{\n  \"error\": { \"code\": \"internal_error\", \"message\": \"Something went wrong.\", \"requestId\": \"req_8f2c\" }\n}"
+      },
+      "why": "Verbose errors are both misconfiguration (A02) and mishandled exceptions (A10): they map your schema, libraries and paths for an attacker. Support staff can find the details in logs with the request id."
+    },
+    {
+      "title": "Treating the Top 10 as a compliance checklist",
+      "bad": {
+        "label": "\"We passed the scanner, so we're covered\"",
+        "lang": "text",
+        "code": "SAST: 0 high findings\nDAST: 0 high findings\n=> ship it"
+      },
+      "better": {
+        "label": "Tools plus design review plus tests of your own rules",
+        "lang": "text",
+        "code": "SAST + dependency scan in CI      (injection, known CVEs)\nThreat model for new features      (insecure design)\nAuthz tests: user A cannot read B  (access control)\nAlert on spikes of 401/403         (logging and alerting)"
+      },
+      "why": "Scanners are good at pattern-shaped bugs and bad at logic. The top category, broken access control, depends on your business rules, so only tests and reviews that know those rules will catch it."
+    }
+  ],
+  "interview": [
+    "Name the current edition and the change: \"OWASP Top 10:2025 keeps Broken Access Control at #1, folds SSRF into it, adds Software Supply Chain Failures and Mishandling of Exceptional Conditions.\" Then show you also know the 2021 names.",
+    "For any endpoint you design, say the A01 check out loud: authenticated, authorised for the action, and owns this object.",
+    "When a feature fetches URLs (previews, webhooks, imports), raise SSRF yourself and describe resolve-then-check plus metadata hardening.",
+    "Describe layers rather than one silver bullet: edge, gateway, service validation and authz, parameterised data access, least-privilege credentials, logging with alerts.",
+    "At SSE level, talk about making the secure path the default: a shared authz library, a safe HTTP client, lint rules that ban string-built SQL, and threat modelling in design reviews."
+  ],
+  "quiz": [
+    {
+      "question": "Which category is #1 in both the 2021 and 2025 OWASP Top 10?",
+      "choices": ["Injection", "Broken Access Control", "Cryptographic Failures", "Security Misconfiguration"],
+      "answer": 1,
+      "explain": "Broken Access Control has topped the list since 2021. In 2025 OWASP also folded Server-Side Request Forgery into it. Injection, the long-time #1 before 2021, is #5 in 2025."
+    },
+    {
+      "question": "A link-preview feature lets users submit any URL. What is the main risk, and where does it sit in the 2025 list?",
+      "choices": ["XSS, under Injection", "SSRF, now part of Broken Access Control", "CSRF, under Authentication Failures"],
+      "answer": 1,
+      "explain": "The server makes requests on the attacker's behalf, reaching internal services and cloud metadata. SSRF was its own category (A10) in 2021 and is part of A01 in 2025. Resolve and check addresses before connecting."
+    },
+    {
+      "question": "An authorization service times out and the code treats the error as 'allowed'. Which 2025 category is this most directly?",
+      "choices": ["Mishandling of Exceptional Conditions", "Insecure Design", "Security Logging and Alerting Failures"],
+      "answer": 0,
+      "explain": "Failing open on an error is a named weakness in A10:2025. The fix is to default to deny and turn an undecidable check into an error response, never a grant."
+    },
+    {
+      "question": "Why does a WAF not replace parameterised queries?",
+      "choices": ["WAFs only inspect responses", "WAFs match patterns and can be bypassed by encodings the app still decodes", "Parameterised queries are slower, so you need both for performance"],
+      "answer": 1,
+      "explain": "A WAF guesses from the outside what the app will do with input. Parameterised queries remove the ambiguity inside: data is never parsed as SQL. Keep the WAF as an extra layer, not the fix."
+    },
+    {
+      "question": "What does the 2025 Software Supply Chain Failures category broaden from 2021?",
+      "choices": ["Vulnerable and Outdated Components", "Software and Data Integrity Failures", "Security Misconfiguration"],
+      "answer": 0,
+      "explain": "2021's A06 was about known-vulnerable libraries. The 2025 category also covers compromised dependencies, build systems and distribution. OWASP notes it had little testing data but the highest average exploit and impact scores."
+    }
+  ],
+  "practice": {
+    "prompt": "You are reviewing the design of a new multi-tenant document app with file import from URL, sharing links and an admin console. Walk through which OWASP Top 10 risks you would look for and what you would require.",
+    "answer": "Start with A01: every document read and write is scoped by tenant and checked for the caller's permission in a shared data-access layer; admin endpoints require an admin role checked server-side and are not merely hidden in the UI; sharing links are long random tokens with expiry and revocation. Import from URL is an SSRF risk: only https, resolve and block internal and link-local ranges, connect to the vetted IP, cap size and time, no blind redirects, ideally through an egress proxy, and require token-based metadata access. A05: parameterised queries, and documents rendered with contextual encoding plus a strict CSP so a malicious file name or body cannot run script. A07: SSO via a standard identity provider, MFA for admins, rate-limited login. A02: config as code, no default credentials, generic errors in production. A03/A08: lockfiles, dependency scanning and an SBOM; verify artifacts before deploy; never deserialise imported data into objects. A04: TLS, encryption at rest, keys in a KMS. A09: log access denials, admin actions and sharing changes, and alert on spikes. A10: authorization errors fail closed. Finish with a short threat model per feature (A06) and authz tests that prove user A cannot read B's documents.",
+    "rubric": [
+      "Puts object-level, tenant-scoped access control first and enforces it server-side",
+      "Identifies URL import as SSRF and describes resolve-then-check plus metadata hardening",
+      "Covers injection and XSS with parameterisation, encoding and CSP",
+      "Mentions supply chain and integrity controls (lockfiles, scanning, verified artifacts)",
+      "Includes logging with alerting and fail-closed error handling",
+      "Treats the list as prompts for threat modelling, not a scanner checkbox"
+    ]
+  },
+  "links": {
+    "lessons": ["design-api-data-model", "design-reliability-observability", "ai-agents-tools"],
+    "cases": ["file-sync", "payments", "url-shortener"],
+    "guides": ["api-auth", "injection-and-xss", "secrets-and-supply-chain", "api-rate-limits", "webhooks", "observability", "code-review", "testing-strategy"]
+  }
+}

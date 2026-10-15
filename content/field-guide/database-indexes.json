@@ -1,0 +1,294 @@
+{
+  "id": "database-indexes",
+  "kind": "guide",
+  "topic": "databases",
+  "level": "se",
+  "title": "Database indexes: what they speed up and what they cost",
+  "summary": "Index for the queries you actually run: put equality columns first in composite indexes, cover hot reads, keep indexed columns bare in WHERE clauses, and remember every index taxes every write.",
+  "minutes": 15,
+  "principle": "An index is a sorted copy of some columns that lets the database seek instead of scan. Design indexes from your real query patterns: equality columns first, then the range or sort column, and add columns to cover hot reads. Keep indexed columns bare in predicates, check the plan with EXPLAIN, and add an index only when its read benefit beats the write and storage cost it adds forever.",
+  "why": "Without a usable index, `SELECT ... WHERE email = $1` on a 10-million-row table makes the database read every row to find one. A **B-tree** index keeps keys sorted in a shallow, balanced tree of pages, so the same lookup touches a handful of pages: root, one or two internal pages, a leaf, then the table row. Because keys are sorted, a B-tree also serves range predicates (`created_at >= ...`), `ORDER BY` and `MIN`/`MAX` without sorting.\n\n**Composite indexes** sort by the first column, then by the second within equal first values, and so on, like a phone book sorted by surname then first name. That is why column order matters: an index on `(customer_id, created_at)` serves `WHERE customer_id = ?` and `WHERE customer_id = ? ORDER BY created_at`, but not `WHERE created_at > ?` on its own. This is the **leftmost prefix** rule. Put equality-filtered columns first and the range or sort column last.\n\n**Selectivity** is the fraction of rows a predicate keeps. An index on `email` is highly selective (one row). An index on `status` where 40% of rows are `'open'` is not: following 4 million index entries to random table pages is slower than reading the table sequentially, so the planner will ignore it. A **covering index** contains every column a query needs, so the database can answer from the index alone (an index-only scan) and skip the table lookups.\n\nIndexes are not free. Every `INSERT`, every `DELETE` and every `UPDATE` that changes an indexed column must also update each affected index: more I/O, more WAL or redo log, more storage and more memory competing for cache. This is **write amplification**. Unused and duplicate indexes are pure cost.\n\nFinally, an index on `email` stores `email` values, not `lower(email)` or `email::text || ''`. Wrapping the column in a function or an implicit cast usually stops the database from using a plain index. Rewrite the predicate to keep the column bare, or index the expression itself.",
+  "diagrams": [
+    {
+      "id": "idx-btree-lookup",
+      "type": "flow",
+      "title": "A B-tree lookup, then a short range scan",
+      "alt": "Flow diagram. A query for one email starts at the root page, follows a key range down to an internal page, then to a leaf page that holds the key and a pointer to the row. The database fetches the row from the table. For a range query it continues sideways from that leaf to the next leaf page.",
+      "caption": "Depth grows with the logarithm of the row count: a few page reads find one row among millions, and sibling links make range scans cheap.",
+      "nodes": [
+        { "id": "q", "label": "WHERE email = ?", "kind": "client", "col": 0, "row": 1 },
+        { "id": "root", "label": "Root page", "kind": "state", "col": 1, "row": 1, "sub": "a–m | n–z" },
+        { "id": "inner", "label": "Internal page", "kind": "state", "col": 2, "row": 1, "sub": "n–p | q–s | t–z" },
+        { "id": "leaf", "label": "Leaf page", "kind": "state", "col": 3, "row": 1, "sub": "key + row pointer" },
+        { "id": "row", "label": "Table row", "kind": "db", "col": 4, "row": 1, "sub": "heap / clustered" },
+        { "id": "next", "label": "Next leaf", "kind": "state", "col": 3, "row": 3, "sub": "sibling link" },
+        { "id": "note", "label": "~4 page reads", "kind": "note", "col": 1, "row": 3, "sub": "for 10M rows" }
+      ],
+      "edges": [
+        { "from": "q", "to": "root", "label": "start at root" },
+        { "from": "root", "to": "inner", "label": "n–z" },
+        { "from": "inner", "to": "leaf", "label": "n–p" },
+        { "from": "leaf", "to": "row", "label": "fetch row" },
+        { "from": "leaf", "to": "next", "label": "range scan", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The search starts at the root page, which holds a few hundred separator keys pointing to child pages." },
+        { "edges": [1, 2], "text": "Each level narrows the key range. With hundreds of keys per page, three or four levels cover tens of millions of rows." },
+        { "edges": [3], "text": "The leaf holds the key and a pointer to the row (or, in a clustered index such as InnoDB's primary key, the row itself). One more read fetches it." },
+        { "edges": [4], "text": "Leaves are linked in key order. A range predicate or `ORDER BY` on the indexed column just walks sideways: no sort needed." }
+      ]
+    },
+    {
+      "id": "idx-rows-examined",
+      "type": "bars",
+      "title": "Rows examined for one customer's open orders",
+      "alt": "Bar chart for an orders table of 10 million rows and the query for customer 42's open orders. A full table scan examines 10 million rows. An index on status alone matches 4 million open orders. An index on customer id examines that customer's 200 orders. A composite index on customer id then status examines only the 5 matching rows.",
+      "caption": "Worked example: 10M orders, 40% open, customer 42 has 200 orders of which 5 are open. The composite index examines only what it returns.",
+      "unit": "rows examined",
+      "bars": [
+        { "label": "Full table scan", "value": 10000000 },
+        { "label": "Index on status", "value": 4000000 },
+        { "label": "Index on customer_id", "value": 200 },
+        { "label": "(customer_id, status)", "value": 5, "highlight": true }
+      ]
+    },
+    {
+      "id": "idx-leftmost",
+      "type": "flow",
+      "title": "Which queries an index on (customer_id, created_at) can seek",
+      "alt": "Flow diagram. A composite index on customer id then created at serves an equality filter on customer id, an equality filter on customer id with a range on created at, and an equality on customer id ordered by created at. It cannot seek a filter on created at alone, because created at is only sorted within each customer.",
+      "caption": "The leftmost prefix rule: the index is sorted by customer first, so a query must pin customer_id to seek it.",
+      "nodes": [
+        { "id": "idx", "label": "Index", "kind": "db", "col": 0, "row": 2, "sub": "(customer_id, ts)" },
+        { "id": "a", "label": "customer_id = ?", "kind": "good", "col": 2, "row": 0, "sub": "seek" },
+        { "id": "b", "label": "+ ts > ?", "kind": "good", "col": 2, "row": 1, "sub": "seek + range" },
+        { "id": "c", "label": "+ ORDER BY ts", "kind": "good", "col": 2, "row": 2, "sub": "no sort step" },
+        { "id": "d", "label": "ts > ? only", "kind": "bad", "col": 2, "row": 4, "sub": "no seek: scan" }
+      ],
+      "edges": [
+        { "from": "idx", "to": "a" },
+        { "from": "idx", "to": "b" },
+        { "from": "idx", "to": "c" },
+        { "from": "idx", "to": "d", "style": "fail" }
+      ]
+    },
+    {
+      "id": "idx-expression",
+      "type": "compare",
+      "title": "WHERE lower(email) = ... without and with an expression index",
+      "alt": "Side-by-side comparison in PostgreSQL. On the left, a query filters on lower of email while the only index is on email itself, so the planner cannot use it and scans all rows. On the right, an index on the expression lower of email exists, so the same query becomes an index scan that reads one row.",
+      "caption": "The index must store exactly what the WHERE clause compares. Index the expression, or store a normalised column and index that.",
+      "before": {
+        "label": "Index on (email) only",
+        "nodes": [
+          { "id": "q", "label": "lower(email)=$1", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Seq scan", "kind": "bad", "col": 1, "row": 0, "sub": "lower() every row" },
+          { "id": "r", "label": "10M rows read", "kind": "db", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "q", "to": "s" },
+          { "from": "s", "to": "r", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Index on (lower(email))",
+        "nodes": [
+          { "id": "q", "label": "lower(email)=$1", "kind": "client", "col": 0, "row": 0 },
+          { "id": "s", "label": "Index scan", "kind": "good", "col": 1, "row": 0, "sub": "matches expression" },
+          { "id": "r", "label": "1 row read", "kind": "db", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "q", "to": "s" },
+          { "from": "s", "to": "r" }
+        ]
+      }
+    },
+    {
+      "id": "idx-tradeoff",
+      "type": "chart",
+      "title": "Indexing choices: read speed vs write cost",
+      "alt": "Trade-off chart with write and storage cost on the horizontal axis and read speed for the hot queries on the vertical axis. No secondary indexes is cheap to write but slow to read. One composite index per hot query is fast at moderate cost. Covering indexes are fastest at higher cost. An inverted index for search is costly to write. Indexing every column costs the most without making the hot queries faster.",
+      "caption": "Rough positions. The goal is the upper-left: a few indexes shaped to real queries, not one per column.",
+      "x": { "label": "Write + storage cost", "low": "cheap writes", "high": "heavy writes" },
+      "y": { "label": "Read speed (hot queries)", "low": "scans", "high": "seeks" },
+      "points": [
+        { "label": "No secondary index", "x": 1, "y": 1 },
+        { "label": "Composite per query", "x": 3, "y": 8, "highlight": true },
+        { "label": "Covering index", "x": 5, "y": 10 },
+        { "label": "GIN for search", "x": 7, "y": 6 },
+        { "label": "Index every column", "x": 9, "y": 4 }
+      ]
+    },
+    {
+      "id": "idx-planner",
+      "type": "sequence",
+      "title": "How a query planner picks a plan",
+      "alt": "Sequence diagram. The application sends a query. The planner reads table statistics, estimates how many rows the predicate matches, and costs a sequential scan against an index scan. It picks the cheaper plan and hands it to the executor, which runs it and returns rows. EXPLAIN shows the chosen plan and EXPLAIN ANALYZE also shows actual row counts.",
+      "caption": "Planners choose by estimated cost, so stale statistics or a non-selective predicate can make them skip your index. Compare estimated and actual rows when a plan looks wrong.",
+      "actors": [
+        { "id": "app", "label": "App" },
+        { "id": "planner", "label": "Planner" },
+        { "id": "stats", "label": "Statistics" },
+        { "id": "exec", "label": "Executor" }
+      ],
+      "messages": [
+        { "from": "app", "to": "planner", "label": "SELECT … WHERE status = 'open'" },
+        { "from": "planner", "to": "stats", "label": "row count, value frequencies", "note": "Statistics are sampled and refreshed by ANALYZE (PostgreSQL) or ANALYZE TABLE (MySQL), often automatically." },
+        { "from": "stats", "to": "planner", "label": "~40% of rows match", "style": "reply", "note": "The planner now costs each candidate plan. An index scan pays a random read per matching row; a sequential scan reads pages in order. At 40% the sequential scan is cheaper." },
+        { "from": "planner", "to": "exec", "label": "plan: Seq Scan on orders", "note": "This is what EXPLAIN prints. For a selective value such as 'refunded' (0.1%), the same planner would choose the index." },
+        { "from": "exec", "to": "app", "label": "rows", "style": "reply", "note": "EXPLAIN ANALYZE actually runs the query and adds real row counts and timings. A large gap between estimated and actual rows points at stale statistics." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Composite index column order",
+      "bad": {
+        "label": "Range column first, equality column second",
+        "lang": "sql",
+        "code": "CREATE INDEX orders_created_customer_idx\n  ON orders (created_at, customer_id);\n\n-- Hot query: one customer's latest orders\nSELECT id, created_at, total_cents\nFROM orders\nWHERE customer_id = $1\nORDER BY created_at DESC\nLIMIT 20;\n-- customer_id is not the leading column, so no seek"
+      },
+      "good": {
+        "label": "Equality first, then the sort column",
+        "lang": "sql",
+        "code": "CREATE INDEX orders_customer_created_idx\n  ON orders (customer_id, created_at);\n\n-- Seeks to customer $1, reads its entries in\n-- created_at order (backwards for DESC), stops at 20.\nSELECT id, created_at, total_cents\nFROM orders\nWHERE customer_id = $1\nORDER BY created_at DESC\nLIMIT 20;"
+      },
+      "why": "Within the index, entries for one customer are only contiguous when `customer_id` comes first. Then the database seeks to that customer, the rows are already in `created_at` order, and `LIMIT 20` stops after 20 entries. Some engines (MySQL 8.0.13+, PostgreSQL 18+) can skip-scan a leading column with few distinct values, but do not design around it."
+    },
+    {
+      "title": "Covering the hot read",
+      "bad": {
+        "label": "Index finds rows, then a table lookup for each",
+        "lang": "sql",
+        "code": "-- PostgreSQL\nCREATE INDEX orders_customer_created_idx\n  ON orders (customer_id, created_at);\n\nSELECT created_at, total_cents\nFROM orders\nWHERE customer_id = $1;\n-- total_cents is not in the index: one table fetch per row"
+      },
+      "good": {
+        "label": "INCLUDE the selected column",
+        "lang": "sql",
+        "code": "-- PostgreSQL 11+ (SQL Server has the same INCLUDE clause)\nCREATE INDEX orders_customer_created_cov_idx\n  ON orders (customer_id, created_at)\n  INCLUDE (total_cents);\n\n-- Can now be an Index Only Scan\nSELECT created_at, total_cents\nFROM orders\nWHERE customer_id = $1;"
+      },
+      "why": "When every column the query touches is in the index, the database can answer from the index alone. `INCLUDE` adds payload columns to the leaf entries without making them part of the sort key. In PostgreSQL an index-only scan still checks the visibility map, so it is most effective on tables that are vacuumed regularly. Cover only hot, narrow queries: wide covering indexes are expensive to write."
+    },
+    {
+      "title": "Reading EXPLAIN at a glance",
+      "bad": {
+        "label": "Guessing from the SQL",
+        "lang": "text",
+        "code": "\"There's an index on email, so this must be fast.\"\n\nSELECT * FROM users WHERE lower(email) = 'ana@example.com';"
+      },
+      "good": {
+        "label": "Asking the database",
+        "lang": "sql",
+        "code": "-- PostgreSQL: runs the query and reports the real plan\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT * FROM users WHERE lower(email) = 'ana@example.com';\n\n-- Look for:\n--   Seq Scan on users           -> no usable index\n--   Index Scan / Index Only Scan -> index used\n--   rows=... (estimate) vs actual rows=...\n\n-- MySQL: EXPLAIN SELECT ...\n--   type=ALL -> full scan; key=NULL -> no index chosen"
+      },
+      "why": "EXPLAIN shows the plan the optimizer chose and its row estimates; with ANALYZE it also runs the query and shows actual rows and time. Note that `EXPLAIN ANALYZE` executes the statement, so wrap writes in a transaction you roll back. The first things to check: scan type, which index (if any), and whether estimated rows are close to actual rows."
+    }
+  ],
+  "checklist": [
+    "Each index exists for a named, frequent query; you can say which one.",
+    "Composite indexes put equality columns first and the range or ORDER BY column last.",
+    "Hot, narrow reads are covered so they can use index-only scans.",
+    "Indexed columns appear bare in WHERE clauses: no functions, casts or arithmetic on them, or there is a matching expression index.",
+    "Low-selectivity columns (booleans, small status sets) are not indexed alone; consider a partial index for the rare value instead.",
+    "New indexes are checked with EXPLAIN (ANALYZE) against production-like data, not an empty dev table.",
+    "Unused and duplicate indexes are found (for example from pg_stat_user_indexes in PostgreSQL) and dropped.",
+    "Large tables get new indexes built online, for example CREATE INDEX CONCURRENTLY in PostgreSQL."
+  ],
+  "antipatterns": [
+    {
+      "title": "Wrapping an indexed column in a function",
+      "bad": { "label": "lower(email) against a plain index", "diagram": "idx-expression" },
+      "better": {
+        "label": "Index the expression, or keep the column bare",
+        "lang": "sql",
+        "code": "-- PostgreSQL: index exactly what you compare\nCREATE INDEX users_email_lower_idx ON users (lower(email));\nSELECT id FROM users WHERE lower(email) = lower($1);\n\n-- Dates: compare a range instead of casting the column\n-- bad:  WHERE created_at::date = '2026-10-15'\nSELECT id FROM orders\nWHERE created_at >= '2026-10-15' AND created_at < '2026-10-16';"
+      },
+      "why": "A B-tree on `email` is sorted by `email`, not by `lower(email)` or by date, so the planner cannot seek it for those expressions. Either index the expression the query uses, or rewrite the predicate so the column stands alone and the transformation applies to the constant. Watch for implicit casts too, such as comparing a string column to a number in MySQL."
+    },
+    {
+      "title": "Indexing a low-selectivity column on its own",
+      "bad": {
+        "label": "Index on a boolean or a three-value status",
+        "lang": "sql",
+        "code": "CREATE INDEX orders_status_idx ON orders (status);\n-- 40% of rows are 'open': the planner ignores this index\n-- for status = 'open', but every write still maintains it"
+      },
+      "better": {
+        "label": "Partial index for the rare value, or composite",
+        "lang": "sql",
+        "code": "-- PostgreSQL partial index: only rows that need finding\nCREATE INDEX orders_needs_review_idx\n  ON orders (created_at)\n  WHERE status = 'needs_review';\n\n-- Or lead with a selective column\nCREATE INDEX orders_customer_status_idx\n  ON orders (customer_id, status);"
+      },
+      "why": "Following millions of index entries to random table pages is slower than scanning the table, so a non-selective index costs writes and buys nothing. A partial index stays small and cheap because it only holds the rare rows you look up; a composite index makes the low-selectivity column useful as a second filter."
+    },
+    {
+      "title": "One index per column, just in case",
+      "bad": {
+        "label": "Every column gets an index",
+        "lang": "sql",
+        "code": "CREATE INDEX ON orders (customer_id);\nCREATE INDEX ON orders (created_at);\nCREATE INDEX ON orders (status);\nCREATE INDEX ON orders (total_cents);\nCREATE INDEX ON orders (customer_id, created_at);\n-- customer_id alone is redundant with the last one"
+      },
+      "better": {
+        "label": "Indexes derived from the query list",
+        "lang": "text",
+        "code": "Q1 customer's latest orders  -> (customer_id, created_at)\nQ2 review queue              -> partial (created_at)\n                                WHERE status = 'needs_review'\nQ3 daily revenue report      -> runs on a replica; no index\n\nReview usage stats each quarter; drop indexes with no scans."
+      },
+      "why": "Each index slows every insert and delete and many updates, takes disk and cache, and lengthens backups and migrations. Single-column indexes rarely help multi-column queries, and an index whose columns are a leading prefix of another is usually redundant. Start from the query list and justify each index."
+    }
+  ],
+  "interview": [
+    "When you write a table schema, name the indexes in the same breath and tie each to a query: \"`(user_id, created_at)` for the timeline query\".",
+    "Explain composite column order with the leftmost prefix rule: equality columns first, range or sort column last.",
+    "Mention the write cost: \"this table takes 20k inserts a second, so I'll keep it to two indexes and push analytics to a replica or warehouse\".",
+    "Say how you would verify: EXPLAIN on production-like data, checking scan type and estimated versus actual rows.",
+    "Know the other index types by use: B-tree for equality, ranges and sorting; hash for equality only; inverted indexes (GIN in PostgreSQL) for arrays, JSON keys and full-text search."
+  ],
+  "quiz": [
+    {
+      "question": "You have an index on `(customer_id, created_at)`. Which query can seek it efficiently?",
+      "choices": ["WHERE created_at > now() - interval '1 day'", "WHERE customer_id = 42 ORDER BY created_at DESC LIMIT 10", "WHERE total_cents > 1000", "ORDER BY created_at LIMIT 10"],
+      "answer": 1,
+      "explain": "The index is sorted by customer_id first. Pinning customer_id lets the database seek to that customer, and the entries are already in created_at order, so it reads 10 and stops. The other queries do not constrain the leading column."
+    },
+    {
+      "question": "Why might the planner ignore an index on `status` for `WHERE status = 'open'`?",
+      "choices": ["Indexes cannot be used on text columns", "Open orders are a large fraction of rows, so a sequential scan is cheaper than many random lookups", "The planner never uses single-column indexes", "status must be the primary key"],
+      "answer": 1,
+      "explain": "Selectivity drives the choice. When a predicate matches a large share of the table, fetching each row via the index costs more than reading the table in order. For a rare value the same index might be used."
+    },
+    {
+      "question": "With only a B-tree index on `email`, why is `WHERE lower(email) = 'a@b.com'` slow?",
+      "choices": ["lower() is not allowed in WHERE", "The index stores email values, not lower(email), so it cannot be searched for that expression", "B-trees cannot store text", "The query needs ORDER BY to use an index"],
+      "answer": 1,
+      "explain": "The index is sorted by the raw values. Index the expression (`CREATE INDEX ... ON users (lower(email))` in PostgreSQL) or store a normalised column and index that."
+    },
+    {
+      "question": "What is the main cost of adding a fifth index to a write-heavy table?",
+      "choices": ["Reads become slower", "Every insert and delete, and updates to indexed columns, must also update that index", "The table can no longer have a primary key", "Queries must name the index explicitly"],
+      "answer": 1,
+      "explain": "Indexes are maintained synchronously with writes, adding I/O, log volume, storage and cache pressure. Each one should pay for itself with a read it speeds up."
+    },
+    {
+      "question": "Which index type fits a query for rows whose `tags` array contains 'urgent' (PostgreSQL)?",
+      "choices": ["B-tree on tags", "Hash on tags", "GIN on tags", "No index can help"],
+      "answer": 2,
+      "explain": "GIN is an inverted index: it maps each element (tag, JSON key, word) to the rows containing it, which suits containment queries. B-tree and hash index the whole value, so they help with equality on the entire array, not element lookups."
+    }
+  ],
+  "practice": {
+    "prompt": "An orders table has 50 million rows and takes about 2,000 inserts per second. The two hottest queries are: (1) a customer's 20 most recent orders with their totals, and (2) support staff looking up an order by the customer's email, typed in any case. Design the indexes and explain how you would verify them.",
+    "answer": "Query 1: a composite index on `(customer_id, created_at)` so the database seeks to the customer and reads entries already in date order, stopping at 20; in PostgreSQL I would add `INCLUDE (total_cents)` (or put it last in MySQL) so it can be an index-only scan. Query 2: email lives on customers, so index `lower(email)` on customers with an expression index in PostgreSQL (or a stored normalised email column with a unique index), and query with `WHERE lower(email) = lower($1)` so the predicate matches the index; then use the customer id for query 1. I would not index status or created_at alone: status is low-selectivity and created_at alone serves no hot query. At 2,000 inserts a second each index adds write work, so I keep it to these two plus the primary key, and send reporting to a replica. Verify with `EXPLAIN (ANALYZE, BUFFERS)` on production-sized data: expect Index Scan or Index Only Scan, and estimated rows close to actual rows. Build the new indexes online (`CREATE INDEX CONCURRENTLY` in PostgreSQL) and watch write latency and index usage stats afterwards.",
+    "rubric": [
+      "Composite index with the equality column first and the sort column second",
+      "Covers the hot read or explains why not",
+      "Handles case-insensitive email with an expression index or normalised column, keeping the predicate matched",
+      "Rejects low-selectivity and speculative indexes, citing write cost",
+      "Verifies with EXPLAIN on realistic data, comparing estimated and actual rows",
+      "Builds indexes online on a large live table"
+    ]
+  },
+  "links": {
+    "lessons": ["design-databases-indexes", "design-api-data-model", "design-replication-partitioning"],
+    "problems": ["target-range", "valid-search-tree"],
+    "cases": ["url-shortener", "typeahead", "payments", "kv-store"],
+    "guides": ["pagination", "caching-strategies", "schema-migrations", "transactions-isolation"]
+  }
+}
