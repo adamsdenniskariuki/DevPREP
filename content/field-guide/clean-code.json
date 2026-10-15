@@ -1,0 +1,337 @@
+{
+  "id": "clean-code",
+  "kind": "guide",
+  "topic": "code-quality",
+  "level": "se",
+  "title": "Clean code: names, small functions and honest structure",
+  "summary": "Name things for what they mean, keep functions small and single-purpose, flatten nesting with guard clauses, name your constants, push I/O to the edges, and prefer some duplication over the wrong abstraction.",
+  "minutes": 14,
+  "principle": "Code is read far more often than it is written, so optimise for the next reader. Each name should say what a thing means, each function should do one thing at one level of detail, the happy path should read top to bottom without deep nesting, and side effects should sit at the edges so the logic in the middle is easy to test. Abstract only when you see a real, repeated idea.",
+  "why": "Most of the cost of software is changing it later. Unclear names, 200-line functions and five levels of `if` make every change slower and riskier, because the reader has to rebuild the author's mental model before touching anything. In interviews, the same habits show up within minutes: interviewers notice whether your variables are `i`, `d` and `tmp` or `left`, `seen` and `window_sum`.\n\nA few habits cover most of it. **Names** carry meaning and units (`timeout_ms`, `is_expired`, `names_earning_over`). **Small functions** do one thing, so their name can describe them completely. **Guard clauses** handle invalid cases first and return early, which keeps the main path flat. **Named constants** replace magic numbers like `86400` or `0.9`. **Pure functions** (same input, same output, no side effects) hold the business rules, while a thin outer layer does I/O. **Comments** explain why, such as a constraint or a surprising decision, not what the next line does. **Errors** follow one convention per module instead of a mix of `null`, `-1` and exceptions.\n\nThe main trap is over-correcting. Removing every duplicate line by building a shared helper with boolean flags couples unrelated callers; when one changes, all of them break. Two similar blocks are cheap; a wrong abstraction is expensive to undo. A common rule of thumb is to wait for the third occurrence and check that the copies change for the same reason.",
+  "diagrams": [
+    {
+      "id": "cc-guard-compare",
+      "type": "compare",
+      "title": "Nested conditionals vs guard clauses",
+      "alt": "Side-by-side comparison. On the left, the main logic sits three levels deep inside nested checks for an order, non-empty items and country. On the right, three guard clauses each return or throw early, and the main logic sits at the top level of the function.",
+      "caption": "Guards turn a staircase into a list: deal with each invalid case and leave, so the main path reads straight down.",
+      "before": {
+        "label": "Nested: logic 3 levels deep",
+        "nodes": [
+          { "id": "d1", "label": "if order", "kind": "decision", "col": 0, "row": 0 },
+          { "id": "d2", "label": "if has items", "kind": "decision", "col": 1, "row": 1 },
+          { "id": "d3", "label": "if domestic", "kind": "decision", "col": 2, "row": 2 },
+          { "id": "w", "label": "Main logic", "kind": "bad", "col": 2, "row": 3, "sub": "elses far below" }
+        ],
+        "edges": [
+          { "from": "d1", "to": "d2", "label": "then" },
+          { "from": "d2", "to": "d3", "label": "then" },
+          { "from": "d3", "to": "w", "label": "then" }
+        ]
+      },
+      "after": {
+        "label": "Guard clauses: flat main path",
+        "nodes": [
+          { "id": "g1", "label": "No order?", "kind": "decision", "col": 0, "row": 0 },
+          { "id": "g2", "label": "No items?", "kind": "decision", "col": 0, "row": 1 },
+          { "id": "g3", "label": "Abroad?", "kind": "decision", "col": 0, "row": 2 },
+          { "id": "w", "label": "Main logic", "kind": "good", "col": 0, "row": 3, "sub": "top level" },
+          { "id": "x", "label": "Return early", "kind": "note", "col": 2, "row": 1, "sub": "throw or value" }
+        ],
+        "edges": [
+          { "from": "g1", "to": "g2", "label": "no" },
+          { "from": "g2", "to": "g3", "label": "no" },
+          { "from": "g3", "to": "w", "label": "no" },
+          { "from": "g1", "to": "x", "label": "yes" },
+          { "from": "g2", "to": "x", "label": "yes" },
+          { "from": "g3", "to": "x", "label": "yes" }
+        ]
+      }
+    },
+    {
+      "id": "cc-refactor-flow",
+      "type": "flow",
+      "title": "The safe refactoring loop",
+      "alt": "Flow diagram of a refactoring loop. First, tests pin current behaviour. Then the engineer makes one small step such as a rename or extracting a function, and runs the tests. If they fail, the step is undone. If they pass, the change is committed and the engineer picks the next smell, returning to another small step.",
+      "caption": "Refactoring means changing structure without changing behaviour. Small steps with a test run after each one make that claim checkable.",
+      "nodes": [
+        { "id": "pin", "label": "Pin behaviour", "kind": "state", "col": 0, "row": 1, "sub": "tests pass first" },
+        { "id": "step", "label": "One small step", "kind": "state", "col": 1, "row": 1, "sub": "rename, extract" },
+        { "id": "run", "label": "Run tests", "kind": "decision", "col": 2, "row": 1, "sub": "seconds, not mins" },
+        { "id": "undo", "label": "Undo step", "kind": "bad", "col": 2, "row": 0, "sub": "git checkout" },
+        { "id": "commit", "label": "Commit", "kind": "good", "col": 3, "row": 1, "sub": "one idea each" },
+        { "id": "next", "label": "Next smell", "kind": "note", "col": 2, "row": 3, "sub": "long fn, dup, flag" }
+      ],
+      "edges": [
+        { "from": "pin", "to": "step" },
+        { "from": "step", "to": "run" },
+        { "from": "run", "to": "undo", "label": "red", "style": "fail" },
+        { "from": "undo", "to": "step", "label": "smaller step", "style": "reply" },
+        { "from": "run", "to": "commit", "label": "green" },
+        { "from": "commit", "to": "next" },
+        { "from": "next", "to": "step", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Before touching structure, make sure tests cover the behaviour you are about to move. For legacy code without tests, write characterisation tests that record what it does today." },
+        { "edges": [1], "text": "Make one mechanical change: rename a variable, extract a function, replace a magic number with a named constant. Then run the fast tests." },
+        { "edges": [2, 3], "text": "Red means the step changed behaviour. Undo it rather than debugging a half-refactor, and try a smaller step." },
+        { "edges": [4], "text": "Green: commit. Small commits make the PR easy to review and any mistake easy to bisect." },
+        { "edges": [5, 6], "text": "Pick the next smell (a long function, a duplicated rule, a boolean flag parameter) and repeat. Stop when the code is clear enough for the change you actually need to make." }
+      ]
+    },
+    {
+      "id": "cc-dup-chart",
+      "type": "chart",
+      "title": "Duplication vs abstraction",
+      "alt": "Trade-off chart with amount of shared abstraction on the horizontal axis and ease of future change on the vertical axis. Copy-pasting the same rule five times has little abstraction and is hard to change. Two similar copies are easy to change. Extracting on the third real repeat is both well shared and easy to change. A helper with many boolean flags and a premature framework are highly abstract but hard to change.",
+      "caption": "Rough positions. Ease of change peaks in the middle: share an idea once it is clearly the same idea, and stop before the helper needs flags.",
+      "x": { "label": "Shared abstraction", "low": "copy-paste", "high": "one big helper" },
+      "y": { "label": "Ease of future change", "low": "hard", "high": "easy" },
+      "points": [
+        { "label": "Same rule pasted 5x", "x": 1, "y": 2 },
+        { "label": "Two similar copies", "x": 2, "y": 7 },
+        { "label": "Extract on 3rd repeat", "x": 5, "y": 9, "highlight": true },
+        { "label": "Helper with 4 flags", "x": 8, "y": 3 },
+        { "label": "Premature framework", "x": 10, "y": 1 }
+      ]
+    },
+    {
+      "id": "cc-deps-compare",
+      "type": "compare",
+      "title": "Tangled dependencies vs layers",
+      "alt": "Side-by-side comparison. On the left, a UI module, orders, billing and email modules call each other in a cycle and the UI talks directly to the database. On the right, a handler calls a service, the service calls a repository that talks to the database, and the service sends email through an interface, so dependencies point one way.",
+      "caption": "When dependencies point one way, you can change or test one layer without loading the others. Cycles make every change touch everything.",
+      "before": {
+        "label": "Tangled: cycles, UI hits DB",
+        "nodes": [
+          { "id": "ui", "label": "UI", "kind": "client", "col": 0, "row": 0 },
+          { "id": "orders", "label": "Orders", "kind": "bad", "col": 2, "row": 0 },
+          { "id": "billing", "label": "Billing", "kind": "bad", "col": 0, "row": 2 },
+          { "id": "email", "label": "Email", "kind": "bad", "col": 2, "row": 2 },
+          { "id": "db", "label": "Database", "kind": "db", "col": 1, "row": 3 }
+        ],
+        "edges": [
+          { "from": "ui", "to": "orders" },
+          { "from": "orders", "to": "billing" },
+          { "from": "billing", "to": "email" },
+          { "from": "email", "to": "orders", "label": "cycle", "style": "fail" },
+          { "from": "ui", "to": "db", "label": "raw SQL", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Layered: one direction",
+        "nodes": [
+          { "id": "h", "label": "Handler", "kind": "client", "col": 1, "row": 0, "sub": "parse, respond" },
+          { "id": "s", "label": "Order service", "kind": "good", "col": 1, "row": 1, "sub": "pure rules" },
+          { "id": "r", "label": "Repository", "kind": "service", "col": 1, "row": 2, "sub": "queries" },
+          { "id": "db", "label": "Database", "kind": "db", "col": 1, "row": 3 },
+          { "id": "n", "label": "Notifier", "kind": "external", "col": 2, "row": 2, "sub": "interface" }
+        ],
+        "edges": [
+          { "from": "h", "to": "s" },
+          { "from": "s", "to": "r" },
+          { "from": "r", "to": "db" },
+          { "from": "s", "to": "n" }
+        ]
+      }
+    },
+    {
+      "id": "cc-core-shell",
+      "type": "flow",
+      "title": "Pure core, thin shell, one place for errors",
+      "alt": "Flow diagram of a request handled in layers. Input is validated at the edge. Clean data goes into pure functions that hold the business rules. Their result goes to an adapter that performs I/O such as database writes. Errors from validation, rules and I/O all flow to a single error handler that maps them to one response format.",
+      "caption": "Business rules in the middle never touch the network or the clock, so they are fast to test. Errors are mapped to responses in exactly one place.",
+      "nodes": [
+        { "id": "in", "label": "Request", "kind": "client", "col": 0, "row": 1 },
+        { "id": "val", "label": "Validate", "kind": "decision", "col": 1, "row": 1, "sub": "at the edge" },
+        { "id": "core", "label": "Pure rules", "kind": "good", "col": 2, "row": 1, "sub": "no I/O, no clock" },
+        { "id": "io", "label": "Adapter", "kind": "service", "col": 3, "row": 1, "sub": "DB, HTTP, email" },
+        { "id": "db", "label": "Database", "kind": "db", "col": 4, "row": 1 },
+        { "id": "err", "label": "Error handler", "kind": "note", "col": 2, "row": 3, "sub": "one format" }
+      ],
+      "edges": [
+        { "from": "in", "to": "val" },
+        { "from": "val", "to": "core", "label": "typed data" },
+        { "from": "core", "to": "io", "label": "decision" },
+        { "from": "io", "to": "db" },
+        { "from": "val", "to": "err", "label": "invalid", "style": "fail" },
+        { "from": "core", "to": "err", "label": "rule broken", "style": "fail" },
+        { "from": "io", "to": "err", "label": "I/O failed", "style": "fail" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Guard clauses and named constants",
+      "bad": {
+        "label": "Nested branches and magic numbers",
+        "lang": "ts",
+        "code": "function shippingCents(order: Order): number {\n  if (order) {\n    if (order.items.length > 0) {\n      if (order.country === 'US') {\n        return order.totalCents > 5000 ? 0 : 599\n      } else {\n        return 1500\n      }\n    } else {\n      throw new Error('empty order')\n    }\n  } else {\n    throw new Error('no order')\n  }\n}"
+      },
+      "good": {
+        "label": "Invalid cases first, main path flat",
+        "lang": "ts",
+        "code": "const FREE_SHIPPING_OVER_CENTS = 5000\nconst DOMESTIC_RATE_CENTS = 599\nconst INTERNATIONAL_RATE_CENTS = 1500\n\nfunction shippingCents(order: Order): number {\n  if (!order) throw new Error('no order')\n  if (order.items.length === 0) throw new Error('empty order')\n  if (order.country !== 'US') return INTERNATIONAL_RATE_CENTS\n  return order.totalCents > FREE_SHIPPING_OVER_CENTS ? 0 : DOMESTIC_RATE_CENTS\n}"
+      },
+      "why": "Both versions behave identically. In the second, each rule is one line, the error for each case sits next to its check, and the numbers have names that say what they are and in which unit, so changing the free-shipping threshold is a one-line, obvious edit."
+    },
+    {
+      "title": "Names that carry meaning",
+      "bad": {
+        "label": "Positional data and cryptic names",
+        "lang": "py",
+        "code": "def calc(d, x):\n    r = []\n    for i in d:\n        if i[2] > x:\n            r.append(i[0])\n    return r"
+      },
+      "good": {
+        "label": "A named type and a descriptive function",
+        "lang": "py",
+        "code": "from typing import NamedTuple\n\n\nclass Employee(NamedTuple):\n    name: str\n    team: str\n    salary: int\n\n\ndef names_earning_over(employees: list[Employee], threshold: int) -> list[str]:\n    return [e.name for e in employees if e.salary > threshold]"
+      },
+      "why": "The reader of `calc(d, x)` must find the caller to learn that index 2 is salary. The second version states the data shape once, and the function name reads like the question it answers, so call sites document themselves."
+    },
+    {
+      "title": "Keep business rules pure; push I/O and time to the edge",
+      "bad": {
+        "label": "Rule tangled with the database and the clock",
+        "lang": "ts",
+        "code": "async function applyNewCustomerDiscount(userId: string) {\n  const user = await db.users.find(userId)\n  if (Date.now() - user.createdAt < 2592000000) {\n    user.cart.totalCents = user.cart.totalCents * 0.9 // may leave fractional cents\n  }\n  await db.users.save(user)\n}"
+      },
+      "good": {
+        "label": "Pure rule plus a thin I/O wrapper",
+        "lang": "ts",
+        "code": "const NEW_CUSTOMER_WINDOW_MS = 30 * 24 * 60 * 60 * 1000\nconst NEW_CUSTOMER_DISCOUNT = 0.1\n\nexport function discountedTotalCents(totalCents: number, createdAt: number, now: number): number {\n  const isNewCustomer = now - createdAt < NEW_CUSTOMER_WINDOW_MS\n  return isNewCustomer ? Math.round(totalCents * (1 - NEW_CUSTOMER_DISCOUNT)) : totalCents\n}\n\nexport async function applyNewCustomerDiscount(userId: string, now = Date.now()) {\n  const user = await db.users.find(userId)\n  const totalCents = discountedTotalCents(user.cart.totalCents, user.createdAt, now)\n  await db.users.save({ ...user, cart: { ...user.cart, totalCents } })\n}"
+      },
+      "why": "The pure function can be tested with plain numbers in microseconds, including the boundary at exactly 30 days, without a database or a fake clock. The wrapper is so thin it needs only one integration test. The constants also explain `2592000000`, and rounding fixes the fractional-cents bug."
+    }
+  ],
+  "checklist": [
+    "Names say what a value means, including units where it matters (`timeout_ms`, `price_cents`); booleans read as questions (`is_expired`, `has_access`).",
+    "Each function does one thing at one level of detail, and its name describes all of it; no `and` hidden inside.",
+    "Invalid and edge cases are handled first with guard clauses; the main path has at most two levels of nesting.",
+    "No unexplained literals: numbers and strings with meaning are named constants.",
+    "Business rules live in pure functions; I/O, time and randomness are passed in or kept at the edges.",
+    "Comments explain why (a constraint, a trade-off, a link to an incident), not what the code already says.",
+    "Duplication is removed only when the copies represent the same rule and change for the same reason; no helpers with boolean mode flags.",
+    "One error convention per module (exceptions, result types, or `undefined` for expected absence), applied consistently."
+  ],
+  "antipatterns": [
+    {
+      "title": "Deep nesting instead of early returns",
+      "bad": { "label": "Main logic three levels deep", "diagram": "cc-guard-compare" },
+      "better": {
+        "label": "Guard, then the happy path",
+        "lang": "py",
+        "code": "def send_invoice(invoice):\n    if invoice is None:\n        raise ValueError(\"invoice is required\")\n    if invoice.paid:\n        return\n    if not invoice.customer.email:\n        raise ValueError(\"customer has no email\")\n    mailer.send(invoice.customer.email, render(invoice))"
+      },
+      "why": "Each guard handles one exceptional case and leaves. The reader no longer has to match an `else` twenty lines down with the `if` it belongs to, and adding a new precondition is one more line at the top."
+    },
+    {
+      "title": "The wrong abstraction: one helper with mode flags",
+      "bad": {
+        "label": "Boolean flags select behaviour",
+        "lang": "ts",
+        "code": "function formatUser(u: User, forEmail: boolean, short: boolean, admin: boolean) {\n  let s = short ? u.firstName : `${u.firstName} ${u.lastName}`\n  if (admin) s += ' (admin)'\n  if (forEmail) s = `${s} <${u.email}>`\n  return s\n}\n// formatUser(u, true, false, false)   what do these mean?\n// formatUser(u, false, true, true)"
+      },
+      "better": {
+        "label": "Small functions named for each use",
+        "lang": "ts",
+        "code": "const fullName = (u: User) => `${u.firstName} ${u.lastName}`\nconst emailRecipient = (u: User) => `${fullName(u)} <${u.email}>`\nconst adminBadge = (u: User) => `${u.firstName} (admin)`\n\n// emailRecipient(u)  ===  formatUser(u, true, false, false)\n// adminBadge(u)      ===  formatUser(u, false, true, true)"
+      },
+      "why": "The flag helper couples every caller: a change for the email case risks the admin case, and call sites are unreadable. Separate functions that share a small piece (`fullName`) are easier to read, test and change independently."
+    },
+    {
+      "title": "Tangled module dependencies",
+      "bad": { "label": "Cycles and UI reaching into the DB", "diagram": "cc-deps-compare" },
+      "better": {
+        "label": "Depend on an interface, inject it",
+        "lang": "ts",
+        "code": "interface Notifier {\n  orderPlaced(orderId: string): Promise<void>\n}\n\nclass OrderService {\n  constructor(private orders: OrderRepository, private notifier: Notifier) {}\n\n  async place(order: Order): Promise<void> {\n    await this.orders.save(order)\n    await this.notifier.orderPlaced(order.id)\n  }\n}"
+      },
+      "why": "The service knows only the small interfaces it needs. Email, SMS or a test fake can implement `Notifier` without the service importing them, which breaks the cycle and makes the service testable alone."
+    },
+    {
+      "title": "Comments that repeat the code",
+      "bad": {
+        "label": "Narrating each line",
+        "lang": "py",
+        "code": "# loop over payments\nfor p in payments:\n    # submit payment\n    provider.submit([p])"
+      },
+      "better": {
+        "label": "Explain the constraint",
+        "lang": "py",
+        "code": "from itertools import batched  # Python 3.12+\n\n# The provider rejects requests with more than 100 payments,\n# so send fixed-size batches instead of one call per payment.\nfor batch in batched(payments, 100):\n    provider.submit(list(batch))"
+      },
+      "why": "A comment that restates the code adds noise and goes stale. A comment that records a constraint the code cannot express (an external limit, a workaround, a deliberate trade-off) saves the next reader from undoing it."
+    },
+    {
+      "title": "Mixed error conventions",
+      "bad": {
+        "label": "-1, null and throw in one function",
+        "lang": "ts",
+        "code": "function findUser(id: string) {\n  if (!id) return -1\n  const row = db.get(id)\n  if (!row) return null\n  if (row.deleted) throw new Error('deleted')\n  return row\n}"
+      },
+      "better": {
+        "label": "Expected absence vs programmer error",
+        "lang": "ts",
+        "code": "function findUser(id: string): User | undefined {\n  if (!id) throw new TypeError('id is required') // caller bug\n  const row = db.get(id)\n  if (!row || row.deleted) return undefined      // normal: not found\n  return row\n}"
+      },
+      "why": "Callers of the first version must check for `-1`, `null` and an exception. The second has one rule: a missing user is a normal `undefined` the type system forces callers to handle, and an exception means the caller has a bug."
+    }
+  ],
+  "interview": [
+    "In coding rounds, name variables for their role (`left`, `seen`, `window_sum`) from the first line; it shows care and makes your own debugging faster.",
+    "Handle edge cases with guard clauses at the top of the function and say so out loud: \"empty input returns 0, then the main loop.\"",
+    "Extract a helper when a block has a clear name (`is_valid_move`, `neighbours`), not to hit a line count.",
+    "When asked to refactor, describe the loop: pin behaviour with tests, take small steps, run tests after each, commit.",
+    "Show judgement on duplication: \"I would leave these two similar blocks for now; they serve different callers and may diverge.\""
+  ],
+  "quiz": [
+    {
+      "question": "Which change most improves this line: `if (elapsed > 86400) expire()`?",
+      "choices": ["Add a comment `// 86400`", "Introduce `const SESSION_TTL_SECONDS = 86400` and use it", "Inline the value as `60 * 60 * 24` with no name", "Move the check into a separate file"],
+      "answer": 1,
+      "explain": "A named constant says what the number means and its unit, and gives one place to change it. `60 * 60 * 24` explains the arithmetic but not the purpose."
+    },
+    {
+      "question": "What is the main benefit of guard clauses?",
+      "choices": ["They make code run faster", "They handle invalid cases early so the main path stays flat and readable", "They remove the need for tests", "They prevent all exceptions"],
+      "answer": 1,
+      "explain": "Returning or throwing early for each special case avoids nested `if/else` pyramids. The reader sees preconditions at the top and the real logic without indentation."
+    },
+    {
+      "question": "Three functions share similar code, but each is used by a different team and they are starting to diverge. What should you do?",
+      "choices": ["Merge them into one helper with flags for each team", "Leave them separate, or extract only the part that is truly the same rule", "Delete two of them", "Copy all three into a shared library"],
+      "answer": 1,
+      "explain": "Code that looks similar but changes for different reasons is not real duplication. A flag-driven helper couples the teams; sharing only the genuinely common rule keeps them independent."
+    },
+    {
+      "question": "Why are pure functions easier to test?",
+      "choices": ["They are always shorter", "They have no inputs", "Their output depends only on their inputs and they have no side effects, so a test is just input and expected output", "They cannot throw errors"],
+      "answer": 2,
+      "explain": "With no database, clock or network inside, there is nothing to mock or set up. You can cover boundaries quickly and the tests are deterministic."
+    },
+    {
+      "question": "Which comment is most useful?",
+      "choices": ["`// increment counter`", "`// loop through the list`", "`// The vendor API returns 404 for empty folders, so treat 404 as an empty result here`", "`// TODO`"],
+      "answer": 2,
+      "explain": "Good comments explain why the code is the way it is, especially surprising behaviour that the next reader might otherwise \"fix\". The others repeat the code or say nothing."
+    }
+  ],
+  "practice": {
+    "prompt": "You inherit a 180-line function `processOrder(order, flag1, flag2)` with five levels of nesting, inline SQL, magic numbers, and no tests. You need to add a new discount rule this week. How do you approach it?",
+    "answer": "Do not rewrite it in one go. First pin behaviour: write characterisation tests through the public entry point for the main paths I can identify, recording today's outputs, including odd ones. Then refactor in small, tested steps, each committed separately: replace magic numbers with named constants; flatten nesting with guard clauses for the invalid cases; extract well-named functions for each block (validate, price, apply discounts, persist); move the SQL behind a repository so the pricing logic becomes pure and takes the clock as a parameter. Replace the two boolean flags with explicit functions or an options object with named fields once I understand what each caller needs. Only refactor what the new rule touches; leave the rest for later PRs. Then add the discount rule as a pure function with unit tests, including boundaries. Ship the refactor and the feature as separate PRs so reviewers can verify the refactor changes no behaviour.",
+    "rubric": [
+      "Adds characterisation tests before changing structure",
+      "Refactors in small, separately committed steps",
+      "Uses guard clauses, named constants and extracted functions with clear names",
+      "Separates I/O (SQL, clock) from pure business rules",
+      "Replaces boolean flag parameters with explicit functions or named options",
+      "Scopes the refactor to what the change needs and splits refactor and feature PRs"
+    ]
+  },
+  "links": {
+    "lessons": ["behavioral-technical-communication"],
+    "problems": ["lru-cache", "flatten-nested-iterator", "time-versioned-store"],
+    "guides": ["code-review", "testing-strategy", "testing-your-code", "api-error-format"]
+  }
+}

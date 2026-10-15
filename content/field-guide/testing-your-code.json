@@ -1,0 +1,309 @@
+{
+  "id": "testing-your-code",
+  "kind": "guide",
+  "topic": "algorithms",
+  "level": "se",
+  "title": "Testing your own solution in a coding interview",
+  "summary": "Before you say \"done\", dry-run a small example in a trace table, walk the edge cases, add quick asserts and, when time allows, check against a brute force.",
+  "minutes": 12,
+  "principle": "Treat \"the code is written\" as the halfway point. Prove it works by tracing one small example by hand, then the edge cases most likely to break it, and fix what you find before the interviewer has to point at it.",
+  "why": "Interviewers rarely expect bug-free first drafts. They do watch whether **you** find the bugs. A candidate who traces their own code, spots an off-by-one and fixes it shows the habit teams rely on in code review and production. A candidate who announces \"done\" and is then walked to the bug by the interviewer shows the opposite, even if the fix takes ten seconds.\n\nTesting in an interview is not running a test suite. Usually there is no compiler, so the tools are a **small example**, a **trace table** of the variables that change, a short list of **edge cases** chosen for this algorithm, and, if you can run code, a few `assert` lines or a **brute-force comparison** on random small inputs. Each costs a few minutes; together they catch most bugs that matter: wrong loop bounds, a missed update, an empty input, duplicates, and a result returned one step too early.\n\nWhen a check fails, debug by **narrowing**: shrink the input to the smallest one that still fails, find the first line where the trace differs from what you expected, and fix that line. Do not patch symptoms by adding special cases at the end.",
+  "diagrams": [
+    {
+      "id": "tyc-loop",
+      "type": "flow",
+      "title": "The test-and-fix loop after you finish coding",
+      "alt": "Flow diagram. Write the code, dry-run a small example, then walk edge cases and optionally compare against a brute force. A decision asks whether every check passed. If yes, state complexity and finish. If not, narrow to the smallest failing input, fix the line, and dry-run again.",
+      "caption": "The loop is short on purpose. One traced example plus three or four targeted edge cases catches most interview bugs.",
+      "nodes": [
+        { "id": "write", "label": "Write code", "kind": "service", "col": 0, "row": 0, "sub": "from the plan" },
+        { "id": "dry", "label": "Dry run", "kind": "state", "col": 1, "row": 0, "sub": "small example" },
+        { "id": "edge", "label": "Edge cases", "kind": "state", "col": 2, "row": 0, "sub": "empty, one, dupes" },
+        { "id": "brute", "label": "Brute compare", "kind": "worker", "col": 2, "row": 2, "sub": "if you can run it" },
+        { "id": "pass", "label": "All pass?", "kind": "decision", "col": 3, "row": 0 },
+        { "id": "done", "label": "State Big-O", "kind": "good", "col": 4, "row": 0, "sub": "then say done" },
+        { "id": "fix", "label": "Narrow and fix", "kind": "bad", "col": 3, "row": 2, "sub": "smallest failure" }
+      ],
+      "edges": [
+        { "from": "write", "to": "dry", "label": "trace it" },
+        { "from": "dry", "to": "edge" },
+        { "from": "edge", "to": "brute", "label": "optional", "style": "async" },
+        { "from": "edge", "to": "pass" },
+        { "from": "brute", "to": "pass" },
+        { "from": "pass", "to": "done", "label": "yes" },
+        { "from": "pass", "to": "fix", "label": "no", "style": "fail" },
+        { "from": "fix", "to": "dry", "label": "re-run", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Pick an input of 3 to 5 elements that exercises the main branch, and trace it line by line. Write the variables in a table rather than keeping them in your head." },
+        { "edges": [1, 3], "text": "Walk the edge cases that matter for this algorithm: empty input, one element, duplicates, the target at either end or absent, and the largest values." },
+        { "edges": [2, 4], "text": "If the environment runs code, compare against a slow but obviously correct version on many random small inputs. It finds cases you did not think of." },
+        { "edges": [6], "text": "A check failed. Shrink to the smallest failing input and find the first line where the trace differs from your expectation." },
+        { "edges": [7], "text": "After the fix, re-run the original example and the failing case. Fixes often break the case that used to work." },
+        { "edges": [5], "text": "Only now say you are done, followed by the time and space complexity." }
+      ]
+    },
+    {
+      "id": "tyc-trace-seq",
+      "type": "sequence",
+      "title": "Tracing lower bound out loud while the interviewer watches",
+      "alt": "Sequence diagram. The candidate tells the interviewer which example they will trace, writes three rows of lo, hi and mid into a trace table, and reports the result. The interviewer asks about a target larger than every element; the candidate traces it and also checks the empty array, then summarises complexity.",
+      "caption": "Narrate the table, not the code. Each row is one loop iteration, so the interviewer can follow and check you.",
+      "actors": [
+        { "id": "cand", "label": "Candidate" },
+        { "id": "table", "label": "Trace table" },
+        { "id": "intv", "label": "Interviewer" }
+      ],
+      "messages": [
+        { "from": "cand", "to": "intv", "label": "I'll trace [1,3,3,5], x = 3", "note": "Pick an example with a duplicate of the target: that is where lower bound differs from plain search." },
+        { "from": "cand", "to": "table", "label": "lo 0, hi 4, mid 2: hi = 2", "note": "a[2] is 3, not less than x, so the answer is at 2 or to its left." },
+        { "from": "cand", "to": "table", "label": "lo 0, hi 2, mid 1: hi = 1" },
+        { "from": "cand", "to": "table", "label": "lo 0, hi 1, mid 0: lo = 1", "note": "a[0] is 1, less than x, so the answer is right of 0." },
+        { "from": "cand", "to": "intv", "label": "lo == hi, return 1: first 3", "note": "Compare with the expected answer you wrote before tracing, not after." },
+        { "from": "intv", "to": "cand", "label": "What if x is above every value?", "style": "reply" },
+        { "from": "cand", "to": "table", "label": "x = 9: lo climbs to 4, return 4", "note": "Returning n means insert at the end. This is the case a hi = n - 1 bug gets wrong." },
+        { "from": "cand", "to": "intv", "label": "Empty array: hi = 0, return 0", "note": "The loop never runs, and 0 is the right insert position." },
+        { "from": "cand", "to": "intv", "label": "O(log n) time, O(1) space", "note": "End with complexity once the checks pass." }
+      ]
+    },
+    {
+      "id": "tyc-done-compare",
+      "type": "compare",
+      "title": "Claiming done untested vs tracing with a table",
+      "alt": "Side-by-side comparison. On the left, the candidate writes code, re-reads it, says it looks right, and the interviewer finds the bug. On the right, the candidate writes code, traces a table, checks edge cases, and finds and fixes the bug themselves.",
+      "caption": "The bug is the same in both runs. Who finds it decides the signal.",
+      "before": {
+        "label": "\"Looks right\": interviewer finds it",
+        "nodes": [
+          { "id": "code", "label": "Code written", "kind": "service", "col": 0, "row": 0 },
+          { "id": "reread", "label": "Re-read code", "kind": "note", "col": 1, "row": 0, "sub": "eyes skim past" },
+          { "id": "done", "label": "\"Done!\"", "kind": "bad", "col": 2, "row": 0 },
+          { "id": "found", "label": "Bug pointed out", "kind": "bad", "col": 2, "row": 1, "sub": "by interviewer" }
+        ],
+        "edges": [
+          { "from": "code", "to": "reread" },
+          { "from": "reread", "to": "done" },
+          { "from": "done", "to": "found", "label": "x above all?", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Traced: candidate finds it",
+        "nodes": [
+          { "id": "code", "label": "Code written", "kind": "service", "col": 0, "row": 0 },
+          { "id": "table", "label": "Trace table", "kind": "state", "col": 1, "row": 0, "sub": "lo, hi, mid" },
+          { "id": "edges", "label": "Edge cases", "kind": "state", "col": 2, "row": 0 },
+          { "id": "fixed", "label": "Self-fixed", "kind": "good", "col": 2, "row": 1, "sub": "hi = n, not n - 1" }
+        ],
+        "edges": [
+          { "from": "code", "to": "table" },
+          { "from": "table", "to": "edges" },
+          { "from": "edges", "to": "fixed", "label": "x = 9 fails" }
+        ]
+      }
+    },
+    {
+      "id": "tyc-45min",
+      "type": "timeline",
+      "title": "Where testing fits in a 45-minute coding round",
+      "alt": "Timeline of an illustrative 45-minute interview: introductions, clarifying questions and examples, approach from brute force to optimised, coding, a dry run that finds a bug, edge cases and the fix, then complexity and follow-up questions.",
+      "caption": "Illustrative split, not a rule. Reserve roughly ten minutes after coding for testing; if coding overruns, shorten the follow-ups, not the testing.",
+      "events": [
+        { "at": "0-3 min", "label": "Introductions; read the problem", "kind": "trigger" },
+        { "at": "3-8 min", "label": "Clarify inputs and write 2-3 examples with expected outputs (these become your tests)", "kind": "trigger" },
+        { "at": "8-15 min", "label": "Brute force, then the optimised approach and its complexity", "kind": "impact" },
+        { "at": "15-30 min", "label": "Write the code, narrating each block", "kind": "impact" },
+        { "at": "30-34 min", "label": "Dry-run the small example in a trace table; spot the off-by-one", "kind": "detect" },
+        { "at": "34-38 min", "label": "Fix it, then walk empty, single, duplicates and out-of-range cases", "kind": "mitigate" },
+        { "at": "38-45 min", "label": "Complexity summary, follow-ups and your questions", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "tyc-exhaustive",
+      "type": "bars",
+      "title": "How many inputs an exhaustive small check covers",
+      "alt": "Bar chart of the number of arrays of length n whose values are each 0, 1 or 2: 3 arrays for length 1, 9 for length 2, 27 for length 3, 81 for length 4, 243 for length 5 and 729 for length 6.",
+      "caption": "Computed as 3^n. Every array up to length 6 is about 1,100 inputs, which runs in milliseconds and hits empty, duplicate and all-equal cases automatically.",
+      "unit": "arrays",
+      "bars": [
+        { "label": "n = 1", "value": 3 },
+        { "label": "n = 2", "value": 9 },
+        { "label": "n = 3", "value": 27 },
+        { "label": "n = 4", "value": 81 },
+        { "label": "n = 5", "value": 243 },
+        { "label": "n = 6", "value": 729, "highlight": true }
+      ]
+    },
+    {
+      "id": "tyc-techniques",
+      "type": "chart",
+      "title": "Testing techniques: time cost vs bugs caught",
+      "alt": "Trade-off chart with time cost on the horizontal axis and bugs caught on the vertical axis. Re-reading the code is cheap but catches little. A happy-path dry run is cheap and catches a fair amount. An edge-case list is cheap and catches more. A full trace table costs more and catches most. A random brute-force comparison costs the most and catches the most but needs a runnable environment.",
+      "caption": "Rough positions, not measurements. Edge cases and a trace table give the best return when you cannot run code.",
+      "x": { "label": "Time cost", "low": "seconds", "high": "minutes" },
+      "y": { "label": "Bugs caught", "low": "few", "high": "most" },
+      "points": [
+        { "label": "Re-read code", "x": 1, "y": 2 },
+        { "label": "Happy-path dry run", "x": 3, "y": 5 },
+        { "label": "Edge-case list", "x": 3, "y": 8, "highlight": true },
+        { "label": "Full trace table", "x": 6, "y": 8 },
+        { "label": "Brute-force compare", "x": 9, "y": 10 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Verify with a trace table instead of a glance",
+      "bad": {
+        "label": "Re-read and declare victory",
+        "lang": "text",
+        "code": "Candidate: \"So lo moves right, hi moves left, they meet\n           at the answer. Looks right, I think we're done.\"\n\n(no example, no variables written down)"
+      },
+      "good": {
+        "label": "One row per iteration, expected answer first",
+        "lang": "text",
+        "code": "a = [1, 3, 3, 5], x = 3, expected 1\n\niter | lo | hi | mid | a[mid] | action\n-----+----+----+-----+--------+---------\n  1  |  0 |  4 |  2  |   3    | hi = 2\n  2  |  0 |  2 |  1  |   3    | hi = 1\n  3  |  0 |  1 |  0  |   1    | lo = 1\nstop: lo == hi == 1  -> return 1  (matches)"
+      },
+      "why": "Writing the expected answer before tracing stops you from rationalising whatever the code produces. The table makes every update visible, so a wrong bound or a missed assignment shows up as a row that does not match."
+    },
+    {
+      "title": "Turn the edge cases into quick asserts",
+      "bad": {
+        "label": "One happy-path print",
+        "lang": "js",
+        "code": "console.log(lowerBound([1, 3, 3, 5], 3)) // 1, ship it"
+      },
+      "good": {
+        "label": "Each assert names the case it covers",
+        "lang": "js",
+        "code": "function lowerBound(a, x) {\n  let lo = 0, hi = a.length\n  while (lo < hi) {\n    const mid = (lo + hi) >> 1\n    if (a[mid] < x) lo = mid + 1\n    else hi = mid\n  }\n  return lo\n}\n\nconsole.assert(lowerBound([], 3) === 0)            // empty\nconsole.assert(lowerBound([5], 3) === 0)           // single, x below\nconsole.assert(lowerBound([1, 3, 3, 5], 3) === 1)  // duplicates: first one\nconsole.assert(lowerBound([1, 3, 3, 5], 9) === 4)  // x above all: n\nconsole.assert(lowerBound([2, 2, 2], 2) === 0)     // all equal"
+      },
+      "why": "Five one-line asserts cover the inputs most likely to break a boundary search. With `hi = a.length - 1` the \"x above all\" assert fails (it returns 3), which is exactly the bug a happy-path check misses."
+    },
+    {
+      "title": "Property check against a brute force",
+      "bad": {
+        "label": "Hand-pick a few more happy cases",
+        "lang": "js",
+        "code": "console.log(lowerBound([1, 2, 3], 2))   // 1\nconsole.log(lowerBound([4, 8, 9], 8))   // 1\nconsole.log(lowerBound([0, 5], 5))      // 1"
+      },
+      "good": {
+        "label": "Random small inputs vs an obviously correct version",
+        "lang": "js",
+        "code": "const brute = (a, x) => {\n  const i = a.findIndex(v => v >= x)\n  return i === -1 ? a.length : i\n}\n\nfor (let t = 0; t < 2000; t++) {\n  const n = Math.floor(Math.random() * 7)\n  const a = Array.from({ length: n }, () => Math.floor(Math.random() * 5))\n    .sort((p, q) => p - q)\n  const x = Math.floor(Math.random() * 7) - 1\n  if (lowerBound(a, x) !== brute(a, x)) {\n    console.log('mismatch', a, x, lowerBound(a, x), brute(a, x))\n    break\n  }\n}"
+      },
+      "why": "The brute force is slow but too simple to be wrong. Small sizes and a narrow value range force duplicates, empties and out-of-range targets, and the first mismatch printed is already a minimal repro (the buggy version fails on `[0]`, x = 1)."
+    }
+  ],
+  "checklist": [
+    "Write 2-3 examples with expected outputs during clarification; reuse them as tests.",
+    "Dry-run one small example (3-5 elements) in a trace table with one row per loop iteration.",
+    "Write the expected answer before you trace, not after.",
+    "Walk the edge cases for this algorithm: empty, one element, duplicates, all equal, target absent, target at either end, largest values.",
+    "Check loop bounds and the final return: does the loop run once too many or too few times, and is the last update applied?",
+    "If you can run code, add one-line asserts that name the case they cover.",
+    "If time allows, compare against a brute force on random small inputs.",
+    "When something fails, shrink to the smallest failing input and fix the first line where the trace diverges.",
+    "After any fix, re-run the original example and the failing case."
+  ],
+  "antipatterns": [
+    {
+      "title": "Patching the symptom with a special case",
+      "bad": {
+        "label": "Bolt an if onto the end",
+        "lang": "js",
+        "code": "function lowerBound(a, x) {\n  let lo = 0, hi = a.length - 1\n  while (lo < hi) { /* ... */ }\n  if (x > a[a.length - 1]) return a.length // hack for the failing case\n  return lo\n}"
+      },
+      "better": {
+        "label": "Fix the invariant that was wrong",
+        "lang": "js",
+        "code": "// Invariant: the answer is in [lo, hi], and hi = n means \"insert at end\".\nlet lo = 0, hi = a.length\nwhile (lo < hi) { /* unchanged */ }\nreturn lo"
+      },
+      "why": "The hack handles the one input you tried and leaves the reasoning broken, and it adds a new bug of its own. State the loop invariant, find where the code breaks it, and fix that. Interviewers notice the difference."
+    },
+    {
+      "title": "Tracing in your head",
+      "bad": {
+        "label": "Mental trace, narrated vaguely",
+        "lang": "text",
+        "code": "\"...then mid is about the middle, so it goes left,\n then it should converge on the first 3. Yes.\""
+      },
+      "better": {
+        "label": "Variables written down, one row per step",
+        "lang": "text",
+        "code": "lo hi mid a[mid]\n 0  4  2   3     -> hi = 2\n 0  2  1   3     -> hi = 1\n 0  1  0   1     -> lo = 1   return 1"
+      },
+      "why": "Mental traces skip exactly the step where the bug lives, because you see what you meant to write. A written table is slower by a minute and lets the interviewer check you as you go."
+    },
+    {
+      "title": "Only testing the example from the prompt",
+      "bad": {
+        "label": "The given example passes, so done",
+        "lang": "text",
+        "code": "Input: [2, 7, 11, 15], target 9 -> [0, 1]  ✓\n\"Great, it works.\""
+      },
+      "better": {
+        "label": "Prompt example plus cases chosen to break it",
+        "lang": "text",
+        "code": "[2, 7, 11, 15], 9  -> [0, 1]   prompt example\n[3, 3], 6          -> [0, 1]   same value twice\n[3, 2, 4], 6       -> [1, 2]   must not reuse index 0\n[1, 2], 7          -> none     no answer"
+      },
+      "why": "The prompt's example was chosen to explain the problem, not to break your code. Pick inputs that target your algorithm's risky spots: reused elements, duplicates and the no-answer path."
+    }
+  ],
+  "interview": [
+    "Before coding, say: \"Let me write two examples with expected outputs; I'll use them to test at the end.\"",
+    "When the code is written, say \"Now let me test it\" before the interviewer asks, and draw a trace table with the variables that change.",
+    "List edge cases out loud and say why each is risky for this algorithm (\"duplicates matter because I want the first index\").",
+    "If you find a bug, name it plainly (\"off-by-one: hi should start at n\"), fix the root cause and re-run both the original and the failing case.",
+    "If you can run code, add a brute-force comparison on random small inputs; mention it even if there is no time to write it.",
+    "Finish with complexity only after the checks pass, so \"done\" means tested."
+  ],
+  "quiz": [
+    {
+      "question": "Your binary search passes the prompt's example. Which extra input is most likely to expose an off-by-one in the initial bounds?",
+      "choices": ["Another array of the same length", "A target larger than every element", "An array in a different random order", "A target equal to the middle element"],
+      "answer": 1,
+      "explain": "Bound bugs usually show at the ends of the range. A target above every element needs the answer n, which a search starting at hi = n - 1 can never return."
+    },
+    {
+      "question": "Why write the expected output before you dry-run the code?",
+      "choices": ["Interviewers require a fixed format", "It stops you accepting whatever the code produces as correct", "It makes the trace table shorter"],
+      "answer": 1,
+      "explain": "If you decide what is right after seeing the code's answer, you tend to rationalise it. Committing to the expected output first turns the trace into a real test."
+    },
+    {
+      "question": "A random comparison against a brute force finds a mismatch on an array of 6 elements. What should you do next?",
+      "choices": ["Add an if-statement for that input", "Shrink the input to the smallest one that still fails, then trace it", "Increase the number of random trials", "Rewrite the solution with a different algorithm"],
+      "answer": 1,
+      "explain": "A smaller failing input has fewer steps to trace, so the first divergent line is easy to find. Special-casing hides the bug; rewriting throws away mostly correct work."
+    },
+    {
+      "question": "When is a brute-force comparison a good use of interview time?",
+      "choices": ["Always, before writing the optimised code", "When you can run code and the brute force takes a few lines", "Never, because interviewers only care about the optimal solution"],
+      "answer": 1,
+      "explain": "A three-line brute force plus a short random loop catches cases you did not think of. Without a runnable environment, a trace table and an edge-case list give more value per minute."
+    },
+    {
+      "question": "Which set of edge cases best targets a function that returns the first index of a value in a sorted array?",
+      "choices": ["Empty, single element, duplicates of the target, target absent", "Large random arrays only", "Arrays sorted in descending order", "Negative numbers only"],
+      "answer": 0,
+      "explain": "Empty and single element test the bounds, duplicates test \"first\", and an absent target tests the not-found return. Descending input breaks the precondition rather than testing the code."
+    }
+  ],
+  "practice": {
+    "prompt": "You have just written a function that merges overlapping intervals (sort by start, then sweep). The interviewer says: \"Walk me through how you'd convince yourself this is correct.\" Talk through your testing.",
+    "answer": "Start with a small traced example: [[1,3],[2,6],[8,10]] should give [[1,6],[8,10]]. Write a table with the current merged interval and each incoming interval, and show the merge and the push. Then edge cases chosen for this algorithm: empty input returns []; one interval returns itself; touching intervals [1,2],[2,3] (decide and state whether they merge, then check the comparison uses <= or < accordingly); full containment [1,10],[2,3] (the end must be max(end1, end2), not end2); unsorted input to confirm the sort happens; and the last interval being pushed after the loop. If I can run code, I would assert each case and compare against a brute force that marks covered points on a small integer range. If a case fails I shrink it to two intervals, trace, and fix the line, then re-run everything. Finish with O(n log n) time for the sort and O(n) output space.",
+    "rubric": [
+      "Traces a concrete small example with an expected output stated first",
+      "Covers empty and single-interval inputs",
+      "Tests touching and fully contained intervals and names the max(end) risk",
+      "Checks the final interval is emitted after the loop",
+      "Mentions asserts or a brute-force comparison when code can run",
+      "Describes narrowing to a minimal failing case before fixing"
+    ]
+  },
+  "links": {
+    "lessons": ["binary-search-lower-bound", "arrays-prefix-foundations", "two-pointers-sorted-pairs", "greedy-interval-selection", "recursion-fast-power"],
+    "problems": ["target-range", "integer-square-root", "search-rotated", "merge-overlaps", "count-pair-sums", "pair-in-sorted-list"],
+    "guides": ["edge-case-checklist", "complexity-reasoning", "pattern-recognition", "communicating-solutions"]
+  }
+}
