@@ -1,0 +1,255 @@
+{
+  "id": "google-code-review",
+  "kind": "case",
+  "topic": "code-quality",
+  "level": "se",
+  "title": "Google code review: small changes, fast replies, better not perfect",
+  "summary": "How Google reviews every change in a huge shared codebase: owner and readability requirements, small CLs, a one-business-day response norm, and approving code that improves overall health even if it is not perfect.",
+  "minutes": 12,
+  "organisation": "Google",
+  "year": 2018,
+  "problem": "Google keeps most of its code in one repository. A 2018 study of its review practice reports more than 25,000 developers making about 20,000 changes on an average workday, and every change goes through review in an internal web tool called **Critique** before it is committed.\n\nThe problem review has to solve is keeping that codebase understandable and healthy while thousands of people change it at once. An early employee interviewed for the study says review was introduced early on so that code would be readable by people other than its author. Over time it also came to cover consistent style and design, adequate tests, and security.\n\nThe tension is speed. Review that is too strict or too slow blocks everyone; review that is too lax lets code health decay a little with every change. Google's public engineering-practices guides describe how it balances the two, and the study measures what actually happens.",
+  "constraints": [
+    "Every change must be reviewed before commit, so review latency sits directly on every developer's critical path.",
+    "One shared repository means a change can touch code owned by other teams, who need a say before it lands.",
+    "Consistency across tens of thousands of authors depends on shared style guides and people who know them.",
+    "Reviewers are also authors with their own focused work, so review time competes with writing code.",
+    "Developers expect review to teach, maintain norms, act as a gate and prevent accidents, all at once."
+  ],
+  "decisions": [
+    {
+      "decision": "Approve a change once it clearly makes the system's overall code health better, even if it is not perfect.",
+      "tradeoff": "Keeps changes moving and avoids perfectionism, but reviewers must judge 'better' versus 'perfect' and accept some imperfections that can be fixed later."
+    },
+    {
+      "decision": "Require approval from an owner of the code being changed, and require every change to be authored or reviewed by someone with readability (language certification); usually a single reviewer satisfies both.",
+      "tradeoff": "Gives clear gatekeepers and consistent style without large reviewer panels, but adds a certification process and can make some approvers bottlenecks."
+    },
+    {
+      "decision": "Optimise for team speed: respond to a review within one business day at most, but do not break off focused work to do it.",
+      "tradeoff": "Authors get quick feedback and code health improves, while reviewers keep their concentration; it requires discipline about checking reviews at natural breaks."
+    },
+    {
+      "decision": "Ask for small, self-contained changes (CLs), including their tests, and split refactorings from behaviour changes.",
+      "tradeoff": "Small CLs are reviewed faster and more thoroughly and are easy to roll back, but authors must plan and stack work instead of sending one big change."
+    },
+    {
+      "decision": "Label optional comments ('Nit:', 'Optional', 'FYI') and allow approval with comments when the remaining issues are minor.",
+      "tradeoff": "Authors know what is required versus suggested and save a round trip, at the cost of trusting authors to address the leftovers."
+    },
+    {
+      "decision": "Run automated analyzers in the review tool and before commit, so humans spend less time on mechanical issues.",
+      "tradeoff": "Cheap, consistent checks, but analyzer noise must be managed; Critique lets reviewers mark findings 'Please fix' or 'Not useful'."
+    }
+  ],
+  "failures": "The practice is not friction-free, and both the guides and the study say where it goes wrong.\n\n**Slow reviews.** The speed guide says slow reviews reduce team velocity, lead developers to protest the review process, and hurt code health, because there is pressure to accept weaker CLs and cleanups and refactorings are discouraged.\n\n**Large changes.** The small-CL guide says big changes are reviewed more slowly and less thoroughly, are harder to merge and roll back, and that reviewers may reject a change for size alone. In the study, comments per change rise with size up to a peak around 1,250 lines.\n\n**Breakdowns between people.** Interviewees described problems with geographical and organisational distance between author and reviewers, with tone and power dynamics, with disagreement over whether design should be settled before review or discussed in it, with missing context about why a change exists, and with team-specific customisations of the process.\n\n**Expecting review to find bugs.** Accident prevention is one expectation, but the study says the main focus at Google is education and code readability, with defect finding welcome but not the only goal. Only two of 44 survey respondents said the review comments on their change had found a bug.",
+  "lessons": [
+    "Set the bar at \"better than before\", not \"perfect\"; continuous improvement beats blocked changes.",
+    "Small, focused changes are a major lever on review speed and quality.",
+    "Fast responses matter more than fast reviews: a quick first reply keeps authors unblocked even when the full review takes longer.",
+    "Make comment severity explicit so authors know what must change and what is a suggestion.",
+    "Use ownership and style expertise as gates, and automation for anything mechanical.",
+    "Treat review mainly as knowledge sharing and consistency; rely on tests and analysis, not just reviewers, to find bugs."
+  ],
+  "caveats": "The engineering-practices pages describe how Google says reviews should work; they are guidance, not measurements, and show no publication date. The study's quantitative data covers changes from January 2014 to July 2016, and its survey had 44 respondents, so current practice and numbers may differ. In the latency chart, Google's value is shown as 4 hours although the paper says only \"under 4 hours\", and the other values are Rigby and Bird's median time to approval, a slightly different measure. The comparison companies' figures come from earlier studies the paper cites, not from Google's data.",
+  "diagrams": [
+    {
+      "id": "gcr-loop",
+      "type": "flow",
+      "title": "The review loop in Critique",
+      "alt": "Flow diagram of the review stages. The author creates a change, previews it with automated analyzers, and mails it to reviewers. Reviewers comment; unresolved comments go back to the author, who addresses them and uploads a new snapshot for another round. When the reviewer approves with LGTM and ownership and readability are satisfied, the change is committed after pre-commit checks.",
+      "caption": "From the study's description of the process. Over 80% of changes need at most one round of addressing feedback.",
+      "nodes": [
+        { "id": "create", "label": "Create change", "kind": "client", "col": 0, "row": 0, "sub": "author" },
+        { "id": "preview", "label": "Preview", "kind": "worker", "col": 1, "row": 0, "sub": "analyzers run" },
+        { "id": "comment", "label": "Comments", "kind": "service", "col": 2, "row": 0 },
+        { "id": "address", "label": "Address feedback", "kind": "client", "col": 2, "row": 2, "sub": "new snapshot" },
+        { "id": "approve", "label": "LGTM", "kind": "good", "col": 3, "row": 0, "sub": "owner, readability" },
+        { "id": "commit", "label": "Commit", "kind": "good", "col": 4, "row": 0, "sub": "pre-commit checks" }
+      ],
+      "edges": [
+        { "from": "create", "to": "preview" },
+        { "from": "preview", "to": "comment", "label": "mail out" },
+        { "from": "comment", "to": "address", "label": "unresolved" },
+        { "from": "address", "to": "comment", "label": "reply", "style": "async" },
+        { "from": "comment", "to": "approve", "label": "looks good" },
+        { "from": "approve", "to": "commit" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "The author creates a change and previews the diff with automated analyzer results (Tricorder) before mailing it to one or more reviewers." },
+        { "edges": [2, 3], "text": "Reviewers leave threaded comments. Unresolved comments are action items; the author replies or uploads a new snapshot and the reviewer looks again." },
+        { "edges": [4], "text": "A reviewer marks the change LGTM. An owner must approve, and the author or a reviewer must have readability in the language; usually a single reviewer is enough." },
+        { "edges": [5], "text": "The change is committed, subject to pre-commit hooks whose failures need an explicit override." }
+      ]
+    },
+    {
+      "id": "gcr-cl",
+      "type": "sequence",
+      "title": "One small CL, reviewed the way the guides describe",
+      "alt": "Sequence diagram with four actors: author, Critique, analyzers and reviewer. The author uploads a small CL with tests; analyzers report findings; the reviewer is mailed the change and responds within a business day with one required fix and a comment labelled Nit; the author fixes the issue; the reviewer gives LGTM with a comment; the author addresses the nit and submits.",
+      "caption": "Labelled comments and LGTM-with-comments save a round trip without lowering the bar.",
+      "actors": [
+        { "id": "author", "label": "Author" },
+        { "id": "tool", "label": "Critique" },
+        { "id": "lint", "label": "Analyzers" },
+        { "id": "rev", "label": "Reviewer" }
+      ],
+      "messages": [
+        { "from": "author", "to": "tool", "label": "upload small CL + tests", "note": "The small-CL guide says tests belong in the same CL as the code they test." },
+        { "from": "tool", "to": "lint", "label": "run analyzers", "note": "Results appear in the diff; reviewers can click 'Please fix' or 'Not useful' on them." },
+        { "from": "tool", "to": "rev", "label": "mail for review", "style": "async" },
+        { "from": "rev", "to": "author", "label": "fix X; Nit: rename y", "note": "Within one business day at most. The 'Nit:' prefix says the rename is polish, not a blocker." },
+        { "from": "author", "to": "tool", "label": "new snapshot", "note": "Required comment addressed; the reviewer can diff snapshots to see what changed." },
+        { "from": "rev", "to": "author", "label": "LGTM with comments", "style": "reply", "note": "Allowed when the reviewer trusts the author to handle the remaining minor points." },
+        { "from": "author", "to": "tool", "label": "submit" }
+      ]
+    },
+    {
+      "id": "gcr-split",
+      "type": "compare",
+      "title": "One big CL versus a stack of small ones",
+      "alt": "Side-by-side comparison. Left: one large change mixing a refactor, a feature and its tests goes to a single reviewer, who reviews slowly and less thoroughly. Right: the same work is split into a refactor CL, a feature CL and a follow-up CL, each reviewed quickly and each easy to roll back.",
+      "caption": "The guide's rough rule: about 100 lines is usually reasonable and 1,000 is usually too large.",
+      "before": {
+        "label": "One large CL",
+        "nodes": [
+          { "id": "big", "label": "Refactor+feature", "kind": "bad", "col": 0, "row": 0, "sub": "1,000+ lines" },
+          { "id": "rev", "label": "Reviewer", "kind": "service", "col": 1, "row": 0, "sub": "slow, skims" },
+          { "id": "land", "label": "Lands late", "kind": "bad", "col": 2, "row": 0, "sub": "hard to roll back" }
+        ],
+        "edges": [
+          { "from": "big", "to": "rev" },
+          { "from": "rev", "to": "land", "label": "days later" }
+        ]
+      },
+      "after": {
+        "label": "Stacked small CLs",
+        "nodes": [
+          { "id": "r", "label": "Refactor CL", "kind": "good", "col": 0, "row": 0, "sub": "same behaviour" },
+          { "id": "f", "label": "Feature CL", "kind": "good", "col": 1, "row": 0, "sub": "code + tests" },
+          { "id": "c", "label": "Cleanup CL", "kind": "good", "col": 2, "row": 0, "sub": "small follow-up" }
+        ],
+        "edges": [
+          { "from": "r", "to": "f", "label": "then" },
+          { "from": "f", "to": "c", "label": "then" }
+        ]
+      }
+    },
+    {
+      "id": "gcr-size",
+      "type": "bars",
+      "title": "Median lines changed per reviewed change",
+      "alt": "Bar chart from the 2018 study: the median change at Google modifies 24 lines, compared with 44 lines at AMD and 263 lines at Lucent as reported in earlier work.",
+      "caption": "Google's figure is from 2014-2016 data; AMD and Lucent come from earlier studies the paper cites.",
+      "unit": "lines (median)",
+      "bars": [
+        { "label": "Google", "value": 24, "highlight": true },
+        { "label": "AMD", "value": 44 },
+        { "label": "Lucent", "value": 263 }
+      ]
+    },
+    {
+      "id": "gcr-latency",
+      "type": "bars",
+      "title": "Median review latency, hours",
+      "alt": "Bar chart: Google's overall median review latency is under 4 hours, shown as 4. For comparison, median time to approval reported by Rigby and Bird is 17.5 hours for AMD, 15.7 for Chrome OS and 14.7, 19.8 and 18.9 hours for three Microsoft projects.",
+      "caption": "Google's value is an upper bound (\"under 4 hours\"), and the others measure time to approval, so treat this as an order-of-magnitude comparison.",
+      "unit": "hours (median)",
+      "bars": [
+        { "label": "Google (under 4)", "value": 4, "highlight": true },
+        { "label": "AMD", "value": 17.5 },
+        { "label": "Chrome OS", "value": 15.7 },
+        { "label": "Microsoft project 1", "value": 14.7 },
+        { "label": "Microsoft project 2", "value": 19.8 },
+        { "label": "Microsoft project 3", "value": 18.9 }
+      ]
+    }
+  ],
+  "interview": [
+    "When asked how you review code, list what you look at, starting with the big picture: design, functionality, complexity, tests, naming, comments, style and documentation.",
+    "State your approval bar: approve when the change clearly improves code health, and mark optional suggestions as nits.",
+    "Talk about size: you split large work into small, self-contained changes with their tests, and refactors separately from behaviour changes.",
+    "On speed, mention responding within a business day and using LGTM-with-comments for minor leftovers, without breaking focused work.",
+    "If asked about disagreements, explain that you reason from data and the style guide, talk in person when comments go back and forth, and escalate rather than let a change stall."
+  ],
+  "quiz": [
+    {
+      "question": "According to Google's reviewer guide, when should a reviewer approve a change?",
+      "choices": ["Only when it is perfect", "When it definitely improves overall code health, even if not perfect", "When the analyzers pass", "When two senior engineers agree"],
+      "answer": 1,
+      "explain": "The guide's senior principle is continuous improvement: approve once the change makes the codebase healthier, and don't block it in pursuit of perfection."
+    },
+    {
+      "question": "What does prefixing a comment with 'Nit:' tell the author?",
+      "choices": ["The change will be rejected", "It is a minor point of polish that is not required to approve", "The analyzer found a bug", "The comment is for a different reviewer"],
+      "answer": 1,
+      "explain": "Labelling severity lets the author tell required fixes from suggestions, which avoids needless rounds of review."
+    },
+    {
+      "question": "What does the speed guide say is the maximum time to respond to a review request?",
+      "choices": ["One hour", "One business day", "One week", "There is no expectation"],
+      "answer": 1,
+      "explain": "One business day is the stated maximum. The guide also says not to interrupt focused work; respond at a natural break instead."
+    },
+    {
+      "question": "In the 2018 study, roughly what share of changes needed at most one round of addressing feedback?",
+      "choices": ["About 10%", "About 40%", "Over 80%", "100%"],
+      "answer": 2,
+      "explain": "The paper reports that over 80% of changes involve at most one iteration, consistent with small changes and clear expectations."
+    },
+    {
+      "question": "Which reason for small CLs does the small-CL guide give?",
+      "choices": ["They avoid the need for tests", "They are reviewed more quickly and thoroughly and are easier to roll back", "They skip ownership approval", "They do not need a description"],
+      "answer": 1,
+      "explain": "The guide lists faster and more thorough review, fewer wasted efforts if rejected, easier merging and easier rollback among the benefits."
+    }
+  ],
+  "practice": {
+    "prompt": "Your 40-person team complains that code reviews take days and PRs often exceed 1,500 lines. Propose a review policy and the tooling changes you would make.",
+    "answer": "Set a clear approval bar: approve once a change improves the codebase, even if not perfect, and label optional feedback as 'Nit:' or 'Optional'. Allow approval with comments for minor leftovers. Agree a response-time target such as one business day for a first response, measured from the review tool, and ask reviewers to check reviews at natural breaks rather than interrupting focused work. Make size a norm: aim for changes of around a hundred lines, keep tests with the code they test, separate refactors from behaviour changes, and use stacked or chained changes for larger work; reviewers may ask for a split. Define code owners per directory so the right reviewer is assigned automatically, and keep one required reviewer for most changes. Move mechanical checks into CI and linters with a way to flag noisy rules, and publish a style guide so style debates have an authority. Track first-response time, time to approval, change size and rounds per change, review them in retros, and escalate stuck disagreements to a tech lead instead of letting changes sit.",
+    "rubric": [
+      "Defines an approval standard of 'improves code health' rather than perfection",
+      "Sets a response-time expectation without demanding constant interruption",
+      "Drives small changes with tests included and refactors separated",
+      "Uses ownership and automatic reviewer assignment with usually one required reviewer",
+      "Automates mechanical checks and uses a style guide as the authority",
+      "Measures latency and size and has an escalation path for disagreements"
+    ]
+  },
+  "links": {
+    "guides": ["code-review", "clean-code", "testing-strategy"]
+  },
+  "sources": [
+    {
+      "title": "What to look for in a code review",
+      "publisher": "Google Engineering Practices",
+      "url": "https://google.github.io/eng-practices/review/reviewer/looking-for.html"
+    },
+    {
+      "title": "The Standard of Code Review",
+      "publisher": "Google Engineering Practices",
+      "url": "https://google.github.io/eng-practices/review/reviewer/standard.html"
+    },
+    {
+      "title": "Speed of Code Reviews",
+      "publisher": "Google Engineering Practices",
+      "url": "https://google.github.io/eng-practices/review/reviewer/speed.html"
+    },
+    {
+      "title": "Small CLs",
+      "publisher": "Google Engineering Practices",
+      "url": "https://google.github.io/eng-practices/review/developer/small-cls.html"
+    },
+    {
+      "title": "How to write code review comments",
+      "publisher": "Google Engineering Practices",
+      "url": "https://google.github.io/eng-practices/review/reviewer/comments.html"
+    },
+    {
+      "title": "Modern Code Review: A Case Study at Google (Sadowski, Söderberg, Church, Sipko, Bacchelli), ICSE-SEIP 2018",
+      "publisher": "ACM",
+      "url": "https://doi.org/10.1145/3183519.3183525",
+      "date": "2018-05-27"
+    }
+  ]
+}

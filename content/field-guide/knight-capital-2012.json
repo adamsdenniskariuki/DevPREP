@@ -1,0 +1,270 @@
+{
+  "id": "knight-capital-2012",
+  "kind": "case",
+  "topic": "testing",
+  "level": "sse",
+  "title": "Knight Capital, August 2012: one missed server, $460 million",
+  "summary": "A deploy skipped one of eight order-router servers. A reused flag woke code that had been dead for years, and in about 45 minutes Knight built multi-billion-dollar positions and lost over $460 million.",
+  "minutes": 15,
+  "organisation": "Knight Capital",
+  "year": 2012,
+  "problem": "Knight Capital Americas was a large US broker-dealer: the SEC says its trading was roughly ten percent of all trading in listed US equities, and its automated router **SMARS** alone handled about one percent or more. SMARS takes \"parent\" orders from the rest of Knight's platform and splits them into \"child\" orders that it sends to trading venues.\n\nTo support the NYSE Retail Liquidity Program (RLP), which started on 1 August 2012, Knight wrote new RLP code for SMARS. The new code was meant to replace an old, unused feature called **Power Peg** that Knight had stopped using in 2003 but never removed; it was still on the servers and could still be called. The RLP code also **reused the flag** that used to switch Power Peg on.\n\nFrom 27 July the code was rolled out to SMARS servers over several days by hand. A technician did not copy it to one of the eight servers, and nobody noticed. On 1 August, RLP orders carrying the reused flag reached that eighth server and ran Power Peg instead. Power Peg's fill counter had been moved elsewhere in 2005, so the server kept sending child orders without checking how much of the parent was already filled. For 212 parent orders, SMARS sent millions of child orders: over 4 million executions in 154 stocks, more than 397 million shares, in about 45 minutes.",
+  "constraints": [
+    "SMARS was a high-speed, automated router directly connected to the market, so an error became real trades within moments.",
+    "The new RLP code had to be live for the program's start date, 1 August 2012.",
+    "Deployment to the eight SMARS servers was a manual copy; SMARS had no written deployment procedure and no rule that a second technician check a deploy.",
+    "Retired Power Peg code had stayed on production servers since 2003 and was still callable through a flag.",
+    "Knight's main risk monitor, PMON, worked after execution, relied on people watching it, did not show limits, and lagged under heavy volume."
+  ],
+  "decisions": [
+    {
+      "decision": "Reuse the flag that once activated Power Peg to activate the new RLP logic, intending to delete Power Peg in the same release.",
+      "tradeoff": "It avoided adding a new flag, but the flag's meaning now depended on which code each server ran. On a server with the old code, \"yes\" meant Power Peg."
+    },
+    {
+      "decision": "Leave Power Peg on the servers after retiring it in 2003, and in 2005 move its cumulative-quantity logic to another place without retesting Power Peg.",
+      "tradeoff": "No cleanup cost at the time, but the dormant code now lacked the check that stopped it once a parent order was filled, and nothing stopped it from being switched on."
+    },
+    {
+      "decision": "Roll out the RLP code by hand to a few servers per day, without a second-person check of the result.",
+      "tradeoff": "Gradual rollout looked cautious, but nothing confirmed that all eight servers ended up with the same build before the flag was used."
+    },
+    {
+      "decision": "During the incident, remove the RLP release from the seven healthy servers.",
+      "tradeoff": "Rolling back is a normal first move, but here it made things worse: with the new code gone, incoming flagged orders hit Power Peg on those servers too."
+    },
+    {
+      "decision": "Rely on controls upstream of SMARS and on post-trade monitoring, rather than a control at the router's exit or an automatic firm-wide capital limit.",
+      "tradeoff": "The upstream checks were designed to stop erroneous orders before they reached SMARS, but nothing could stop SMARS itself from misbehaving, and no threshold automatically cut off order flow."
+    }
+  ],
+  "failures": "The SEC describes a chain of gaps, and says that closing some of them alone could have averted the events. The deploy missed a server and **no one verified** it; the SEC says a simple written double-check could have caught the miss. Dead code was **left callable** for years, partly broken by a 2005 change that was never retested, and then reachable again through a **reused flag**.\n\nThere were warnings. From about 8:01 a.m. ET, an internal system sent automated emails about SMARS reporting \"Power Peg disabled\"; 97 arrived before the 9:30 a.m. open. They were not designed as alerts, nobody generally read them, and they were not used for diagnosis after the open.\n\nOnce trading started, nothing **stopped the flow automatically**. SMARS had no check comparing orders leaving the router with orders entering it, and no procedure to halt it when it behaved abnormally. A 9.5% price-collar did not apply to these pre-open auction orders. An internal account that collected unmatched fills had a $2 million limit but was not tied to any automated control. PMON had no automated alerts. Knight had **no incident-response procedure** saying when to disconnect a malfunctioning system, so engineers debugged live while orders kept going, and their rollback spread the problem to the other seven servers.",
+  "lessons": [
+    "Verify every deployment automatically: after a rollout, check that every target runs the expected build before turning anything on.",
+    "Delete dead code. Code that is \"unused but callable\" is a loaded feature waiting for a trigger, and it rots because nobody tests it.",
+    "Never reuse a feature flag for a new meaning. Give new behaviour a new flag, and remove old flags with the code they controlled.",
+    "Put a hard, automatic limit at the last point before side effects leave your system: compare output with input and halt on anomalies.",
+    "Have a kill switch and a written rule for when to use it. Under pressure, disconnecting first and debugging second is often cheaper.",
+    "Treat noisy machine messages as signals. If an error message names a feature that should not exist, someone should be paged."
+  ],
+  "caveats": "Everything here comes from the SEC's settled order, which Knight accepted without admitting or denying the findings. The order does not say when exactly each server received code, how the uninstall was carried out, or at what moment trading was stopped; it gives the duration as approximately 45 minutes. The timeline times other than 8:01 and 9:30 a.m. ET are not in the source, so the timeline shows order of events instead. The \"after\" pictures in the compare diagrams are illustrative controls drawn from the SEC's criticism, not a description of what Knight later built.",
+  "diagrams": [
+    {
+      "id": "knc-timeline",
+      "type": "timeline",
+      "title": "From a 2003 retirement to a 2012 loss",
+      "alt": "Timeline. In 2003 Power Peg is retired but left on the servers. In 2005 its fill counter is moved without retesting. From 27 July 2012 RLP code is deployed by hand, but one of eight servers is missed. On 1 August from 8:01 a.m. ET, 97 Power Peg disabled emails arrive before the 9:30 open. After the open the eighth server floods the market, a rollback of the seven good servers spreads the problem, and within about 45 minutes Knight holds billions in positions and later realises a loss of over 460 million dollars. In October 2013 the SEC settles with a 12 million dollar penalty.",
+      "caption": "The trigger was a 2012 deploy, but the fuse was laid in 2003 and 2005. Warnings began arriving almost 90 minutes before the market opened.",
+      "events": [
+        { "at": "2003", "label": "Knight stops using Power Peg but leaves the code on SMARS servers", "kind": "trigger" },
+        { "at": "2005", "label": "Power Peg's fill counter is moved earlier in the code; Power Peg is not retested", "kind": "trigger" },
+        { "at": "From 27 Jul 2012", "label": "RLP code deployed by hand over several days; one of eight servers is missed", "kind": "trigger" },
+        { "at": "1 Aug, 8:01 ET", "label": "Automated emails start reporting \"Power Peg disabled\"; 97 arrive before the open", "kind": "detect" },
+        { "at": "1 Aug, 9:30 ET", "label": "Market opens; flagged RLP orders on server 8 run Power Peg and child orders flood out", "kind": "impact" },
+        { "at": "After the open", "label": "Staff see large positions building in the 33 Account but cannot quickly tell why", "kind": "detect" },
+        { "at": "During response", "label": "New code uninstalled from the seven good servers; Power Peg now fires there too", "kind": "impact" },
+        { "at": "~45 minutes", "label": "Over 4 million executions in 154 stocks before Knight stops sending the orders", "kind": "mitigate" },
+        { "at": "Aftermath", "label": "Net positions of about $3.5B long and $3.15B short; realised loss over $460 million", "kind": "resolve" },
+        { "at": "16 Oct 2013", "label": "SEC settled order: censure, cease-and-desist, $12 million penalty, independent consultant", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "knc-router",
+      "type": "flow",
+      "title": "How one missed server turned a flag into a flood",
+      "alt": "Flow diagram. A manual deploy copies the new RLP code to servers one to seven but misses server eight, which still has Power Peg. An RLP parent order with the reused flag set to yes reaches server eight, which sends endless child orders to trading venues. Fills pile up in the 33 Account, which is watched by PMON, a human-monitored tool with no automatic stop.",
+      "caption": "Every link here was a missing check: no deploy verification, no dead-code removal, no exit control on the router, no automatic stop on the account.",
+      "nodes": [
+        { "id": "tech", "label": "Manual deploy", "kind": "worker", "col": 0, "row": 0, "sub": "no second check" },
+        { "id": "good", "label": "Servers 1-7", "kind": "good", "col": 2, "row": 0, "sub": "new RLP code" },
+        { "id": "bad", "label": "Server 8", "kind": "bad", "col": 2, "row": 2, "sub": "Power Peg alive" },
+        { "id": "order", "label": "RLP parent order", "kind": "client", "col": 0, "row": 2, "sub": "reused flag = yes" },
+        { "id": "venues", "label": "Trading venues", "kind": "external", "col": 4, "row": 2, "sub": "4M+ executions" },
+        { "id": "acct", "label": "33 Account", "kind": "db", "col": 4, "row": 4, "sub": "limit not wired" },
+        { "id": "pmon", "label": "PMON", "kind": "note", "col": 2, "row": 4, "sub": "humans watching" }
+      ],
+      "edges": [
+        { "from": "tech", "to": "good", "label": "copied" },
+        { "from": "tech", "to": "bad", "label": "missed", "style": "fail" },
+        { "from": "order", "to": "bad", "label": "flag = yes" },
+        { "from": "bad", "to": "venues", "label": "endless child orders", "style": "fail" },
+        { "from": "venues", "to": "acct", "label": "fills" },
+        { "from": "acct", "to": "pmon", "label": "no auto stop", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "From 27 July the RLP code is copied server by server. One of the eight is skipped, and with no second reviewer or written procedure, nobody notices." },
+        { "edges": [2], "text": "On 1 August, RLP orders carry the flag that used to mean \"run Power Peg\". On server 8 it still does." },
+        { "edges": [3], "text": "Power Peg's fill counter was moved in 2005, so it never sees that a parent is filled. It keeps sending child orders for each of 212 parent orders." },
+        { "edges": [4], "text": "Executions that the system cannot match to unfilled parents land in the 33 Account. Its $2 million limit is not wired to any automated control." },
+        { "edges": [5], "text": "PMON shows the growing position, but it only reports after execution, has no automated alerts and cannot stop order entry. People must notice and act." }
+      ]
+    },
+    {
+      "id": "knc-response",
+      "type": "sequence",
+      "title": "Why the rollback made it worse",
+      "alt": "Sequence diagram with five actors: parent orders, server 8, trading venues, the tech team and servers 1 to 7. Flagged orders reach server 8, which sends child orders; venues return fills that server 8 ignores. The tech team uninstalls the new code from servers 1 to 7, so the next flagged orders reach Power Peg there too and those servers also send child orders.",
+      "caption": "A rollback only helps if the old version is safe. Here the \"old version\" was the dormant Power Peg path.",
+      "actors": [
+        { "id": "orders", "label": "Parent orders" },
+        { "id": "s8", "label": "Server 8" },
+        { "id": "venues", "label": "Trading venues" },
+        { "id": "team", "label": "Tech team" },
+        { "id": "s17", "label": "Servers 1-7" }
+      ],
+      "messages": [
+        { "from": "orders", "to": "s17", "label": "RLP order, flag = yes", "note": "The seven updated servers handle RLP orders correctly." },
+        { "from": "orders", "to": "s8", "label": "RLP order, flag = yes", "note": "Server 8 never got the new code, so the flag runs Power Peg." },
+        { "from": "s8", "to": "venues", "label": "child orders, again and again", "style": "fail", "note": "Without the fill counter it keeps routing child orders in rapid succession." },
+        { "from": "venues", "to": "s8", "label": "fills (not counted)", "style": "reply", "note": "Another part of Knight's system knew the parents were filled, but that was not passed to SMARS." },
+        { "from": "team", "to": "s17", "label": "uninstall new RLP code", "note": "Engineers debug in live trading. No procedure tells them when to disconnect SMARS from the market." },
+        { "from": "orders", "to": "s17", "label": "RLP order, flag = yes", "note": "With the new code removed, the flag now reaches Power Peg on these servers too." },
+        { "from": "s17", "to": "venues", "label": "more runaway child orders", "style": "fail", "note": "The SEC says this step worsened the problem. Orders continued for about 45 minutes in total." }
+      ]
+    },
+    {
+      "id": "knc-deploy",
+      "type": "compare",
+      "title": "Hand-copied rollout versus verified rollout",
+      "alt": "Side-by-side comparison. Left: a manual copy puts new code on servers one to seven and misses server eight, then the flag is used anyway. Right: a pipeline deploys one build to all eight servers, a verification step confirms all eight report the expected version, and only then is the flag enabled.",
+      "caption": "Illustrative fix. The SEC says a simple double-check could have caught the missed server; automation makes that check hard to skip.",
+      "before": {
+        "label": "What happened: manual copy",
+        "nodes": [
+          { "id": "copy", "label": "Manual copy", "kind": "worker", "col": 0, "row": 0, "sub": "server by server" },
+          { "id": "seven", "label": "Servers 1-7", "kind": "good", "col": 2, "row": 0, "sub": "new code" },
+          { "id": "eight", "label": "Server 8", "kind": "bad", "col": 2, "row": 1, "sub": "old code" },
+          { "id": "flag", "label": "Flag on", "kind": "bad", "col": 0, "row": 1, "sub": "no check first" }
+        ],
+        "edges": [
+          { "from": "copy", "to": "seven" },
+          { "from": "flag", "to": "eight", "label": "runs Power Peg", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Better: deploy, verify, then enable",
+        "nodes": [
+          { "id": "pipe", "label": "Deploy pipeline", "kind": "worker", "col": 0, "row": 0, "sub": "one build" },
+          { "id": "all", "label": "All 8 servers", "kind": "service", "col": 1, "row": 0 },
+          { "id": "verify", "label": "Verify versions", "kind": "good", "col": 2, "row": 0, "sub": "8 of 8 match" },
+          { "id": "enable", "label": "Enable flag", "kind": "good", "col": 2, "row": 1, "sub": "new flag name" }
+        ],
+        "edges": [
+          { "from": "pipe", "to": "all" },
+          { "from": "all", "to": "verify" },
+          { "from": "verify", "to": "enable", "label": "only if all pass" }
+        ]
+      }
+    },
+    {
+      "id": "knc-controls",
+      "type": "compare",
+      "title": "Watching positions versus gating orders",
+      "alt": "Side-by-side comparison. Left: SMARS sends orders straight to venues and PMON shows positions afterwards for a human to notice. Right: orders leaving the router pass an exit gate that compares output with input and checks a firm-wide capital limit; if either trips, a kill switch halts the router.",
+      "caption": "Illustrative. The SEC faulted Knight for having no control just before orders left SMARS and no automatic firm-wide capital threshold.",
+      "before": {
+        "label": "What happened: post-trade watch",
+        "nodes": [
+          { "id": "smars", "label": "SMARS", "kind": "service", "col": 0, "row": 0 },
+          { "id": "mkt", "label": "Venues", "kind": "external", "col": 2, "row": 0 },
+          { "id": "pmon", "label": "PMON", "kind": "bad", "col": 2, "row": 1, "sub": "people must notice" }
+        ],
+        "edges": [
+          { "from": "smars", "to": "mkt", "label": "unchecked", "style": "fail" },
+          { "from": "mkt", "to": "pmon", "label": "after the fact", "style": "async" }
+        ]
+      },
+      "after": {
+        "label": "Better: pre-trade gate and kill switch",
+        "nodes": [
+          { "id": "smars", "label": "SMARS", "kind": "service", "col": 0, "row": 0 },
+          { "id": "gate", "label": "Exit gate", "kind": "good", "col": 1, "row": 0, "sub": "out vs in, limits" },
+          { "id": "mkt", "label": "Venues", "kind": "external", "col": 2, "row": 0 },
+          { "id": "kill", "label": "Kill switch", "kind": "good", "col": 1, "row": 1, "sub": "halt router" }
+        ],
+        "edges": [
+          { "from": "smars", "to": "gate" },
+          { "from": "gate", "to": "mkt", "label": "within limits" },
+          { "from": "gate", "to": "kill", "label": "anomaly", "style": "fail" }
+        ]
+      }
+    },
+    {
+      "id": "knc-exposure",
+      "type": "bars",
+      "title": "What 45 minutes left behind (US$ billions)",
+      "alt": "Bar chart of figures from the SEC order: a net long position of about 3.5 billion dollars in 80 stocks, a net short position of about 3.15 billion dollars in 74 stocks, and a realised loss of about 0.46 billion dollars.",
+      "caption": "SEC figures. The unwanted positions dwarfed the eventual loss, which was still over $460 million.",
+      "unit": "US$ billions",
+      "bars": [
+        { "label": "Net long (80 stocks)", "value": 3.5 },
+        { "label": "Net short (74 stocks)", "value": 3.15 },
+        { "label": "Realised loss", "value": 0.46, "highlight": true }
+      ]
+    }
+  ],
+  "interview": [
+    "When you describe a rollout, say how you prove it finished: \"After deploy, every host reports its build version and the pipeline fails if any differ, before any flag flips.\"",
+    "Mention dead-code hygiene explicitly: retired features are deleted, not left behind a flag, and flags are removed with the code they guard.",
+    "For any system that causes external side effects (orders, payments, emails), put a hard limit at the exit and an automatic kill switch, not only a dashboard.",
+    "Say that rollback is not automatically safe: you check what the previous version will do with today's inputs and flags.",
+    "At SSE level, tell Knight as a defence-in-depth story: deploy check, dead code, flag reuse, missed alerts, no exit control, no runbook. Fix each layer."
+  ],
+  "quiz": [
+    {
+      "question": "Why did RLP orders behave correctly on seven SMARS servers but not on the eighth?",
+      "choices": ["The eighth server had a hardware fault", "The new code was never copied to the eighth server, so the reused flag ran old Power Peg code there", "The eighth server received different customer orders", "The flag was set to \"no\" on the eighth server"],
+      "answer": 1,
+      "explain": "The flag meant \"RLP\" only where the new code was installed. On the missed server the same flag still activated Power Peg."
+    },
+    {
+      "question": "Why did Power Peg keep sending child orders after parent orders were filled?",
+      "choices": ["Venues did not report fills", "Its cumulative-quantity check had been moved elsewhere in 2005 and the code was never retested", "The 9.5% price collar was misconfigured", "Server 8 was overloaded"],
+      "answer": 1,
+      "explain": "The counter that stopped routing once a parent was filled no longer ran in Power Peg's path. Dead code that is never tested silently breaks."
+    },
+    {
+      "question": "What early signal did Knight have before the market opened?",
+      "choices": ["A pager alert from PMON", "97 automated emails mentioning \"Power Peg disabled\" from about 8:01 a.m. ET", "A failed deployment job", "A call from the exchange"],
+      "answer": 1,
+      "explain": "The emails were caused by the bad deploy but were not designed as alerts and were generally not read. Messages that name a retired feature deserve a page."
+    },
+    {
+      "question": "Why did uninstalling the new code from seven servers make things worse?",
+      "choices": ["It restarted the servers during trading", "Without the new code, flagged orders reached the old Power Peg path on those servers too", "It deleted the order history", "It disabled PMON"],
+      "answer": 1,
+      "explain": "Rolling back to a state that still contains a dangerous dormant path, while the triggering flag is still in use, spreads the failure. Disconnecting from the market would have stopped it."
+    },
+    {
+      "question": "Which control would most directly have capped the damage once orders started flowing?",
+      "choices": ["A larger PMON screen", "An automated pre-trade gate on SMARS output tied to firm-wide capital limits, with a halt", "More detailed logging", "Running the deploy on a weekend"],
+      "answer": 1,
+      "explain": "The SEC faulted Knight for lacking controls just before orders left SMARS and for not linking capital thresholds to order entry. An automatic gate stops the flow without waiting for diagnosis."
+    }
+  ],
+  "practice": {
+    "prompt": "You own an automated service that places real-money orders with external venues and is deployed to a fleet of servers. Design the release process and runtime safeguards so that a partial deploy or a misbehaving release cannot run away like Knight Capital in 2012.",
+    "answer": "Release: build one immutable artifact and deploy it through a pipeline, never by hand. After deploy, every host reports its version and config hash; the pipeline fails and stops if any host differs. New behaviour ships dark behind a **new** feature flag with a single meaning; old flags and retired code are deleted in the same or the next release, and a lint or review rule blocks reusing flag names. Flags are flipped only after the fleet is verified, first for a small slice of traffic. Testing: any code path that is reachable in production has tests in CI, including after refactors that move shared logic. Runtime: put an exit gate in front of the venue connection that compares child-order quantity with the parent quantity, enforces per-order, per-symbol and firm-wide exposure limits, and automatically halts sending when breached. Unknown or error messages from the router page on-call instead of going to an unread mailbox. Incident response: a runbook that says to disconnect first when output is abnormal, a tested kill switch that works independently of the router, and a rule that rollback is checked against current flags before use.",
+    "rubric": [
+      "Automated deploy with fleet-wide version verification before enabling",
+      "Feature flag hygiene: new flags for new meanings, dead code and old flags removed",
+      "Automatic pre-trade or exit limits that halt output, not just dashboards",
+      "Kill switch plus a runbook that says when to disconnect",
+      "Machine warnings routed to on-call as real alerts",
+      "Recognises that rollback can be unsafe and must be checked"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability"],
+    "cases": ["payments"],
+    "guides": ["testing-strategy", "observability", "circuit-breakers", "graceful-degradation"]
+  },
+  "sources": [
+    {
+      "title": "In the Matter of Knight Capital Americas LLC, Administrative Proceeding File No. 3-15570, Release No. 34-70694",
+      "publisher": "U.S. Securities and Exchange Commission",
+      "url": "https://www.sec.gov/litigation/admin/2013/34-70694.pdf",
+      "date": "2013-10-16"
+    }
+  ]
+}

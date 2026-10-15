@@ -1,0 +1,290 @@
+{
+  "id": "edge-case-checklist",
+  "kind": "guide",
+  "topic": "algorithms",
+  "level": "se",
+  "title": "Edge-case checklist: the inputs that break correct-looking code",
+  "summary": "A repeatable sweep of boundary inputs — empty, single, duplicates, negatives, overflow, sorted, all equal, cycles, off-by-one, Unicode and huge n — to clarify up front and test before you say \"done\".",
+  "minutes": 13,
+  "principle": "Most wrong answers in interviews are right for the sample and wrong at the **boundaries**. Ask about the boundaries before coding, design for them while coding, and walk a short fixed checklist of inputs through the finished code. Edge cases are part of the solution, not an afterthought.",
+  "why": "The sample input in a prompt is chosen to explain the problem, not to break your code. Bugs live where loops start and stop, where containers are empty, where numbers get large and where data has a shape you did not picture: all duplicates, already sorted, a cycle, a second connected component.\n\nA fixed checklist beats inspiration. Under pressure you will not invent the right test, but you can run down a list in a minute: **empty** and **single** element; **duplicates** and **all equal**; **negatives and zero**; **extreme values** and overflow; **sorted** and **reverse sorted**; **cycles** and **disconnected** graphs; **off-by-one** at the first and last index; **Unicode and whitespace** in strings; and **very large n** for time and recursion depth.\n\nAsking about these up front also changes the design. \"Can values be negative?\" decides between a sliding window and prefix sums. \"How large can the sum get?\" decides the integer type. Interviewers notice candidates who ask, because real requirements are ambiguous in the same places.",
+  "diagrams": [
+    {
+      "id": "ec-boundary-flow",
+      "type": "flow",
+      "title": "Walk the boundary inputs through your function",
+      "alt": "A function in the centre with boundary inputs arranged around it: empty input, one element, all equal values, negatives and zero, extreme values, sorted or reversed input, very large n, cycles and disconnected parts, off-by-one positions and Unicode or whitespace strings. Each input has an arrow into the function.",
+      "caption": "Walk the same ring of inputs every time. Most take seconds to trace by hand and catch the bugs the sample never will.",
+      "nodes": [
+        { "id": "fn", "label": "Your function", "kind": "service", "col": 2, "row": 2, "sub": "trace by hand" },
+        { "id": "empty", "label": "Empty input", "kind": "client", "col": 0, "row": 0, "sub": "[], \"\", null root" },
+        { "id": "one", "label": "One element", "kind": "client", "col": 2, "row": 0, "sub": "loop runs once" },
+        { "id": "equal", "label": "All equal", "kind": "client", "col": 4, "row": 0, "sub": "duplicates" },
+        { "id": "neg", "label": "Negatives, zero", "kind": "client", "col": 0, "row": 2, "sub": "sign assumptions" },
+        { "id": "big", "label": "Extreme values", "kind": "client", "col": 4, "row": 2, "sub": "overflow" },
+        { "id": "sorted", "label": "Sorted/reversed", "kind": "client", "col": 0, "row": 4, "sub": "worst-case order" },
+        { "id": "huge", "label": "Very large n", "kind": "client", "col": 2, "row": 4, "sub": "time, stack depth" },
+        { "id": "graph", "label": "Cycles, islands", "kind": "client", "col": 4, "row": 4, "sub": "disconnected parts" },
+        { "id": "obo", "label": "First/last index", "kind": "client", "col": 1, "row": 5, "sub": "off-by-one" },
+        { "id": "text", "label": "Unicode, spaces", "kind": "client", "col": 3, "row": 5, "sub": "case, emoji, tabs" }
+      ],
+      "edges": [
+        { "from": "empty", "to": "fn" },
+        { "from": "one", "to": "fn" },
+        { "from": "equal", "to": "fn" },
+        { "from": "neg", "to": "fn" },
+        { "from": "big", "to": "fn" },
+        { "from": "sorted", "to": "fn" },
+        { "from": "huge", "to": "fn" },
+        { "from": "graph", "to": "fn" },
+        { "from": "obo", "to": "fn" },
+        { "from": "text", "to": "fn" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Empty and single-element inputs check that loops can run zero or one times, that you never read `a[0]` on an empty array, and that the return value for \"nothing\" is defined (−1, null, 0 or an empty list)." },
+        { "edges": [2], "text": "All-equal input stresses duplicate handling: strict versus non-strict comparisons, skipping repeats in 3-sum, and whether \"first\" or \"any\" index is wanted." },
+        { "edges": [3, 4], "text": "Negatives and zero break assumptions such as \"the sum only grows\" or \"the product only grows\". Extreme values test overflow: in fixed-width integers, 10^5 values of 10^9 sum to 10^14, far beyond 32 bits." },
+        { "edges": [5, 6], "text": "Sorted and reverse-sorted input is often the worst case (a naive quicksort pivot, an unbalanced BST, a deep recursion). Very large n checks the complexity and the recursion depth." },
+        { "edges": [7], "text": "For graphs, add a cycle (do you mark visited?), a self-loop and a second component (do you start a search from every unvisited node?)." },
+        { "edges": [8, 9], "text": "Trace the first and last index of every loop and window. For strings, try uppercase, spaces and a character outside ASCII." }
+      ]
+    },
+    {
+      "id": "ec-binary-search-compare",
+      "type": "compare",
+      "title": "Binary search: mixed conventions vs one consistent invariant",
+      "alt": "Side-by-side comparison. On the left, the loop condition lo less than or equal to hi is combined with the update hi equals mid; when lo equals hi and the test fails, hi stays put and the loop never ends. On the right, the search keeps the answer in the half-open range lo to hi, loops while lo is less than hi, sets hi to mid or lo to mid plus 1, and computes mid as lo plus half the gap, so the range always shrinks and the midpoint cannot overflow.",
+      "caption": "Pick one convention (here the answer is always in [lo, hi]) and make every line agree with it. `lo + (hi - lo) / 2` avoids overflow in 32-bit languages.",
+      "before": {
+        "label": "lo <= hi with hi = mid: can hang",
+        "nodes": [
+          { "id": "init", "label": "hi = n - 1", "kind": "state", "col": 0, "row": 0 },
+          { "id": "loop", "label": "while lo <= hi", "kind": "decision", "col": 1, "row": 0 },
+          { "id": "upd", "label": "else hi = mid", "kind": "state", "col": 2, "row": 0, "sub": "mid == lo == hi" },
+          { "id": "hang", "label": "Infinite loop", "kind": "bad", "col": 2, "row": 1, "sub": "range stuck" },
+          { "id": "mid", "label": "(lo + hi) / 2", "kind": "bad", "col": 0, "row": 1, "sub": "int32 overflow" }
+        ],
+        "edges": [
+          { "from": "init", "to": "loop" },
+          { "from": "loop", "to": "upd" },
+          { "from": "upd", "to": "hang", "style": "fail" },
+          { "from": "mid", "to": "loop", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Answer always in [lo, hi]",
+        "nodes": [
+          { "id": "init", "label": "hi = n", "kind": "state", "col": 0, "row": 0, "sub": "n = not found" },
+          { "id": "loop", "label": "while lo < hi", "kind": "decision", "col": 1, "row": 0 },
+          { "id": "upd", "label": "hi=mid/lo=mid+1", "kind": "state", "col": 2, "row": 0 },
+          { "id": "ok", "label": "Range shrinks", "kind": "good", "col": 2, "row": 1, "sub": "ends at lo == hi" },
+          { "id": "mid", "label": "lo+(hi-lo)/2", "kind": "good", "col": 0, "row": 1, "sub": "no overflow" }
+        ],
+        "edges": [
+          { "from": "init", "to": "loop" },
+          { "from": "loop", "to": "upd" },
+          { "from": "upd", "to": "ok", "style": "reply" },
+          { "from": "mid", "to": "loop" }
+        ]
+      }
+    },
+    {
+      "id": "ec-overflow-bars",
+      "type": "bars",
+      "title": "How big the numbers get, in powers of ten",
+      "alt": "Bar chart of log base 10 of several values. The 32-bit signed integer maximum is about 10 to the 9.3. The sum of 100,000 values of up to 10 to the 9 is 10 to the 14. The largest exact integer in a JavaScript number is about 10 to the 15.95. The 64-bit signed integer maximum is about 10 to the 18.96.",
+      "caption": "Real values: 2^31 − 1 ≈ 2.1 × 10^9; 10^5 × 10^9 = 10^14; 2^53 − 1 ≈ 9.0 × 10^15; 2^63 − 1 ≈ 9.2 × 10^18. A plain sum overflows 32 bits; 64 bits or a JS number holds it exactly. Python integers do not overflow.",
+      "unit": "log10 of the value",
+      "bars": [
+        { "label": "int32 max", "value": 9.33 },
+        { "label": "Sum 10^5 × 10^9", "value": 14, "highlight": true },
+        { "label": "JS safe integer", "value": 15.95 },
+        { "label": "int64 max", "value": 18.96 }
+      ]
+    },
+    {
+      "id": "ec-clarify-sequence",
+      "type": "sequence",
+      "title": "Clarifying the boundaries before coding",
+      "alt": "Sequence diagram of a candidate and an interviewer. The candidate asks whether the array can be empty, what range values have, whether duplicates are allowed and how large n is. The interviewer answers each. The candidate then states a plan that uses a 64-bit sum and an O(n log n) approach and returns -1 for empty input.",
+      "caption": "Four questions, under a minute, and each answer changes a line of code. Restate the answers as part of your plan.",
+      "actors": [
+        { "id": "cand", "label": "Candidate" },
+        { "id": "int", "label": "Interviewer" }
+      ],
+      "messages": [
+        { "from": "cand", "to": "int", "label": "Can the array be empty?", "note": "Decides the return value for \"nothing\" and guards every `a[0]`." },
+        { "from": "int", "to": "cand", "label": "Yes, return -1", "style": "reply" },
+        { "from": "cand", "to": "int", "label": "Value range? Negatives?", "note": "Negatives rule out some window techniques; the range decides the integer type." },
+        { "from": "int", "to": "cand", "label": "-10^9 to 10^9", "style": "reply" },
+        { "from": "cand", "to": "int", "label": "Duplicates allowed?", "note": "Changes strict vs non-strict comparisons and which index to return." },
+        { "from": "int", "to": "cand", "label": "Yes; return the first one", "style": "reply" },
+        { "from": "cand", "to": "int", "label": "How large can n be?", "note": "Turns into a time budget and tells you whether recursion depth is a risk." },
+        { "from": "int", "to": "cand", "label": "Up to 10^5", "style": "reply" },
+        { "from": "cand", "to": "int", "label": "Plan: O(n log n), 64-bit sums", "note": "10^5 × 10^9 = 10^14 exceeds 32 bits, so sums are 64-bit. Restating the answers lets the interviewer correct a misunderstanding early." },
+        { "from": "int", "to": "cand", "label": "Sounds good", "style": "reply" }
+      ]
+    },
+    {
+      "id": "ec-priority-chart",
+      "type": "chart",
+      "title": "Which edge cases to test first",
+      "alt": "Chart with how often a case breaks interview code on the vertical axis and effort to construct the test on the horizontal axis. Empty input, one element and off-by-one at the ends are cheap and often break code. Duplicates and negatives are cheap and fairly common. Overflow and very large n take more effort. Cycles and disconnected graphs are moderate effort and common for graph problems. Unicode strings are cheap but matter less often.",
+      "caption": "Positions are rough judgment, not measurements. Start in the top-left: cheap tests that catch the most bugs.",
+      "x": { "label": "Effort to build the test", "low": "seconds", "high": "minutes" },
+      "y": { "label": "How often it breaks code", "low": "rarely", "high": "often" },
+      "points": [
+        { "label": "Empty input", "x": 1, "y": 9, "highlight": true },
+        { "label": "Off-by-one ends", "x": 3, "y": 9 },
+        { "label": "One element", "x": 1, "y": 7 },
+        { "label": "Duplicates", "x": 3, "y": 6 },
+        { "label": "Negatives/zero", "x": 2, "y": 5 },
+        { "label": "Cycles/islands", "x": 6, "y": 7 },
+        { "label": "Overflow", "x": 7, "y": 4 },
+        { "label": "Unicode text", "x": 3, "y": 2 }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Lower bound that terminates on every input",
+      "bad": {
+        "label": "lo <= hi with hi = mid: hangs on [1], x = 1",
+        "lang": "js",
+        "code": "function lowerBound(a, x) {\n  let lo = 0, hi = a.length - 1\n  while (lo <= hi) {\n    const mid = Math.floor((lo + hi) / 2)\n    if (a[mid] < x) lo = mid + 1\n    else hi = mid   // when lo === hi, nothing changes\n  }\n  return lo\n}"
+      },
+      "good": {
+        "label": "Half-open range, one invariant",
+        "lang": "js",
+        "code": "// First index i with a[i] >= x, or a.length if none.\nfunction lowerBound(a, x) {\n  let lo = 0, hi = a.length // answer is in [lo, hi]\n  while (lo < hi) {\n    const mid = lo + Math.floor((hi - lo) / 2)\n    if (a[mid] < x) lo = mid + 1\n    else hi = mid\n  }\n  return lo\n}\n// [] -> 0, [1] x=0 -> 0, [1] x=2 -> 1, [1,2,2,2,3] x=2 -> 1"
+      },
+      "why": "Every update must strictly shrink the range. With `lo < hi`, `mid` is always below `hi`, so `hi = mid` makes progress. Tracing the empty array, one element and \"x larger than everything\" takes under a minute and proves it."
+    },
+    {
+      "title": "Define the answer for empty input instead of inheriting one",
+      "bad": {
+        "label": "Spread into Math.max",
+        "lang": "js",
+        "code": "function largest(nums) {\n  return Math.max(...nums)\n}\n// largest([]) -> -Infinity (silently)\n// a 10^6-element array can throw RangeError in V8"
+      },
+      "good": {
+        "label": "Explicit empty case, linear scan",
+        "lang": "js",
+        "code": "function largest(nums) {\n  if (nums.length === 0) throw new RangeError('largest() of empty list')\n  let best = nums[0]\n  for (const x of nums) if (x > best) best = x\n  return best\n}"
+      },
+      "why": "`-Infinity` is a legal number, so the bug travels far before it shows. Spreading a very large array passes every element as an argument, which can exceed engine limits. Decide the empty-input behaviour with the interviewer and code it on purpose."
+    }
+  ],
+  "checklist": [
+    "Empty input: empty array, empty string, null tree root, graph with no edges.",
+    "Single element, and two elements (the smallest case where order matters).",
+    "Duplicates and all-equal values: strict vs non-strict comparisons, which index to return, skipping repeats.",
+    "Negative numbers and zero: sign assumptions in windows, products and division.",
+    "Extreme values: does a sum, product or `lo + hi` overflow the integer type?",
+    "Sorted and reverse-sorted input, which are often the worst case for naive pivots and unbalanced trees.",
+    "Graphs: cycles, self-loops and more than one connected component.",
+    "Off-by-one: trace the first and last iteration of every loop and the ends of every window.",
+    "Strings: case, leading and trailing spaces, and characters outside ASCII such as accents or emoji.",
+    "Very large n: time budget, memory and recursion depth."
+  ],
+  "antipatterns": [
+    {
+      "title": "Reversing a string by UTF-16 code units",
+      "bad": {
+        "label": "split('') breaks characters made of two code units",
+        "lang": "js",
+        "code": "const isPalindrome = s => s === s.split('').reverse().join('')\nisPalindrome('a😀a') // false: the emoji's two halves are swapped"
+      },
+      "better": {
+        "label": "Iterate by code point (and agree on normalisation)",
+        "lang": "js",
+        "code": "const isPalindrome = s => {\n  const chars = Array.from(s)  // splits by code point\n  return chars.join('') === chars.reverse().join('')\n}\nisPalindrome('a😀a') // true"
+      },
+      "why": "JavaScript strings are UTF-16, so characters outside the basic plane occupy two units. Ask whether input is ASCII; if not, iterate by code point and clarify case folding and accents, which need normalisation beyond this."
+    },
+    {
+      "title": "Patching a failing case with a special-case `if`",
+      "bad": {
+        "label": "Hard-code the input that failed",
+        "lang": "js",
+        "code": "function lowerBound(a, x) {\n  if (a.length === 1) return a[0] >= x ? 0 : 1 // \"fixes\" the hang\n  // ... same buggy loop as before\n}"
+      },
+      "better": {
+        "label": "Fix the invariant so every size works",
+        "lang": "js",
+        "code": "// Re-derive: answer in [lo, hi], loop while lo < hi,\n// every branch shrinks the range. No special cases needed;\n// the empty array falls out as lo = hi = 0."
+      },
+      "why": "A special case hides the root cause, and the same bug reappears at size 2 or 3. When an edge case fails, ask which assumption it broke and fix that. Interviewers read special-case patches as guessing."
+    },
+    {
+      "title": "Testing only the sample from the prompt",
+      "bad": {
+        "label": "One happy-path check",
+        "lang": "js",
+        "code": "console.log(lowerBound([1, 2, 4, 4, 5], 4)) // 2, \"works\""
+      },
+      "better": {
+        "label": "A small table of boundary cases",
+        "lang": "js",
+        "code": "const cases = [\n  [[], 3, 0],            // empty\n  [[5], 5, 0],           // single, equal\n  [[5], 9, 1],           // past the end\n  [[2, 2, 2], 2, 0],     // all equal: first index\n  [[-3, 0, 4], -5, 0],   // negatives, before the start\n]\nfor (const [a, x, want] of cases) console.assert(lowerBound(a, x) === want, a, x)"
+      },
+      "why": "The sample tells you the code can be right, not that it is. Five targeted cases cover empty, single, both ends and duplicates, and take less time to write than debugging a hidden failure."
+    }
+  ],
+  "interview": [
+    "Before coding, ask three or four boundary questions: empty input, value range and sign, duplicates, and the maximum n. Restate the answers in your plan.",
+    "While coding, say where each edge case is handled: \"this guard covers the empty array; `lo < hi` keeps the range shrinking\".",
+    "After coding, trace the empty and single-element inputs by hand, then one case at each end of the range. Say the expected output before you trace.",
+    "If a case fails, name the assumption that broke instead of adding a special-case `if`.",
+    "At SSE level, mention inputs from outside the interview frame: very large n against recursion limits, integer width in the production language and non-ASCII text."
+  ],
+  "quiz": [
+    {
+      "question": "n ≤ 10^5 and each value ≤ 10^9 in absolute value. Why can summing the array be a problem in Java or C++?",
+      "choices": ["The sum can reach 10^14, beyond a 32-bit int", "Arrays of that size cannot be summed", "Negative values cannot be added", "Summation is O(n^2)"],
+      "answer": 0,
+      "explain": "2^31 − 1 is about 2.1 × 10^9, and 10^5 × 10^9 = 10^14. Use a 64-bit type. Python integers are unbounded and JS numbers stay exact up to 2^53 − 1, so the risk is language-specific."
+    },
+    {
+      "question": "A binary search uses `while (lo <= hi)` and `hi = mid`. On which input can it loop forever?",
+      "choices": ["Any array where lo and hi meet and a[mid] >= x", "Only arrays with negative numbers", "Only empty arrays", "Only arrays longer than 2^31"],
+      "answer": 0,
+      "explain": "When lo == hi, mid equals both, and `hi = mid` changes nothing, so the condition stays true. Use `lo < hi` with `hi = mid`, or `lo <= hi` with `hi = mid - 1`, consistently."
+    },
+    {
+      "question": "Your BFS counts connected components but only starts from node 0. Which test exposes the bug?",
+      "choices": ["A graph with a cycle", "A graph with two components and no edge between them", "A single-node graph", "A complete graph"],
+      "answer": 1,
+      "explain": "Starting from one node only explores its own component. Loop over every node and start a search from each one not yet visited."
+    },
+    {
+      "question": "Which input most often turns a naive quicksort (first element as pivot) into O(n^2)?",
+      "choices": ["Random order", "Already sorted input", "An array with one element", "An array of distinct primes"],
+      "answer": 1,
+      "explain": "With the first element as pivot, sorted input splits into sizes 0 and n−1 every time, giving n levels of O(n) work. Random or median-of-three pivots avoid it."
+    },
+    {
+      "question": "In JavaScript, why can `s.split('').reverse().join('')` give a wrong palindrome check?",
+      "choices": ["split('') is O(n^2)", "It splits UTF-16 code units, so characters such as emoji are broken in half", "reverse() sorts the array", "join('') drops spaces"],
+      "answer": 1,
+      "explain": "Characters outside the basic multilingual plane are two UTF-16 units. `Array.from(s)` or `[...s]` iterates by code point; full Unicode equality may also need normalisation."
+    }
+  ],
+  "practice": {
+    "prompt": "Write a function that returns the length of the longest substring without repeating characters. Before and after coding, list the edge cases you would check and what your function returns for each.",
+    "answer": "Clarify: is the input ASCII or arbitrary Unicode, is it case-sensitive, can it be empty, and how long can it be? Approach: sliding window with a map from character to its last index; when the current character was seen at or after `left`, move `left` past that index; track the best `right − left + 1`. O(n) time, O(min(n, alphabet)) space. Edge cases: empty string → 0; one character → 1; all the same, \"bbbb\" → 1; all distinct → n; a repeat that is before the window, \"abba\" → 2 (the check `last[ch] >= left` stops `left` moving backwards); spaces count as characters, \"a b\" → 3 if spaces are allowed; non-ASCII such as emoji needs iteration by code point in JavaScript; very long input is fine because the algorithm is linear and iterative.",
+    "rubric": [
+      "Asks about empty input, character set and case before coding",
+      "Uses a sliding window with last-seen indexes and explains the O(n) bound",
+      "Handles the stale-index case (\"abba\") with a `>= left` check",
+      "Gives expected outputs for empty, single, all-equal and all-distinct inputs",
+      "Mentions Unicode or whitespace behaviour explicitly",
+      "Notes that long input is safe because there is no recursion"
+    ]
+  },
+  "links": {
+    "lessons": ["binary-search-lower-bound", "arrays-prefix-foundations", "two-pointers-sorted-pairs", "sliding-window-distinct", "graph-dfs-components", "graph-bfs-shortest-hops", "linked-lists-reversal", "sorting-stable-merge"],
+    "problems": ["target-range", "integer-square-root", "search-rotated", "rotated-minimum", "longest-distinct-stretch", "almost-palindrome", "zero-sum-triples", "count-regions", "cycle-entry", "remove-from-end", "smallest-absent-positive", "merge-overlaps"],
+    "guides": ["testing-your-code", "complexity-reasoning", "pattern-recognition", "communicating-solutions"]
+  }
+}

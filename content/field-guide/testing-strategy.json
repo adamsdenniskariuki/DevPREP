@@ -1,0 +1,327 @@
+{
+  "id": "testing-strategy",
+  "kind": "guide",
+  "topic": "testing",
+  "level": "se",
+  "title": "Testing strategy: fast feedback you can trust",
+  "summary": "Mix unit, integration, contract and end-to-end tests by cost and confidence, test behaviour not implementation, keep tests deterministic, treat coverage as a signal, and use canaries and flags in production.",
+  "minutes": 16,
+  "principle": "A test suite is a feedback system: it should tell you quickly and reliably whether a change broke something users care about. Put most checks where they are cheap and precise, add fewer, broader tests where pieces meet, assert on observable behaviour rather than internal calls, remove every source of randomness and timing, and treat production rollout as the last layer of testing, not a replacement for the others.",
+  "why": "Tests cost something to write, run and maintain, and they buy confidence. Different kinds of tests sit at different points on that trade-off. **Unit tests** run in milliseconds and point at the exact broken function, but they cannot see wiring mistakes. **Integration tests** exercise real collaborators such as a database or a queue, and catch mismatched queries and config. **Contract tests** check that a consumer and a provider agree on an API without deploying both together. **End-to-end tests** drive the real system like a user, and catch what nothing else does, but they are slow, need a full environment, and fail for many unrelated reasons.\n\nThe **test pyramid** (many unit, fewer integration, few end-to-end) and the **testing trophy** (static checks at the base, with the most weight on integration tests) are two models of the same trade-off, not laws. A library of pure algorithms is mostly unit tests; a CRUD service that is mostly glue gets more value from integration tests against a real database in a container. Choose by asking where your bugs actually come from.\n\nWhatever the mix, a few rules hold. Test through the public interface so refactors do not break tests. Use **test doubles** deliberately: a **stub** returns canned answers, a **mock** also verifies it was called in a certain way, and a **fake** is a working lightweight implementation such as an in-memory repository. Prefer fakes and real collaborators; reserve mocks for checking interactions that are themselves the behaviour (an email was sent). Keep tests **deterministic**: inject the clock and random seeds, avoid sleeps, isolate data. A flaky test that fails 1 time in 50 trains people to click retry and ignore red builds.\n\n**Coverage** tells you which code no test runs, which is useful. It does not tell you whether any test would notice a bug there, so a coverage target invites tests with no assertions. Finally, CI gates block merges on fast suites, and production practices (canary releases, feature flags, monitoring) catch what pre-production cannot: real traffic, real data, real scale.",
+  "diagrams": [
+    {
+      "id": "ts-layers-bars",
+      "type": "bars",
+      "title": "Test counts per layer in a pyramid-shaped suite (illustrative)",
+      "alt": "Bar chart with illustrative test counts for a single service: about 800 unit tests, 150 integration tests, 40 contract tests and 15 end-to-end tests, forming a pyramid shape from many cheap tests to few expensive ones.",
+      "caption": "Illustrative numbers, not a target. The shape is the point: many cheap, precise tests and a handful of slow, broad ones. A trophy-shaped suite would make the integration bar the tallest.",
+      "unit": "tests (illustrative)",
+      "bars": [
+        { "label": "Unit", "value": 800, "highlight": true },
+        { "label": "Integration", "value": 150 },
+        { "label": "Contract", "value": 40 },
+        { "label": "End-to-end", "value": 15 }
+      ]
+    },
+    {
+      "id": "ts-ci-flow",
+      "type": "flow",
+      "title": "Tests as CI and CD gates",
+      "alt": "Flow diagram of a delivery pipeline. A push triggers fast checks (lint, types and unit tests), then integration tests, then end-to-end smoke tests on staging. Any failure blocks the merge. After merge the change goes to a canary, which either rolls out fully when metrics are healthy or rolls back automatically.",
+      "caption": "Order the gates by speed so most failures surface in minutes. The canary is the last test: real traffic, with an automatic way back.",
+      "nodes": [
+        { "id": "push", "label": "Push / PR", "kind": "client", "col": 0, "row": 1 },
+        { "id": "fast", "label": "Fast checks", "kind": "worker", "col": 1, "row": 1, "sub": "lint, types, unit" },
+        { "id": "integ", "label": "Integration", "kind": "worker", "col": 2, "row": 1, "sub": "real DB in docker" },
+        { "id": "e2e", "label": "E2E smoke", "kind": "worker", "col": 3, "row": 1, "sub": "staging, few flows" },
+        { "id": "canary", "label": "Canary", "kind": "decision", "col": 4, "row": 1, "sub": "1-5% of traffic" },
+        { "id": "block", "label": "Block merge", "kind": "bad", "col": 2, "row": 3, "sub": "fix or revert" },
+        { "id": "back", "label": "Auto rollback", "kind": "bad", "col": 3, "row": 3, "sub": "error rate up" },
+        { "id": "full", "label": "Full rollout", "kind": "good", "col": 4, "row": 3, "sub": "metrics healthy" }
+      ],
+      "edges": [
+        { "from": "push", "to": "fast" },
+        { "from": "fast", "to": "integ", "label": "~2 min" },
+        { "from": "integ", "to": "e2e", "label": "~8 min" },
+        { "from": "fast", "to": "block", "style": "fail" },
+        { "from": "integ", "to": "block", "style": "fail" },
+        { "from": "e2e", "to": "block", "style": "fail" },
+        { "from": "e2e", "to": "canary", "label": "merge, deploy" },
+        { "from": "canary", "to": "back", "label": "unhealthy", "style": "fail" },
+        { "from": "canary", "to": "full", "label": "healthy" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Every push runs lint, type checks and unit tests first. They take a couple of minutes and catch most mistakes with a precise error." },
+        { "edges": [2], "text": "Integration tests run against real dependencies started in containers, catching wrong queries, migrations and config." },
+        { "edges": [3, 4, 5], "text": "Any red gate blocks the merge. A flaky gate is treated as a bug to fix or quarantine, not a reason to click retry." },
+        { "edges": [6], "text": "A small set of end-to-end smoke tests checks critical user journeys on staging; then the change merges and deploys to a canary." },
+        { "edges": [7, 8], "text": "The canary compares error rate and latency against the baseline. Unhealthy: roll back automatically. Healthy: continue the rollout, often in stages." }
+      ]
+    },
+    {
+      "id": "ts-behaviour-compare",
+      "type": "compare",
+      "title": "Test that mirrors the implementation vs test of behaviour",
+      "alt": "Side-by-side comparison. On the left a test mocks the repository and spies on an internal tax helper, asserting how many times each was called, so it breaks on any refactor. On the right a test calls the public checkout function with an in-memory fake repository and asserts on the returned total and the saved cart status.",
+      "caption": "Assert on what the caller and the user can observe. Then a refactor that keeps behaviour keeps the tests green, and a real bug turns them red.",
+      "before": {
+        "label": "Mirrors implementation",
+        "nodes": [
+          { "id": "t", "label": "Test", "kind": "client", "col": 0, "row": 1, "sub": "asserts calls" },
+          { "id": "m", "label": "Mock repo", "kind": "bad", "col": 2, "row": 0, "sub": "find called once" },
+          { "id": "s", "label": "Spy: applyTax", "kind": "bad", "col": 2, "row": 2, "sub": "private helper" }
+        ],
+        "edges": [
+          { "from": "t", "to": "m", "label": "expect call" },
+          { "from": "t", "to": "s", "label": "expect args" }
+        ]
+      },
+      "after": {
+        "label": "Tests behaviour",
+        "nodes": [
+          { "id": "t", "label": "Test", "kind": "client", "col": 0, "row": 0, "sub": "given a cart" },
+          { "id": "api", "label": "checkout()", "kind": "service", "col": 2, "row": 0, "sub": "public API" },
+          { "id": "f", "label": "Fake repo", "kind": "good", "col": 2, "row": 2, "sub": "in memory" },
+          { "id": "a", "label": "Assert outcome", "kind": "good", "col": 0, "row": 2, "sub": "total, status" }
+        ],
+        "edges": [
+          { "from": "t", "to": "api", "label": "call" },
+          { "from": "api", "to": "f", "label": "read / save" },
+          { "from": "f", "to": "a", "label": "state", "style": "reply" }
+        ]
+      }
+    },
+    {
+      "id": "ts-contract-seq",
+      "type": "sequence",
+      "title": "Consumer-driven contract test",
+      "alt": "Sequence diagram with Consumer CI, a mock provider, a Broker, Provider CI and the Provider API. The consumer's tests run against the mock provider and record the requests and responses they rely on as a contract. The contract is published to a broker. The provider's CI fetches it, replays each request against the real provider and reports the result. Before either side deploys, a check asks the broker whether the versions are compatible.",
+      "caption": "Each side tests alone, yet incompatible changes are caught before deploy. The contract lists only what the consumer actually uses.",
+      "actors": [
+        { "id": "c", "label": "Consumer CI" },
+        { "id": "m", "label": "Mock provider" },
+        { "id": "b", "label": "Broker" },
+        { "id": "p", "label": "Provider CI" },
+        { "id": "api", "label": "Provider API" }
+      ],
+      "messages": [
+        { "from": "c", "to": "m", "label": "GET /orders/42", "note": "The consumer's own tests run against a mock provider instead of the real service." },
+        { "from": "m", "to": "c", "label": "200 {id, status}", "style": "reply", "note": "The mock records each request and only the response fields the consumer actually reads. That record is the contract." },
+        { "from": "c", "to": "b", "label": "publish contract v12" },
+        { "from": "p", "to": "b", "label": "fetch contracts for provider" },
+        { "from": "b", "to": "p", "label": "contract v12", "style": "reply" },
+        { "from": "p", "to": "api", "label": "replay GET /orders/42", "note": "Provider state is set up per interaction, e.g. 'order 42 exists', then each recorded request is sent to the real provider." },
+        { "from": "api", "to": "p", "label": "200 {id, status, total}", "style": "reply", "note": "Extra fields are fine; a missing or renamed field that the consumer relies on fails verification." },
+        { "from": "p", "to": "b", "label": "verified: v12 OK", "style": "reply" },
+        { "from": "c", "to": "b", "label": "can I deploy v12?" },
+        { "from": "b", "to": "c", "label": "yes: verified by prod provider", "style": "reply", "note": "If the provider had removed a field the consumer uses, verification would fail and both deploys would be blocked." }
+      ]
+    },
+    {
+      "id": "ts-speed-chart",
+      "type": "chart",
+      "title": "Feedback speed vs confidence per kind of check",
+      "alt": "Trade-off chart with time to feedback on the horizontal axis and confidence that the system works for users on the vertical axis. Static types and lint are instant but give limited confidence. Unit tests are fast with moderate confidence. Contract and integration tests take longer and give more. End-to-end tests are slow with high confidence. A production canary is slowest and gives the most confidence.",
+      "caption": "Rough positions. No single kind of test covers the whole chart, which is why suites mix them and order gates fastest first.",
+      "x": { "label": "Time to feedback", "low": "instant", "high": "hours" },
+      "y": { "label": "Confidence for users", "low": "narrow", "high": "broad" },
+      "points": [
+        { "label": "Types + lint", "x": 0, "y": 2 },
+        { "label": "Unit", "x": 1, "y": 4, "highlight": true },
+        { "label": "Contract", "x": 3, "y": 6 },
+        { "label": "Integration", "x": 5, "y": 7 },
+        { "label": "End-to-end", "x": 8, "y": 8 },
+        { "label": "Prod canary", "x": 10, "y": 10 }
+      ]
+    },
+    {
+      "id": "ts-doubles-flow",
+      "type": "flow",
+      "title": "Choosing a test double",
+      "alt": "Decision flow for picking a test double. If the real dependency is fast and deterministic, use it. Otherwise, if you need it to behave realistically across many calls, use a fake such as an in-memory store. If you only need canned answers, use a stub. If the interaction itself is the behaviour being tested, such as sending an email, use a mock.",
+      "caption": "Prefer the real thing, then a fake. Mocks are for when the call is the outcome; overused, they lock tests to the implementation.",
+      "nodes": [
+        { "id": "q1", "label": "Real one fast?", "kind": "decision", "col": 0, "row": 1, "sub": "and deterministic" },
+        { "id": "real", "label": "Use the real one", "kind": "good", "col": 0, "row": 3, "sub": "pure code, SQLite" },
+        { "id": "q2", "label": "Need realism?", "kind": "decision", "col": 2, "row": 1, "sub": "state across calls" },
+        { "id": "fake", "label": "Fake", "kind": "good", "col": 2, "row": 3, "sub": "in-memory repo" },
+        { "id": "q3", "label": "Call is outcome?", "kind": "decision", "col": 4, "row": 1, "sub": "e.g. email sent" },
+        { "id": "mock", "label": "Mock", "kind": "service", "col": 4, "row": 3, "sub": "verify the call" },
+        { "id": "stub", "label": "Stub", "kind": "service", "col": 4, "row": 0, "sub": "canned answers" }
+      ],
+      "edges": [
+        { "from": "q1", "to": "real", "label": "yes" },
+        { "from": "q1", "to": "q2", "label": "no" },
+        { "from": "q2", "to": "fake", "label": "yes" },
+        { "from": "q2", "to": "q3", "label": "no" },
+        { "from": "q3", "to": "mock", "label": "yes" },
+        { "from": "q3", "to": "stub", "label": "no" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Assert on outcomes, not on internal calls",
+      "bad": {
+        "label": "Mocks and spies mirror the code",
+        "lang": "ts",
+        "code": "test('checkout', async () => {\n  const repo = { find: vi.fn().mockResolvedValue(cart), save: vi.fn() }\n  const taxSpy = vi.spyOn(pricing, 'applyTax')\n  await checkout(repo, 'c1')\n  expect(repo.find).toHaveBeenCalledTimes(1)\n  expect(taxSpy).toHaveBeenCalledWith(1000, 'GB')\n  expect(repo.save).toHaveBeenCalled()\n})"
+      },
+      "good": {
+        "label": "A fake repo and assertions on results",
+        "lang": "ts",
+        "code": "test('checkout charges VAT and marks the cart paid', async () => {\n  const repo = new InMemoryCartRepo([\n    { id: 'c1', subtotalCents: 1000, country: 'GB', status: 'open' },\n  ])\n  const receipt = await checkout(repo, 'c1')\n  expect(receipt.totalCents).toBe(1200) // 20% standard UK VAT\n  expect((await repo.get('c1'))?.status).toBe('paid')\n})"
+      },
+      "why": "The first test passes even if the total is wrong, and fails if someone caches the cart or inlines `applyTax`. The second fails exactly when a user would see a wrong total or an unpaid cart, and survives any refactor that keeps that true."
+    },
+    {
+      "title": "Control time instead of sleeping",
+      "bad": {
+        "label": "Real clock and sleep: slow and flaky",
+        "lang": "py",
+        "code": "import time\n\ndef test_token_expires():\n    token = issue_token(ttl_seconds=1)\n    time.sleep(1.1)  # slow, and flaky on a busy CI machine\n    assert is_expired(token)"
+      },
+      "good": {
+        "label": "Inject a fake clock",
+        "lang": "py",
+        "code": "class FakeClock:\n    def __init__(self, start: float) -> None:\n        self.now = start\n\n    def time(self) -> float:\n        return self.now\n\n    def advance(self, seconds: float) -> None:\n        self.now += seconds\n\n\ndef test_token_expires_after_ttl():\n    clock = FakeClock(start=1_000.0)\n    token = issue_token(ttl_seconds=60, clock=clock)\n    clock.advance(59)\n    assert not is_expired(token, clock=clock)\n    clock.advance(2)\n    assert is_expired(token, clock=clock)"
+      },
+      "why": "Passing the clock in makes the test instant and exact, and lets it check both sides of the boundary. The same idea applies to random numbers (seed them), IDs (inject a generator) and time zones (fix them in the test)."
+    },
+    {
+      "title": "Wait for a condition, not for a fixed time (end-to-end)",
+      "bad": {
+        "label": "Fixed sleep in a browser test",
+        "lang": "ts",
+        "code": "await page.getByRole('button', { name: 'Save' }).click()\nawait page.waitForTimeout(3000) // hope it finished\nexpect(await page.textContent('.status')).toBe('Saved')"
+      },
+      "good": {
+        "label": "Auto-retrying assertion on what the user sees",
+        "lang": "ts",
+        "code": "await page.getByRole('button', { name: 'Save' }).click()\nawait expect(page.getByRole('status')).toHaveText('Saved')"
+      },
+      "why": "A fixed sleep is too long on a fast machine and too short on a slow one, so it is both slow and flaky. Playwright's web-first assertions retry until the condition holds or a timeout expires, and role-based locators also check accessibility."
+    }
+  ],
+  "checklist": [
+    "The mix of unit, integration, contract and end-to-end tests is chosen by where bugs come from, not by a fixed ratio.",
+    "Tests go through public interfaces and assert on outputs, state or user-visible effects, not on private calls.",
+    "Doubles are chosen deliberately: real or fake first, stubs for canned answers, mocks only when the interaction is the behaviour.",
+    "Tests are deterministic: injected clock and seeds, no sleeps, isolated data, no order dependence.",
+    "Flaky tests are tracked, quarantined with an owner and a deadline, and fixed; retries are not the fix.",
+    "Coverage is used to find untested code, not as a target; critical paths are checked for real assertions.",
+    "CI gates run fastest suites first and block merges on red; the main branch stays green.",
+    "Risky changes ship behind feature flags and through canaries with automatic rollback on error-rate or latency regressions."
+  ],
+  "antipatterns": [
+    {
+      "title": "Mocking everything",
+      "bad": { "label": "Tests assert on internal calls", "diagram": "ts-behaviour-compare" },
+      "better": {
+        "label": "A small fake that behaves like the real thing",
+        "lang": "ts",
+        "code": "class InMemoryCartRepo implements CartRepo {\n  private carts = new Map<string, Cart>()\n  constructor(seed: Cart[] = []) {\n    for (const c of seed) this.carts.set(c.id, { ...c })\n  }\n  async get(id: string) { return this.carts.get(id) }\n  async save(cart: Cart) { this.carts.set(cart.id, { ...cart }) }\n}"
+      },
+      "why": "When every collaborator is a mock, tests describe how the code is written today, so refactors break them and real bugs slip through. A fake is written once, behaves consistently across calls, and lets tests assert on state."
+    },
+    {
+      "title": "Chasing a coverage number",
+      "bad": {
+        "label": "Executes code, checks nothing",
+        "lang": "ts",
+        "code": "test('report builds', () => {\n  buildReport(fixtures) // 100% of lines run, zero assertions\n})"
+      },
+      "better": {
+        "label": "Assert on the result that matters",
+        "lang": "ts",
+        "code": "test('report totals revenue per region', () => {\n  const report = buildReport(fixtures)\n  expect(report.rows).toEqual([\n    { region: 'EU', revenueCents: 12_500 },\n    { region: 'US', revenueCents: 30_000 },\n  ])\n})"
+      },
+      "why": "Coverage measures what ran, not what was checked. A mandated percentage produces tests like the first one. Use coverage reports to find untested branches, and mutation testing or review to judge whether tests would actually catch a bug."
+    },
+    {
+      "title": "Living with flaky tests",
+      "bad": {
+        "label": "Retry until green",
+        "lang": "yaml",
+        "code": "# CI config\ntest:\n  script: npm test\n  retry: 3   # \"it's just flaky\""
+      },
+      "better": {
+        "label": "Quarantine with an owner, then fix the cause",
+        "lang": "text",
+        "code": "1. Detect: track pass/fail per test across runs.\n2. Quarantine: move the flaky test out of the blocking suite,\n   file a ticket with an owner and a deadline.\n3. Fix the cause: shared state, real clock, sleeps,\n   test order, network calls.\n4. Return it to the blocking suite."
+      },
+      "why": "Blanket retries hide real race conditions and train the team to ignore red builds. Quarantining keeps the main signal trustworthy while making the debt visible, and most flakiness traces back to a handful of fixable causes."
+    },
+    {
+      "title": "Relying on end-to-end tests for everything",
+      "bad": {
+        "label": "Every rule tested through the browser",
+        "lang": "text",
+        "code": "400 E2E tests, 45 minutes per run, ~3% flaky.\nA wrong discount rounding shows up as\n\"checkout page: expected £9.99, got £10.00\"\nafter clicking through login, search and cart."
+      },
+      "better": {
+        "label": "Push each check to the cheapest layer that can catch it",
+        "lang": "text",
+        "code": "Discount rounding  -> unit tests (ms, exact message)\nCart persistence   -> integration test with real DB\nCheckout API shape -> contract test with the web client\nCritical journeys  -> ~10 E2E smoke tests"
+      },
+      "why": "End-to-end tests are the most realistic, but slow and broad failures make them a poor place for detailed rules. Keep them for the few journeys that must never break and let faster layers carry the detail."
+    }
+  ],
+  "interview": [
+    "When asked how you would test a feature, list layers with reasons: unit tests for the rules, an integration test against a real database, a contract test for the API, one E2E smoke test for the journey.",
+    "Mention the pyramid and the trophy as models and say which fits this codebase and why, rather than quoting a ratio.",
+    "Use the vocabulary precisely: stub (canned answers), mock (verifies interactions), fake (working lightweight implementation).",
+    "Say how you keep tests deterministic: injected clock, seeded randomness, no sleeps, isolated data, and how you handle flaky tests.",
+    "At SSE level, describe CI gates ordered by speed, coverage as a signal, and production safety nets: feature flags, canaries with automatic rollback, and monitoring (link to observability)."
+  ],
+  "quiz": [
+    {
+      "question": "Which is a fake rather than a stub or a mock?",
+      "choices": ["A function that always returns the same user object", "An in-memory repository that stores and returns carts like a real database would", "An object that records calls and fails the test if `send` was not called once", "A real PostgreSQL instance in a container"],
+      "answer": 1,
+      "explain": "A fake is a working, simplified implementation. A stub returns canned data, a mock verifies interactions, and a containerised database is the real dependency."
+    },
+    {
+      "question": "A refactor kept behaviour identical but broke 40 tests. What does that most likely indicate?",
+      "choices": ["The refactor introduced bugs", "The tests are coupled to implementation details such as internal calls", "There are too few tests", "The CI machine is slow"],
+      "answer": 1,
+      "explain": "Tests that assert on how the code works (which helper was called, in what order) break on any restructuring. Tests on observable behaviour survive refactors and fail only on real regressions."
+    },
+    {
+      "question": "Why is 100% line coverage not proof that code is well tested?",
+      "choices": ["Coverage tools are inaccurate", "Coverage counts lines that ran, not whether any assertion would catch a wrong result", "100% coverage is impossible", "Coverage only measures end-to-end tests"],
+      "answer": 1,
+      "explain": "A test can execute every line and assert nothing. Coverage is good at showing untested code; whether tests catch bugs needs real assertions, review, or mutation testing."
+    },
+    {
+      "question": "What problem do consumer-driven contract tests solve?",
+      "choices": ["They replace unit tests in the consumer", "They catch API incompatibilities between services without a shared end-to-end environment", "They load-test the provider", "They encrypt traffic between services"],
+      "answer": 1,
+      "explain": "The consumer records what it relies on; the provider verifies it can still satisfy that contract in its own CI. Breaking changes surface before deploy, without deploying both services together."
+    },
+    {
+      "question": "A test fails about once in 50 runs. What should the team do?",
+      "choices": ["Add automatic retries to CI", "Delete the test", "Quarantine it from the blocking suite with an owner, and fix the root cause such as shared state or timing", "Ignore it; 98% is good enough"],
+      "answer": 2,
+      "explain": "Retries hide real races and teach people to ignore red builds. Quarantine keeps the main signal trustworthy while the cause is found and fixed."
+    }
+  ],
+  "practice": {
+    "prompt": "Your team's checkout service has 30% unit coverage, a 50-minute end-to-end suite that fails randomly about once a day, and two outages last quarter caused by an API change that broke the mobile app. Propose a testing strategy.",
+    "answer": "Start from where bugs come from: the outages were contract breaks, and the slow flaky E2E suite blocks everyone while adding little. Plan: (1) Contract tests between the mobile app and the checkout API, consumer-driven, verified in the provider's CI, with a can-I-deploy check before release; that targets the actual outages. (2) Unit tests for pricing, discounts, tax and rounding as pure functions, with injected clock and boundary cases. (3) Integration tests for persistence and payments adapters against a real database in a container and a payment-provider sandbox or fake. (4) Shrink E2E to about ten critical journeys, replace sleeps with condition-based waits, isolate test data; track flakiness per test and quarantine flaky ones with an owner. (5) CI gates in order: lint and types, unit (minutes), integration, contract verification, E2E smoke; red blocks merge. (6) Coverage reports to find untested critical branches, not a percentage target. (7) Production: risky changes behind feature flags, canary deploys with automatic rollback on checkout error rate and latency, and alerts on payment failures. Measure success by escaped defects, pipeline time and flake rate.",
+    "rubric": [
+      "Ties the strategy to the actual failures (contract breaks, flaky slow E2E)",
+      "Introduces contract tests verified in provider CI",
+      "Moves detailed rules to fast unit tests and adapters to integration tests",
+      "Reduces and de-flakes E2E (condition waits, isolation, quarantine with owner)",
+      "Orders CI gates by speed and treats coverage as a signal",
+      "Adds production safety: feature flags, canary with rollback, monitoring"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability", "ml-deployment-monitoring"],
+    "problems": ["lru-cache", "token-bucket-limiter", "time-versioned-store"],
+    "cases": ["payments", "metrics-monitoring"],
+    "guides": ["testing-your-code", "code-review", "clean-code", "observability", "api-error-format"]
+  }
+}

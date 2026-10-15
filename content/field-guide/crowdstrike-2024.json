@@ -1,0 +1,263 @@
+{
+  "id": "crowdstrike-2024",
+  "kind": "case",
+  "topic": "testing",
+  "level": "sse",
+  "title": "CrowdStrike, July 2024: a content update that crashed Windows",
+  "summary": "A Falcon \"Rapid Response Content\" update used a 21st input field that the sensor code never supplied. A validator bug passed it, it shipped unstaged, and Windows hosts that got it in a 78-minute window crashed.",
+  "minutes": 15,
+  "organisation": "CrowdStrike",
+  "year": 2024,
+  "problem": "CrowdStrike's Falcon sensor runs on customer machines and, on Windows, includes a kernel driver that loads early in boot. It gets detection logic in two ways. **Sensor Content** (including \"Template Types\", which define what fields a kind of detection can match on) is code compiled into each sensor release and goes through a staged release that customers control. **Rapid Response Content** is configuration: \"Template Instances\" of regex matching criteria, bundled into numbered *channel files* and pushed from the cloud so detections can change without a sensor update. CrowdStrike stresses that it is data, not code or a driver.\n\nSensor 7.11 (February 2024) added an IPC Template Type for spotting attacks that abuse named pipes; its instances ship in **Channel File 291**. The type's definition declared **21 input fields**, but the sensor code that called the Content Interpreter supplied only **20 values**. No instance shipped before July made use of field 21 (the initial ones used a wildcard there), so nothing ever read it.\n\nAt 04:09 UTC on 19 July 2024 two new IPC instances were released. One used a real (non-wildcard) criterion on field 21. The Content Validator checked it against the 21-field definition and passed it. On Windows hosts running sensor 7.11 or later that received the file, the next named-pipe event made the interpreter read a 21st input that did not exist: an out-of-bounds memory read in the kernel, which crashed the system. The content was reverted at 05:27 UTC.",
+  "constraints": [
+    "Rapid Response Content exists to respond to new threats at operational speed, without waiting for a sensor release.",
+    "The sensor's detection code runs in a Windows kernel driver, where an unhandled memory fault crashes the whole machine rather than one process.",
+    "Template Types are compiled into sensor releases that customers adopt on their own schedule (N, N-1 or N-2), while Rapid Response Content was delivered from the cloud outside those customer-controlled sensor update policies.",
+    "The IPC Template Type had passed a stress test and four earlier instances had worked in production, so the path looked proven.",
+    "The automated tests for the Template Type used a static set of 12 cases with a hand-written channel file that wildcarded field 21 everywhere."
+  ],
+  "decisions": [
+    {
+      "decision": "Deliver detection logic as configuration (Rapid Response Content) interpreted by a generic engine, instead of shipping new sensor code for each new technique.",
+      "tradeoff": "New detections reach customers quickly and without driver changes, but the interpreter and its inputs become a code path that every content update exercises, and config skipped the release gates code went through."
+    },
+    {
+      "decision": "Deploy new Template Instances based on the Template Type's earlier stress test, trust in the Content Validator, and prior successful IPC instances.",
+      "tradeoff": "Fast and usually safe, but the one-time test with a single instance never exercised field 21, and the validator checked against the definition rather than what the sensor actually supplies."
+    },
+    {
+      "decision": "After the incident, validate input counts at sensor compile time, add bounds checks in the interpreter, and make the sensor supply the correct 21 inputs.",
+      "tradeoff": "Fixes need a sensor hotfix across all Windows versions from 7.11, but the mismatch class is caught at build time and a bad read no longer crashes the host."
+    },
+    {
+      "decision": "Give Rapid Response Content staged deployment: canary first, then wider rings with bake-in telemetry and rollback, plus customer control over where and when it lands.",
+      "tradeoff": "Slower to reach the whole fleet, which matters for a security product, but a crashing update hits a canary ring instead of every online host."
+    },
+    {
+      "decision": "Test every new Template Instance, test every field with non-wildcard criteria, fuzz the handlers, and bring in two independent third-party reviewers.",
+      "tradeoff": "More test and review cost per content update, in exchange for coverage of the combinations production content actually uses."
+    }
+  ],
+  "failures": "CrowdStrike's root cause analysis calls it a **confluence** of issues rather than one bug.\n\n**A count mismatch nobody checked.** The Template Type definition said 21 inputs; the sensor code supplied 20. Nothing compared the two at compile time.\n\n**Tests that never touched the edge.** The 12 automated test cases and the stress-test instance all wildcarded field 21, so the out-of-bounds read stayed latent through release testing, stress testing and four production instances.\n\n**A validator with a logic error.** The Content Validator assessed the new instances against the 21-input expectation, so content that would read a missing field passed.\n\n**No bounds check at runtime.** The Content Interpreter read the 21st entry of a 20-element array. The PIR notes the interpreter was designed to handle exceptions from bad content gracefully, but this one could not be handled, and in a kernel driver that means a crash.\n\n**No staged rollout for this content.** Sensor releases went through dogfooding, early adopters and customer-selected versions, but the new channel file reached Windows sensors that were online between 04:09 and 05:27 UTC with no staged rollout described; those on 7.11+ crashed. The RCA's own finding is that each Template Instance should be deployed in stages.",
+  "lessons": [
+    "Configuration and content updates are deployments. If they can change runtime behaviour, they need canaries, rings, bake time and rollback like code.",
+    "Validate against reality, not the spec: check the inputs the code actually provides, ideally at compile time, not only the declared schema.",
+    "Test every field with non-default values. Wildcards and defaults in fixtures hide the exact path production will take.",
+    "Untrusted or frequently changed data reaching privileged code needs bounds checks and fuzzing; assume the validator can be wrong.",
+    "Let customers choose rollout timing for anything that runs on their machines, and publish what changed.",
+    "Look for several contributing causes. Each missing layer here (compile check, tests, validator, bounds check, staged rollout) could have caught it or limited its reach."
+  ],
+  "caveats": "This entry relies only on CrowdStrike's preliminary PIR and its root cause analysis. Neither gives a count of affected machines or describes how crashed hosts were recovered, so those are left out. The RCA states that each Template Instance \"should\" have staged deployment and lists it as a mitigation; the reports do not spell out every check that existed for Rapid Response Content before July. Dates for the hotfix (by 9 August) and the new validator check (by 19 August) were commitments at the time the RCA was written. The rollout compare diagram simplifies the ring design the RCA describes.",
+  "diagrams": [
+    {
+      "id": "cs291-timeline",
+      "type": "timeline",
+      "title": "Channel File 291, February to August 2024",
+      "alt": "Timeline. On 28 February sensor 7.11 ships with the IPC Template Type. On 5 March it passes a stress test and the first IPC instance ships via Channel File 291; three more ship between 8 and 24 April. On 19 July at 04:09 UTC two new instances ship, one using field 21, and Windows hosts crash; the content is reverted at 05:27 UTC. The PIR follows on 24 July, an interpreter bounds check on 25 July, a compiler input-count check on 27 July, about 99 percent of Windows sensors are online by 29 July, and the RCA is published on 6 August.",
+      "caption": "The bug shipped in February and sat latent for almost five months, until content finally used the 21st field.",
+      "events": [
+        { "at": "28 Feb", "label": "Sensor 7.11 GA introduces the IPC Template Type (definition: 21 inputs; code supplies 20)", "kind": "trigger" },
+        { "at": "5 Mar", "label": "IPC Template Type passes stress test; first IPC instance ships in Channel File 291", "kind": "trigger" },
+        { "at": "8-24 Apr", "label": "Three more IPC instances ship and work, all wildcarding field 21", "kind": "trigger" },
+        { "at": "19 Jul, 04:09 UTC", "label": "Two new IPC instances released; one matches on field 21 and passes the validator", "kind": "trigger" },
+        { "at": "From 04:09 UTC", "label": "Windows hosts on 7.11+ that receive the file crash on the next named-pipe event", "kind": "impact" },
+        { "at": "19 Jul, 05:27 UTC", "label": "Problematic content reverted; hosts connecting later are not affected", "kind": "mitigate" },
+        { "at": "19 Jul", "label": "Patch to the Sensor Content Compiler that checks input counts is developed", "kind": "mitigate" },
+        { "at": "24 Jul", "label": "Preliminary Post Incident Review published", "kind": "detect" },
+        { "at": "25 Jul", "label": "Bounds and input-count checks added to the Content Interpreter", "kind": "resolve" },
+        { "at": "27 Jul", "label": "Compiler input-count check goes into production build tooling", "kind": "resolve" },
+        { "at": "29 Jul", "label": "About 99% of Windows sensors online compared with the week before", "kind": "resolve" },
+        { "at": "6 Aug", "label": "Root Cause Analysis published; sensor hotfix due by 9 Aug", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "cs291-paths",
+      "type": "flow",
+      "title": "Two ways detection logic reaches a sensor",
+      "alt": "Flow diagram. Top path: a sensor release containing Template Types goes through a staged rollout of dogfooding, early adopters and general availability before reaching the Windows sensor. Bottom path: the Content Configuration System creates Template Instances, the Content Validator checks them, and Channel File 291 goes straight to the sensor, whose interpreter then crashes the host with an out-of-bounds read.",
+      "caption": "Code took the slow, staged road. Content took the fast road, and the fast road was the one that crashed machines.",
+      "nodes": [
+        { "id": "rel", "label": "Sensor release", "kind": "worker", "col": 0, "row": 0, "sub": "Template Types" },
+        { "id": "stage", "label": "Staged rollout", "kind": "good", "col": 2, "row": 0, "sub": "dogfood, early, GA" },
+        { "id": "host", "label": "Windows sensor", "kind": "client", "col": 4, "row": 1, "sub": "kernel driver" },
+        { "id": "ccs", "label": "Content config", "kind": "service", "col": 0, "row": 2, "sub": "Template Instances" },
+        { "id": "val", "label": "Validator", "kind": "bad", "col": 1, "row": 2, "sub": "logic error" },
+        { "id": "cf", "label": "Channel File 291", "kind": "queue", "col": 2, "row": 2, "sub": "uses field 21" },
+        { "id": "crash", "label": "System crash", "kind": "bad", "col": 4, "row": 3, "sub": "out-of-bounds read" }
+      ],
+      "edges": [
+        { "from": "rel", "to": "stage", "label": "code" },
+        { "from": "stage", "to": "host", "label": "customer picks N" },
+        { "from": "ccs", "to": "val", "label": "check" },
+        { "from": "val", "to": "cf", "label": "pass", "style": "fail" },
+        { "from": "cf", "to": "host", "label": "no staged rollout", "style": "async" },
+        { "from": "host", "to": "crash", "label": "named pipe event", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Sensor Content, including the IPC Template Type, ships as code in a sensor release: tested, dogfooded, given to early adopters, then GA. Customers choose N, N-1 or N-2." },
+        { "edges": [2, 3], "text": "Detection engineers create Template Instances in the Content Configuration System. The Content Validator checks them against the Template Type definition, which says 21 inputs, so the field-21 criterion passes." },
+        { "edges": [4], "text": "The new Channel File 291 reaches Windows sensors that are online between 04:09 and 05:27 UTC, with no staged rollout described; those on sensor 7.11+ are exposed." },
+        { "edges": [5], "text": "On the next named-pipe notification the interpreter evaluates the new instance, reads input 21 from a 20-entry array, and the kernel faults." }
+      ]
+    },
+    {
+      "id": "cs291-crash",
+      "type": "sequence",
+      "title": "From content push to crash",
+      "alt": "Sequence diagram with five actors: content system, validator, sensor driver, content interpreter and Windows. The content system sends two new instances to the validator, which passes them. The content system pushes Channel File 291 to the sensor. Windows reports a named pipe event; the sensor asks the interpreter to evaluate with 20 inputs; the interpreter reads input 21 out of bounds; Windows bugchecks. At 05:27 the content is reverted.",
+      "caption": "The validator and the sensor disagreed about how many inputs exist, and nothing checked them against each other.",
+      "actors": [
+        { "id": "ccs", "label": "Content system" },
+        { "id": "val", "label": "Validator" },
+        { "id": "drv", "label": "Sensor driver" },
+        { "id": "ci", "label": "Interpreter" },
+        { "id": "os", "label": "Windows" }
+      ],
+      "messages": [
+        { "from": "ccs", "to": "val", "label": "2 new IPC instances", "note": "19 July. One instance uses a non-wildcard criterion on the 21st field for the first time." },
+        { "from": "val", "to": "ccs", "label": "valid (expects 21 inputs)", "style": "reply", "note": "The validator's logic error: it trusted the definition's 21 fields, not the 20 the sensor supplies." },
+        { "from": "ccs", "to": "drv", "label": "Channel File 291, 04:09 UTC", "style": "async", "note": "Delivered to Windows sensors on 7.11 or later that were online." },
+        { "from": "os", "to": "drv", "label": "named pipe notification", "note": "The driver combines the event with system context into the IPC Template Type's inputs." },
+        { "from": "drv", "to": "ci", "label": "evaluate with 20 inputs", "note": "The integration code builds an array of 20 input pointers." },
+        { "from": "ci", "to": "drv", "label": "read input 21: out of bounds", "style": "fail", "note": "The 21st slot holds an invalid pointer. The read cannot be handled gracefully." },
+        { "from": "drv", "to": "os", "label": "kernel page fault", "style": "fail", "note": "The RCA's crash dump shows a PAGE_FAULT_IN_NONPAGED_AREA bugcheck in csagent.sys." },
+        { "from": "ccs", "to": "drv", "label": "05:27 UTC: content reverted", "style": "reply", "note": "Hosts that came online later, or never connected in the window, were not affected." }
+      ]
+    },
+    {
+      "id": "cs291-fix",
+      "type": "compare",
+      "title": "Counts that disagree versus counts that are enforced",
+      "alt": "Side-by-side comparison. Left: the Template Type definition declares 21 inputs, the validator trusts it and passes a new instance that matches on field 21, while the sensor code passes only 20 values to the interpreter, which crashes. Right: a compiler check makes the sensor code supply 21 inputs, the validator rejects criteria on fields beyond what the sensor supplies, and the interpreter is bounds-checked.",
+      "caption": "The RCA's fixes cover the same mismatch at three points: compile time, validation time (new check committed for 19 August) and runtime.",
+      "before": {
+        "label": "19 July: 21 declared, 20 supplied",
+        "nodes": [
+          { "id": "def", "label": "Type definition", "kind": "note", "col": 0, "row": 0, "sub": "declares 21" },
+          { "id": "val", "label": "Validator", "kind": "service", "col": 1, "row": 0, "sub": "checks vs 21" },
+          { "id": "inst", "label": "New instance", "kind": "service", "col": 2, "row": 0, "sub": "matches field 21" },
+          { "id": "code", "label": "Sensor code", "kind": "service", "col": 0, "row": 1, "sub": "passes 20" },
+          { "id": "ci", "label": "Interpreter", "kind": "bad", "col": 2, "row": 1, "sub": "reads index 20" }
+        ],
+        "edges": [
+          { "from": "def", "to": "val" },
+          { "from": "val", "to": "inst", "label": "passes" },
+          { "from": "code", "to": "ci", "label": "20 values" },
+          { "from": "inst", "to": "ci", "label": "field 21", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "After: counts enforced",
+        "nodes": [
+          { "id": "comp", "label": "Content compiler", "kind": "good", "col": 0, "row": 0, "sub": "checks input count" },
+          { "id": "code", "label": "Sensor code", "kind": "service", "col": 1, "row": 0, "sub": "supplies 21" },
+          { "id": "val", "label": "Validator", "kind": "good", "col": 0, "row": 1, "sub": "fields <= inputs" },
+          { "id": "ci", "label": "Interpreter", "kind": "good", "col": 2, "row": 1, "sub": "bounds-checked" }
+        ],
+        "edges": [
+          { "from": "comp", "to": "code" },
+          { "from": "code", "to": "ci" },
+          { "from": "val", "to": "ci", "label": "safe content" }
+        ]
+      }
+    },
+    {
+      "id": "cs291-rings",
+      "type": "flow",
+      "title": "Rapid Response Content rollout after the fix",
+      "alt": "Flow diagram. A new Template Instance is tested on its own, then goes to a canary ring, then successively wider rings with bake-in telemetry, and finally lands on hosts according to customer policy. If problems such as crashes, false-positive spikes or performance issues appear at the canary or in a ring, the instance is rolled back.",
+      "caption": "Simplified from the RCA. Content now earns its way to the whole fleet, and customers can choose where and when it lands.",
+      "nodes": [
+        { "id": "new", "label": "New instance", "kind": "service", "col": 0, "row": 0 },
+        { "id": "test", "label": "Instance tests", "kind": "worker", "col": 1, "row": 0, "sub": "every instance" },
+        { "id": "canary", "label": "Canary ring", "kind": "service", "col": 2, "row": 0 },
+        { "id": "rings", "label": "Wider rings", "kind": "service", "col": 3, "row": 0, "sub": "bake-in telemetry" },
+        { "id": "cust", "label": "Customer policy", "kind": "good", "col": 4, "row": 0, "sub": "where and when" },
+        { "id": "back", "label": "Roll back", "kind": "bad", "col": 3, "row": 2, "sub": "crash, FP, perf" }
+      ],
+      "edges": [
+        { "from": "new", "to": "test" },
+        { "from": "test", "to": "canary" },
+        { "from": "canary", "to": "rings", "label": "healthy" },
+        { "from": "rings", "to": "cust", "label": "healthy" },
+        { "from": "canary", "to": "back", "label": "problem", "style": "fail" },
+        { "from": "rings", "to": "back", "label": "problem", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "Every new Template Instance is now tested in the Content Configuration System, not just the first one created with its Template Type." },
+        { "edges": [2], "text": "After canary testing, the instance is promoted ring by ring. Each promotion is followed by bake-in time while telemetry shows its effect on endpoints." },
+        { "edges": [4, 5], "text": "If an instance causes crashes, false-positive spikes or performance problems, it is rolled back before reaching wider rings." },
+        { "edges": [3], "text": "Customers can now choose where and when Rapid Response Content is deployed; CrowdStrike also committed to content update release notes that customers can subscribe to." }
+      ]
+    }
+  ],
+  "interview": [
+    "When a design pushes config, rules or ML models to a fleet, say: \"Content is a deployment. It goes canary, rings with bake time, automatic rollback, and customers can pin or delay it.\"",
+    "Show defence in depth for schema contracts: check producer and consumer agree at build time, validate content against what consumers really accept, and bounds-check at runtime.",
+    "When discussing test fixtures, point out that wildcards and defaults hide edge paths; ask for tests that exercise every field with real values, plus fuzzing.",
+    "For privileged or crash-prone code (kernel, firmware, shared runtimes), mention isolation and fail-safe behaviour: a bad input should disable a feature, not take down the host.",
+    "At SSE level, describe how you would set rollout policy differently for code and data, and why fast paths still need a canary."
+  ],
+  "quiz": [
+    {
+      "question": "What exactly did the July 19 Channel File 291 instance do that earlier ones did not?",
+      "choices": ["It contained new kernel driver code", "It used a non-wildcard matching criterion on the 21st input field", "It targeted Mac and Linux hosts", "It disabled the Content Interpreter"],
+      "answer": 1,
+      "explain": "Earlier IPC instances wildcarded field 21, so the interpreter never read it. The new one required inspecting it, and the sensor supplied only 20 inputs."
+    },
+    {
+      "question": "Why did the Content Validator pass the problematic instance?",
+      "choices": ["It was skipped for urgent updates", "It checked the instance against the Template Type definition's 21 inputs, not the 20 the sensor supplied", "It only checks file size", "It timed out"],
+      "answer": 1,
+      "explain": "The RCA calls this a logic error in the validator. It validated against the declared schema, which disagreed with the code that actually feeds the interpreter."
+    },
+    {
+      "question": "Why did months of testing and four successful production instances not reveal the bug?",
+      "choices": ["The bug was introduced in July", "Tests and earlier instances all used a wildcard in field 21, so the out-of-bounds read was never exercised", "Testing was only done on Linux", "Earlier instances were never deployed"],
+      "answer": 1,
+      "explain": "The 12 static test cases and stress-test instance were built with a wildcard in field 21. Fixtures that avoid a field can never find bugs in it."
+    },
+    {
+      "question": "Which change most directly limits the blast radius of a future bad content update?",
+      "choices": ["A faster revert button", "Staged deployment through canary and wider rings with bake-in telemetry and rollback", "Shipping content less often", "Larger channel files"],
+      "answer": 1,
+      "explain": "Even with all other checks, a bad update in a canary ring affects a small set of hosts and is rolled back before reaching the fleet."
+    },
+    {
+      "question": "Why did an out-of-bounds read crash the whole Windows machine instead of one process?",
+      "choices": ["Windows always reboots on any read error", "The Content Interpreter runs inside CrowdStrike's kernel driver, where this fault could not be handled", "The channel file overwrote system files", "The sensor deliberately triggered a reboot"],
+      "answer": 1,
+      "explain": "The RCA's crash dump shows the fault in csagent.sys, a kernel driver. An invalid memory access in kernel mode that is not caught ends in a bugcheck."
+    }
+  ],
+  "practice": {
+    "prompt": "You run an agent installed on millions of customer machines. Detection rules are pushed several times a day as data files and evaluated by an interpreter inside a privileged component. Design the pipeline and runtime safeguards so a bad rule file cannot take down customer machines at scale.",
+    "answer": "Start with the contract between rule files and the interpreter: generate both the agent's input schema and the validator's schema from one source, and fail the agent build if a template's declared field count differs from what the code supplies. The validator checks rule files against what each deployed agent version actually supports, rejects references to missing fields, and is itself tested with negative cases. In CI, test every template with real (non-wildcard) values in every field, and fuzz the interpreter with random and malformed rule files. At runtime the interpreter bounds-checks every access, validates the file on load, and on any fault disables the offending rule or file and reports it rather than crashing; if possible, run it outside the kernel or in a sandbox. If an agent crashes soon after loading a new file, it falls back to the last known good file on restart. Roll out rule files like code: internal dogfood, a small canary ring, then wider rings with bake time and automatic halt on crash, CPU or false-positive telemetry, with a guarded emergency path for active threats. Let customers choose which ring each group of machines is in and publish release notes for each file.",
+    "rubric": [
+      "Single source of truth for schema with a build-time check that producer and consumer agree",
+      "Tests and fuzzing that exercise every field with real values",
+      "Runtime bounds checks and fail-safe handling (disable rule, last known good) instead of crash",
+      "Staged rollout of content with canary, bake time and automatic rollback",
+      "Customer control over rollout timing and visibility into changes",
+      "Treats content and configuration as deployments, with an explicit emergency path"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability"],
+    "guides": ["testing-strategy", "observability", "graceful-degradation"]
+  },
+  "sources": [
+    {
+      "title": "Preliminary Post Incident Review (PIR): Content Configuration Update Impacting the Falcon Sensor and the Windows Operating System (BSOD)",
+      "publisher": "CrowdStrike",
+      "url": "https://www.crowdstrike.com/en-us/blog/falcon-content-update-preliminary-post-incident-report/",
+      "date": "2024-07-24"
+    },
+    {
+      "title": "External Technical Root Cause Analysis — Channel File 291",
+      "publisher": "CrowdStrike",
+      "url": "https://www.crowdstrike.com/wp-content/uploads/2024/08/Channel-File-291-Incident-Root-Cause-Analysis-08.06.2024.pdf",
+      "date": "2024-08-06"
+    }
+  ]
+}

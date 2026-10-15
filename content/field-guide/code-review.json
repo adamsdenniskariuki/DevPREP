@@ -1,0 +1,322 @@
+{
+  "id": "code-review",
+  "kind": "guide",
+  "topic": "code-quality",
+  "level": "sse",
+  "title": "Code review: catch real problems, keep the team fast",
+  "summary": "Keep PRs small, review for correctness, design, tests and security before style, write comments that ask and explain, label nits, answer within a day, and use review to raise the whole team's bar.",
+  "minutes": 15,
+  "principle": "Code review exists to ship correct, maintainable changes **and** to spread knowledge, not to prove who is smarter. The author makes the change easy to review: small, described, self-reviewed and tested. The reviewer answers quickly, spends attention on what tools cannot catch (correctness, design, tests, security), says why in every comment, and marks what blocks the merge versus what is optional.",
+  "why": "Review is one of the cheapest places to find a bug: the context is fresh, the change is small and nothing has shipped. It is also where a team's standards actually live. Linters enforce formatting; review is where people learn why a lock is needed, why an API shape will hurt later, or what test would have caught last month's incident.\n\nReview also has costs. Every hour a PR waits blocks the author or pushes them into context switches, and large PRs get skimmed: reviewers tend to give a 50-line change careful attention and a 1,500-line change a quick LGTM. Harsh or vague comments make authors defensive and slow the next review too.\n\nSo good review is a system, not a heroic act. **Authors** keep changes small (often under a few hundred lines), write a description that says what, why and how it was tested, and review their own diff first. **Reviewers** respond within about a working day, read the tests first, focus on the order correctness → design → tests → security → readability, and label each comment: `blocking`, `suggestion`, `nit`, or `question`. **Tools** handle formatting, lint and type errors so humans never argue about them.\n\nAt senior level the job widens: write down the team's review guide, tune CI so reviewers see green builds, pair with new reviewers, and settle disagreements with data, a quick call, or a written decision instead of an endless thread.",
+  "diagrams": [
+    {
+      "id": "cr-lifecycle",
+      "type": "flow",
+      "title": "Lifecycle of a pull request",
+      "alt": "Flow diagram of a pull request. The author self-reviews and opens a pull request with a description. The pull request goes to CI checks and to a reviewer in parallel. Both feed a decision. If changes are requested, the author addresses comments and pushes new commits back to the reviewer. If approved, the change merges.",
+      "caption": "CI and the human reviewer work in parallel, and the loop back is short when the PR is small and the comments are specific.",
+      "nodes": [
+        { "id": "author", "label": "Author", "kind": "client", "col": 0, "row": 1, "sub": "self-review first" },
+        { "id": "pr", "label": "Pull request", "kind": "service", "col": 1, "row": 1, "sub": "what, why, tested" },
+        { "id": "ci", "label": "CI checks", "kind": "worker", "col": 2, "row": 0, "sub": "build, lint, tests" },
+        { "id": "rev", "label": "Reviewer", "kind": "service", "col": 2, "row": 2, "sub": "reply within a day" },
+        { "id": "dec", "label": "Decision", "kind": "decision", "col": 3, "row": 1, "sub": "approve / changes" },
+        { "id": "fix", "label": "Address notes", "kind": "state", "col": 3, "row": 3, "sub": "fix or reply" },
+        { "id": "merge", "label": "Merge", "kind": "good", "col": 4, "row": 1, "sub": "small, reversible" }
+      ],
+      "edges": [
+        { "from": "author", "to": "pr", "label": "open" },
+        { "from": "pr", "to": "ci", "label": "trigger" },
+        { "from": "pr", "to": "rev", "label": "request review" },
+        { "from": "ci", "to": "dec", "label": "green" },
+        { "from": "rev", "to": "dec", "label": "comments" },
+        { "from": "dec", "to": "fix", "label": "changes", "style": "fail" },
+        { "from": "fix", "to": "rev", "label": "new commits", "style": "reply" },
+        { "from": "dec", "to": "merge", "label": "approved" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "The author reads their own diff before anyone else does, removes debug code, and writes a description: what changed, why, how it was tested, and where to look first." },
+        { "edges": [1, 2], "text": "CI and the reviewer start in parallel. CI catches formatting, type and test failures so the human can focus on logic and design." },
+        { "edges": [3, 4], "text": "The reviewer reads the tests and the riskiest file first, labels each comment (blocking, suggestion, nit, question) and gives an overall verdict." },
+        { "edges": [5, 6], "text": "Blocking comments get a fix or a reasoned reply. New commits go back to the same reviewer, who checks only what changed." },
+        { "edges": [7], "text": "Approved with green CI: merge. Approving with optional suggestions is normal; the author decides on nits." }
+      ]
+    },
+    {
+      "id": "cr-loop-seq",
+      "type": "sequence",
+      "title": "Author, CI and reviewer loop on one PR",
+      "alt": "Sequence diagram with Author, CI and Reviewer. The author opens a PR, CI runs and reports a failing test, the author fixes it and CI goes green. The reviewer leaves one blocking comment about a race and one nit. The author fixes the race, replies to the nit, CI passes again, and the reviewer approves.",
+      "caption": "Let CI finish before asking for review, and re-review only the delta. Two short rounds beat one long silent wait.",
+      "actors": [
+        { "id": "a", "label": "Author" },
+        { "id": "ci", "label": "CI" },
+        { "id": "r", "label": "Reviewer" }
+      ],
+      "messages": [
+        { "from": "a", "to": "ci", "label": "push branch, open draft PR" },
+        { "from": "ci", "to": "a", "label": "1 test failing", "style": "fail", "note": "Fix CI before requesting review so the reviewer's time is not spent on things a machine already found." },
+        { "from": "a", "to": "ci", "label": "fix test, push" },
+        { "from": "ci", "to": "a", "label": "all checks green", "style": "reply" },
+        { "from": "a", "to": "r", "label": "ready for review (+ description)" },
+        { "from": "r", "to": "a", "label": "blocking: race on cache write", "style": "fail", "note": "The comment names the line, explains the interleaving that breaks, and suggests a fix." },
+        { "from": "r", "to": "a", "label": "nit: rename tmp to pending", "note": "Labelled as a nit: the author may take it or leave it." },
+        { "from": "a", "to": "ci", "label": "fix race, add test, push" },
+        { "from": "ci", "to": "a", "label": "green", "style": "reply" },
+        { "from": "a", "to": "r", "label": "fixed race; kept name, see reply" },
+        { "from": "r", "to": "a", "label": "approved", "style": "reply", "note": "The reviewer checks only the new commits and the reply, then approves." }
+      ]
+    },
+    {
+      "id": "cr-comment-compare",
+      "type": "compare",
+      "title": "Vague, harsh comment vs specific, kind comment",
+      "alt": "Side-by-side comparison. On the left a comment that says only that the code is wrong leaves the author confused and defensive, and a long thread follows. On the right a blocking comment names the bug, explains why and suggests a fix, while a separate nit is marked optional, and the author fixes the bug in one commit.",
+      "caption": "Same reviewer, same bug. Saying why and how, and labelling severity, turns a debate into a one-commit fix.",
+      "before": {
+        "label": "\"This is wrong.\"",
+        "nodes": [
+          { "id": "c", "label": "Vague comment", "kind": "bad", "col": 0, "row": 0, "sub": "no reason, no fix" },
+          { "id": "a", "label": "Author", "kind": "client", "col": 2, "row": 0, "sub": "confused" },
+          { "id": "t", "label": "Long thread", "kind": "bad", "col": 2, "row": 2, "sub": "2 days, defensive" }
+        ],
+        "edges": [
+          { "from": "c", "to": "a", "label": "what is wrong?" },
+          { "from": "a", "to": "t", "label": "argues", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Specific, labelled, kind",
+        "nodes": [
+          { "id": "b", "label": "Blocking: bug", "kind": "good", "col": 0, "row": 0, "sub": "why + suggestion" },
+          { "id": "n", "label": "Nit: optional", "kind": "note", "col": 0, "row": 2, "sub": "author decides" },
+          { "id": "a", "label": "Author", "kind": "client", "col": 2, "row": 0, "sub": "understands" },
+          { "id": "f", "label": "One-commit fix", "kind": "good", "col": 2, "row": 2, "sub": "plus a test" }
+        ],
+        "edges": [
+          { "from": "b", "to": "a", "label": "clear ask" },
+          { "from": "n", "to": "a", "label": "low stakes" },
+          { "from": "a", "to": "f", "label": "fixes" }
+        ]
+      }
+    },
+    {
+      "id": "cr-size-bars",
+      "type": "bars",
+      "title": "Reviewer attention per line as PRs grow (illustrative)",
+      "alt": "Bar chart with illustrative values showing careful reviewer attention per changed line falling as pull requests grow: highest under 100 lines, lower at 100 to 300 lines, lower again at 300 to 600, and very low for changes over 1,000 lines.",
+      "caption": "Illustrative, not measured data. It shows a widely reported pattern: past a few hundred lines, reviewers skim and approve, so defects slip through. Split big changes.",
+      "unit": "relative attention/line",
+      "bars": [
+        { "label": "< 100 lines", "value": 10, "highlight": true },
+        { "label": "100-300 lines", "value": 8 },
+        { "label": "300-600 lines", "value": 5 },
+        { "label": "600-1,000 lines", "value": 3 },
+        { "label": "1,000+ lines", "value": 1 }
+      ]
+    },
+    {
+      "id": "cr-focus-chart",
+      "type": "chart",
+      "title": "Where review time pays off",
+      "alt": "Trade-off chart with reviewer time spent on the horizontal axis and value of the finding on the vertical axis. Security issues and correctness bugs are high value. Design and API shape is high value but takes more time. Missing tests are good value for moderate time. Naming is moderate value for little time. Hand-checking formatting takes time and adds almost no value.",
+      "caption": "Rough positions. Spend human attention top-left and top-centre; automate the bottom-right away with formatters and linters.",
+      "x": { "label": "Reviewer time spent", "low": "little", "high": "a lot" },
+      "y": { "label": "Value of the finding", "low": "low", "high": "high" },
+      "points": [
+        { "label": "Security issue", "x": 3, "y": 10, "highlight": true },
+        { "label": "Correctness bug", "x": 5, "y": 9, "highlight": true },
+        { "label": "Design / API shape", "x": 8, "y": 8 },
+        { "label": "Missing tests", "x": 4, "y": 6 },
+        { "label": "Naming", "x": 1, "y": 4 },
+        { "label": "Formatting by hand", "x": 7, "y": 1 }
+      ]
+    },
+    {
+      "id": "cr-standards-flow",
+      "type": "flow",
+      "title": "How a senior engineer raises the team's review bar",
+      "alt": "Flow diagram showing how review standards improve over time. A bug that escaped review leads to a short write-up, which feeds both a written review guide and a new automated check in CI. The guide is used when pairing on reviews with newer engineers. Both lead to better reviews, which produce fewer escaped bugs.",
+      "caption": "Every escaped bug should change something: a check a machine runs, or a line in the guide people learn from.",
+      "nodes": [
+        { "id": "bug", "label": "Escaped bug", "kind": "bad", "col": 0, "row": 1, "sub": "found in prod" },
+        { "id": "post", "label": "Short write-up", "kind": "note", "col": 1, "row": 1, "sub": "what review missed" },
+        { "id": "guide", "label": "Review guide", "kind": "storage", "col": 2, "row": 0, "sub": "checklist + tips" },
+        { "id": "ci", "label": "New CI check", "kind": "worker", "col": 2, "row": 2, "sub": "lint rule, test" },
+        { "id": "pair", "label": "Pair reviews", "kind": "service", "col": 3, "row": 0, "sub": "mentor new folks" },
+        { "id": "better", "label": "Better reviews", "kind": "good", "col": 3, "row": 2, "sub": "fewer escapes" }
+      ],
+      "edges": [
+        { "from": "bug", "to": "post" },
+        { "from": "post", "to": "guide", "label": "human rule" },
+        { "from": "post", "to": "ci", "label": "machine rule" },
+        { "from": "guide", "to": "pair" },
+        { "from": "pair", "to": "better" },
+        { "from": "ci", "to": "better" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "A comment that teaches instead of judging",
+      "bad": {
+        "label": "Vague and judgemental",
+        "lang": "text",
+        "code": "Why would you do it like this? This is wrong."
+      },
+      "good": {
+        "label": "Labelled, specific, with the why and a fix",
+        "lang": "text",
+        "code": "blocking: `prices.sort()` compares values as strings in JS,\nso [10, 9, 1] becomes [1, 10, 9]. Could we use\n`prices.sort((a, b) => a - b)` and add a test with a\ntwo-digit price?\n\nnit (optional): `tmp` -> `sortedPrices` would read better."
+      },
+      "why": "The good comment names the line, explains the failure with a concrete input, proposes a fix, asks for a test so the bug stays fixed, and separates the must-fix from the take-it-or-leave-it. The author can act without a follow-up question."
+    },
+    {
+      "title": "A PR description the reviewer can start from",
+      "bad": {
+        "label": "Title only",
+        "lang": "text",
+        "code": "Fix stuff\n\n(no description; 38 files changed)"
+      },
+      "good": {
+        "label": "What, why, how tested, where to look",
+        "lang": "text",
+        "code": "Cap retries on the pricing client at 2 with jitter\n\nWhy: during the 3 Oct DB failover, 3 retries at every layer\nmultiplied load (see incident doc).\n\nWhat: new RetryPolicy in pricing/client.ts; gateway retries\nremoved. No API change.\n\nTested: unit tests for backoff bounds; ran load test in\nstaging with DB failover, attempts/request stayed < 1.2.\n\nReview first: pricing/client.ts. The rest is renames."
+      },
+      "why": "A good description lets the reviewer check the change against its intent rather than reverse-engineer it. Saying where to look first and what is mechanical spends their attention where the risk is."
+    },
+    {
+      "title": "Split one large change into reviewable steps",
+      "bad": {
+        "label": "One 1,400-line PR",
+        "lang": "text",
+        "code": "PR #812  Add order export (1,400 lines, 31 files)\n  - new DB table + migration\n  - refactor of OrderRepository\n  - CSV writer\n  - new API endpoint + UI button\n  - formatting changes across the module"
+      },
+      "good": {
+        "label": "A short stack of focused PRs",
+        "lang": "text",
+        "code": "#820  Format orders module (no logic change, auto-generated)\n#821  Migration: add export_jobs table\n#822  Refactor OrderRepository (behaviour unchanged, tests pass)\n#823  CSV writer + unit tests\n#824  Export endpoint behind flag `orders.export` + UI button"
+      },
+      "why": "Each PR has one purpose, so the reviewer can verify it fully. Mechanical changes are isolated, the refactor is proven safe on its own, and the feature lands behind a flag so each step can merge and deploy independently."
+    }
+  ],
+  "checklist": [
+    "Author: PR does one thing, is small enough to review in one sitting, and was self-reviewed in the diff view.",
+    "Author: description covers what, why, how it was tested, and where to look first; CI is green before review is requested.",
+    "Reviewer: first response within about one working day; if you cannot review properly, say so and suggest someone.",
+    "Reviewer: check correctness (edge cases, errors, concurrency), design (fits the codebase, right layer), tests (would they fail if the code broke?), security (input, auth, secrets), then readability.",
+    "Every comment says why, prefers questions to verdicts, and is labelled blocking, suggestion, nit or question.",
+    "Approve with suggestions when only optional items remain; do not hold a PR hostage for nits.",
+    "Formatting and lint rules are enforced by tools in CI, never debated in comments.",
+    "Disagreements that take more than two rounds move to a short call, and the outcome is written back on the PR."
+  ],
+  "antipatterns": [
+    {
+      "title": "Harsh or vague comments",
+      "bad": { "label": "\"This is wrong\" and a long thread", "diagram": "cr-comment-compare" },
+      "better": {
+        "label": "Ask, explain, label",
+        "lang": "text",
+        "code": "question: what happens if two requests update the cache at\nthe same time? I think the second write can overwrite a newer\nvalue. Would a compare-and-set on the version work here?"
+      },
+      "why": "Comments are read without tone of voice. A question that shows your reasoning invites the author to explain or fix, and it teaches; a verdict without reasons invites a defence and teaches nothing."
+    },
+    {
+      "title": "Rubber-stamp approval of a huge PR",
+      "bad": {
+        "label": "LGTM on 2,000 lines in 4 minutes",
+        "lang": "text",
+        "code": "Reviewed 2,034 lines across 47 files.\nLGTM 👍"
+      },
+      "better": {
+        "label": "Say what you reviewed, ask for a split",
+        "lang": "text",
+        "code": "I reviewed the migration and OrderService closely; I only\nskimmed the UI files. Could we split the UI into its own PR\nso someone who knows that code can review it properly?"
+      },
+      "why": "An approval is a claim that the change was checked. Being explicit about coverage keeps that claim honest, and asking for a split fixes the real cause: a PR too large for anyone to review well."
+    },
+    {
+      "title": "Using review to enforce style by hand",
+      "bad": {
+        "label": "Twelve comments about quotes and spacing",
+        "lang": "text",
+        "code": "nit: single quotes\nnit: trailing comma\nnit: blank line here\nnit: single quotes\n..."
+      },
+      "better": {
+        "label": "Let the formatter and linter decide in CI",
+        "lang": "yaml",
+        "code": "# .github/workflows/ci.yml (excerpt)\n- run: npx prettier --check .\n- run: npx eslint . --max-warnings=0"
+      },
+      "why": "Style comments bury the one important comment, cost the reviewer's attention, and annoy the author. A formatter makes the debate impossible, and CI enforces it on every PR with no human involved."
+    },
+    {
+      "title": "Blocking on personal preference",
+      "bad": {
+        "label": "Request changes for a different but equal design",
+        "lang": "text",
+        "code": "Request changes: I'd have used a class here instead of\nfunctions. Please rewrite."
+      },
+      "better": {
+        "label": "Separate preference from defect",
+        "lang": "text",
+        "code": "suggestion (non-blocking): a class might group these, but the\nfunctions work and match the rest of the module. Approving."
+      },
+      "why": "Blocking should be reserved for things that are wrong or will clearly hurt: bugs, security issues, missing tests, designs that break the codebase's conventions. Preferences belong in a suggestion; the author owns the code."
+    }
+  ],
+  "interview": [
+    "When asked how you review code, give an order: tests and riskiest file first, then correctness, design, tests, security, and readability last, with formatting left to tools.",
+    "Show a real comment you would write: label (blocking/nit/question), the concrete failure, why it matters, and a suggested fix.",
+    "Mention author duties: small PRs, a description with what/why/how tested, self-review, and green CI before asking for review.",
+    "For behavioural questions about disagreement, describe moving a long thread to a quick call, deciding on evidence (a test, a benchmark, the style guide), and writing the outcome on the PR.",
+    "At SSE level, talk about the system: review latency targets, a written review guide, turning escaped bugs into CI checks, and pairing on reviews to grow newer engineers."
+  ],
+  "quiz": [
+    {
+      "question": "A reviewer finds a real bug and three naming preferences. What is the best way to leave feedback?",
+      "choices": ["Request changes and list all four items equally", "Mark the bug as blocking with an explanation, and label the naming items as optional nits", "Approve and mention the bug in chat later", "Only mention the naming, since the author's tests should catch bugs"],
+      "answer": 1,
+      "explain": "Labelling severity tells the author what must change before merge and what is their call. Mixing a bug with preferences hides the important item and makes every comment feel mandatory."
+    },
+    {
+      "question": "Why do small pull requests usually get better reviews?",
+      "choices": ["Reviewers are required to approve small PRs faster", "CI runs faster on small PRs", "A reviewer can hold the whole change in their head, so attention per line stays high", "Small PRs never contain bugs"],
+      "answer": 2,
+      "explain": "Attention is limited. On a large diff reviewers skim and approve; on a small, single-purpose diff they can actually trace the logic and edge cases."
+    },
+    {
+      "question": "Which item is best left to automated tools rather than human reviewers?",
+      "choices": ["Whether the API shape fits existing endpoints", "Consistent indentation and quote style", "Whether a lock is needed around a cache update", "Whether the tests would fail if the logic broke"],
+      "answer": 1,
+      "explain": "Formatting is mechanical and a formatter can enforce it in CI with zero debate. Design fit, concurrency and test quality need human judgement."
+    },
+    {
+      "question": "Author and reviewer have gone back and forth four times on an approach. What should happen next?",
+      "choices": ["The reviewer keeps requesting changes until the author agrees", "The author merges without approval", "Have a short call, decide using evidence or team conventions, and record the outcome on the PR", "Close the PR and start over"],
+      "answer": 2,
+      "explain": "Long text threads escalate tone and lose context. A short conversation resolves most disagreements, and writing the decision back keeps the reasoning visible for future readers."
+    },
+    {
+      "question": "What is a reasonable expectation for a reviewer's first response to a ready PR?",
+      "choices": ["Within about one working day, or a note saying when or who instead", "Within a week, since review is lower priority than coding", "Only after the sprint ends", "Immediately, interrupting any focused work"],
+      "answer": 0,
+      "explain": "Slow reviews block authors and push them into costly context switches. Many teams aim for a first response within a working day, while still batching reviews to protect focus time."
+    }
+  ],
+  "practice": {
+    "prompt": "You join a team as a senior engineer. PRs wait three days for review, most are 800+ lines, comments are often blunt, and two production bugs last quarter were in code that had been approved. What do you change?",
+    "answer": "Diagnose first: measure time to first review, PR size and review rounds for a month, and read the two bug PRs to see what review missed. Then fix the system. Size: agree a soft limit (a few hundred lines), teach stacking and feature flags so large features land in steps, and separate mechanical changes. Latency: a first-response target of one working day, a rotating reviewer of the day, and reviews batched at fixed times so focus is protected. Content: a short written review guide with an order (correctness, design, tests, security, readability), labels (blocking, suggestion, nit, question) and examples of good comments. Move formatting and lint into CI so humans stop commenting on style. Turn the two escaped bugs into checks: a test pattern or lint rule each. Tone: model it in my own reviews, explain why, ask questions, approve with suggestions; give private feedback to people whose comments are harsh. Pair-review with newer engineers so they learn what to look for. Revisit the metrics after a few weeks and adjust.",
+    "rubric": [
+      "Measures before changing (latency, size, rounds, what review missed)",
+      "Reduces PR size with stacking, flags and separate mechanical changes",
+      "Sets a review latency target with a practical mechanism (rotation, batching)",
+      "Defines review focus and comment labels in a written guide",
+      "Automates style and turns escaped bugs into CI checks",
+      "Addresses tone and mentoring by modelling and pairing"
+    ]
+  },
+  "links": {
+    "lessons": ["behavioral-collaboration-leadership", "behavioral-technical-communication", "behavioral-tradeoffs-conflict"],
+    "guides": ["clean-code", "testing-strategy", "testing-your-code", "observability"]
+  }
+}

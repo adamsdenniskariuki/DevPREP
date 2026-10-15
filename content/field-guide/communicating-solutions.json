@@ -1,0 +1,313 @@
+{
+  "id": "communicating-solutions",
+  "kind": "guide",
+  "topic": "algorithms",
+  "level": "se",
+  "title": "Communicating your solution in a coding interview",
+  "summary": "Clarify first, state a brute force, name the pattern, narrate trade-offs and finish with complexity, so the interviewer can follow and credit your thinking, not just your code.",
+  "minutes": 13,
+  "principle": "The interviewer can only grade what they can see. Make your reasoning visible: confirm the problem, say the simple solution and its cost, explain why and how you improve it, think aloud while you code, and close with tested code and a complexity summary.",
+  "why": "A coding round produces two things: code and evidence of how you think. Interview feedback forms usually ask about problem solving, coding, testing and communication separately, and silence leaves most of those boxes blank. Two candidates with the same final code can get very different write-ups if one explained the brute force, the trade-off that led to a hash map and the edge cases they checked, while the other typed quietly for twenty minutes.\n\nGood communication is structured, not chatty. **Clarify** the inputs, outputs and constraints, and write a couple of examples. **State a brute force** with its complexity, which proves you understand the problem and gives a fallback. **Name the pattern** you are moving to (sliding window, heap of size k, BFS) and why the constraints point there. **Narrate** while coding at the level of intent (\"now I shrink the window until it is valid again\"), not syntax. When stuck, **say where** you are stuck; that turns a hint into a collaboration. **Finish** with tests and a one-line summary of time and space.\n\nAt senior level the same structure stretches further: discuss how you would test it properly, what the API should look like, and what changes when the input no longer fits in memory or arrives as a stream. Keep that to a minute or two unless the interviewer follows up.",
+  "diagrams": [
+    {
+      "id": "comm-phases",
+      "type": "timeline",
+      "title": "What to say in each phase of a 45-minute round",
+      "alt": "Timeline of an illustrative 45-minute coding interview, with what the candidate communicates in each phase: restate and clarify, examples, brute force with complexity, optimised approach and pattern, narrated coding, testing aloud, complexity summary, and senior-level extensions and questions.",
+      "caption": "Illustrative timings, not a rule. The order matters more than the minutes: agree on the problem and the plan before you write code.",
+      "events": [
+        { "at": "0-5 min", "label": "Restate the problem; ask about input size, duplicates, empty input, output format", "kind": "trigger" },
+        { "at": "5-8 min", "label": "Write two examples with expected outputs and confirm them with the interviewer", "kind": "trigger" },
+        { "at": "8-11 min", "label": "State a brute force and its complexity; say what makes it slow", "kind": "impact" },
+        { "at": "11-15 min", "label": "Name the pattern that removes the slow part; agree the plan before coding", "kind": "impact" },
+        { "at": "15-30 min", "label": "Code while narrating intent; flag shortcuts you would clean up later", "kind": "impact" },
+        { "at": "30-37 min", "label": "Test aloud: trace an example, walk edge cases, fix what you find", "kind": "detect" },
+        { "at": "37-40 min", "label": "Summarise time and space complexity and the main trade-off", "kind": "mitigate" },
+        { "at": "40-45 min", "label": "Follow-ups (scale, streaming, API, tests), then your questions", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "comm-clarify-seq",
+      "type": "sequence",
+      "title": "A clarification dialogue for \"top k frequent words\"",
+      "alt": "Sequence diagram. The candidate restates the problem of returning the k most frequent words, then asks about ties, whether k can exceed the number of distinct words, the input size and case sensitivity. The interviewer answers each. The candidate writes an example, states a brute force, proposes a hash map plus a size-k heap and gets agreement before coding.",
+      "caption": "Five short questions, each tied to a decision in the code. Clarifying is not stalling when every answer changes something.",
+      "actors": [
+        { "id": "cand", "label": "Candidate" },
+        { "id": "intv", "label": "Interviewer" },
+        { "id": "board", "label": "Whiteboard" }
+      ],
+      "messages": [
+        { "from": "cand", "to": "intv", "label": "Return the k most frequent words?", "note": "Restating catches a misread prompt in seconds instead of at minute 30." },
+        { "from": "cand", "to": "intv", "label": "How should ties be ordered?", "note": "This decides the comparator, which is where most bugs in this problem live." },
+        { "from": "intv", "to": "cand", "label": "Alphabetical on ties", "style": "reply" },
+        { "from": "cand", "to": "intv", "label": "Can k exceed distinct words?", "style": "sync" },
+        { "from": "intv", "to": "cand", "label": "No, 1 <= k <= distinct", "style": "reply" },
+        { "from": "cand", "to": "intv", "label": "Roughly how many words? Case?", "note": "Size picks the complexity target; case decides whether to normalise." },
+        { "from": "intv", "to": "cand", "label": "Up to 10^5, all lowercase", "style": "reply" },
+        { "from": "cand", "to": "board", "label": "a b a c b a, k=2 -> [a, b]", "note": "An example with expected output doubles as the first test." },
+        { "from": "cand", "to": "intv", "label": "Brute: count, sort all: n log n", "note": "Say the simple answer and its cost first." },
+        { "from": "cand", "to": "intv", "label": "Better: count + size-k heap", "note": "Name the pattern and the gain: with m distinct words, the top-k step is O(m log k) instead of O(m log m) for a full sort." },
+        { "from": "intv", "to": "cand", "label": "Sounds good, go ahead", "style": "reply", "note": "Agreement on the plan before coding saves rewrites." }
+      ]
+    },
+    {
+      "id": "comm-silent-compare",
+      "type": "compare",
+      "title": "Silent coding vs a narrated approach",
+      "alt": "Side-by-side comparison. On the left, the candidate reads the prompt, codes silently, gets stuck without saying so, and the interviewer has to guess what they were thinking. On the right, the candidate clarifies, states brute force and the optimisation, codes while narrating, and finishes with tests and a complexity summary.",
+      "caption": "Same problem, same final code. Only the right-hand candidate leaves evidence for every part of the feedback form.",
+      "before": {
+        "label": "Silent: the interviewer guesses",
+        "nodes": [
+          { "id": "read", "label": "Reads prompt", "kind": "client", "col": 0, "row": 0 },
+          { "id": "code", "label": "Codes silently", "kind": "bad", "col": 1, "row": 0, "sub": "20 quiet minutes" },
+          { "id": "stuck", "label": "Stuck, silent", "kind": "bad", "col": 2, "row": 0 },
+          { "id": "guess", "label": "No evidence", "kind": "bad", "col": 2, "row": 1, "sub": "weak write-up" }
+        ],
+        "edges": [
+          { "from": "read", "to": "code" },
+          { "from": "code", "to": "stuck" },
+          { "from": "stuck", "to": "guess", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Narrated: reasoning on the record",
+        "nodes": [
+          { "id": "clar", "label": "Clarify", "kind": "client", "col": 0, "row": 0, "sub": "+ two examples" },
+          { "id": "plan", "label": "Brute, then opt", "kind": "state", "col": 1, "row": 0, "sub": "pattern named" },
+          { "id": "code", "label": "Narrated code", "kind": "service", "col": 2, "row": 0 },
+          { "id": "close", "label": "Tests + Big-O", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "clar", "to": "plan" },
+          { "from": "plan", "to": "code", "label": "agreed plan" },
+          { "from": "code", "to": "close" }
+        ]
+      }
+    },
+    {
+      "id": "comm-signals",
+      "type": "chart",
+      "title": "Communication habits: time they cost vs signal they send",
+      "alt": "Chart with time cost on the horizontal axis and signal strength on the vertical axis. Silent coding costs nothing and sends little. A complexity summary is cheap and fairly strong. Clarifying questions are cheap and strong. Naming the pattern is cheap and moderately strong. Narrating trade-offs costs a little more and is strong. Stating brute force first costs a few minutes and is moderately strong. Testing your own code costs the most and sends the strongest signal.",
+      "caption": "Rough positions from common interview rubrics, not measurements. The cheap habits on the left are the easiest points to collect.",
+      "x": { "label": "Time it costs you", "low": "seconds", "high": "minutes" },
+      "y": { "label": "Signal it sends", "low": "weak", "high": "strong" },
+      "points": [
+        { "label": "Silent coding", "x": 0, "y": 1 },
+        { "label": "Big-O summary", "x": 1, "y": 6 },
+        { "label": "Clarifying questions", "x": 2, "y": 8, "highlight": true },
+        { "label": "Naming the pattern", "x": 3, "y": 4 },
+        { "label": "Brute force first", "x": 6, "y": 5 },
+        { "label": "Trade-offs aloud", "x": 6, "y": 8 },
+        { "label": "Testing own code", "x": 8, "y": 10 }
+      ]
+    },
+    {
+      "id": "comm-stuck",
+      "type": "flow",
+      "title": "Stuck? Strategies to try out loud",
+      "alt": "Flow diagram. From the stuck decision, one path tries a smaller example, then the brute force, then scanning known patterns, which leads to being unblocked. Another path says where exactly you are stuck, takes the interviewer's hint, and also leads to being unblocked.",
+      "caption": "Say each strategy as you try it. Even if a hint is needed, the interviewer sees a structured search instead of silence.",
+      "nodes": [
+        { "id": "stuck", "label": "Stuck?", "kind": "decision", "col": 0, "row": 1 },
+        { "id": "small", "label": "Shrink example", "kind": "state", "col": 1, "row": 0, "sub": "solve by hand" },
+        { "id": "brute", "label": "Brute force", "kind": "state", "col": 2, "row": 0, "sub": "where is it slow?" },
+        { "id": "patterns", "label": "Scan patterns", "kind": "state", "col": 3, "row": 0, "sub": "map, window, heap" },
+        { "id": "say", "label": "Say where stuck", "kind": "client", "col": 2, "row": 2, "sub": "exact sub-problem" },
+        { "id": "hint", "label": "Take the hint", "kind": "external", "col": 3, "row": 2, "sub": "build on it" },
+        { "id": "go", "label": "Unblocked", "kind": "good", "col": 4, "row": 1 }
+      ],
+      "edges": [
+        { "from": "stuck", "to": "small", "label": "first" },
+        { "from": "small", "to": "brute" },
+        { "from": "brute", "to": "patterns", "label": "remove waste" },
+        { "from": "patterns", "to": "go" },
+        { "from": "stuck", "to": "say", "label": "after ~3-5 min", "style": "async" },
+        { "from": "say", "to": "hint", "style": "reply" },
+        { "from": "hint", "to": "go" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Shrink the input and solve it by hand, out loud. The steps you take by hand often are the algorithm." },
+        { "edges": [1], "text": "Go back to the brute force and ask which work it repeats. Repeated work is what a better structure removes." },
+        { "edges": [2, 3], "text": "Scan the patterns that fit the constraints: a hash map for lookups, a window for contiguous ranges, a heap for top k, BFS for fewest steps, DP for overlapping choices." },
+        { "edges": [4], "text": "If a few minutes pass without progress, say exactly where you are stuck: \"I can find the window, but I don't know how to shrink it in O(1).\"" },
+        { "edges": [5, 6], "text": "Treat the hint as data. Repeat it in your own words, connect it to your plan and continue. Using a hint well is a positive signal." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Clarify before you code",
+      "bad": {
+        "label": "Straight to the keyboard",
+        "lang": "text",
+        "code": "Interviewer: \"Find the longest substring without repeating characters.\"\nCandidate: \"OK.\" (starts typing a sliding window)\n... 15 minutes later: \"Wait, is it case-sensitive? Can it be empty?\""
+      },
+      "good": {
+        "label": "Short questions, each tied to a decision",
+        "lang": "text",
+        "code": "\"Return the length, or the substring itself?\"      -> return type\n\"Any characters, or just lowercase letters?\"       -> map vs 26-slot array\n\"Can the string be empty?\"                         -> return 0, test case\n\"Rough length, thousands or millions?\"            -> O(n) needed?\nExample: \"abcabcbb\" -> 3 (\"abc\"). Agreed?"
+      },
+      "why": "Every question changes the code, the data structure or a test, so it reads as engineering rather than stalling. Late questions force rewrites and suggest you did not understand the problem."
+    },
+    {
+      "title": "State the brute force, then optimise with a reason",
+      "bad": {
+        "label": "Jump to a named trick",
+        "lang": "text",
+        "code": "\"This is a sliding window problem.\" (starts coding)"
+      },
+      "good": {
+        "label": "Simple answer, its cost, the waste, the fix",
+        "lang": "text",
+        "code": "\"Brute force: check every substring for repeats, O(n^3),\n or O(n^2) if I grow each start with a set.\n The waste: when I hit a repeat I restart from the next start\n and re-check characters I already know are unique.\n A sliding window keeps them: move the left edge past the\n earlier copy instead of restarting. Each index enters and\n leaves once, so O(n) time and O(alphabet) space.\""
+      },
+      "why": "Naming a pattern without the path to it can look memorised. Showing the brute force, the repeated work and how the pattern removes it demonstrates the reasoning the interviewer is scoring, and leaves you a correct fallback if the optimisation stalls."
+    },
+    {
+      "title": "Close with a complexity summary",
+      "bad": {
+        "label": "Trail off",
+        "lang": "text",
+        "code": "\"...and that should work. I think it's pretty fast.\""
+      },
+      "good": {
+        "label": "One sentence each for time, space and the trade-off",
+        "lang": "text",
+        "code": "\"Time O(n + m log k): one pass over n words to count, then\n each of the m distinct words does a push/pop on a size-k heap.\n Space O(m) for the counts plus O(k) for the heap.\n If k is close to m, sorting all counts is simpler and\n about as fast.\""
+      },
+      "why": "Saying where each term comes from proves the numbers are derived, not guessed. Naming when the simpler option wins shows judgement rather than reflexive optimisation."
+    },
+    {
+      "title": "Senior depth: production concerns in two minutes",
+      "bad": {
+        "label": "Stop at the algorithm",
+        "lang": "text",
+        "code": "Interviewer: \"Anything else you'd consider if this shipped?\"\nCandidate: \"No, it's optimal.\""
+      },
+      "good": {
+        "label": "Tests, API shape and scale, briefly",
+        "lang": "text",
+        "code": "\"Tests: the edge cases we traced as unit tests, plus a\n randomised check against the sort-everything version.\n API: take an iterable and k, return a list; reject k <= 0.\n Scale: if words stream in and don't fit in memory, I'd\n keep approximate counts (count-min sketch plus a heap)\n and say the answer becomes approximate.\""
+      },
+      "why": "Senior interviewers look for the step from puzzle to product: how you would prove it works, how others would call it, and what breaks at larger sizes. Keep it short and only go deep where the interviewer follows."
+    }
+  ],
+  "checklist": [
+    "Restate the problem in one sentence and ask about input size, duplicates, empty input, output format and tie-breaking.",
+    "Write one or two examples with expected outputs and get agreement.",
+    "State a brute force and its time and space before optimising.",
+    "Explain which work the brute force repeats and name the pattern that removes it.",
+    "Agree the plan with the interviewer before writing code.",
+    "Narrate intent while coding (\"now I shrink the window\"), not syntax.",
+    "When stuck, say where; try a smaller example, the brute force and the pattern list out loud.",
+    "Repeat a hint in your own words and build on it.",
+    "Test aloud before saying done.",
+    "Finish with time and space complexity and where each term comes from.",
+    "At SSE level, mention tests, API shape and what changes at scale, briefly."
+  ],
+  "antipatterns": [
+    {
+      "title": "Going quiet when stuck",
+      "bad": {
+        "label": "Minutes of silence, then a guess",
+        "lang": "text",
+        "code": "(4 minutes of silence, typing and deleting)\n\"Maybe... a heap? I'm not sure.\""
+      },
+      "better": {
+        "label": "Say what you know and where the gap is",
+        "lang": "text",
+        "code": "\"I can count frequencies in O(n). The open question is\n getting the top k without sorting everything. Options:\n sort counts, a size-k heap, or bucket by count.\n Let me compare those.\""
+      },
+      "why": "Silence gives the interviewer nothing to grade and nothing to hint at. Stating the known part and the precise gap shows structured thinking and lets a hint land exactly where it helps."
+    },
+    {
+      "title": "Defending against a hint",
+      "bad": {
+        "label": "Treat the hint as an attack",
+        "lang": "text",
+        "code": "Interviewer: \"What if the input were sorted?\"\nCandidate: \"It isn't sorted, so that doesn't apply.\""
+      },
+      "better": {
+        "label": "Explore it out loud",
+        "lang": "text",
+        "code": "\"If it were sorted I could use two pointers instead of\n a set. Sorting costs O(n log n), which still beats my\n O(n^2). Let me check whether sorting loses anything we\n need, like original indexes.\""
+      },
+      "why": "Hints are usually nudges toward the intended approach. Engaging with them, including checking what they cost, shows coachability, one of the things interviewers are often asked to assess."
+    },
+    {
+      "title": "Over-clarifying to avoid starting",
+      "bad": {
+        "label": "Ten minutes of questions",
+        "lang": "text",
+        "code": "\"What about Unicode? Null input? Concurrent callers?\n Should it be generic? What language version? Can I use\n the standard library? What if memory is very small? ...\""
+      },
+      "better": {
+        "label": "Ask what changes the solution; state assumptions",
+        "lang": "text",
+        "code": "\"I'll assume ASCII and a non-null string; I'll handle\n empty. Size up to 10^5, so I'm aiming for O(n).\n Stop me if any of that is wrong.\""
+      },
+      "why": "Clarifying should take a few minutes, not a third of the round. Questions that do not change the algorithm can be stated as assumptions, which keeps momentum and still shows you noticed them."
+    }
+  ],
+  "interview": [
+    "Open with a one-sentence restatement and three to five questions, each tied to a decision (data structure, return type, an edge case).",
+    "Say the brute force and its complexity even if you already see the optimal approach; it takes thirty seconds and proves understanding.",
+    "Name the pattern and the reason: \"contiguous range and a validity condition, so a sliding window\".",
+    "Ask \"Does this plan sound reasonable before I code it?\" to catch a wrong direction early.",
+    "While coding, narrate intent at the level of blocks; flag shortcuts (\"I'd extract this helper in real code\").",
+    "When given a hint, paraphrase it, connect it to your plan and continue.",
+    "End with tests and a complexity summary; at SSE level add a short note on testing, API shape and scale."
+  ],
+  "quiz": [
+    {
+      "question": "You already see the optimal approach. Why still mention the brute force?",
+      "choices": ["Interviewers require two solutions", "It shows you understand the problem, gives a fallback and sets up the optimisation", "It fills time if you finish early"],
+      "answer": 1,
+      "explain": "The brute force proves you understood the problem, names the work that is wasted, and explains why the better pattern helps. It costs under a minute and is a safe answer if the optimisation stalls."
+    },
+    {
+      "question": "Which clarifying question is most useful for \"top k frequent words\"?",
+      "choices": ["What programming language should I use?", "How should words with equal counts be ordered?", "Is this used in production?", "Can I use a whiteboard?"],
+      "answer": 1,
+      "explain": "Tie-breaking decides the comparator and the expected output, and it is where many wrong answers on this problem come from. The others rarely change the solution."
+    },
+    {
+      "question": "You have been stuck for four minutes. What is the best next move?",
+      "choices": ["Keep thinking silently so you don't look weak", "Say what you have, where exactly you are stuck and which options you are weighing", "Ask the interviewer for the answer", "Switch to a different problem"],
+      "answer": 1,
+      "explain": "Stating the known part and the precise gap shows structured thinking and lets the interviewer give a targeted hint. Silence leaves nothing to evaluate."
+    },
+    {
+      "question": "What makes a complexity summary convincing?",
+      "choices": ["Saying \"it's linear\" quickly", "Stating time and space and where each term comes from", "Quoting the best known bound for the problem"],
+      "answer": 1,
+      "explain": "\"O(n + m log k): one pass to count, then a size-k heap operation per distinct word\" shows the bound is derived from your code. A bare claim could be a guess."
+    },
+    {
+      "question": "At SSE level the interviewer asks what else you would consider if this shipped. Which answer fits best?",
+      "choices": ["\"Nothing, the algorithm is optimal.\"", "A ten-minute design of a distributed system", "Brief notes on tests, API shape and what changes when input no longer fits in memory"],
+      "answer": 2,
+      "explain": "Senior signal comes from connecting the puzzle to production concerns concisely. Going deep without being asked eats the time left for follow-ups."
+    }
+  ],
+  "practice": {
+    "prompt": "Mock round: \"Given an array of meeting intervals, return the minimum number of rooms needed.\" Talk through the first ten minutes as you would in the interview, from clarification to an agreed plan, then summarise how you would close.",
+    "answer": "Restate: return the smallest number of rooms so no two overlapping meetings share one. Clarify: are intervals [start, end) so a meeting ending at 10 frees the room for one starting at 10 (yes, assume half-open); can the list be empty (return 0); size up to about 10^5, so aim for O(n log n). Example: [[0,30],[5,10],[15,20]] gives 2. Brute force: for each meeting, count how many others overlap its start, O(n^2), and take the max plus one. The waste is re-scanning every meeting for each start. Better: sort by start and keep a min-heap of end times; for each meeting, pop the earliest end if it is <= the start (room freed), then push this end. The heap size at the end is the answer. Alternatively sort starts and ends separately and sweep with two pointers. Ask whether that plan sounds good, then code while narrating. Close by tracing the example, checking empty, touching intervals and all-overlapping, and stating O(n log n) time for the sort and heap, O(n) space. At SSE level mention that the API should validate start < end, and that for a calendar service you would compute per day or per building rather than over all time.",
+    "rubric": [
+      "Restates the problem and clarifies boundary semantics (touching meetings) and empty input",
+      "Writes an example with the expected answer",
+      "States a brute force with its complexity and the repeated work",
+      "Names the heap or sweep pattern and explains why it removes the waste",
+      "Checks the plan with the interviewer before coding",
+      "Closes with tests and a derived complexity summary"
+    ]
+  },
+  "links": {
+    "lessons": ["hash-map-complements", "sliding-window-distinct", "heaps-top-k", "greedy-interval-selection", "two-pointers-sorted-pairs", "dp-nonadjacent-sum"],
+    "problems": ["most-frequent-k", "longest-distinct-stretch", "rooms-needed", "count-pair-sums", "merge-overlaps", "lru-cache"],
+    "guides": ["testing-your-code", "edge-case-checklist", "complexity-reasoning", "pattern-recognition"]
+  }
+}

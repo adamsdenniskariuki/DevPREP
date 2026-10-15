@@ -1,0 +1,266 @@
+{
+  "id": "complexity-reasoning",
+  "kind": "guide",
+  "topic": "algorithms",
+  "level": "se",
+  "title": "Complexity reasoning: deriving Big-O instead of guessing it",
+  "summary": "Derive time and space from the code: count loop work by what moves, sum recursion trees level by level, amortise resizes, include the call stack, and check the result against the input size.",
+  "minutes": 15,
+  "principle": "Big-O is a claim you should be able to **derive**, not a label you recall. For each loop ask how many times its body runs in total; for recursion draw the tree and add the work per level; for data structures quote average and worst case; for space count every allocation, including the recursion stack. Then sanity-check the answer against n.",
+  "why": "Interviewers ask \"what is the complexity?\" for two reasons: to check the solution is fast enough for the stated n, and to see whether you understand your own code. A wrong or hand-waved answer (\"it's O(n), I think\") undermines an otherwise good solution.\n\nThe common traps are predictable. Two nested loops are not always O(n^2): if the inner pointer never moves backwards, the total is O(n). A single line can hide a loop: `x in list`, `list.pop(0)`, slicing and string concatenation all cost O(n). A recursive function that looks constant-space uses O(depth) stack. A hash map is O(1) on **average**, not in the worst case.\n\nA useful rule of thumb: a typical machine runs very roughly 10^8 simple operations per second in a compiled language, and fewer in Python. Rough feasible sizes for about a second of work are n ≤ 10–11 for O(n!), n ≤ 20–25 for O(2^n), n ≤ ~500 for O(n^3), n ≤ ~5,000–10,000 for O(n^2), n ≤ ~10^6 for O(n log n) and n ≤ ~10^7–10^8 for O(n). Treat these as an order-of-magnitude guide; constant factors matter.",
+  "diagrams": [
+    {
+      "id": "cr-recursion-tree",
+      "type": "flow",
+      "title": "Merge sort's recursion tree: n work per level, log n levels",
+      "alt": "Recursion tree for merge sort. The root handles n elements. It splits into two children of n over 2, which split into four grandchildren of n over 4. A note beside each level says the merge work on that level totals n, and a final note says there are about log2 n levels, so the total is n log n.",
+      "caption": "Add the work level by level, not node by node. Equal work per level times log n levels gives O(n log n); the master theorem is a shortcut for the same picture.",
+      "nodes": [
+        { "id": "root", "label": "sort(n)", "kind": "state", "col": 2, "row": 0, "sub": "merge: n" },
+        { "id": "l", "label": "sort(n/2)", "kind": "state", "col": 1, "row": 1, "sub": "merge: n/2" },
+        { "id": "r", "label": "sort(n/2)", "kind": "state", "col": 3, "row": 1, "sub": "merge: n/2" },
+        { "id": "ll", "label": "sort(n/4)", "kind": "state", "col": 0, "row": 2 },
+        { "id": "lr", "label": "sort(n/4)", "kind": "state", "col": 1, "row": 2 },
+        { "id": "rl", "label": "sort(n/4)", "kind": "state", "col": 3, "row": 2 },
+        { "id": "rr", "label": "sort(n/4)", "kind": "state", "col": 4, "row": 2 },
+        { "id": "lvl", "label": "Each level: n", "kind": "note", "col": 2, "row": 2, "sub": "2^k nodes × n/2^k" },
+        { "id": "leaves", "label": "n leaves of 1", "kind": "state", "col": 2, "row": 3, "sub": "log2 n levels down" },
+        { "id": "total", "label": "Total n log n", "kind": "good", "col": 2, "row": 4, "sub": "levels × n" }
+      ],
+      "edges": [
+        { "from": "root", "to": "l", "label": "half" },
+        { "from": "root", "to": "r", "label": "half" },
+        { "from": "l", "to": "ll" },
+        { "from": "l", "to": "lr" },
+        { "from": "r", "to": "rl" },
+        { "from": "r", "to": "rr" },
+        { "from": "lvl", "to": "leaves", "label": "keep halving", "style": "async" },
+        { "from": "leaves", "to": "total", "style": "reply" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "The root splits n items into two halves and later merges them in O(n). That is level 0: total work n." },
+        { "edges": [2, 3, 4, 5], "text": "Level 1 has two calls of size n/2, each merging in n/2, so the level still costs n. Level 2 has four calls of n/4: again n. Each level doubles the count and halves the size." },
+        { "edges": [6], "text": "Halving stops when sizes reach 1, after about log2 n levels. For n = 10^5 that is about 17 levels." },
+        { "edges": [7], "text": "n per level times log n levels gives O(n log n). The master theorem case T(n) = 2T(n/2) + O(n) says the same thing: work is balanced across levels, so multiply by the depth. Space is O(n) for the merge buffer plus O(log n) stack." }
+      ]
+    },
+    {
+      "id": "cr-growth-bars",
+      "type": "bars",
+      "title": "Estimated time at n = 100,000 (rule of thumb: 10^8 ops/s)",
+      "alt": "Bar chart of estimated milliseconds at n equals 100,000 assuming about 10 to the 8 simple operations per second. O of n is 1 millisecond, O of n log n is about 17 milliseconds, O of n to the 1.5 is about 316 milliseconds, and O of n squared is 100,000 milliseconds, which is 100 seconds.",
+      "caption": "Arithmetic: n = 10^5 → 1 ms; n log2 n ≈ 1.66 × 10^6 → ~17 ms; n√n ≈ 3.16 × 10^7 → ~316 ms; n^2 = 10^10 → ~100 s. Only the constant factor is a guess; the ratios are exact.",
+      "unit": "est. ms at 10^8 ops/s",
+      "bars": [
+        { "label": "O(n)", "value": 1, "highlight": true },
+        { "label": "O(n log n)", "value": 16.6 },
+        { "label": "O(n^1.5)", "value": 316 },
+        { "label": "O(n^2)", "value": 100000 }
+      ]
+    },
+    {
+      "id": "cr-nested-compare",
+      "type": "compare",
+      "title": "Two nested loops: true O(n^2) vs amortised O(n)",
+      "alt": "Side-by-side comparison. On the left, an inner index j restarts from i plus 1 for every i, so the body runs about n squared over two times. On the right, a sliding window has an outer loop moving right and an inner while loop moving left, but left only ever moves forward, so across the whole run it advances at most n times and the total is about 2n.",
+      "caption": "Do not count loops; count how far each index travels in total. An index that never moves backwards contributes O(n) overall.",
+      "before": {
+        "label": "Inner index restarts: O(n^2)",
+        "nodes": [
+          { "id": "i", "label": "for i in 0..n", "kind": "state", "col": 0, "row": 0 },
+          { "id": "j", "label": "j = i + 1", "kind": "state", "col": 1, "row": 0, "sub": "restart each i" },
+          { "id": "body", "label": "body runs", "kind": "bad", "col": 2, "row": 0, "sub": "n(n-1)/2 times" }
+        ],
+        "edges": [
+          { "from": "i", "to": "j" },
+          { "from": "j", "to": "body", "label": "to n" }
+        ]
+      },
+      "after": {
+        "label": "Inner index only moves forward: O(n)",
+        "nodes": [
+          { "id": "r", "label": "for right", "kind": "state", "col": 0, "row": 0, "sub": "n steps" },
+          { "id": "l", "label": "while: left++", "kind": "state", "col": 1, "row": 0, "sub": "never resets" },
+          { "id": "body", "label": "<= 2n moves", "kind": "good", "col": 2, "row": 0, "sub": "left + right" }
+        ],
+        "edges": [
+          { "from": "r", "to": "l", "label": "if invalid" },
+          { "from": "l", "to": "body" }
+        ]
+      }
+    },
+    {
+      "id": "cr-space-time-chart",
+      "type": "chart",
+      "title": "\"Contains a duplicate?\" — time vs extra space",
+      "alt": "Trade-off chart for detecting a duplicate in an array, with time cost on the vertical axis and extra space on the horizontal axis. Nested loops use no extra space but quadratic time. Sorting in place then scanning uses little space and n log n time. A hash set uses linear space and linear average time. A bitset over a small value range uses space proportional to the range and linear time.",
+      "caption": "Positions are rough. Most complexity questions are really a time-for-space trade; name both axes when you compare options.",
+      "x": { "label": "Extra space", "low": "O(1)", "high": "O(n) or more" },
+      "y": { "label": "Time", "low": "O(n)", "high": "O(n^2)" },
+      "points": [
+        { "label": "Nested loops", "x": 0, "y": 10 },
+        { "label": "Sort in place + scan", "x": 2, "y": 5 },
+        { "label": "Hash set", "x": 7, "y": 1, "highlight": true },
+        { "label": "Bitset (small range)", "x": 5, "y": 0 }
+      ]
+    },
+    {
+      "id": "cr-amortised-timeline",
+      "type": "timeline",
+      "title": "Dynamic array growth: occasional copies, O(1) amortised push",
+      "alt": "Timeline of pushes into a dynamic array that doubles its capacity when full. Most pushes are cheap writes. Resizes happen at pushes 2, 3, 5, 9 and 17, copying 1, 2, 4, 8 and 16 elements. After 17 pushes the total copies are 31, fewer than 2 times 17.",
+      "caption": "Copies form 1 + 2 + 4 + … < 2n, so n pushes cost O(n) in total and O(1) each on average, even though one push can cost O(n).",
+      "events": [
+        { "at": "push 1", "label": "Write into capacity 1", "kind": "trigger" },
+        { "at": "push 2", "label": "Full: allocate 2, copy 1 element", "kind": "impact" },
+        { "at": "push 3", "label": "Full: allocate 4, copy 2 elements", "kind": "impact" },
+        { "at": "push 4", "label": "Cheap write, capacity 4", "kind": "trigger" },
+        { "at": "push 5", "label": "Full: allocate 8, copy 4 elements", "kind": "impact" },
+        { "at": "push 6-8", "label": "Three cheap writes", "kind": "trigger" },
+        { "at": "push 9", "label": "Full: allocate 16, copy 8 elements", "kind": "impact" },
+        { "at": "push 17", "label": "Full: allocate 32, copy 16 elements", "kind": "impact" },
+        { "at": "after 17", "label": "31 copies + 17 writes: under 3 operations per push", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Spot the hidden loop inside one line",
+      "bad": {
+        "label": "`x in list` scans: O(n^2) overall",
+        "lang": "py",
+        "code": "def has_duplicate(nums):\n    seen = []\n    for x in nums:\n        if x in seen:      # scans the list: O(n) each time\n            return True\n        seen.append(x)\n    return False"
+      },
+      "good": {
+        "label": "Set membership: O(n) average overall",
+        "lang": "py",
+        "code": "def has_duplicate(nums):\n    seen = set()\n    for x in nums:\n        if x in seen:      # hash lookup: O(1) on average\n            return True\n        seen.add(x)\n    return False"
+      },
+      "why": "The loops look identical; the cost is in the container. Learn the cost of the operations you call: list membership, `list.pop(0)`, `list.insert(0, x)` and slicing are all O(n) in Python."
+    },
+    {
+      "title": "Name every variable in the answer",
+      "bad": {
+        "label": "One letter for everything",
+        "lang": "text",
+        "code": "\"Group anagrams: it's O(n log n) because we sort.\""
+      },
+      "good": {
+        "label": "Define n and k, then derive",
+        "lang": "text",
+        "code": "n = number of words, k = longest word length.\nSorting each word: O(k log k); n words: O(n · k log k).\nCounting letters instead: O(n · k).\nSpace: O(n · k) for the keys and groups."
+      },
+      "why": "Problems with strings, grids or graphs have more than one size. Using a single n hides the real cost and invites a follow-up question you could have answered up front."
+    }
+  ],
+  "checklist": [
+    "Define each size variable (n, m, k, V, E, word length) before stating a complexity.",
+    "For each loop, count total iterations across the whole run, not per outer iteration; an index that never moves back is O(n) total.",
+    "Look inside library calls: membership in a list, slicing, `pop(0)`, string concatenation and sorting all have a cost.",
+    "For recursion, draw the tree: branching factor, depth and work per node; sum per level.",
+    "Quote hash map and hash set operations as O(1) average and O(n) worst case.",
+    "Count space for every structure you allocate, the output if it is not free, and the recursion stack (O(depth)).",
+    "For operations that are sometimes expensive (resizes, rebalancing, stack pops), give the amortised cost and say it is amortised.",
+    "Check the result against the bound on n with the rough 10^8 simple operations per second rule of thumb."
+  ],
+  "antipatterns": [
+    {
+      "title": "Claiming O(1) space for a recursive solution",
+      "bad": {
+        "label": "\"No extra data structures, so O(1) space\"",
+        "lang": "py",
+        "code": "def tree_height(node):\n    if node is None:\n        return 0\n    return 1 + max(tree_height(node.left), tree_height(node.right))\n# claimed: O(n) time, O(1) space"
+      },
+      "better": {
+        "label": "Stack depth is the height h",
+        "lang": "py",
+        "code": "# O(n) time, O(h) space for the call stack:\n# O(log n) if balanced, O(n) for a chain.\n# CPython's default recursion limit is 1000, so a\n# 10^5-node chain needs an explicit stack instead."
+      },
+      "why": "Every pending call keeps a frame. On a degenerate tree the depth equals n, which is both an O(n) space cost and, in Python, a real crash risk."
+    },
+    {
+      "title": "Slicing inside a \"logarithmic\" search",
+      "bad": {
+        "label": "Recursive binary search that copies halves",
+        "lang": "py",
+        "code": "def contains(a, x):\n    if not a:\n        return False\n    mid = len(a) // 2\n    if a[mid] == x:\n        return True\n    return contains(a[:mid], x) if x < a[mid] else contains(a[mid + 1:], x)\n# looks O(log n); slices cost n/2 + n/4 + ... = O(n)"
+      },
+      "better": {
+        "label": "Move indexes, never copy",
+        "lang": "py",
+        "code": "def contains(a, x):\n    lo, hi = 0, len(a) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if a[mid] == x:\n            return True\n        if a[mid] < x:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return False\n# O(log n) time, O(1) space"
+      },
+      "why": "The comparisons are logarithmic but each slice allocates and copies. The geometric sum of copies is O(n) time and memory, which defeats the purpose of binary search."
+    },
+    {
+      "title": "Treating hash maps as O(1) with no qualifier",
+      "bad": {
+        "label": "Unqualified claim",
+        "lang": "text",
+        "code": "\"Lookups are O(1), so the whole thing is O(n), guaranteed.\""
+      },
+      "better": {
+        "label": "Average vs worst case, said once",
+        "lang": "text",
+        "code": "\"O(n) expected: hash lookups are O(1) on average.\nWith many collisions a lookup can degrade to O(n)\n(some implementations bound this, e.g. Java 8+ uses\ntrees in crowded buckets). If I need a guarantee,\nsorting gives O(n log n) worst case.\""
+      },
+      "why": "Interviewers at senior level often probe this. One sentence on average versus worst case, and an alternative with a guaranteed bound, shows you know where the O(1) comes from."
+    }
+  ],
+  "interview": [
+    "State complexity with named variables and both resources: \"O(n · k) time and O(n · k) space, where k is the longest word.\"",
+    "Derive it out loud in one or two sentences: \"Each index enters and leaves the window once, so the inner loop is O(n) in total.\"",
+    "Before coding, convert the bound into a budget: \"n is 10^5, so O(n^2) is about 10^10 steps, too slow; I need O(n log n) or better.\"",
+    "For recursion, sketch the tree on the whiteboard and sum by level; mention stack depth as space.",
+    "Say \"amortised\" and \"expected\" when they apply, and offer a worst-case-safe alternative if asked."
+  ],
+  "quiz": [
+    {
+      "question": "A sliding window has an outer `for` over `right` and an inner `while` that advances `left`. `left` never decreases. What is the time complexity?",
+      "choices": ["O(n^2) because loops are nested", "O(n) because each index moves at most n times in total", "O(n log n)", "O(log n)"],
+      "answer": 1,
+      "explain": "Count total movement: `right` moves n times and `left` moves at most n times across the whole run. The inner loop's cost is spread across outer iterations, so the total is O(n)."
+    },
+    {
+      "question": "What is the complexity of T(n) = 2T(n/2) + O(n)?",
+      "choices": ["O(n)", "O(n log n)", "O(n^2)", "O(log n)"],
+      "answer": 1,
+      "explain": "The recursion tree has log n levels and each level does n total work, so O(n log n). This is the merge sort recurrence."
+    },
+    {
+      "question": "A dynamic array doubles its capacity when full. What is the amortised cost of one push?",
+      "choices": ["O(1)", "O(log n)", "O(n)", "O(n log n)"],
+      "answer": 0,
+      "explain": "Copies sum to 1 + 2 + 4 + … < 2n over n pushes, so the total is O(n) and the average per push is O(1). A single push that triggers a resize is still O(n)."
+    },
+    {
+      "question": "A recursive DFS visits every node of a tree of height h with no other data structures. What is its extra space?",
+      "choices": ["O(1)", "O(h) for the call stack", "O(n^2)", "O(log h)"],
+      "answer": 1,
+      "explain": "Each pending call holds a stack frame, and the deepest chain of pending calls is the height. That is O(log n) for a balanced tree and O(n) for a path-shaped one."
+    },
+    {
+      "question": "n is up to 10^5. Using the rough 10^8 simple operations per second rule, which complexity is safely feasible within about a second?",
+      "choices": ["O(n^2)", "O(n^2 log n)", "O(n log n)", "O(2^n)"],
+      "answer": 2,
+      "explain": "n log2 n ≈ 1.7 × 10^6 steps, well within budget. n^2 = 10^10 would take on the order of 100 seconds; the others are worse."
+    }
+  ],
+  "practice": {
+    "prompt": "You wrote: for each word in a list of n words (each up to k letters), sort its letters and use the sorted string as a key in a hash map to group anagrams. State and justify the time and space complexity, and say how you would make it faster.",
+    "answer": "Define n = number of words and k = maximum word length. Sorting one word costs O(k log k); doing it for n words is O(n · k log k). Building the key string is O(k), and hashing a k-length key and inserting is O(k) on average, which is dominated by the sort. Total: O(n · k log k) time, average case. Space: the map holds every word once plus a key per group, O(n · k), and each sort uses O(k) temporary space. Faster: replace sorting with a 26-entry letter count as the key (for lowercase English letters), giving O(n · k) time; space stays O(n · k). Worst case for the hash map is O(n) per operation with pathological collisions, but that is unlikely with a good hash. For n = 10^4 and k = 100 both versions are fast; the count key matters when k is large.",
+    "rubric": [
+      "Defines n and k separately instead of a single n",
+      "Derives O(n · k log k) time from per-word sort cost",
+      "Accounts for hashing and key-building cost being O(k)",
+      "States O(n · k) space and mentions temporary sort space",
+      "Proposes the letter-count key for O(n · k) and notes its alphabet assumption",
+      "Qualifies hash map cost as average case"
+    ]
+  },
+  "links": {
+    "lessons": ["sorting-stable-merge", "recursion-fast-power", "binary-search-lower-bound", "hash-map-complements", "sliding-window-distinct", "two-pointers-sorted-pairs", "trees-bst-validation", "dp-grid-paths"],
+    "problems": ["group-by-letters", "has-nearby-duplicate", "longest-distinct-stretch", "integer-square-root", "tree-height", "longest-rising-subsequence", "running-median", "merge-sorted-streams", "min-stack-ops"],
+    "guides": ["pattern-recognition", "edge-case-checklist", "testing-your-code", "communicating-solutions"]
+  }
+}
