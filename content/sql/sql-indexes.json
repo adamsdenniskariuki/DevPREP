@@ -1,0 +1,1487 @@
+{
+  "id": "sql-indexes",
+  "track": "sql",
+  "title": "Indexes: B-tree, composite, partial, GIN",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How a B-tree finds rows and walks ranges, Index Scan versus Index Only Scan versus Bitmap scans, selectivity and when a Seq Scan is right, composite indexes (leftmost prefix, equality before range, sort order for `ORDER BY ... LIMIT`), `INCLUDE`, partial, expression and unique indexes, GIN for `jsonb`/arrays/full-text, why some predicates cannot use an index, and the write cost and safe rollout of every index.",
+  "prerequisites": [
+    "sql-select-basics",
+    "sql-joins"
+  ],
+  "prerequisiteNotes": "sql-select-basics: `WHERE`, `ORDER BY ... LIMIT` and NULL comparisons, which are exactly the clauses an index serves. sql-joins: join keys and foreign keys, because the most common missing index is the one on a join or foreign key column.",
+  "objectives": [
+    "Explain how a B-tree answers an equality lookup and a range, and when the planner prefers an Index Scan, an Index Only Scan, a Bitmap scan or a Seq Scan.",
+    "Design a composite index from a query shape: equality columns first, then the range or sort columns, with directions that match `ORDER BY`.",
+    "Use `INCLUDE`, partial, expression and unique indexes for covering reads, hot subsets, computed lookups and constraints.",
+    "Spot predicates an index cannot serve (`lower(col)`, `col + 1`, leading-wildcard `LIKE`, `->>` with a GIN index) and rewrite them or index the expression.",
+    "Weigh every index's write and storage cost, and ship one to production with `CREATE INDEX CONCURRENTLY`."
+  ],
+  "concepts": [
+    {
+      "title": "How a B-tree finds rows",
+      "body": "A Postgres table is a **heap**: rows sit in 8 kB pages in no particular order, and each row has an address, its TID (`ctid`: page and item number). A B-tree index is a separate, sorted structure of `(key, TID)` entries. Lookups start at the **root page**, follow separator keys down through **branch pages**, and land on a **leaf page**; with hundreds of entries per page the tree is 3–4 levels deep even for hundreds of millions of rows, so a lookup is a handful of page reads, O(log n). Leaf pages are linked to their neighbours, so a range (`BETWEEN`, `>=`/`<`, `ORDER BY ... LIMIT`) descends once and then walks sideways, in either direction. The index alone does not hold the row or its visibility, so a normal **Index Scan** visits the heap for each match. `PRIMARY KEY` and `UNIQUE` create a B-tree automatically; it is also the default `CREATE INDEX` type and supports `=`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `IN`, `IS NULL` and prefix `LIKE 'abc%'` (with the C collation or a `text_pattern_ops` index).",
+      "code": "CREATE INDEX tickets_created_idx ON tickets (created_at);\n\n-- Served by a descent plus a leaf walk:\nSELECT id FROM tickets WHERE created_at >= '2025-03-01' AND created_at < '2025-04-01';\nSELECT id FROM tickets ORDER BY created_at DESC LIMIT 20;   -- backward walk, no sort\n\n-- Where does a row live? (page, item)\nSELECT ctid, id FROM tickets LIMIT 3;",
+      "diagram": "sqi-btree"
+    },
+    {
+      "title": "Index Scan, Index Only Scan, Bitmap scan, and when a Seq Scan wins",
+      "body": "An **Index Scan** walks the index and fetches each row from the heap as it goes; the output comes back in index order, which is ideal for few rows or for `ORDER BY ... LIMIT`. An **Index Only Scan** answers from the index alone when every column the query needs is in it; it still checks the **visibility map**, and pages not marked all-visible (recently changed, not yet vacuumed) need a heap visit, so it is fastest on tables that `VACUUM` keeps up with. A **Bitmap scan** first collects matching TIDs from one or more indexes into a bitmap (combining indexes with `BitmapAnd`/`BitmapOr`), then reads the heap pages in physical order, each page once; it suits a medium number of rows and loses index order. A **Seq Scan** reads every page sequentially. The planner picks by estimated cost: **selectivity** (the fraction of rows that match, estimated from `ANALYZE` statistics) times the price of random versus sequential page reads. When a query needs a large share of the table, random heap visits cost more than reading everything, so a Seq Scan is the correct plan, not a missing index. On tiny tables the Seq Scan almost always wins too, which is why lab checks set `enable_seqscan = off` to ask \"could an index be used?\".",
+      "code": "EXPLAIN (ANALYZE, BUFFERS)\nSELECT id, title FROM tickets WHERE org_id = 7 AND created_at >= '2025-03-01';\n-- Read the plan bottom-up: node type, Index Cond vs Filter,\n-- estimated rows vs actual rows, and buffers (pages) read.\n\n-- Statistics the planner uses for selectivity:\nANALYZE tickets;\nSELECT attname, n_distinct, most_common_vals\nFROM pg_stats WHERE tablename = 'tickets';"
+    },
+    {
+      "title": "Composite indexes: leftmost prefix, equality before range, sort order",
+      "body": "A composite B-tree on `(a, b, c)` is sorted by `a`, then by `b` within each `a`, then by `c`. It can narrow a search on any **leftmost prefix** (`a`; `a, b`; `a, b, c`). With equality on the leading columns, the matching entries are one contiguous run, so a range or sort on the **next** column is served inside that run. Hence the rule: **equality columns first, then one range or sort column**. In `(org_id, created_at)` the query `org_id = 7 AND created_at >= X` reads only org 7's recent entries; in `(created_at, org_id)` it must read every entry in the date range for every org and check `org_id` on each. Once a column is used as a range, later columns cannot narrow the run further; they only filter entries. The same index serves `WHERE org_id = 7 ORDER BY created_at DESC LIMIT 20` with no sort, because a backward walk gives descending order. Mixed directions (`ORDER BY priority DESC, created_at ASC`) need an index declared with the same mix, `(priority DESC, created_at)`, or its exact reverse. Do not order columns by \"most selective first\"; order them by the query shape. PostgreSQL 18 adds **skip scan**, which can use `(a, b)` for a condition on `b` alone when `a` has few distinct values, but a matching index is still the reliable design.",
+      "code": "CREATE INDEX tickets_org_created_idx ON tickets (org_id, created_at);\n\n-- All served by the one index:\nSELECT id FROM tickets WHERE org_id = 7;                                -- leftmost prefix\nSELECT id FROM tickets WHERE org_id = 7 AND created_at >= '2025-03-01'; -- equality + range\nSELECT id FROM tickets WHERE org_id = 7 ORDER BY created_at DESC LIMIT 20; -- no sort\n\n-- Mixed directions need a matching declaration:\nCREATE INDEX tickets_queue_idx ON tickets (org_id, priority DESC, created_at);",
+      "diagram": "sqi-composite"
+    },
+    {
+      "title": "Covering indexes with INCLUDE",
+      "body": "To get an **Index Only Scan** the index must contain every column the query reads. Adding columns to the key works but makes every inner page bigger and changes what the index sorts and enforces. `INCLUDE (cols)` (PostgreSQL 11+, B-tree) stores extra **payload** columns in the leaf entries only: they cannot be searched or sorted on and do not count for uniqueness, but they let the query skip the heap. A common shape is `CREATE UNIQUE INDEX ON users (email) INCLUDE (id)`: uniqueness on `email` alone, and the login lookup returns `id` from the index. Costs: a wider index, and every update of an included column must update the index (it also prevents HOT updates). Only cover hot queries, and check `Heap Fetches` in `EXPLAIN ANALYZE`: a high number means the visibility map is stale and the \"index only\" scan is visiting the heap anyway.",
+      "code": "CREATE INDEX tickets_org_created_cov ON tickets (org_id, created_at) INCLUDE (title);\n\n-- Can be answered from the index alone:\nSELECT created_at, title FROM tickets WHERE org_id = 7 ORDER BY created_at DESC LIMIT 20;\n\n-- Uniqueness on the key only; id rides along:\nCREATE UNIQUE INDEX users_email_key ON users (email) INCLUDE (id);"
+    },
+    {
+      "title": "Sargable predicates and expression indexes",
+      "body": "An index on `email` stores `email` values, so it helps only when the predicate compares the **bare column** with something the planner can compute once (a constant or parameter). Wrap the column and it stops: `lower(email) = 'a@x.io'`, `created_at::date = '2025-03-01'`, `price + 1 = 10`, `coalesce(region, '') = 'eu'`, and comparing an `int` column with a `numeric` value all filter row by row. Rewrite to move the work to the constant side (`price = 10 - 1`, `created_at >= '2025-03-01' AND created_at < '2025-03-02'`), or index the expression itself: `CREATE INDEX ON users (lower(email))`. An **expression index** is used only when the query repeats the expression exactly, the function must be `IMMUTABLE`, and `ANALYZE` gathers statistics for it. `LIKE 'abc%'` is a range on a B-tree (with the C collation or a `text_pattern_ops` index), but a leading wildcard, `LIKE '%abc'`, has no start point in sorted order; that needs a trigram GIN index (`pg_trgm`) or full-text search. `OR` across different columns can use a `BitmapOr` of two indexes, but not one composite index.",
+      "code": "-- Not sargable: the index on email stores email, not lower(email)\nSELECT id FROM users WHERE lower(email) = 'ana@shop.io';\nCREATE INDEX users_email_lower_idx ON users (lower(email));  -- now it is\n\n-- Rewrite instead of wrapping the column\nSELECT id FROM orders WHERE created_at::date = '2025-03-01';                       -- no\nSELECT id FROM orders WHERE created_at >= '2025-03-01' AND created_at < '2025-03-02'; -- yes\nSELECT id FROM items WHERE price + 1 = 10;   -- no\nSELECT id FROM items WHERE price = 10 - 1;   -- yes"
+    },
+    {
+      "title": "Partial indexes",
+      "body": "`CREATE INDEX ... WHERE predicate` indexes only the rows that satisfy the predicate. When nearly every query targets a small, hot subset (open tickets, pending jobs, unprocessed outbox rows, non-deleted users), a **partial index** is a fraction of the size, stays in memory, and writes to rows outside the predicate do not touch it. The planner uses it only when it can prove the query's `WHERE` implies the index predicate, so write the condition the same way (`status = 'open'` in both; a parameter `status = $1` in a generic plan cannot prove it). Partial **unique** indexes express rules a table constraint cannot: \"at most one active subscription per user\" or \"emails unique among live users\" with soft deletes. Watch two things: `INSERT ... ON CONFLICT` must repeat the predicate (`ON CONFLICT (user_id) WHERE active`), and a foreign key cannot reference a partial unique index.",
+      "code": "-- 2% of tickets are open; the queue only ever asks for open ones\nCREATE INDEX tickets_open_queue_idx\n  ON tickets (org_id, priority DESC, created_at)\n  WHERE status = 'open';\n\n-- One active subscription per user; any number of past ones\nCREATE UNIQUE INDEX one_active_sub ON subscriptions (user_id) WHERE active;\nINSERT INTO subscriptions (user_id, plan, active) VALUES (42, 'pro', true)\nON CONFLICT (user_id) WHERE active DO UPDATE SET plan = EXCLUDED.plan;",
+      "diagram": "sqi-partial"
+    },
+    {
+      "title": "Unique indexes are constraints",
+      "body": "A unique index is how Postgres enforces `PRIMARY KEY` and `UNIQUE`: an insert or update that would create a second equal key fails with `unique_violation` (SQLSTATE `23505`), and the check is safe under concurrency because the second writer waits on the first. `CREATE UNIQUE INDEX` can express what a table constraint cannot: uniqueness of an expression (`lower(email)`), or of a subset (partial). NULLs are **distinct** by default, so a unique column accepts any number of NULLs; PostgreSQL 15+ offers `UNIQUE NULLS NOT DISTINCT` when one NULL should be the limit. Prefer a declared constraint when one fits (it documents intent and can be the target of a foreign key); you can create the index concurrently first and then attach it with `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX`. Remember the opposite direction too: Postgres indexes the referenced side of a foreign key, not the referencing column, so `tickets.assignee_id` needs its own index for joins and for `ON DELETE` checks.",
+      "code": "-- Case-insensitive uniqueness and a fast login lookup in one index\nCREATE UNIQUE INDEX users_email_lower_key ON users (lower(email));\n\n-- At most one NULL allowed (PostgreSQL 15+)\nCREATE TABLE devices (serial text UNIQUE NULLS NOT DISTINCT);\n\n-- Build without blocking writes, then promote to a constraint\nCREATE UNIQUE INDEX CONCURRENTLY accounts_handle_idx ON accounts (handle);\nALTER TABLE accounts ADD CONSTRAINT accounts_handle_key UNIQUE USING INDEX accounts_handle_idx;"
+    },
+    {
+      "title": "GIN for jsonb, arrays and full-text search",
+      "body": "A B-tree indexes one value per row. **GIN** (generalized inverted index) indexes many keys per row: each element of an array, each key and value of a `jsonb` document, each lexeme of a `tsvector`, and stores for each key a **posting list** of the rows containing it. A query such as `doc @> '{\"plan\":\"pro\"}'` or `tags @> ARRAY['urgent']` or `search @@ to_tsquery('refund')` looks up keys and intersects their lists. GIN supports only bitmap scans. The default `jsonb_ops` class supports `@>`, `?`, `?|`, `?&`, `@?` and `@@`; `jsonb_path_ops` supports only `@>`, `@?` and `@@` but is smaller and faster for containment. GIN does **not** serve `doc->>'plan' = 'pro'`: write `@>` instead, or add a B-tree expression index on `(doc->>'plan')`. Writes are expensive (one posting-list update per key), which GIN softens with a **pending list** (`fastupdate`) merged later by vacuum; the cost is less predictable read latency.",
+      "code": "CREATE INDEX accounts_doc_gin  ON accounts USING gin (doc jsonb_path_ops);\nCREATE INDEX tickets_tags_gin  ON tickets  USING gin (tags);\nCREATE INDEX articles_fts_gin  ON articles USING gin (to_tsvector('english', body));\n\nSELECT id FROM accounts WHERE doc @> '{\"plan\": \"pro\"}';      -- uses the GIN index\nSELECT id FROM accounts WHERE doc->>'plan' = 'pro';           -- does not\nSELECT id FROM tickets  WHERE tags @> ARRAY['urgent'];\nSELECT id FROM articles WHERE to_tsvector('english', body) @@ to_tsquery('english', 'refund');",
+      "diagram": "sqi-gin"
+    },
+    {
+      "title": "Every index has a price",
+      "body": "Each index is a second copy of some columns that must be kept in sync. Every `INSERT` adds an entry to **every** index, every `DELETE` leaves entries for vacuum to clean, and an `UPDATE` normally writes a new row version plus a new entry in every index. The exception is a **HOT** (heap-only tuple) update: if no indexed column changed and the page has room, Postgres skips index maintenance, so indexing a frequently updated column (`last_seen_at`, `status`) can multiply write cost. More indexes also mean more WAL (replication lag, backup size), more memory competing for cache, longer vacuums and slower planning. Random keys such as UUIDv4 insert all over the B-tree and split pages; time-ordered keys (`bigint` identity, `uuidv7()` in PostgreSQL 18) append at the right edge. So index for measured query shapes, merge overlapping indexes (`(a)` is redundant next to `(a, b)`), and drop what `pg_stat_user_indexes.idx_scan` shows is unused, checking every replica first.",
+      "code": "-- Indexes never scanned since statistics were reset (check every replica)\nSELECT relname, indexrelname, idx_scan,\n       pg_size_pretty(pg_relation_size(indexrelid)) AS size\nFROM pg_stat_user_indexes\nORDER BY idx_scan, pg_relation_size(indexrelid) DESC;\n\n-- How many updates were HOT?\nSELECT relname, n_tup_upd, n_tup_hot_upd FROM pg_stat_user_tables;"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Design the index for a query, aloud",
+      "body": "The support dashboard runs `SELECT id, title FROM tickets WHERE org_id = $1 AND created_at >= $2 AND created_at < $3`. Say the shape first: one equality (`org_id`) and one range (`created_at`). Then the numbers: 1.2 million tickets, a year of history, org 7 owns about 1%, so March for org 7 is about 1,000 rows, under 0.1% of the table, which is selective enough for an index. Then the order: equality first, range last, so `(org_id, created_at)` makes the answer one contiguous run of the index. Contrast the alternatives out loud: `(org_id)` alone reads all 12,000 of org 7's rows and filters by date; `(created_at, org_id)` reads all 100,000 March entries across every org; two single-column indexes give a `BitmapAnd` that still reads both lists. Finish with what you would check: `EXPLAIN (ANALYZE, BUFFERS)` shows `Index Cond` on both columns and rows close to the estimate, and the dashboard's other query (`WHERE org_id = $1` alone) is served by the same index as its leftmost prefix.",
+      "code": "CREATE INDEX CONCURRENTLY tickets_org_created_idx ON tickets (org_id, created_at);\n\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT id, title FROM tickets\nWHERE org_id = 7 AND created_at >= '2025-03-01' AND created_at < '2025-04-01';\n-- Look for: Index Cond: ((org_id = 7) AND (created_at >= ...) AND (created_at < ...))\n-- and no separate Filter line for either column.",
+      "diagram": "sqi-rows"
+    },
+    {
+      "title": "The index exists but the plan ignores it",
+      "body": "Work through causes from cheapest to check. **1. The predicate is not sargable**: a function or cast on the column (`lower(email)`, `created_at::date`), arithmetic on the column, a leading-wildcard `LIKE`, or a type mismatch. Rewrite or index the expression. **2. The index does not match the shape**: the filtered column is not a leftmost prefix, or the `ORDER BY` directions do not match. **3. Statistics are stale or misleading**: estimated rows far from actual rows in `EXPLAIN ANALYZE`; run `ANALYZE`, raise the column's statistics target, or add extended statistics for correlated columns. **4. The plan is right**: the query returns a large share of the table, or the table is tiny. **5. Generic plans**: a prepared statement may switch to a generic plan that cannot use a partial index whose predicate depends on a parameter. To test whether an index is usable at all, `SET enable_seqscan = off` in a session and look at the plan; never ship that setting.",
+      "code": "SET enable_seqscan = off;   -- diagnosis only: \"can this index be used?\"\nEXPLAIN (COSTS OFF) SELECT id FROM users WHERE lower(email) = 'ana@shop.io';\n-- Seq Scan on users / Disabled: true / Filter: (lower(email) = ...)\n-- => no usable index for lower(email)\nRESET enable_seqscan;\n\nEXPLAIN (ANALYZE) SELECT id FROM tickets WHERE status = 'open';\n-- rows=50 estimated vs rows=40000 actual => run ANALYZE tickets"
+    },
+    {
+      "title": "Ship an index to a busy table",
+      "body": "A plain `CREATE INDEX` takes a `SHARE` lock: reads continue but every `INSERT`, `UPDATE` and `DELETE` waits until the build finishes, minutes to hours on a large table. In production use `CREATE INDEX CONCURRENTLY`. It holds only `SHARE UPDATE EXCLUSIVE`, scans the table twice and waits for older transactions between phases, so it is slower and one long-running transaction can stall it. It **cannot run inside a transaction block**, so disable the migration framework's wrapping transaction for that step, and run one index per migration. Set a `lock_timeout` so the brief catalog locks never queue behind a long lock. If it fails (deadlock, unique violation, cancellation) it leaves an **INVALID** index that is still maintained on every write but never used: find it with `pg_index.indisvalid = false`, then `DROP INDEX CONCURRENTLY` and retry. `REINDEX CONCURRENTLY` (PostgreSQL 12+) rebuilds a bloated index the same way.",
+      "code": "SET lock_timeout = '5s';\nCREATE INDEX CONCURRENTLY IF NOT EXISTS tickets_assignee_idx ON tickets (assignee_id);\n\n-- Did it finish valid?\nSELECT c.relname, i.indisvalid\nFROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid\nWHERE i.indrelid = 'tickets'::regclass;\n\n-- Clean up a failed build and retry\nDROP INDEX CONCURRENTLY IF EXISTS tickets_assignee_idx;",
+      "diagram": "sqi-concurrently"
+    }
+  ],
+  "example": "-- A support app's indexes, each justified by a query shape.\nCREATE TABLE tickets (\n  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- B-tree, appends at the right edge\n  org_id      int NOT NULL,\n  assignee_id int REFERENCES agents(id),\n  status      text NOT NULL,\n  priority    int NOT NULL,\n  created_at  timestamptz NOT NULL DEFAULT now(),\n  tags        text[] NOT NULL DEFAULT '{}'\n);\n\n-- Dashboard: org's tickets in a date range, newest first\nCREATE INDEX CONCURRENTLY tickets_org_created_idx ON tickets (org_id, created_at);\n-- Agent view and FK checks on agents: the referencing side is not indexed automatically\nCREATE INDEX CONCURRENTLY tickets_assignee_idx ON tickets (assignee_id);\n-- Queue: open tickets only, priority high to low, oldest first\nCREATE INDEX CONCURRENTLY tickets_open_queue_idx\n  ON tickets (org_id, priority DESC, created_at) WHERE status = 'open';\n-- Tag filter: tags @> ARRAY['urgent']\nCREATE INDEX CONCURRENTLY tickets_tags_gin ON tickets USING gin (tags);\n\nSELECT id FROM tickets\nWHERE org_id = 7 AND status = 'open'\nORDER BY priority DESC, created_at\nLIMIT 20;   -- Limit -> Index Scan using tickets_open_queue_idx, no Sort",
+  "task": "Tables `agents(id, name)` and `tickets(id, org_id, assignee_id, status, created_at, title)`; `assignee_id` references `agents` and may be NULL. Write `CREATE INDEX` statements so that both of these queries can use an index: (1) `SELECT id, title FROM tickets WHERE org_id = $1 AND created_at >= $2 AND created_at < $3`, where **both** conditions must be applied inside one index (the plan's `Index Cond` lists `org_id` and then `created_at`, not a `Filter` and not a `BitmapAnd` of two indexes); (2) `SELECT id, title FROM tickets WHERE assignee_id = $1`. Do not change the data. The checker runs both queries with `enable_seqscan = off` (org 7 in March 2025, agent 42) and returns `query`, `index_ok` and `ids` (the matching ticket ids in ascending order, NULL when none); `index_ok` must be true for both rows.",
+  "starter": "-- Make both queries able to use an index:\n--   1) SELECT id, title FROM tickets WHERE org_id = $1 AND created_at >= $2 AND created_at < $3\n--   2) SELECT id, title FROM tickets WHERE assignee_id = $1\n-- One index per column looked reasonable...\nCREATE INDEX ON tickets (created_at);\nCREATE INDEX ON tickets (org_id);",
+  "hints": [
+    "Query (1) has one equality and one range. In a composite index, which of the two must come first so that org 7's March tickets sit next to each other?",
+    "Postgres creates an index for the referenced side of a foreign key (`agents.id` is the primary key), but not for the referencing column `tickets.assignee_id`."
+  ],
+  "solution": "Query (1) compares `org_id` with one value and `created_at` with a range, so the index is `(org_id, created_at)`: sorted by org first and by time within each org, org 7's March tickets form one contiguous run that the scan enters with one descent and leaves at the first April entry, and the plan shows `Index Cond: ((org_id = 7) AND (created_at >= ...) AND (created_at < ...))`. The reverse order `(created_at, org_id)` is usable but reads every org's March entries and only narrows by `org_id` entry by entry; the starter's two single-column indexes give either one index plus a `Filter`, or a `BitmapAnd` that reads 12,000 org entries and 100,000 March entries to intersect them. Query (2) needs its own index: `assignee_id` is a foreign key, and Postgres never indexes the referencing column automatically, so without one, both this lookup and every `DELETE FROM agents` (which must check for referencing tickets) scan the whole table. Cost: two indexes to maintain on every insert, and on updates that change these columns; build them with `CREATE INDEX CONCURRENTLY` on a live table.\n\n```sql\n-- Equality column first, range column second: org 7's March tickets are one contiguous run.\nCREATE INDEX tickets_org_created_idx ON tickets (org_id, created_at);\n-- Postgres does not index the referencing side of a foreign key for you.\nCREATE INDEX tickets_assignee_idx ON tickets (assignee_id);\n```",
+  "checklist": [
+    "The equality column (`org_id`) comes before the range column (`created_at`) in the composite index.",
+    "Both conditions appear in one `Index Cond`; neither is a `Filter`, and there is no `BitmapAnd` of two single-column indexes.",
+    "The foreign key column `assignee_id` has its own index.",
+    "No redundant extra index: `(org_id)` alone is covered by `(org_id, created_at)` as its leftmost prefix.",
+    "On a live table the statements would be `CREATE INDEX CONCURRENTLY`, outside a transaction block."
+  ],
+  "pitfalls": [
+    "Ordering composite columns by \"most selective first\" instead of by the query: equality columns go first, the range or sort column after them.",
+    "Wrapping the indexed column in a function or cast (`lower(email)`, `created_at::date`, `price + 1`): the plain index cannot be used; rewrite or index the expression.",
+    "Assuming Postgres indexes foreign key columns: only the referenced side has an index, so joins and parent deletes scan the child table.",
+    "Expecting a GIN index on `jsonb` to serve `doc->>'key' = 'v'`: it serves `@>`, `?` and jsonpath operators; use containment or a B-tree expression index.",
+    "Adding an index for every query: each one slows every insert, can block HOT updates and adds WAL. Merge overlapping indexes and drop unused ones.",
+    "Running a plain `CREATE INDEX` on a busy table (it blocks writes), or `CREATE INDEX CONCURRENTLY` inside a migration transaction (it errors).",
+    "Treating a Seq Scan as a bug: for a large share of the table, or a tiny table, it is the cheapest plan."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Case-insensitive unique email",
+      "prompt": "Table `users(id, email, name)`. Emails are stored as typed (`Ana@Shop.io`). With **one** `CREATE UNIQUE INDEX` statement, make emails unique ignoring case (inserting `ANA@SHOP.IO` next to `Ana@Shop.io` must fail) and let the login lookup `SELECT id FROM users WHERE lower(email) = lower($1)` use the index. The checker returns `probe`, `passed`, `ids`: one row for the lookup (the matching ids for `ana@shop.io`) and one for a duplicate insert in the other letter case.",
+      "hints": [
+        "A unique index on `email` treats `Ana@Shop.io` and `ana@shop.io` as different values, and it stores `email`, not `lower(email)`.",
+        "Index the expression the query uses: `ON users (lower(email))`. One index then gives both the constraint and the lookup."
+      ],
+      "solution": "CREATE UNIQUE INDEX users_email_lower_key ON users (lower(email));",
+      "checklist": [
+        "The index is on `lower(email)`, the exact expression the lookup uses.",
+        "It is `UNIQUE`, so a second email that differs only in case is rejected with `unique_violation`.",
+        "Only one index: the expression index serves both the rule and the lookup."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Index for the open-ticket queue",
+      "prompt": "Table `tickets(id, org_id, status, priority, created_at, title)`; about 2% of tickets are `'open'`. Agents load their queue with `SELECT id FROM tickets WHERE org_id = $1 AND status = 'open' ORDER BY priority DESC, created_at LIMIT 3`. Create **one** index that (a) has `org_id` in the plan's `Index Cond`, (b) is partial, containing only open tickets (`WHERE status = 'open'`), and (c) returns rows already in `priority DESC, created_at` order so the plan has no Sort or Incremental Sort. The checker returns `org_in_index_cond`, `partial_index_used`, `no_sort` and `top_ids` (the query's ids in order) for org 7.",
+      "hints": [
+        "After the equality column, the index columns must follow the `ORDER BY` exactly, including directions: a backward scan can only flip **all** directions at once.",
+        "The partial predicate goes at the end: `CREATE INDEX ... ON tickets (...) WHERE status = 'open'`. `status` does not need to be a key column then."
+      ],
+      "solution": "CREATE INDEX tickets_open_queue_idx\n  ON tickets (org_id, priority DESC, created_at)\n  WHERE status = 'open';",
+      "checklist": [
+        "`org_id` is the leading column, so the scan enters org 7's run directly.",
+        "`priority DESC, created_at` matches the `ORDER BY` directions, so the `LIMIT` stops after 3 entries with no sort.",
+        "`WHERE status = 'open'` keeps the 98% closed tickets out of the index; the query repeats the same predicate so the planner can use it."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "You add an index and p99 write latency on the table goes up. Why, and what do you check?",
+      "answer": "Every insert now writes one more index entry (often a random page, possibly a split), and if the indexed column is updated often, those updates can no longer be HOT, so each one writes a new entry in **every** index and more WAL. Check `pg_stat_user_tables.n_tup_hot_upd` against `n_tup_upd` before and after, WAL volume and replica lag, and checkpoint activity. Fixes: narrow it to a partial index, drop the frequently updated column from the key (or from `INCLUDE`), merge it with an existing index, or lower `fillfactor` so HOT updates have room on the page."
+    },
+    {
+      "question": "How do you find and remove unused or duplicate indexes safely?",
+      "answer": "Read `pg_stat_user_indexes.idx_scan` on the primary **and every replica** (statistics are per server, and read replicas often serve the queries), over a period that includes monthly jobs, and check when statistics were last reset. Exclude indexes that back a primary key, unique constraint or exclusion constraint: they enforce rules even if never scanned. Duplicates are indexes whose columns are a leftmost prefix of another (`(a)` next to `(a, b)`), unless the narrower one is unique. Drop with `DROP INDEX CONCURRENTLY`, one at a time, and keep the definition handy so you can recreate it concurrently if a plan regresses."
+    },
+    {
+      "question": "When would you use something other than a B-tree?",
+      "answer": "GIN for many keys per row: `jsonb` containment, arrays, full-text search, and trigram `LIKE '%x%'` with `pg_trgm`. GiST for overlapping and nearest-neighbour data: ranges, geometry, and exclusion constraints such as \"no two bookings of a room overlap\". BRIN for huge append-only tables whose physical order follows a column (event time): it stores a min/max per block range, so it is tiny, but only effective while that correlation holds. Hash supports only equality and is rarely better than a B-tree. B-tree remains the default for equality, ranges and sorting."
+    },
+    {
+      "question": "In a multi-tenant schema, should `org_id` lead every index?",
+      "answer": "For tenant-scoped queries, yes: equality on `org_id` first keeps each tenant's entries contiguous, so a tenant's range or sort never reads other tenants' data, and it lines up with partitioning by tenant later. It is wrong for cross-tenant queries (an admin search by email, a global job queue), which need their own index or, from PostgreSQL 18, may get by with skip scan when there are few tenants. The rule is still query shape first: list the hot queries and design for them, not a blanket prefix."
+    },
+    {
+      "question": "The planner chooses a Seq Scan although your index matches. Is that a bug?",
+      "answer": "Usually not. Compare estimated and actual rows in `EXPLAIN (ANALYZE, BUFFERS)`. If the estimate is right and the query returns a large share of the table, sequential reads are cheaper than random heap visits. If the estimate is wrong, refresh statistics (`ANALYZE`), raise the statistics target, or add extended statistics for correlated columns. If the hardware is SSD and the data mostly cached, the default `random_page_cost = 4` overstates random I/O; 1.1–2 is common. Also check for a generic prepared plan, or a parameter type that does not match the column."
+    }
+  ],
+  "takeaways": [
+    "A B-tree descends a few pages to a leaf and walks linked leaves for ranges and `ORDER BY`; each match costs a heap visit unless the scan is index-only.",
+    "Selectivity decides the plan: Index Scan for few rows, Bitmap for a medium share, Seq Scan for a large share or a tiny table.",
+    "Composite index order follows the query: equality columns first, then one range or sort column, with matching directions.",
+    "`INCLUDE` covers a query without widening the key; partial indexes shrink an index to the hot subset; expression indexes serve `lower(col)`-style lookups.",
+    "Unique indexes enforce rules (NULLs distinct by default); foreign key columns are not indexed for you.",
+    "GIN serves `@>`, `?` and full-text `@@` on `jsonb`, arrays and `tsvector`, not `->>` equality.",
+    "Every index taxes writes, WAL and cache; build in production with `CREATE INDEX CONCURRENTLY`, outside a transaction."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqi-btree",
+        "type": "flow",
+        "title": "A B-tree range scan: descend once, then walk the leaves",
+        "alt": "Flow diagram of a B-tree index on tickets.id answering WHERE id BETWEEN 57 AND 63. The query enters at the root page, which points to a branch for keys below 50 and a branch for 50 to 99. The search follows the 50 to 99 branch down to the leaf holding keys 50 to 58, fetches the matching rows from two heap pages, then follows the leaf's right-sibling link to the leaf holding 59 to 66 and fetches its matches from a third heap page.",
+        "caption": "The tree is shallow (3–4 levels for millions of rows), leaves are sorted and linked, so a range costs one descent plus a walk; each match still needs a heap visit unless the scan is index-only.",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "id 57..63",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "BETWEEN query"
+          },
+          {
+            "id": "root",
+            "label": "root page",
+            "kind": "db",
+            "col": 2,
+            "row": 0,
+            "sub": "<50 | 50–99 | ≥100"
+          },
+          {
+            "id": "bra",
+            "label": "branch <50",
+            "kind": "state",
+            "col": 1,
+            "row": 1,
+            "sub": "not visited"
+          },
+          {
+            "id": "brb",
+            "label": "branch 50–99",
+            "kind": "state",
+            "col": 3,
+            "row": 1,
+            "sub": "<59 | ≥59"
+          },
+          {
+            "id": "leafa",
+            "label": "leaf 50–58",
+            "kind": "good",
+            "col": 2,
+            "row": 2,
+            "sub": "57→(12,4) 58→(3,1)"
+          },
+          {
+            "id": "leafb",
+            "label": "leaf 59–66",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "59..63 → TIDs"
+          },
+          {
+            "id": "h1",
+            "label": "heap page 12",
+            "kind": "storage",
+            "col": 1,
+            "row": 4,
+            "sub": "row id 57"
+          },
+          {
+            "id": "h2",
+            "label": "heap page 3",
+            "kind": "storage",
+            "col": 2,
+            "row": 4,
+            "sub": "row id 58"
+          },
+          {
+            "id": "h3",
+            "label": "heap page 40",
+            "kind": "storage",
+            "col": 4,
+            "row": 4,
+            "sub": "rows 59..63"
+          }
+        ],
+        "edges": [
+          {
+            "from": "q",
+            "to": "root",
+            "label": "descend"
+          },
+          {
+            "from": "root",
+            "to": "bra",
+            "label": "id < 50"
+          },
+          {
+            "from": "root",
+            "to": "brb",
+            "label": "50 ≤ 57 < 100"
+          },
+          {
+            "from": "brb",
+            "to": "leafa",
+            "label": "57 < 59"
+          },
+          {
+            "from": "leafa",
+            "to": "h1",
+            "label": "TID (12,4)"
+          },
+          {
+            "from": "leafa",
+            "to": "h2",
+            "label": "TID (3,1)"
+          },
+          {
+            "from": "leafa",
+            "to": "leafb",
+            "label": "right sibling"
+          },
+          {
+            "from": "leafb",
+            "to": "h3",
+            "label": "heap fetch"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              2
+            ],
+            "text": "Start at the root page and compare 57 with its separator keys: it belongs under the 50–99 branch. The `< 50` branch is never read. Each level is one page read, and the tree is only a few levels deep."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "The branch page narrows it to the leaf that holds keys 50–58. Leaf entries are sorted and each one stores the key plus a TID: the (page, item) address of the row in the heap."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "For every matching entry an Index Scan visits the heap page to read the row and check it is visible to this transaction. Rows scattered over many pages mean random I/O."
+          },
+          {
+            "edges": [
+              6,
+              7
+            ],
+            "text": "Keys continue in the right sibling leaf, which the scan reaches by its link without going back up the tree. It stops at the first key above 63. The same linked leaves serve `ORDER BY id` and backward scans for `DESC`."
+          }
+        ]
+      },
+      {
+        "id": "sqi-composite",
+        "type": "compare",
+        "title": "Column order decides how much of a composite index is read",
+        "alt": "Comparison of two composite indexes answering org_id = 7 AND created_at in March. On the left, an index on created_at then org_id sorts entries by date first, so the entries for org 3 and org 7 are interleaved and the scan reads every March entry, about 100,000, to find org 7's. On the right, an index on org_id then created_at keeps all of org 7's entries together in date order, so the scan reads one contiguous run of about 1,000 entries and never touches org 3.",
+        "caption": "Put equality columns first and the range column last: the matching entries then form one contiguous run of the index.",
+        "before": {
+          "label": "(created_at, org_id)",
+          "nodes": [
+            {
+              "id": "e1",
+              "label": "Mar 01 · org 3",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "e2",
+              "label": "Mar 01 · org 7",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "e3",
+              "label": "Mar 02 · org 3",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "e4",
+              "label": "Mar 02 · org 7",
+              "kind": "state",
+              "col": 0,
+              "row": 3
+            },
+            {
+              "id": "r",
+              "label": "read 100,000",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "every March entry"
+            },
+            {
+              "id": "k",
+              "label": "keep 1,000",
+              "kind": "state",
+              "col": 2,
+              "row": 3,
+              "sub": "org 7 only"
+            }
+          ],
+          "edges": [
+            {
+              "from": "e1",
+              "to": "r"
+            },
+            {
+              "from": "e2",
+              "to": "r"
+            },
+            {
+              "from": "e3",
+              "to": "r"
+            },
+            {
+              "from": "e4",
+              "to": "r"
+            },
+            {
+              "from": "r",
+              "to": "k",
+              "label": "filter org_id"
+            }
+          ]
+        },
+        "after": {
+          "label": "(org_id, created_at)",
+          "nodes": [
+            {
+              "id": "e1",
+              "label": "org 3 · Mar 01",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "e2",
+              "label": "org 3 · Mar 02",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "e3",
+              "label": "org 7 · Mar 01",
+              "kind": "good",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "e4",
+              "label": "org 7 · Mar 02",
+              "kind": "good",
+              "col": 0,
+              "row": 3
+            },
+            {
+              "id": "s",
+              "label": "never read",
+              "kind": "note",
+              "col": 2,
+              "row": 0,
+              "sub": "other orgs"
+            },
+            {
+              "id": "r",
+              "label": "read 1,000",
+              "kind": "good",
+              "col": 2,
+              "row": 3,
+              "sub": "one contiguous run"
+            }
+          ],
+          "edges": [
+            {
+              "from": "e1",
+              "to": "s"
+            },
+            {
+              "from": "e2",
+              "to": "s"
+            },
+            {
+              "from": "e3",
+              "to": "r"
+            },
+            {
+              "from": "e4",
+              "to": "r"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqi-partial",
+        "type": "compare",
+        "title": "A full index versus a partial index for the open queue",
+        "alt": "Comparison of two indexes for a support queue where 2 percent of 1.2 million tickets are open. On the left, a full index on org, priority and created_at holds an entry for every ticket, open or closed, 1.2 million entries, and almost all of them are never queried. On the right, the same index with WHERE status = 'open' holds only the open tickets, about 24,000 entries; closed tickets get no entry and their updates do not touch it.",
+        "caption": "When queries always filter on the same rare value, a partial index is a fraction of the size, stays in cache, and is skipped by writes to rows outside its WHERE.",
+        "before": {
+          "label": "full index, every status",
+          "nodes": [
+            {
+              "id": "o",
+              "label": "open · org 7",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "c1",
+              "label": "closed · org 7",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "c2",
+              "label": "closed · org 3",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "c3",
+              "label": "closed · org 9",
+              "kind": "state",
+              "col": 0,
+              "row": 3
+            },
+            {
+              "id": "i",
+              "label": "1.2M entries",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "98% never queried"
+            }
+          ],
+          "edges": [
+            {
+              "from": "o",
+              "to": "i"
+            },
+            {
+              "from": "c1",
+              "to": "i"
+            },
+            {
+              "from": "c2",
+              "to": "i"
+            },
+            {
+              "from": "c3",
+              "to": "i"
+            }
+          ]
+        },
+        "after": {
+          "label": "... WHERE status = 'open'",
+          "nodes": [
+            {
+              "id": "o",
+              "label": "open · org 7",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "o2",
+              "label": "open · org 3",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "c",
+              "label": "closed tickets",
+              "kind": "note",
+              "col": 0,
+              "row": 3,
+              "sub": "no entry at all"
+            },
+            {
+              "id": "i",
+              "label": "24,000 entries",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "fits in memory"
+            },
+            {
+              "id": "x",
+              "label": "not maintained",
+              "kind": "note",
+              "col": 2,
+              "row": 3,
+              "sub": "for closed rows"
+            }
+          ],
+          "edges": [
+            {
+              "from": "o",
+              "to": "i"
+            },
+            {
+              "from": "o2",
+              "to": "i"
+            },
+            {
+              "from": "c",
+              "to": "x"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqi-rows",
+        "type": "bars",
+        "title": "Rows or index entries read for org 7's March tickets",
+        "alt": "Bar chart for a table of 1.2 million tickets spread evenly over 12 months, where org 7 has 12,000 tickets and 1,000 of them in March. A sequential scan reads 1,200,000 rows. An index on org_id alone reads 12,000 entries and heap rows. An index on created_at then org_id reads the 100,000 March entries. An index on org_id then created_at reads 1,000 entries.",
+        "caption": "Same query, same result: the right column order turns a 1.2 million row scan into a 1,000 entry range (assumes 1.2M rows evenly over 12 months, org 7 owning 1%).",
+        "unit": "rows or entries read",
+        "bars": [
+          {
+            "label": "Seq Scan",
+            "value": 1200000
+          },
+          {
+            "label": "(created_at, org_id)",
+            "value": 100000
+          },
+          {
+            "label": "(org_id)",
+            "value": 12000
+          },
+          {
+            "label": "(org_id, created_at)",
+            "value": 1000,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "sqi-gin",
+        "type": "flow",
+        "title": "GIN: one posting list per key, intersected for @>",
+        "alt": "Flow diagram of a GIN index on a jsonb column with three rows. Row 1 contains plan pro and geo eu, row 2 plan free and geo eu, row 3 plan pro and geo us. The index stores one entry per key with the list of rows containing it: plan pro lists rows 1 and 3, geo eu lists rows 1 and 2, plan free lists row 2, geo us lists row 3. The query doc @> plan pro and geo eu reads two posting lists, intersects them in a bitmap to get row 1, and rechecks that row in the heap.",
+        "caption": "A GIN index inverts the data: values point to rows. Containment intersects posting lists, so it is fast for reads but every insert updates one list per key.",
+        "nodes": [
+          {
+            "id": "d1",
+            "label": "row 1",
+            "kind": "storage",
+            "col": 0,
+            "row": 0,
+            "sub": "plan:pro geo:eu"
+          },
+          {
+            "id": "d2",
+            "label": "row 2",
+            "kind": "storage",
+            "col": 0,
+            "row": 1,
+            "sub": "plan:free geo:eu"
+          },
+          {
+            "id": "d3",
+            "label": "row 3",
+            "kind": "storage",
+            "col": 0,
+            "row": 2,
+            "sub": "plan:pro geo:us"
+          },
+          {
+            "id": "k1",
+            "label": "plan:pro",
+            "kind": "db",
+            "col": 2,
+            "row": 0,
+            "sub": "rows 1, 3"
+          },
+          {
+            "id": "k2",
+            "label": "geo:eu",
+            "kind": "db",
+            "col": 2,
+            "row": 1,
+            "sub": "rows 1, 2"
+          },
+          {
+            "id": "k3",
+            "label": "plan:free",
+            "kind": "db",
+            "col": 2,
+            "row": 2,
+            "sub": "row 2"
+          },
+          {
+            "id": "k4",
+            "label": "geo:us",
+            "kind": "db",
+            "col": 2,
+            "row": 3,
+            "sub": "row 3"
+          },
+          {
+            "id": "q",
+            "label": "doc @> {...}",
+            "kind": "client",
+            "col": 4,
+            "row": 0,
+            "sub": "plan:pro geo:eu"
+          },
+          {
+            "id": "and",
+            "label": "bitmap AND",
+            "kind": "decision",
+            "col": 4,
+            "row": 1,
+            "sub": "{1,3} ∩ {1,2}"
+          },
+          {
+            "id": "heap",
+            "label": "recheck row 1",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "heap visit"
+          }
+        ],
+        "edges": [
+          {
+            "from": "d1",
+            "to": "k1"
+          },
+          {
+            "from": "d1",
+            "to": "k2"
+          },
+          {
+            "from": "d2",
+            "to": "k3"
+          },
+          {
+            "from": "d2",
+            "to": "k2"
+          },
+          {
+            "from": "d3",
+            "to": "k1"
+          },
+          {
+            "from": "d3",
+            "to": "k4"
+          },
+          {
+            "from": "q",
+            "to": "and",
+            "label": "two keys"
+          },
+          {
+            "from": "k1",
+            "to": "and",
+            "label": "posting list"
+          },
+          {
+            "from": "k2",
+            "to": "and",
+            "label": "posting list"
+          },
+          {
+            "from": "and",
+            "to": "heap",
+            "label": "row 1"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "text": "Building the index: every row is split into keys and each key gets a **posting list** of the rows that contain it. Here each key is a path with its value, which is how the `jsonb_path_ops` operator class works; the default `jsonb_ops` stores keys and values as separate items."
+          },
+          {
+            "edges": [
+              6,
+              7,
+              8
+            ],
+            "text": "`doc @> '{\"plan\":\"pro\",\"geo\":\"eu\"}'` looks up both keys and reads their posting lists: rows 1, 3 and rows 1, 2."
+          },
+          {
+            "edges": [
+              9
+            ],
+            "text": "A bitmap AND keeps row 1. GIN only supports bitmap scans, and the heap row is rechecked because the index entries alone do not prove the whole condition."
+          }
+        ]
+      },
+      {
+        "id": "sqi-concurrently",
+        "type": "sequence",
+        "title": "CREATE INDEX CONCURRENTLY on a live table",
+        "alt": "Sequence diagram with four lanes: the migration, Postgres, the new index, and the application's writes. The migration issues CREATE INDEX CONCURRENTLY. Postgres adds an invalid catalog entry, waits for transactions that started earlier, scans the table to build entries while the application keeps inserting and updating, then makes new writes maintain the index, does a second pass for rows it missed, and finally marks the index valid. If any step fails, the index is left INVALID and must be dropped and rebuilt.",
+        "caption": "Concurrent builds trade time (two scans and several waits) for never blocking writes; a plain CREATE INDEX blocks every INSERT, UPDATE and DELETE until it finishes.",
+        "actors": [
+          {
+            "id": "mig",
+            "label": "migration"
+          },
+          {
+            "id": "pg",
+            "label": "Postgres"
+          },
+          {
+            "id": "idx",
+            "label": "new index"
+          },
+          {
+            "id": "app",
+            "label": "app writes"
+          }
+        ],
+        "messages": [
+          {
+            "from": "mig",
+            "to": "pg",
+            "label": "CREATE INDEX CONCURRENTLY",
+            "note": "Takes SHARE UPDATE EXCLUSIVE: reads and writes continue. Must run outside a transaction block, so turn off your migration tool's wrapping transaction."
+          },
+          {
+            "from": "pg",
+            "to": "idx",
+            "label": "catalog entry, not valid yet"
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "wait for older transactions",
+            "style": "async",
+            "note": "A long-running transaction started before the build stalls it here. Watch pg_stat_activity."
+          },
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "INSERT / UPDATE (not blocked)"
+          },
+          {
+            "from": "pg",
+            "to": "idx",
+            "label": "pass 1: build entries"
+          },
+          {
+            "from": "app",
+            "to": "idx",
+            "label": "new writes now maintain it"
+          },
+          {
+            "from": "pg",
+            "to": "idx",
+            "label": "pass 2: add rows it missed"
+          },
+          {
+            "from": "pg",
+            "to": "mig",
+            "label": "mark valid: planner can use it",
+            "style": "reply"
+          },
+          {
+            "from": "pg",
+            "to": "mig",
+            "label": "on error: left INVALID",
+            "style": "fail",
+            "note": "An invalid index is not used for reads but is still updated by writes. DROP INDEX CONCURRENTLY, then retry."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE agents (\n  id   int PRIMARY KEY,\n  name text NOT NULL\n);\nCREATE TABLE tickets (\n  id          int PRIMARY KEY,\n  org_id      int NOT NULL,\n  assignee_id int REFERENCES agents(id),\n  status      text NOT NULL,\n  created_at  timestamptz NOT NULL,\n  title       text NOT NULL\n);",
+        "starter": "-- Make both queries able to use an index:\n--   1) SELECT id, title FROM tickets WHERE org_id = $1 AND created_at >= $2 AND created_at < $3\n--   2) SELECT id, title FROM tickets WHERE assignee_id = $1\n-- One index per column looked reasonable...\nCREATE INDEX ON tickets (created_at);\nCREATE INDEX ON tickets (org_id);",
+        "solution": "-- Equality column first, range column second: org 7's March tickets are one contiguous run.\nCREATE INDEX tickets_org_created_idx ON tickets (org_id, created_at);\n-- Postgres does not index the referencing side of a foreign key for you.\nCREATE INDEX tickets_assignee_idx ON tickets (assignee_id);",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nSELECT 'org_month' AS query,\n       bool_or(p LIKE '%Index Cond: ((org_id = 7) AND (created_at >=%') AS index_ok,\n       (SELECT array_agg(id ORDER BY id) FROM tickets\n         WHERE org_id = 7 AND created_at >= '2025-03-01' AND created_at < '2025-04-01') AS ids\nFROM plan_of($q$SELECT id, title FROM tickets WHERE org_id = 7 AND created_at >= '2025-03-01' AND created_at < '2025-04-01'$q$) AS p\nUNION ALL\nSELECT 'by_assignee',\n       bool_or(p LIKE '%Index Cond: (assignee_id = 42)%'),\n       (SELECT array_agg(id ORDER BY id) FROM tickets WHERE assignee_id = 42)\nFROM plan_of($q$SELECT id, title FROM tickets WHERE assignee_id = 42$q$) AS p",
+        "tests": [
+          {
+            "name": "org 7 in March, and agent 42's tickets",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim'), (43, 'Lee');\nINSERT INTO tickets VALUES\n  (1, 7, 42, 'open', '2025-03-02 10:00+00', 'Login fails'),\n  (2, 7, 43, 'closed', '2025-03-15 08:30+00', 'Export is slow'),\n  (3, 7, 42, 'open', '2025-02-27 12:00+00', 'Refund request'),\n  (4, 5, 42, 'open', '2025-03-10 09:00+00', 'SSO setup'),\n  (5, 7, NULL, 'open', '2025-03-31 23:59+00', 'Billing question');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    1,
+                    2,
+                    5
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  [
+                    1,
+                    3,
+                    4
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "the month is half-open: midnight on April 1 is out",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim'), (43, 'Lee');\nINSERT INTO tickets VALUES\n  (1, 7, 43, 'open', '2025-03-01 00:00+00', 'First minute'),\n  (2, 7, 43, 'open', '2025-04-01 00:00+00', 'Next month'),\n  (3, 7, 42, 'open', '2025-04-01 01:00+03', 'Still March in UTC'),\n  (4, 7, 42, 'closed', '2025-02-28 23:59:59+00', 'Last second of Feb');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    1,
+                    3
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  [
+                    3,
+                    4
+                  ]
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "neither query finds a row",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim');\nINSERT INTO tickets VALUES (1, 5, NULL, 'open', '2025-03-05 10:00+00', 'Other org'),\n  (2, 7, NULL, 'open', '2025-05-05 10:00+00', 'May ticket');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  null
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "unassigned tickets never match the assignee query",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim'), (43, 'Lee');\nINSERT INTO tickets VALUES (1, 7, NULL, 'open', '2025-03-03 10:00+00', 'a'),\n  (2, 7, NULL, 'open', '2025-03-04 10:00+00', 'b'),\n  (3, 7, 43, 'open', '2025-03-05 10:00+00', 'c');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    1,
+                    2,
+                    3
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "several orgs share the same March days",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim');\nINSERT INTO tickets VALUES (1, 3, 42, 'open', '2025-03-10 10:00+00', 'a'),\n  (2, 7, 42, 'open', '2025-03-10 10:00+00', 'b'),\n  (3, 9, 42, 'open', '2025-03-10 10:00+00', 'c'),\n  (4, 70, NULL, 'open', '2025-03-11 10:00+00', 'd'),\n  (5, 7, NULL, 'closed', '2025-03-12 10:00+00', 'e');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    2,
+                    5
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  [
+                    1,
+                    2,
+                    3
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "one ticket per month all year",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim');\nINSERT INTO tickets SELECT m, 7, CASE WHEN m % 2 = 0 THEN 42 END, 'open',\n  make_timestamptz(2025, m, 15, 12, 0, 0, 'UTC'), 'month ' || m FROM generate_series(1, 12) AS m;",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    3
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  [
+                    2,
+                    4,
+                    6,
+                    8,
+                    10,
+                    12
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a single ticket",
+            "seed": "INSERT INTO agents VALUES (42, 'Kim');\nINSERT INTO tickets VALUES (8, 7, 42, 'open', '2025-03-20 08:00+00', 'Only one');",
+            "expected": {
+              "columns": [
+                "query",
+                "index_ok",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "org_month",
+                  true,
+                  [
+                    8
+                  ]
+                ],
+                [
+                  "by_assignee",
+                  true,
+                  [
+                    8
+                  ]
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE users (\n  id    int PRIMARY KEY,\n  email text NOT NULL,\n  name  text NOT NULL\n);",
+        "starter": "-- One statement: emails unique ignoring case, and the login lookup\n--   SELECT id FROM users WHERE lower(email) = lower($1)\n-- must be able to use the index.\nCREATE UNIQUE INDEX ON users (email);",
+        "solution": "CREATE UNIQUE INDEX users_email_lower_key ON users (lower(email));",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nCREATE TEMP TABLE probe (probe text, passed boolean, ids int[]);\nINSERT INTO probe\nSELECT 'lookup uses an index',\n       bool_or(p LIKE '%Index Cond: (lower(email) =%'),\n       (SELECT array_agg(id ORDER BY id) FROM users WHERE lower(email) = 'ana@shop.io')\nFROM plan_of($q$SELECT id FROM users WHERE lower(email) = 'ana@shop.io'$q$) AS p;\nDO $$ BEGIN\n  BEGIN\n    INSERT INTO users (id, email, name)\n    SELECT 1000, CASE WHEN email = upper(email) THEN lower(email) ELSE upper(email) END, 'dup'\n    FROM users ORDER BY id LIMIT 1;\n    INSERT INTO probe VALUES ('other-case duplicate rejected', false, NULL);\n  EXCEPTION WHEN unique_violation THEN\n    INSERT INTO probe VALUES ('other-case duplicate rejected', true, NULL);\n  END;\nEND $$;\nSELECT probe, passed, ids FROM probe",
+        "tests": [
+          {
+            "name": "mixed-case stored email is found",
+            "seed": "INSERT INTO users VALUES (1, 'Ana@Shop.io', 'Ana'), (2, 'bo@shop.io', 'Bo');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  [
+                    1
+                  ]
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "nobody has that email",
+            "seed": "INSERT INTO users VALUES (1, 'cy@shop.io', 'Cy'), (2, 'di@shop.io', 'Di');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  null
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "stored in lower case already",
+            "seed": "INSERT INTO users VALUES (5, 'ana@shop.io', 'Ana');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  [
+                    5
+                  ]
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "stored in upper case",
+            "seed": "INSERT INTO users VALUES (3, 'bo@shop.io', 'Bo'), (9, 'ANA@SHOP.IO', 'Ana');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  [
+                    9
+                  ]
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "look-alike emails do not match",
+            "seed": "INSERT INTO users VALUES (1, 'anna@shop.io', 'Anna'), (2, 'ana@shop.io.evil', 'Eve'),\n  (3, ' ana@shop.io', 'Spacey'), (4, 'ana@shop.com', 'Other');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  null
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "many users, one match",
+            "seed": "INSERT INTO users SELECT g, 'user' || g || '@shop.io', 'u' || g FROM generate_series(1, 12) AS g;\nINSERT INTO users VALUES (13, 'Ana@SHOP.io', 'Ana');",
+            "expected": {
+              "columns": [
+                "probe",
+                "passed",
+                "ids"
+              ],
+              "rows": [
+                [
+                  "lookup uses an index",
+                  true,
+                  [
+                    13
+                  ]
+                ],
+                [
+                  "other-case duplicate rejected",
+                  true,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE tickets (\n  id         int PRIMARY KEY,\n  org_id     int NOT NULL,\n  status     text NOT NULL,\n  priority   int NOT NULL,\n  created_at timestamptz NOT NULL,\n  title      text NOT NULL\n);",
+        "starter": "-- One index for the agent queue:\n--   SELECT id FROM tickets WHERE org_id = $1 AND status = 'open'\n--   ORDER BY priority DESC, created_at LIMIT 3\nCREATE INDEX ON tickets (org_id, priority, created_at);",
+        "solution": "CREATE INDEX tickets_open_queue_idx\n  ON tickets (org_id, priority DESC, created_at)\n  WHERE status = 'open';",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nWITH plan AS (\n  SELECT p FROM plan_of($q$SELECT id FROM tickets WHERE org_id = 7 AND status = 'open'\n                          ORDER BY priority DESC, created_at LIMIT 3$q$) AS p\n), partial AS (\n  SELECT indexname FROM pg_indexes\n  WHERE tablename = 'tickets' AND indexdef LIKE '%WHERE (status = ''open''::text)%'\n)\nSELECT EXISTS (SELECT 1 FROM plan WHERE p LIKE '%Index Cond: %(org_id = 7)%') AS org_in_index_cond,\n       EXISTS (SELECT 1 FROM plan JOIN partial ON plan.p LIKE ('%using ' || partial.indexname || ' on%')) AS partial_index_used,\n       NOT EXISTS (SELECT 1 FROM plan WHERE p LIKE '%Sort%') AS no_sort,\n       ARRAY(SELECT id FROM tickets WHERE org_id = 7 AND status = 'open'\n             ORDER BY priority DESC, created_at LIMIT 3) AS top_ids",
+        "tests": [
+          {
+            "name": "highest priority first, oldest first within a priority",
+            "seed": "INSERT INTO tickets VALUES\n  (1, 7, 'open', 2, '2025-03-01 09:00+00', 'a'),\n  (2, 7, 'open', 3, '2025-03-02 09:00+00', 'b'),\n  (3, 7, 'closed', 5, '2025-03-03 09:00+00', 'c'),\n  (4, 7, 'open', 3, '2025-03-01 12:00+00', 'd'),\n  (5, 7, 'open', 1, '2025-02-01 09:00+00', 'e'),\n  (6, 5, 'open', 5, '2025-03-01 09:00+00', 'f');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    4,
+                    2,
+                    1
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "fewer than three open tickets",
+            "seed": "INSERT INTO tickets VALUES (1, 7, 'open', 1, '2025-03-01 09:00+00', 'a'),\n  (2, 7, 'closed', 4, '2025-03-01 10:00+00', 'b'),\n  (3, 7, 'pending', 5, '2025-03-01 11:00+00', 'c');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    1
+                  ]
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "org 7 has no open tickets",
+            "seed": "INSERT INTO tickets VALUES (1, 7, 'closed', 5, '2025-03-01 09:00+00', 'a'),\n  (2, 8, 'open', 5, '2025-03-01 09:00+00', 'b');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  []
+                ]
+              ]
+            }
+          },
+          {
+            "name": "urgent tickets of other orgs are ignored",
+            "seed": "INSERT INTO tickets VALUES (1, 6, 'open', 9, '2025-01-01 09:00+00', 'a'), (2, 8, 'open', 9, '2025-01-01 09:00+00', 'b'),\n  (3, 7, 'open', 1, '2025-03-01 09:00+00', 'c'), (4, 7, 'open', 2, '2025-03-05 09:00+00', 'd'),\n  (5, 70, 'open', 9, '2025-01-01 09:00+00', 'e');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    4,
+                    3
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "closed high-priority tickets never fill the queue",
+            "seed": "INSERT INTO tickets SELECT g, 7, 'closed', 9, make_timestamptz(2025, 1, g, 9, 0, 0, 'UTC'), 'old' FROM generate_series(1, 10) AS g;\nINSERT INTO tickets VALUES (11, 7, 'open', 2, '2025-03-01 09:00+00', 'x'), (12, 7, 'open', 2, '2025-02-01 09:00+00', 'y'),\n  (13, 7, 'open', 1, '2025-01-01 09:00+00', 'z'), (14, 7, 'open', 1, '2024-12-01 09:00+00', 'w');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    12,
+                    11,
+                    14
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "status is case-sensitive: 'Open' is not 'open'",
+            "seed": "INSERT INTO tickets VALUES (1, 7, 'Open', 9, '2025-03-01 09:00+00', 'a'), (2, 7, 'open ', 9, '2025-03-01 09:00+00', 'b'),\n  (3, 7, 'open', 4, '2025-03-02 09:00+00', 'c');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    3
+                  ]
+                ]
+              ]
+            }
+          },
+          {
+            "name": "offsets are compared as instants",
+            "seed": "INSERT INTO tickets VALUES (1, 7, 'open', 3, '2025-03-01 08:00+00', 'utc'),\n  (2, 7, 'open', 3, '2025-03-01 10:00+03', 'earlier: 07:00 UTC'),\n  (3, 7, 'open', 3, '2025-03-01 07:30-01', 'later: 08:30 UTC'),\n  (4, 7, 'open', 2, '2020-01-01 00:00+00', 'lower priority');",
+            "expected": {
+              "columns": [
+                "org_in_index_cond",
+                "partial_index_used",
+                "no_sort",
+                "top_ids"
+              ],
+              "rows": [
+                [
+                  true,
+                  true,
+                  true,
+                  [
+                    2,
+                    1,
+                    3
+                  ]
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "CREATE TABLE users (id int PRIMARY KEY, email text);\nCREATE INDEX users_email_idx ON users (email);\nSET enable_seqscan = off;  -- any usable index should now win\nEXPLAIN (COSTS OFF) SELECT id FROM users WHERE lower(email) = 'ana@shop.io'",
+        "choices": [
+          "Index Scan using users_email_idx on users\n  Index Cond: (lower(email) = 'ana@shop.io'::text)",
+          "Seq Scan on users\n  Disabled: true\n  Filter: (lower(email) = 'ana@shop.io'::text)",
+          "Index Only Scan using users_email_idx on users\n  Filter: (lower(email) = 'ana@shop.io'::text)"
+        ],
+        "answer": 1,
+        "explain": "The index stores `email`, not `lower(email)`, so no index can serve the predicate: even with sequential scans disabled the planner has nothing else and shows `Disabled: true`. Index the expression (`ON users (lower(email))`) or store a normalized column."
+      },
+      {
+        "code": "CREATE TABLE events (id int PRIMARY KEY, doc jsonb);\nCREATE INDEX events_doc_gin ON events USING gin (doc);\nSET enable_seqscan = off;\nEXPLAIN (COSTS OFF) SELECT id FROM events WHERE doc->>'plan' = 'pro'",
+        "choices": [
+          "Bitmap Heap Scan on events\n  Recheck Cond: ((doc ->> 'plan'::text) = 'pro'::text)\n  ->  Bitmap Index Scan on events_doc_gin\n        Index Cond: ((doc ->> 'plan'::text) = 'pro'::text)",
+          "Seq Scan on events\n  Disabled: true\n  Filter: ((doc ->> 'plan'::text) = 'pro'::text)"
+        ],
+        "answer": 1,
+        "explain": "A GIN index on `jsonb` serves operators such as `@>` and `?`, not text equality on `->>`. Rewrite as `doc @> '{\"plan\": \"pro\"}'` (which uses a Bitmap Index Scan on `events_doc_gin`), or add a B-tree expression index on `(doc->>'plan')`."
+      },
+      {
+        "code": "CREATE TABLE accounts (id int, email text);\nCREATE UNIQUE INDEX accounts_email_key ON accounts (email);\nINSERT INTO accounts VALUES (1, NULL), (2, NULL);\nSELECT count(*) FROM accounts",
+        "choices": [
+          "2",
+          "1",
+          "ERROR: duplicate key value violates unique constraint \"accounts_email_key\""
+        ],
+        "answer": 0,
+        "explain": "NULLs are distinct by default (NULL = NULL is not true), so a unique index accepts any number of them. Add `NOT NULL`, or use `NULLS NOT DISTINCT` (PostgreSQL 15+) to allow at most one NULL."
+      },
+      {
+        "code": "CREATE TABLE subscriptions (id int, user_id int, active boolean);\nCREATE UNIQUE INDEX one_active_sub ON subscriptions (user_id) WHERE active;\nINSERT INTO subscriptions VALUES (1, 42, false), (2, 42, false), (3, 42, true);\nINSERT INTO subscriptions VALUES (4, 42, true);\nSELECT count(*) FROM subscriptions",
+        "choices": [
+          "4",
+          "3",
+          "ERROR: duplicate key value violates unique constraint \"one_active_sub\""
+        ],
+        "answer": 2,
+        "explain": "The partial unique index only contains active rows, so two inactive subscriptions for user 42 are fine, but a second active one collides. The error message calls the index a constraint because that is what it enforces."
+      },
+      {
+        "code": "CREATE TABLE tickets (id int PRIMARY KEY, org_id int, created_at date);\nCREATE INDEX tickets_org_created_idx ON tickets (org_id, created_at);\nSET enable_seqscan = off;\nEXPLAIN (COSTS OFF)\nSELECT id FROM tickets\nWHERE created_at >= '2025-03-01' AND created_at < '2025-04-01' AND org_id = 7",
+        "choices": [
+          "Index Scan using tickets_org_created_idx on tickets\n  Index Cond: ((org_id = 7) AND (created_at >= '2025-03-01'::date) AND (created_at < '2025-04-01'::date))",
+          "Index Scan using tickets_org_created_idx on tickets\n  Index Cond: (org_id = 7)\n  Filter: ((created_at >= '2025-03-01'::date) AND (created_at < '2025-04-01'::date))",
+          "Seq Scan on tickets\n  Disabled: true\n  Filter: ((created_at >= '2025-03-01'::date) AND (created_at < '2025-04-01'::date) AND (org_id = 7))"
+        ],
+        "answer": 0,
+        "explain": "The order of conditions in `WHERE` does not matter; the index's column order does. Equality on the leading `org_id` plus a range on the next column are both index conditions, so the scan reads only org 7's March entries."
+      },
+      {
+        "code": "CREATE TABLE t (id int PRIMARY KEY, x int);\nBEGIN;\nCREATE INDEX CONCURRENTLY t_x_idx ON t (x);\nCOMMIT;\nSELECT 1",
+        "choices": [
+          "1",
+          "ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block",
+          "ERROR: relation \"t_x_idx\" already exists"
+        ],
+        "answer": 1,
+        "explain": "A concurrent build commits and waits between its phases, so it cannot be part of a larger transaction. Migration tools that wrap each migration in `BEGIN ... COMMIT` must have that turned off for this step."
+      }
+    ],
+    "tip": "Before writing `CREATE INDEX`, write the query shape on the board: which columns are equality, which one is a range or the sort, and roughly how many rows match out of how many. Then say the index in that order (\"equality on org, then created_at\"), name what it costs on writes, and say you would confirm with `EXPLAIN (ANALYZE, BUFFERS)` and ship it with `CREATE INDEX CONCURRENTLY`.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "schema-migrations",
+        "pagination"
+      ],
+      "lessons": [
+        "sql-select-basics",
+        "sql-joins",
+        "design-databases-indexes"
+      ]
+    }
+  }
+}

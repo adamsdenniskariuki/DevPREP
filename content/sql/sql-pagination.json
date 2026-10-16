@@ -1,0 +1,1323 @@
+{
+  "id": "sql-pagination",
+  "track": "sql",
+  "title": "Pagination: OFFSET vs keyset",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Why `LIMIT`/`OFFSET` gets slower on deep pages and drifts when rows are inserted or deleted, and how keyset (seek) pagination fixes both: a total order with a unique tie-breaker, the `(created_at, id) < (x, y)` row comparison and its OR form, the composite index that serves it, previous pages, opaque API cursors, filters, `has_more` without counting, and when OFFSET is still fine.",
+  "prerequisites": [
+    "sql-indexes"
+  ],
+  "prerequisiteNotes": "sql-indexes: how a B-tree index stores rows in key order, what a composite index can serve (leading columns, sort direction) and how to read `EXPLAIN`. Keyset pagination is an index range scan, so you need to see why the column order of the index matters.",
+  "objectives": [
+    "Explain why `OFFSET` cost grows with page depth and how inserts and deletes between requests duplicate or skip rows.",
+    "Write a keyset next-page query over a total order (`created_at DESC, id DESC`) with a row-value comparison, and expand it into the equivalent OR form.",
+    "Choose the composite index that serves the query, matching column order and sort direction, including extra equality filters.",
+    "Fetch the previous page by flipping the comparison and the order, and design an opaque cursor with `has_more` via `LIMIT n + 1`.",
+    "Argue when OFFSET is acceptable and what to show instead of an exact total count."
+  ],
+  "concepts": [
+    {
+      "title": "OFFSET reads what it skips",
+      "body": "`LIMIT 20 OFFSET 40` does not jump to row 41: Postgres produces rows in order and **throws away** the first 40, so page k with page size 20 reads 20k rows (index entries plus heap fetches) to return 20. Page 1 is cheap, page 500 reads 10,000 rows, and a crawler that walks every page does quadratic total work. The plan below is real PGlite output on 5,000 posts with an index on `(created_at DESC, id DESC)`: the index scan emitted 2,020 rows for a 20-row page. The index removes the sort, not the skipping. OFFSET also has no memory: it counts positions in the current data, which leads to drift (next concept).",
+      "code": "-- Page 101 of 20 posts per page\nSELECT id FROM posts\nORDER BY created_at DESC, id DESC\nLIMIT 20 OFFSET 2000;\n\n-- EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF):\n-- Limit (actual rows=20.00 loops=1)\n--   ->  Index Only Scan using posts_feed_idx on posts (actual rows=2020.00 loops=1)\n--         Heap Fetches: 2020",
+      "diagram": "sqp-rows-read"
+    },
+    {
+      "title": "Pages drift when rows move",
+      "body": "OFFSET names a **position**, and writes move rows between positions. If a post is published after the client read page 1, every older post shifts down one place and page 2 starts with the last post of page 1: a **duplicate**. If a post on page 1 is deleted, rows shift up and the first post that belonged on page 2 is never shown: a **gap**. With a feed that gets many writes per second, deep pages drift constantly. Repeatable-read transactions do not help because each page is a separate request. The fix is to remember the last row the client saw and continue strictly after it, which is keyset pagination.",
+      "code": "-- Page 1 showed posts 50..31. Post 51 is inserted. Page 2:\nSELECT id FROM posts ORDER BY created_at DESC, id DESC LIMIT 20 OFFSET 20;\n-- starts at post 31 again (duplicate)\n\n-- Keyset page 2 continues after post 31, whatever was inserted above it:\nSELECT id FROM posts\nWHERE (created_at, id) < ('2025-03-01 09:31:00+00', 31)\nORDER BY created_at DESC, id DESC LIMIT 20;",
+      "diagram": "sqp-drift"
+    },
+    {
+      "title": "Keyset: seek past the last row, over a total order",
+      "body": "Keyset (seek) pagination replaces \"skip N rows\" with \"rows that sort after the last one I returned\": `WHERE (created_at, id) < ($last_created_at, $last_id) ORDER BY created_at DESC, id DESC LIMIT 20`. The `ORDER BY` must be a **total order**, which means ending in a unique column. `created_at` alone is not unique: two posts in the same microsecond (or a bulk import with one timestamp) are tied, and a cursor of only `created_at` either drops the unseen tied rows (`<`) or repeats the seen ones (`<=`). Adding the primary key as a tie-breaker gives each row exactly one position, so \"after this row\" is well defined. Make the sort columns `NOT NULL` (as here): a NULL in a row comparison yields NULL and the row silently disappears from every page. Cost is O(log n + page size) at any depth.",
+      "code": "-- Next page, newest first; $1, $2 come from the cursor (last row of the previous page)\nSELECT id, author, created_at\nFROM posts\nWHERE (created_at, id) < ($1, $2)\nORDER BY created_at DESC, id DESC\nLIMIT 20;\n\n-- First page: the same query without the WHERE clause.",
+      "diagram": "sqp-offset-vs-keyset"
+    },
+    {
+      "title": "The row-value comparison and its OR form",
+      "body": "`(a, b) < (x, y)` is a standard SQL row-constructor comparison, and Postgres evaluates it lexicographically: it is exactly `a < x OR (a = x AND b < y)`. Both return the same rows, but they plan differently. The row form becomes one B-tree `Index Cond`, a single seek. The OR form, in our PGlite test, became a `Filter` on an index scan that started at the newest row: \"Rows Removed by Filter: 3201\" to return 20. Adding the redundant bound `a <= x AND (a < x OR b < y)` restores an index condition on `a`. You need the OR form when sort directions are **mixed** (`priority DESC, created_at ASC`): a row comparison applies one operator to every column, so expand it by hand, `priority < $p OR (priority = $p AND created_at > $t) OR (...)`.",
+      "code": "-- Equivalent predicates for ORDER BY created_at DESC, id DESC:\nWHERE (created_at, id) < ($1, $2)                        -- Index Cond: ROW(created_at, id) < ROW(...)\nWHERE created_at < $1 OR (created_at = $1 AND id < $2)    -- Filter (scans from the top)\nWHERE created_at <= $1 AND (created_at < $1 OR id < $2)   -- Index Cond on created_at + Filter\n\n-- Mixed directions cannot use one row comparison:\n-- ORDER BY priority DESC, created_at ASC, id ASC\nWHERE priority < $p\n   OR (priority = $p AND (created_at, id) > ($t, $id))",
+      "diagram": "sqp-row-compare"
+    },
+    {
+      "title": "The index that serves it",
+      "body": "Keyset pagination is fast only if an index returns rows in exactly the query's order, so Postgres can seek to the cursor and stop after `LIMIT` rows. For `ORDER BY created_at DESC, id DESC` use an index on `(created_at DESC, id DESC)`; `(created_at, id)` works too, because a B-tree can be scanned backward (`Index Scan Backward`). What fails is a **mixed** direction such as `(created_at DESC, id)`: in PGlite it used the index for `created_at` and added an `Incremental Sort` for `id`. Put **equality** filter columns first: a per-author feed `WHERE author_id = $a AND (created_at, id) < (...)` wants `(author_id, created_at DESC, id DESC)`. A permanent filter such as `NOT hidden` fits a partial index. Add `INCLUDE (...)` columns if you want index-only scans.",
+      "code": "CREATE INDEX posts_feed_idx        ON posts (created_at DESC, id DESC);\nCREATE INDEX posts_author_feed_idx ON posts (author_id, created_at DESC, id DESC);\nCREATE INDEX posts_visible_idx     ON posts (created_at DESC, id DESC) WHERE NOT hidden;\n\n-- Real PGlite plan with posts_feed_idx (enable_seqscan off):\n-- Limit\n--   ->  Index Only Scan using posts_feed_idx on posts\n--         Index Cond: (ROW(created_at, id) < ROW('2025-01-01 10:00:00+00'::timestamp with time zone, 1800))"
+    },
+    {
+      "title": "Previous page: flip, then reverse",
+      "body": "To go back, the cursor is the **first** row of the current page, and you want the rows just before it in feed order, which are the newer ones. Flip the comparison (`<` becomes `>`) and flip the order (`DESC` becomes `ASC`) so the rows **nearest** the cursor come first and `LIMIT` keeps those. Then reverse them to show newest first, in the API or with an outer `ORDER BY`. The common bug is flipping only the comparison: `(created_at, id) > cursor ORDER BY created_at DESC LIMIT 20` returns the 20 newest posts in the whole table, not the page before. The same index serves both directions.",
+      "code": "WITH prev AS (\n  SELECT id, author, created_at\n  FROM posts\n  WHERE (created_at, id) > ($first_created_at, $first_id)\n  ORDER BY created_at, id          -- nearest newer rows first\n  LIMIT 20\n)\nSELECT * FROM prev\nORDER BY created_at DESC, id DESC; -- back to feed order",
+      "diagram": "sqp-prev-page"
+    },
+    {
+      "title": "Counts, has_more, and when OFFSET is fine",
+      "body": "An exact total is expensive in Postgres: there is no stored row count (MVCC means each transaction may see a different number), so `count(*)` scans the table or a whole index, every time. `count(*) OVER ()` on a paged query is worse than it looks: the window runs before `LIMIT`, so it counts every matching row. Usually the UI only needs **has_more**: fetch `LIMIT n + 1` and check whether the extra row came back. For a number, use an estimate (`pg_class.reltuples` for a table, the planner's row estimate from `EXPLAIN` for a filter), or a capped count (`SELECT count(*) FROM (SELECT 1 ... LIMIT 1001) s` shown as \"1000+\"). OFFSET is fine for small or bounded results (an admin table of a few thousand rows, search results capped at 10 pages), or when users really need \"jump to page N\", which keyset cannot do.",
+      "code": "-- has_more without counting: ask for one extra row\nSELECT id, created_at FROM posts\nWHERE (created_at, id) < ($1, $2)\nORDER BY created_at DESC, id DESC\nLIMIT 21;                                  -- 21 rows back => has_more, show 20\n\n-- Cheap estimate of the table size (updated by VACUUM / ANALYZE)\nSELECT reltuples::bigint AS approx_rows FROM pg_class WHERE relname = 'posts';\n\n-- Capped count: \"1000+\"\nSELECT count(*) AS n FROM (SELECT 1 FROM posts WHERE author_id = $1 LIMIT 1001) s;"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Designing a feed endpoint, aloud",
+      "body": "Start with the order: \"newest first, `created_at DESC`, and `id DESC` as the tie-breaker because timestamps collide\". Then the query: keyset with a row comparison, page size + 1. Then the index: `(created_at DESC, id DESC)`, so each page is a seek plus 21 index entries at any depth. Then the contract: the response has `items`, `next_cursor` and `has_more`; the cursor is opaque (base64 of `{\"t\": \"2025-03-01 09:05:00.123456+00\", \"id\": 4, \"v\": 1}`, optionally signed) so clients cannot edit it and you can change its format later. Encode the timestamp at **full precision**: JavaScript `Date` keeps milliseconds while `timestamptz` stores microseconds, and a truncated cursor sorts before the real row, so the client sees it again. Finally say what you give up: no page numbers and no exact total.",
+      "code": "-- $1, $2 decoded from the cursor; first page omits the WHERE clause\nSELECT id, author, created_at\nFROM posts\nWHERE (created_at, id) < ($1::timestamptz, $2::bigint)\nORDER BY created_at DESC, id DESC\nLIMIT 21;\n-- API: has_more = rows.length > 20; items = rows[0..19];\n--      next_cursor = has_more ? encode(items[19].created_at::text, items[19].id) : null",
+      "diagram": "sqp-cursor-api"
+    },
+    {
+      "title": "Keyset with a filter",
+      "body": "Filters are just extra `WHERE` conditions; the cursor still holds only the sort key. Two rules make it correct and fast. First, the filter must be part of the cursor's identity: if the client changes the filter, start from page 1 (store a hash of the filter in the cursor and reject a mismatch), because the old cursor's position means nothing in the new result. Second, the index must lead with the **equality** columns and then the sort key, so the seek lands inside that author's slice of the index. A range filter (`created_at >= now() - interval '7 days'`) on the sort column itself is fine; a range filter on a different column cannot narrow the seek and becomes a filter that may read many rows to fill a page, so measure it.",
+      "code": "-- Feed of one author's visible posts, page after the cursor\nSELECT id, created_at\nFROM posts\nWHERE author_id = $1\n  AND NOT hidden\n  AND (created_at, id) < ($2, $3)\nORDER BY created_at DESC, id DESC\nLIMIT 21;\n\nCREATE INDEX posts_author_visible_idx\n  ON posts (author_id, created_at DESC, id DESC) WHERE NOT hidden;"
+    }
+  ],
+  "example": "-- Next page of an author's feed, newest first, with has_more and a cursor for the following page.\nWITH probe AS (\n  SELECT id, author_id, body, created_at\n  FROM posts\n  WHERE author_id = 42\n    AND (created_at, id) < (timestamptz '2025-03-01 09:05:00.123456+00', 9184)\n  ORDER BY created_at DESC, id DESC\n  LIMIT 21\n), page AS (\n  SELECT *, row_number() OVER (ORDER BY created_at DESC, id DESC) AS pos\n  FROM probe\n)\nSELECT id, body, created_at,\n       (SELECT count(*) FROM probe) > 20                    AS has_more,\n       CASE WHEN pos = 20 THEN created_at::text || '|' || id END AS next_cursor_raw\nFROM page\nWHERE pos <= 20\nORDER BY created_at DESC, id DESC;",
+  "task": "Tables `posts(id, author, body, created_at)` and `page_cursor(created_at, id)`. The feed shows posts newest first: by `created_at` descending, and by `id` descending when timestamps are equal. `created_at` is `NOT NULL`, and several posts can share a timestamp. `page_cursor` holds exactly one row: the `created_at` and `id` of the **last** post of the page the client already has. Return the **next page**: the 3 posts that come right after the cursor in feed order (fewer if the feed ends; none if the cursor is the last post). Return `id`, `author`, `created_at`, sorted in feed order (`created_at` descending, then `id` descending). The cursor's post may have been deleted since; continue from its position anyway. Do not use OFFSET.",
+  "starter": "-- Next page after the cursor: id, author, created_at; newest first; 3 rows.\nSELECT p.id, p.author, p.created_at\nFROM posts p, page_cursor c\nWHERE p.created_at < c.created_at\nORDER BY p.created_at DESC\nLIMIT 3;",
+  "hints": [
+    "If the cursor is at 09:05 and two more posts share 09:05 with smaller ids, `created_at < cursor` skips them. What must you compare when the timestamps are equal?",
+    "`(p.created_at, p.id) < (c.created_at, c.id)` compares the timestamps first and the ids only on a tie. Order by both columns descending so the order is total, and `LIMIT 3`."
+  ],
+  "solution": "A keyset page is \"rows strictly after the cursor in a total order\". The order is `created_at DESC, id DESC`; the `id` makes it total, because timestamps tie. \"After\" in a descending order means \"smaller\", and on the pair: `(p.created_at, p.id) < (c.created_at, c.id)`, which Postgres evaluates as `created_at < x OR (created_at = x AND id < y)`. That keeps older posts and, inside the cursor's tie group, only the ones with a smaller id, which are the unseen ones. The cursor row itself is excluded, so nothing repeats. The starter compares `created_at` only, so it skips every unseen post that shares the cursor's timestamp, and its `ORDER BY` has no tie-breaker, so tied rows come back in any order. A deleted cursor row does not matter: the comparison uses its values, not its existence. The cross join with the one-row `page_cursor` stands in for bind parameters. With an index on `(created_at DESC, id DESC)` this is one index seek plus 3 entries, at any page depth.\n\n```sql\nSELECT p.id, p.author, p.created_at\nFROM posts p\nCROSS JOIN page_cursor c\nWHERE (p.created_at, p.id) < (c.created_at, c.id)\nORDER BY p.created_at DESC, p.id DESC\nLIMIT 3;\n```",
+  "checklist": [
+    "Posts that share the cursor's `created_at` but have a smaller `id` are on the next page; the cursor post is not.",
+    "The `ORDER BY` ends with the unique `id`, in the same direction as the comparison.",
+    "Post ids that are not in time order (a backfilled import) are still paged by time.",
+    "A cursor whose post was deleted still works, and a cursor on the last post returns no rows.",
+    "Output columns are exactly `id`, `author`, `created_at`, in feed order, and there is no OFFSET."
+  ],
+  "pitfalls": [
+    "A cursor of only `created_at`: `<` drops unseen rows that tie with the cursor, `<=` repeats the rows already shown.",
+    "Comparing the columns separately (`created_at <= $1 AND id < $2`): it drops older posts that happen to have larger ids. Use the row comparison or the full OR form.",
+    "An `ORDER BY` without a unique tie-breaker: tied rows may come back in a different order on each request, so pages overlap or skip.",
+    "A previous-page query that flips the comparison but keeps `DESC`: it returns the newest rows in the table, not the page before.",
+    "An index whose directions do not match the query (`created_at DESC, id ASC` for `ORDER BY created_at DESC, id DESC`): it adds a sort step on every page.",
+    "Encoding the cursor timestamp through a millisecond type (JavaScript `Date`): the truncated value sorts before the real row, so rows repeat.",
+    "Nullable sort columns: a NULL makes the row comparison NULL, so the row is on no page. Use `NOT NULL` columns or `coalesce` in both the index and the query.",
+    "`count(*) OVER ()` on a paged query to show a total: the window runs before `LIMIT` and counts every matching row."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "First page with has_more",
+      "prompt": "Table `articles(id, title, published_at)`, `published_at NOT NULL`. Return the **first page** of the newest 3 articles, ordered by `published_at` descending and then `id` descending, with a boolean `has_more` on every row: true when at least one more article exists after this page. Return `id`, `title`, `published_at`, `has_more` in that order and sort. Do not count the whole table: read at most one extra row.",
+      "hints": [
+        "Fetch one more row than the page size. If 4 rows come back, there is a next page.",
+        "Put the `LIMIT 4` query in a CTE; select from it with `LIMIT 3` and compare `(SELECT count(*) FROM probe) > 3`."
+      ],
+      "solution": "WITH probe AS (\n  SELECT id, title, published_at\n  FROM articles\n  ORDER BY published_at DESC, id DESC\n  LIMIT 4                      -- page size + 1\n)\nSELECT id, title, published_at,\n       (SELECT count(*) FROM probe) > 3 AS has_more\nFROM probe\nORDER BY published_at DESC, id DESC\nLIMIT 3;",
+      "checklist": [
+        "Exactly 3 articles means `has_more` is false; exactly 4 means true.",
+        "Ties on `published_at` are ordered by `id` descending, so the page edge is well defined.",
+        "The query never reads more than 4 rows from the index."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Previous page of a filtered feed",
+      "prompt": "Tables `posts(id, author, body, created_at, hidden)` and `page_cursor(created_at, id)`; `created_at` is `NOT NULL`. The feed shows visible posts (`hidden` is false) newest first, by `created_at` descending then `id` descending. `page_cursor` holds the **first** (newest) post of the page the client is looking at. Return the **previous page**: the up to 3 visible posts that come immediately **before** the cursor in feed order (the nearest newer posts), returned in feed order (newest first). Return `id`, `author`, `created_at`. Hidden posts are never returned and never count toward the 3.",
+      "hints": [
+        "The rows you want are newer than the cursor, `(created_at, id) > (...)`, but the nearest ones. Which order puts the nearest newer rows first?",
+        "Order ascending and `LIMIT 3` in a CTE, filter `NOT hidden` there too, then sort the CTE's rows descending in the outer query."
+      ],
+      "solution": "WITH prev AS (\n  SELECT p.id, p.author, p.created_at\n  FROM posts p\n  CROSS JOIN page_cursor c\n  WHERE NOT p.hidden\n    AND (p.created_at, p.id) > (c.created_at, c.id)\n  ORDER BY p.created_at, p.id          -- walk towards newer posts, nearest first\n  LIMIT 3\n)\nSELECT id, author, created_at\nFROM prev\nORDER BY created_at DESC, id DESC;     -- flip back to feed order",
+      "checklist": [
+        "With more than 3 newer posts, the 3 nearest the cursor are returned, not the 3 newest overall.",
+        "Hidden posts are skipped and the next visible post takes their place.",
+        "Ties around the cursor are resolved by `id`, and the result is in feed order."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Product wants \"jump to page 37\" on a table of 50 million rows. What do you say?",
+      "answer": "Keyset cannot jump; it can only continue from a row. Options: cap deep paging (search engines stop at about 10 pages) and keep OFFSET for those few pages; replace page numbers with a jump by value (\"posts from March 2025\" is a seek on `created_at`); or precompute bookmarks every 1,000 rows in a side table refreshed periodically and seek from the nearest one. Whatever you choose, an unbounded `OFFSET 740000` means reading 740,000 rows per request, and the drift remains."
+    },
+    {
+      "question": "The feed sorts by `score DESC`, and scores change while users scroll. How does keyset behave?",
+      "answer": "The cursor holds `(score, id)` of the last row shown. If a row's score changes, it moves to another place in the order: a row that rises above the cursor is never shown, and a row that falls below it is shown twice. Keyset still never reads extra rows, but it cannot fix a moving order. Options: sort on an immutable value (creation time, or a score frozen when the ranking is computed), page through a snapshot of the ranking stored with a version id that goes in the cursor, or accept it and de-duplicate ids on the client."
+    },
+    {
+      "question": "Why is `count(*)` slow in Postgres, and what do you show instead of \"1,234,567 results\"?",
+      "answer": "MVCC: whether a row is visible depends on the reader's snapshot, so Postgres keeps no row counter. `count(*)` must scan the table or an index (an index-only scan is cheaper only if the visibility map is mostly set). Show `has_more` from `LIMIT n + 1`; an estimate from `pg_class.reltuples` or from `EXPLAIN`'s row estimate for a filtered query (\"about 1.2M\"); or a capped count read with `LIMIT 1001` (\"1000+\"). If an exact count is a product requirement, maintain it in a counter table updated by triggers or in batches, and be aware that a single hot counter row becomes a point of lock contention."
+    },
+    {
+      "question": "How do you paginate `ORDER BY priority DESC, created_at ASC`?",
+      "answer": "A row comparison applies one operator to all columns, so it only fits when every column goes the same way. Expand it by hand: `priority < $p OR (priority = $p AND (created_at, id) > ($t, $id))`, with the tie-breaker going the same way as the column before it. Index `(priority DESC, created_at ASC, id ASC)` to match. Add the redundant `priority <= $p` so the planner gets an index condition rather than a filter. For a numeric column you can also index an expression such as `(-priority, created_at, id)` and use a single row comparison on it."
+    },
+    {
+      "question": "Your cursor is base64 JSON. What can go wrong, and how do you harden it?",
+      "answer": "Clients decode and edit it, so validate the types and reject unknown versions. If it contains anything sensitive (a filter on a tenant, a private sort key), sign it with an HMAC or encrypt it. Include the filter and sort so a cursor from one query is rejected on another. Keep timestamp precision (store the text form of `timestamptz`, not a millisecond epoch). Expect a cursor whose row was deleted, and treat it as a position, not as a row lookup. Give cursors no expiry semantics unless you page through snapshots."
+    }
+  ],
+  "takeaways": [
+    "OFFSET reads and discards every skipped row: page k of size n reads about n·k rows.",
+    "OFFSET counts positions, so inserts and deletes between requests cause duplicates and gaps; a keyset cursor names a row.",
+    "Keyset needs a total order: end the `ORDER BY` with a unique column and put it in the cursor.",
+    "`(a, b) < (x, y)` means `a < x OR (a = x AND b < y)`; the row form plans as one index seek, the OR form may not.",
+    "Index the equality filters first, then the sort columns in the query's order and directions.",
+    "Previous page: flip `<` to `>` and `DESC` to `ASC`, `LIMIT`, then reverse. `has_more` comes from `LIMIT n + 1`, not from a count."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqp-rows-read",
+        "type": "bars",
+        "title": "Index entries read to serve one page of 20",
+        "alt": "Bar chart of index entries read per page with a page size of 20. OFFSET page 1 reads 20, page 50 reads 1,000, page 100 reads 2,000 and page 500 reads 10,000, because page k reads 20 times k entries. A keyset query for page 500 reads only 20, the same as page 1.",
+        "caption": "OFFSET page k reads 20k entries and throws away 20(k−1) of them; keyset reads one page's worth at any depth.",
+        "unit": "index entries read",
+        "bars": [
+          {
+            "label": "OFFSET · page 1",
+            "value": 20
+          },
+          {
+            "label": "OFFSET · page 50",
+            "value": 1000
+          },
+          {
+            "label": "OFFSET · page 100",
+            "value": 2000
+          },
+          {
+            "label": "OFFSET · page 500",
+            "value": 10000
+          },
+          {
+            "label": "keyset · page 500",
+            "value": 20,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "sqp-drift",
+        "type": "timeline",
+        "title": "Page drift: a new post arrives between page 1 and page 2",
+        "alt": "Timeline of a feed paginated with LIMIT 20 OFFSET. The client reads page 1, posts 50 down to 31. Post 51 is then inserted, shifting every post down one position. Page 2 with OFFSET 20 now starts at post 31, so post 31 is shown twice. A keyset request for rows after post 31 returns posts 30 to 11 and is unaffected.",
+        "caption": "OFFSET counts positions, and writes move rows between positions; a keyset cursor names a row, so inserts and deletes elsewhere cannot shift it.",
+        "events": [
+          {
+            "at": "t0 · page 1",
+            "label": "LIMIT 20 OFFSET 0 returns posts 50 down to 31.",
+            "kind": "trigger"
+          },
+          {
+            "at": "t1 · insert",
+            "label": "Post 51 is published: every older post moves down one position.",
+            "kind": "impact"
+          },
+          {
+            "at": "t2 · page 2",
+            "label": "LIMIT 20 OFFSET 20 skips posts 51–32 and starts at post 31.",
+            "kind": "impact"
+          },
+          {
+            "at": "t2 · result",
+            "label": "Post 31 is shown twice. A delete instead would have shifted rows up and skipped one.",
+            "kind": "detect"
+          },
+          {
+            "at": "keyset fix",
+            "label": "Page 2 asks for rows after (created_at, id) of post 31: posts 30 down to 11.",
+            "kind": "mitigate"
+          },
+          {
+            "at": "next refresh",
+            "label": "Post 51 appears when the client reloads the first page.",
+            "kind": "resolve"
+          }
+        ]
+      },
+      {
+        "id": "sqp-offset-vs-keyset",
+        "type": "compare",
+        "title": "Page 3 of 20: OFFSET walks, keyset seeks",
+        "alt": "Comparison of fetching the third page of 20 posts. On the left, LIMIT 20 OFFSET 40 starts at the newest index entry, reads 60 entries, discards the first 40 and returns 20. On the right, the cursor (created_at, id) of the last post on page 2 is used as a search key: the B-tree descends straight to it, reads the next 20 entries and returns all of them.",
+        "caption": "OFFSET cost grows with page depth because skipped rows are still read; a keyset query descends the index to the cursor and reads only the rows it returns.",
+        "before": {
+          "label": "LIMIT 20 OFFSET 40",
+          "nodes": [
+            {
+              "id": "s",
+              "label": "start at top",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "newest entry"
+            },
+            {
+              "id": "r",
+              "label": "read 60 rows",
+              "kind": "state",
+              "col": 1,
+              "row": 0,
+              "sub": "positions 1–60"
+            },
+            {
+              "id": "d",
+              "label": "discard 40",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "work thrown away"
+            },
+            {
+              "id": "k",
+              "label": "return 20",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "positions 41–60"
+            }
+          ],
+          "edges": [
+            {
+              "from": "s",
+              "to": "r",
+              "label": "walk"
+            },
+            {
+              "from": "r",
+              "to": "d",
+              "label": "skip"
+            },
+            {
+              "from": "r",
+              "to": "k",
+              "label": "keep"
+            }
+          ]
+        },
+        "after": {
+          "label": "WHERE (created_at, id) < cursor",
+          "nodes": [
+            {
+              "id": "c",
+              "label": "cursor (t, id)",
+              "kind": "note",
+              "col": 0,
+              "row": 0,
+              "sub": "last row of page 2"
+            },
+            {
+              "id": "s",
+              "label": "B-tree descent",
+              "kind": "db",
+              "col": 0,
+              "row": 2,
+              "sub": "O(log n) pages"
+            },
+            {
+              "id": "r",
+              "label": "read 20 rows",
+              "kind": "state",
+              "col": 1,
+              "row": 2,
+              "sub": "just after cursor"
+            },
+            {
+              "id": "k",
+              "label": "return 20",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "nothing discarded"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c",
+              "to": "s",
+              "label": "search key"
+            },
+            {
+              "from": "s",
+              "to": "r",
+              "label": "seek"
+            },
+            {
+              "from": "r",
+              "to": "k"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqp-row-compare",
+        "type": "flow",
+        "title": "How (created_at, id) < (x, y) decides a row",
+        "alt": "Flow diagram of a row-value comparison. A post's pair (a, b) is compared with the cursor (x, y). First a is compared with x: if a is less than x the post is older and kept; if a is greater it is newer and dropped. Only when a equals x is the tie broken by comparing b with y: b less than y keeps the post, otherwise it is dropped, which also drops the cursor row itself.",
+        "caption": "The row comparison is lexicographic: it equals a < x OR (a = x AND b < y). The second column only matters inside a tie, so it must be unique.",
+        "nodes": [
+          {
+            "id": "row",
+            "label": "post (a, b)",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "vs cursor (x, y)"
+          },
+          {
+            "id": "c1",
+            "label": "compare a with x",
+            "kind": "decision",
+            "col": 1,
+            "row": 2
+          },
+          {
+            "id": "lt",
+            "label": "a < x",
+            "kind": "good",
+            "col": 1,
+            "row": 0,
+            "sub": "older: keep"
+          },
+          {
+            "id": "gt",
+            "label": "a > x",
+            "kind": "bad",
+            "col": 1,
+            "row": 4,
+            "sub": "newer: drop"
+          },
+          {
+            "id": "eq",
+            "label": "a = x: a tie",
+            "kind": "decision",
+            "col": 3,
+            "row": 2,
+            "sub": "compare b with y"
+          },
+          {
+            "id": "k2",
+            "label": "b < y",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "keep"
+          },
+          {
+            "id": "d2",
+            "label": "b >= y",
+            "kind": "bad",
+            "col": 3,
+            "row": 4,
+            "sub": "drop, incl. cursor"
+          }
+        ],
+        "edges": [
+          {
+            "from": "row",
+            "to": "c1"
+          },
+          {
+            "from": "c1",
+            "to": "lt",
+            "label": "less"
+          },
+          {
+            "from": "c1",
+            "to": "gt",
+            "label": "greater"
+          },
+          {
+            "from": "c1",
+            "to": "eq",
+            "label": "equal"
+          },
+          {
+            "from": "eq",
+            "to": "k2",
+            "label": "less"
+          },
+          {
+            "from": "eq",
+            "to": "d2",
+            "label": "not less"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Each candidate post's `(created_at, id)` is compared with the cursor `(x, y)` taken from the last row of the previous page."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "The first columns decide unless they are equal: an older timestamp is kept, a newer one dropped. The ids are never looked at."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "Equal timestamps are a tie. This is the case a `created_at < x` cursor gets wrong: it drops every tied post the client has not seen yet."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Inside the tie the unique `id` decides. `id < y` keeps the unseen tied posts; `id = y` is the cursor row itself and is excluded, so nothing repeats."
+          }
+        ]
+      },
+      {
+        "id": "sqp-cursor-api",
+        "type": "flow",
+        "title": "One round trip of a cursor-paginated feed API",
+        "alt": "Flow diagram of a feed API. The client sends GET /feed with an opaque cursor. The API decodes it into created_at and id and runs a keyset query with LIMIT 21. Postgres returns up to 21 rows. The API keeps 20, sets has_more if a 21st row came back, and encodes the last kept row's created_at and id as next_cursor. The response with items and next_cursor goes back to the client, which sends it on the next request.",
+        "caption": "The cursor is the last row's sort key, made opaque; LIMIT n + 1 answers has_more without counting.",
+        "nodes": [
+          {
+            "id": "cl",
+            "label": "client",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "GET /feed?cursor="
+          },
+          {
+            "id": "api",
+            "label": "API",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "decode + validate"
+          },
+          {
+            "id": "db",
+            "label": "Postgres",
+            "kind": "db",
+            "col": 4,
+            "row": 0,
+            "sub": "keyset, LIMIT 21"
+          },
+          {
+            "id": "rows",
+            "label": "up to 21 rows",
+            "kind": "state",
+            "col": 4,
+            "row": 2,
+            "sub": "index order"
+          },
+          {
+            "id": "trim",
+            "label": "keep 20",
+            "kind": "service",
+            "col": 2,
+            "row": 2,
+            "sub": "21st => has_more"
+          },
+          {
+            "id": "enc",
+            "label": "encode cursor",
+            "kind": "service",
+            "col": 2,
+            "row": 4,
+            "sub": "last row (t, id)"
+          },
+          {
+            "id": "resp",
+            "label": "response",
+            "kind": "client",
+            "col": 0,
+            "row": 4,
+            "sub": "items, next_cursor"
+          }
+        ],
+        "edges": [
+          {
+            "from": "cl",
+            "to": "api",
+            "label": "opaque token"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "(t, id) < (x, y)"
+          },
+          {
+            "from": "db",
+            "to": "rows"
+          },
+          {
+            "from": "rows",
+            "to": "trim"
+          },
+          {
+            "from": "trim",
+            "to": "enc"
+          },
+          {
+            "from": "enc",
+            "to": "resp"
+          },
+          {
+            "from": "resp",
+            "to": "cl",
+            "label": "next request"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "The client sends back the cursor exactly as it received it. It is opaque (for example base64 of a small JSON with the sort key, the filter and a version), so clients cannot build or edit one."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "The API decodes and validates the cursor (reject it if the filter or sort changed) and runs the keyset query with page size + 1 as the limit."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Postgres seeks to the cursor in the `(created_at DESC, id DESC)` index and reads at most 21 entries. If 21 come back, there is a next page."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "The API drops the 21st row, takes the last kept row's `created_at` and `id` (at full microsecond precision) and encodes them as `next_cursor`, or null when `has_more` is false."
+          },
+          {
+            "edges": [
+              6
+            ],
+            "text": "The client stores `next_cursor` and sends it for the next page. No page numbers and no total count are needed."
+          }
+        ]
+      },
+      {
+        "id": "sqp-prev-page",
+        "type": "sequence",
+        "title": "Previous page: flip the comparison and the order, then reverse",
+        "alt": "Sequence diagram with a client, an API and Postgres. The client asks for the page before a cursor that holds the first row it is showing. The API queries Postgres for rows greater than the cursor ordered ascending with a limit, so the rows nearest the cursor come first. Postgres returns them oldest first; the API reverses them to newest first before replying with the page and both cursors.",
+        "caption": "Going backwards uses the same index scanned the other way; reverse the rows afterwards so every page is shown in feed order.",
+        "actors": [
+          {
+            "id": "cl",
+            "label": "Client"
+          },
+          {
+            "id": "api",
+            "label": "API"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "cl",
+            "to": "api",
+            "label": "GET /feed?before=<first row>"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "(t, id) > (x, y) ORDER BY t, id",
+            "note": "Comparison flipped from < to >, order flipped from DESC to ASC, LIMIT n + 1."
+          },
+          {
+            "from": "db",
+            "to": "api",
+            "label": "nearest newer rows, oldest first",
+            "style": "reply"
+          },
+          {
+            "from": "api",
+            "to": "cl",
+            "label": "rows reversed: newest first",
+            "style": "reply",
+            "note": "Reverse in the API or with an outer ORDER BY created_at DESC, id DESC."
+          },
+          {
+            "from": "cl",
+            "to": "api",
+            "label": "GET /feed?after=<last row>",
+            "note": "Forward paging continues from the last row shown, as before."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE posts (\n  id         bigint PRIMARY KEY,\n  author     text NOT NULL,\n  body       text NOT NULL,\n  created_at timestamptz NOT NULL\n);\nCREATE INDEX posts_feed_idx ON posts (created_at DESC, id DESC);\n-- Exactly one row: the LAST post of the page the client already has (decoded from its cursor).\nCREATE TABLE page_cursor (\n  created_at timestamptz NOT NULL,\n  id         bigint NOT NULL\n);",
+        "starter": "-- Next page after the cursor: id, author, created_at; newest first; 3 rows.\nSELECT p.id, p.author, p.created_at\nFROM posts p, page_cursor c\nWHERE p.created_at < c.created_at\nORDER BY p.created_at DESC\nLIMIT 3;",
+        "solution": "SELECT p.id, p.author, p.created_at\nFROM posts p\nCROSS JOIN page_cursor c\nWHERE (p.created_at, p.id) < (c.created_at, c.id)\nORDER BY p.created_at DESC, p.id DESC\nLIMIT 3;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "no ties: the next three older posts",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:01+00'), (3, 'cy', 'post 3', '2025-03-01 09:02+00'), (4, 'dee', 'post 4', '2025-03-01 09:03+00'), (5, 'eli', 'post 5', '2025-03-01 09:04+00'), (6, 'fay', 'post 6', '2025-03-01 09:05+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:04+00', 5);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:03:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:02:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:01:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "ties on created_at at the page boundary",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:05+00'), (3, 'cy', 'post 3', '2025-03-01 09:05+00'), (4, 'dee', 'post 4', '2025-03-01 09:05+00'), (5, 'eli', 'post 5', '2025-03-01 09:10+00'), (6, 'fay', 'post 6', '2025-03-01 09:10+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:05+00', 4);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  1,
+                  "ana",
+                  "2025-03-01 09:00:00+00"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "post ids are not in time order (backfilled import)",
+            "seed": "INSERT INTO posts VALUES (10, 'imp', 'post 10', '2025-03-01 08:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:00+00'), (7, 'gus', 'post 7', '2025-03-01 09:00+00'), (3, 'cy', 'post 3', '2025-03-01 09:30+00'), (1, 'ana', 'post 1', '2025-03-01 10:00+00'), (9, 'imp', 'post 9', '2025-03-01 07:00+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:30+00', 3);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  7,
+                  "gus",
+                  "2025-03-01 09:00:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:00:00+00"
+                ],
+                [
+                  10,
+                  "imp",
+                  "2025-03-01 08:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "fewer than three posts left",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:01+00'), (3, 'cy', 'post 3', '2025-03-01 09:02+00'), (4, 'dee', 'post 4', '2025-03-01 09:03+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:01+00', 2);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  1,
+                  "ana",
+                  "2025-03-01 09:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "cursor on the last post gives an empty page",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:01+00'), (3, 'cy', 'post 3', '2025-03-01 09:02+00'), (4, 'dee', 'post 4', '2025-03-01 09:03+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:00+00', 1);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "every post shares one timestamp",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 12:00+00'), (2, 'ben', 'post 2', '2025-03-01 12:00+00'), (3, 'cy', 'post 3', '2025-03-01 12:00+00'), (4, 'dee', 'post 4', '2025-03-01 12:00+00'), (5, 'eli', 'post 5', '2025-03-01 12:00+00'), (6, 'fay', 'post 6', '2025-03-01 12:00+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 12:00+00', 5);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 12:00:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 12:00:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 12:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "cursor post was deleted after page 1",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:01+00'), (2, 'ben', 'post 2', '2025-03-01 09:02+00'), (3, 'cy', 'post 3', '2025-03-01 09:03+00'), (4, 'dee', 'post 4', '2025-03-01 09:04+00'), (6, 'fay', 'post 6', '2025-03-01 09:06+00'), (7, 'gus', 'post 7', '2025-03-01 09:07+00'), (8, 'hal', 'post 8', '2025-03-01 09:08+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:05+00', 5);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:04:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:03:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:02:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "same instant written with a +03 offset still ties",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00'), (2, 'ben', 'post 2', '2025-03-01 09:05+00'), (3, 'cy', 'post 3', '2025-03-01 12:05+03'), (4, 'dee', 'post 4', '2025-03-01 09:05+00'), (5, 'eli', 'post 5', '2025-03-01 09:10+00');\nINSERT INTO page_cursor VALUES ('2025-03-01 09:10+00', 5);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:05:00+00"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE articles (\n  id           bigint PRIMARY KEY,\n  title        text NOT NULL,\n  published_at timestamptz NOT NULL\n);\nCREATE INDEX articles_feed_idx ON articles (published_at DESC, id DESC);",
+        "starter": "-- First page (3 newest) plus has_more: id, title, published_at, has_more.\nWITH page AS (\n  SELECT id, title, published_at\n  FROM articles\n  ORDER BY published_at DESC\n  LIMIT 3\n)\nSELECT id, title, published_at,\n       (SELECT count(*) FROM page) > 3 AS has_more\nFROM page\nORDER BY published_at DESC;",
+        "solution": "WITH probe AS (\n  SELECT id, title, published_at\n  FROM articles\n  ORDER BY published_at DESC, id DESC\n  LIMIT 4                      -- page size + 1\n)\nSELECT id, title, published_at,\n       (SELECT count(*) FROM probe) > 3 AS has_more\nFROM probe\nORDER BY published_at DESC, id DESC\nLIMIT 3;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "five articles: a next page exists",
+            "seed": "INSERT INTO articles VALUES (1, 'Intro', '2025-03-01 08:00+00'), (2, 'Joins', '2025-03-01 09:00+00'), (3, 'Windows', '2025-03-01 10:00+00'), (4, 'Indexes', '2025-03-01 11:00+00'), (5, 'Paging', '2025-03-01 12:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  5,
+                  "Paging",
+                  "2025-03-01 12:00:00+00",
+                  true
+                ],
+                [
+                  4,
+                  "Indexes",
+                  "2025-03-01 11:00:00+00",
+                  true
+                ],
+                [
+                  3,
+                  "Windows",
+                  "2025-03-01 10:00:00+00",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "exactly three articles: no next page",
+            "seed": "INSERT INTO articles VALUES (1, 'Intro', '2025-03-01 08:00+00'), (2, 'Joins', '2025-03-01 09:00+00'), (3, 'Windows', '2025-03-01 10:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  3,
+                  "Windows",
+                  "2025-03-01 10:00:00+00",
+                  false
+                ],
+                [
+                  2,
+                  "Joins",
+                  "2025-03-01 09:00:00+00",
+                  false
+                ],
+                [
+                  1,
+                  "Intro",
+                  "2025-03-01 08:00:00+00",
+                  false
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "exactly four articles: one more remains",
+            "seed": "INSERT INTO articles VALUES (1, 'Intro', '2025-03-01 08:00+00'), (2, 'Joins', '2025-03-01 09:00+00'), (3, 'Windows', '2025-03-01 10:00+00'), (4, 'Indexes', '2025-03-01 11:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  4,
+                  "Indexes",
+                  "2025-03-01 11:00:00+00",
+                  true
+                ],
+                [
+                  3,
+                  "Windows",
+                  "2025-03-01 10:00:00+00",
+                  true
+                ],
+                [
+                  2,
+                  "Joins",
+                  "2025-03-01 09:00:00+00",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "tie on published_at across the page edge",
+            "seed": "INSERT INTO articles VALUES (1, 'Intro', '2025-03-01 08:00+00'), (2, 'Joins', '2025-03-01 10:00+00'), (3, 'Windows', '2025-03-01 10:00+00'), (4, 'Indexes', '2025-03-01 10:00+00'), (5, 'Paging', '2025-03-01 12:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  5,
+                  "Paging",
+                  "2025-03-01 12:00:00+00",
+                  true
+                ],
+                [
+                  4,
+                  "Indexes",
+                  "2025-03-01 10:00:00+00",
+                  true
+                ],
+                [
+                  3,
+                  "Windows",
+                  "2025-03-01 10:00:00+00",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "ids not in time order",
+            "seed": "INSERT INTO articles VALUES (9, 'Old import', '2025-03-01 07:00+00'), (1, 'Launch', '2025-03-01 12:00+00'), (8, 'Recap', '2025-03-01 11:30+00'), (2, 'Notes', '2025-03-01 11:30+00'), (5, 'Draft', '2025-03-01 06:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Launch",
+                  "2025-03-01 12:00:00+00",
+                  true
+                ],
+                [
+                  8,
+                  "Recap",
+                  "2025-03-01 11:30:00+00",
+                  true
+                ],
+                [
+                  2,
+                  "Notes",
+                  "2025-03-01 11:30:00+00",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a single article",
+            "seed": "INSERT INTO articles VALUES (7, 'Hello', '2025-03-01 09:00+00');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": [
+                [
+                  7,
+                  "Hello",
+                  "2025-03-01 09:00:00+00",
+                  false
+                ]
+              ]
+            }
+          },
+          {
+            "name": "no articles at all",
+            "seed": "",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "published_at",
+                "has_more"
+              ],
+              "rows": []
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE posts (\n  id         bigint PRIMARY KEY,\n  author     text NOT NULL,\n  body       text NOT NULL,\n  created_at timestamptz NOT NULL,\n  hidden     boolean NOT NULL DEFAULT false\n);\nCREATE INDEX posts_visible_feed_idx ON posts (created_at DESC, id DESC) WHERE NOT hidden;\n-- Exactly one row: the FIRST (newest) post of the page the client is looking at.\nCREATE TABLE page_cursor (\n  created_at timestamptz NOT NULL,\n  id         bigint NOT NULL\n);",
+        "starter": "-- Previous page: the 3 visible posts just newer than the cursor, returned newest first.\nSELECT p.id, p.author, p.created_at\nFROM posts p, page_cursor c\nWHERE (p.created_at, p.id) > (c.created_at, c.id)\nORDER BY p.created_at DESC, p.id DESC\nLIMIT 3;",
+        "solution": "WITH prev AS (\n  SELECT p.id, p.author, p.created_at\n  FROM posts p\n  CROSS JOIN page_cursor c\n  WHERE NOT p.hidden\n    AND (p.created_at, p.id) > (c.created_at, c.id)\n  ORDER BY p.created_at, p.id          -- walk towards newer posts, nearest first\n  LIMIT 3\n)\nSELECT id, author, created_at\nFROM prev\nORDER BY created_at DESC, id DESC;     -- flip back to feed order",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "more than three newer posts: take the nearest three",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:01+00', false), (3, 'cy', 'post 3', '2025-03-01 09:02+00', false), (4, 'dee', 'post 4', '2025-03-01 09:03+00', false), (5, 'eli', 'post 5', '2025-03-01 09:04+00', false), (6, 'fay', 'post 6', '2025-03-01 09:05+00', false), (7, 'gus', 'post 7', '2025-03-01 09:06+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 09:02+00', 3);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  6,
+                  "fay",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  5,
+                  "eli",
+                  "2025-03-01 09:04:00+00"
+                ],
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:03:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "ties on created_at around the cursor",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:05+00', false), (3, 'cy', 'post 3', '2025-03-01 09:05+00', false), (4, 'dee', 'post 4', '2025-03-01 09:05+00', false), (5, 'eli', 'post 5', '2025-03-01 09:10+00', false), (6, 'fay', 'post 6', '2025-03-01 09:10+00', false), (7, 'gus', 'post 7', '2025-03-01 09:20+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 09:05+00', 2);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  5,
+                  "eli",
+                  "2025-03-01 09:10:00+00"
+                ],
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:05:00+00"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "hidden posts are skipped",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:01+00', false), (3, 'cy', 'post 3', '2025-03-01 09:02+00', false), (4, 'dee', 'post 4', '2025-03-01 09:03+00', false), (5, 'eli', 'post 5', '2025-03-01 09:04+00', true), (6, 'fay', 'post 6', '2025-03-01 09:05+00', false), (7, 'gus', 'post 7', '2025-03-01 09:06+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 09:02+00', 3);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  7,
+                  "gus",
+                  "2025-03-01 09:06:00+00"
+                ],
+                [
+                  6,
+                  "fay",
+                  "2025-03-01 09:05:00+00"
+                ],
+                [
+                  4,
+                  "dee",
+                  "2025-03-01 09:03:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "near the top: fewer than three newer posts",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:01+00', false), (3, 'cy', 'post 3', '2025-03-01 09:02+00', false), (4, 'dee', 'post 4', '2025-03-01 09:03+00', false), (5, 'eli', 'post 5', '2025-03-01 09:04+00', false), (6, 'fay', 'post 6', '2025-03-01 09:05+00', false), (7, 'gus', 'post 7', '2025-03-01 09:06+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 09:05+00', 6);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  7,
+                  "gus",
+                  "2025-03-01 09:06:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "cursor on the newest post gives an empty page",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 09:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:01+00', false), (3, 'cy', 'post 3', '2025-03-01 09:02+00', false), (4, 'dee', 'post 4', '2025-03-01 09:03+00', false), (5, 'eli', 'post 5', '2025-03-01 09:04+00', false), (6, 'fay', 'post 6', '2025-03-01 09:05+00', false), (7, 'gus', 'post 7', '2025-03-01 09:06+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 09:06+00', 7);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "post ids are not in time order",
+            "seed": "INSERT INTO posts VALUES (10, 'imp', 'post 10', '2025-03-01 08:00+00', false), (2, 'ben', 'post 2', '2025-03-01 09:00+00', false), (7, 'gus', 'post 7', '2025-03-01 09:00+00', false), (3, 'cy', 'post 3', '2025-03-01 09:30+00', false), (1, 'ana', 'post 1', '2025-03-01 10:00+00', false), (9, 'imp', 'post 9', '2025-03-01 07:00+00', false), (4, 'dee', 'post 4', '2025-03-01 11:00+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 08:00+00', 10);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 09:30:00+00"
+                ],
+                [
+                  7,
+                  "gus",
+                  "2025-03-01 09:00:00+00"
+                ],
+                [
+                  2,
+                  "ben",
+                  "2025-03-01 09:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "hidden post inside a tie group",
+            "seed": "INSERT INTO posts VALUES (1, 'ana', 'post 1', '2025-03-01 12:00+00', false), (2, 'ben', 'post 2', '2025-03-01 12:00+00', false), (3, 'cy', 'post 3', '2025-03-01 12:00+00', false), (4, 'dee', 'post 4', '2025-03-01 12:00+00', true), (5, 'eli', 'post 5', '2025-03-01 12:00+00', false), (6, 'fay', 'post 6', '2025-03-01 12:00+00', false);\nINSERT INTO page_cursor VALUES ('2025-03-01 12:00+00', 2);",
+            "expected": {
+              "columns": [
+                "id",
+                "author",
+                "created_at"
+              ],
+              "rows": [
+                [
+                  6,
+                  "fay",
+                  "2025-03-01 12:00:00+00"
+                ],
+                [
+                  5,
+                  "eli",
+                  "2025-03-01 12:00:00+00"
+                ],
+                [
+                  3,
+                  "cy",
+                  "2025-03-01 12:00:00+00"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "SELECT (2, 5) < (2, 7) AS a, (1, 9) < (2, 0) AS b, (3, 0) < (2, 9) AS c",
+        "choices": [
+          "true | true | false",
+          "true | false | false",
+          "false | true | false"
+        ],
+        "answer": 0,
+        "explain": "Row comparison is lexicographic. `(2, 5) < (2, 7)`: tie on 2, then 5 < 7. `(1, 9) < (2, 0)`: 1 < 2 decides, the 9 is never compared. `(3, 0) < (2, 9)`: 3 > 2 decides. It is not a column-by-column AND, which would make `b` false."
+      },
+      {
+        "code": "-- Feed order: ts DESC, id DESC. Page 1 showed ids 3, 2; the cursor stored only ts = 10.\nWITH feed(id, ts) AS (VALUES (1, 10), (2, 10), (3, 10), (4, 9))\nSELECT id FROM feed\nWHERE ts < 10\nORDER BY ts DESC, id DESC",
+        "choices": [
+          "1\n4",
+          "4",
+          "(no rows)"
+        ],
+        "answer": 1,
+        "explain": "Post 1 shares the cursor's timestamp but was not shown yet; `ts < 10` drops it forever. The cursor needs the tie-breaker: `(ts, id) < (10, 2)` returns 1, then 4."
+      },
+      {
+        "code": "-- Page 1 (LIMIT 2 OFFSET 0) showed 6, 5. Then post 7 is inserted. Page 2:\nWITH feed(id) AS (VALUES (7), (6), (5), (4), (3), (2), (1))\nSELECT id FROM feed ORDER BY id DESC LIMIT 2 OFFSET 2",
+        "choices": [
+          "4\n3",
+          "5\n4",
+          "7\n6"
+        ],
+        "answer": 1,
+        "explain": "OFFSET 2 now skips 7 and 6, so page 2 starts with 5, which page 1 already showed. A keyset query `WHERE id < 5` would return 4, 3 regardless of the insert."
+      },
+      {
+        "code": "SELECT (1, NULL::int) < (2, 0) AS a, (1, NULL::int) < (1, 5) AS b",
+        "choices": [
+          "true | NULL",
+          "NULL | NULL",
+          "true | false"
+        ],
+        "answer": 0,
+        "explain": "The first pair decides `a` (1 < 2), so the NULL is never compared. In `b` the first columns tie and the comparison reaches `NULL < 5`, which is NULL, so a row like that would be on no page. Keep sort columns `NOT NULL`."
+      },
+      {
+        "code": "SELECT id, count(*) OVER () AS total\nFROM generate_series(1, 10) AS id\nORDER BY id\nLIMIT 2",
+        "choices": [
+          "1 | 2\n2 | 2",
+          "1 | 10\n2 | 10",
+          "1 | 1\n2 | 2"
+        ],
+        "answer": 1,
+        "explain": "Window functions run before `LIMIT`, so `count(*) OVER ()` counts every row the query matched. It gives a total, but it costs a full read of the result even for one page. Use `LIMIT n + 1` for `has_more`, or an estimate."
+      }
+    ],
+    "tip": "Before writing the query, say the order out loud and prove it is total: \"newest first, `created_at DESC`, then `id DESC` because timestamps tie\". Then say the cursor is the last row's `(created_at, id)`, write the row comparison, and name the index `(created_at DESC, id DESC)`. Interviewers listen for three things: the tie-breaker, why OFFSET is O(depth) and drifts, and `LIMIT n + 1` instead of a count.",
+    "links": {
+      "guides": [
+        "pagination",
+        "database-indexes",
+        "api-styles-rest-grpc"
+      ],
+      "lessons": [
+        "design-databases-indexes",
+        "design-api-data-model",
+        "design-end-to-end-bookmarks"
+      ]
+    }
+  }
+}

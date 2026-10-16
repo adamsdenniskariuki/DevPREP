@@ -1,0 +1,1331 @@
+{
+  "id": "sql-explain",
+  "track": "sql",
+  "title": "Reading EXPLAIN and EXPLAIN ANALYZE",
+  "minutes": 55,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "Read a Postgres plan as a tree, inside-out: scan nodes (Seq, Index, Index Only, Bitmap), Sort, Hash, Aggregate and Limit, and the three join algorithms. Interpret `cost=startup..total`, estimated versus actual rows and `loops`; run EXPLAIN ANALYZE safely on DML; use BUFFERS; fix stale statistics with ANALYZE; spot the red flags; and rewrite non-sargable predicates so an existing index can be used.",
+  "prerequisites": [
+    "sql-indexes"
+  ],
+  "prerequisiteNotes": "sql-indexes: what a B-tree index stores, composite column order, expression and partial indexes, and the write cost of every index. This lesson assumes you know which index should help and teaches you to prove whether the planner used it, and why not.",
+  "objectives": [
+    "Read a plan tree bottom-up, name each node type and say what it does with the rows it receives.",
+    "Explain `cost=startup..total`, `rows`, `actual rows` and `loops`, and multiply per-loop numbers correctly.",
+    "Choose between Nested Loop, Hash Join and Merge Join from input sizes, order and the join condition, and recognise when the planner chose wrongly.",
+    "Run EXPLAIN ANALYZE safely (DML inside `BEGIN ... ROLLBACK`), read BUFFERS, and fix estimates broken by stale statistics with ANALYZE.",
+    "Rewrite non-sargable predicates (functions or arithmetic on the column, implicit casts, OR across tables) so the same rows come back through an index."
+  ],
+  "concepts": [
+    {
+      "title": "A plan is a tree: read it inside-out",
+      "body": "EXPLAIN prints the plan the planner chose as an indented tree. The **root** is the first line, but execution is pull-based: the root asks its children for rows, they ask theirs, and the **leaves** (scans) actually read tables. So read from the most indented lines outward: what does each leaf produce, what does each parent do with it, and how many rows flow up each edge. Each node line shows the planner's estimate `(cost=startup..total rows=N width=bytes)`; with ANALYZE it adds `(actual rows=N loops=L)` and detail lines such as `Index Cond`, `Filter`, `Rows Removed by Filter`, `Hash Cond` or `Sort Method`. Every plan in this lesson is real PGlite output (PostgreSQL 18.3) on a demo database you can rebuild from the example: 2,000 customers, 20,000 orders one every 47 minutes from 2024-01-01, indexes on `orders (placed_at)` and `orders (customer_id)`, after ANALYZE. Note that Postgres 18 prints `actual rows` with two decimals because it is an **average per loop**.",
+      "code": "EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT c.region, count(*) AS orders\nFROM orders o\nJOIN customers c ON c.id = o.customer_id\nWHERE o.placed_at >= '2024-02-01' AND o.placed_at < '2024-02-08'\nGROUP BY c.region;\n\n-- HashAggregate  (cost=73.20..73.23 rows=3 width=11) (actual rows=3.00 loops=1)\n--   Group Key: c.region\n--   Batches: 1  Memory Usage: 32kB\n--   ->  Hash Join  (cost=58.29..72.13 rows=214 width=3) (actual rows=215.00 loops=1)\n--         Hash Cond: (o.customer_id = c.id)\n--         ->  Index Scan using orders_placed_at_idx on orders o  (cost=0.29..13.57 rows=214 width=4) (actual rows=215.00 loops=1)\n--               Index Cond: ((placed_at >= '2024-02-01 00:00:00+00'::timestamp with time zone) AND (placed_at < '2024-02-08 00:00:00+00'::timestamp with time zone))\n--               Index Searches: 1\n--         ->  Hash  (cost=33.00..33.00 rows=2000 width=7) (actual rows=2000.00 loops=1)\n--               Buckets: 2048  Batches: 1  Memory Usage: 74kB\n--               ->  Seq Scan on customers c  (cost=0.00..33.00 rows=2000 width=7) (actual rows=2000.00 loops=1)",
+      "diagram": "sqx-tree"
+    },
+    {
+      "title": "EXPLAIN vs EXPLAIN ANALYZE, and the options worth typing",
+      "body": "A statement goes parser → rewriter (views are expanded here) → planner → executor. Plain `EXPLAIN` stops after the planner: it shows the plan and **estimates**, runs nothing, and is safe on any statement. `EXPLAIN ANALYZE` also **executes** the statement and reports what really happened, so `EXPLAIN ANALYZE DELETE ...` really deletes and `EXPLAIN ANALYZE` on a 10-minute query takes 10 minutes. Wrap DML in `BEGIN; EXPLAIN ANALYZE ...; ROLLBACK;` (the row locks and WAL still happen, and a `nextval()` is not rolled back). Useful options: `BUFFERS` (pages hit in cache, read, dirtied, written; on by default with ANALYZE since Postgres 18), `VERBOSE` (output columns, schema-qualified names), `SETTINGS` (non-default planner settings), `WAL`, `FORMAT JSON` for tools, and `TIMING OFF` / `SUMMARY OFF` / `COSTS OFF` to make output stable for diffs and tests. Per-node timing has overhead on fast nodes; `TIMING OFF` keeps the row counts and drops the clock calls.",
+      "code": "-- Plain EXPLAIN: plan and estimates only; nothing runs.\nEXPLAIN SELECT * FROM orders;\n-- Seq Scan on orders  (cost=0.00..367.00 rows=20000 width=31)\n\n-- EXPLAIN ANALYZE runs the statement. Wrap DML so the change is undone.\nBEGIN;\nEXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nUPDATE orders SET status = 'void' WHERE customer_id = 42;\n-- Update on orders (actual rows=0.00 loops=1)\n--   ->  Bitmap Heap Scan on orders (actual rows=10.00 loops=1)\n--         Recheck Cond: (customer_id = 42)\n--         Heap Blocks: exact=10\n--         ->  Bitmap Index Scan on orders_customer_id_idx (actual rows=10.00 loops=1)\n--               Index Cond: (customer_id = 42)\n--               Index Searches: 1\nROLLBACK;\n\n-- In production you usually want everything (BUFFERS is on by default with ANALYZE in 18):\n-- EXPLAIN (ANALYZE, BUFFERS, SETTINGS, VERBOSE) <query>;",
+      "diagram": "sqx-pipeline"
+    },
+    {
+      "title": "Scan nodes: Seq, Index, Index Only, Bitmap",
+      "body": "**Seq Scan** reads every page of the table in order; with a `Filter` it discards non-matching rows after reading them. It is the right plan when a large fraction of rows match or the table is small, because sequential I/O is cheap. **Index Scan** walks the B-tree to the matching keys (`Index Cond`) and fetches each row from the heap; it returns rows in index order, which can remove a Sort. **Index Only Scan** answers from the index alone when every needed column is in it, but must check the heap for rows on pages not marked all-visible: `Heap Fetches` shows how often, and it drops after VACUUM updates the visibility map. **Bitmap Index Scan + Bitmap Heap Scan** first collects all matching row locations into a bitmap, then visits the heap pages once each in physical order; it is chosen for medium selectivity, and several bitmaps can be combined with `BitmapAnd` / `BitmapOr` (that is how `a = 1 OR b = 2` on two indexed columns of one table can still use both indexes). `Recheck Cond` is applied when the bitmap became lossy (page-level). Postgres 18 also prints `Index Searches`, the number of B-tree descents.",
+      "code": "-- Bitmap: collect matching row ids from the index, then visit heap pages in physical order.\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT id, total FROM orders WHERE customer_id = 42;\n-- Bitmap Heap Scan on orders  (cost=4.37..37.15 rows=10 width=14) (actual rows=10.00 loops=1)\n--   Recheck Cond: (customer_id = 42)\n--   Heap Blocks: exact=10\n--   ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.36 rows=10 width=0) (actual rows=10.00 loops=1)\n--         Index Cond: (customer_id = 42)\n--         Index Searches: 1\n\n-- Index Only Scan: every needed column is in the index.\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT placed_at FROM orders WHERE placed_at < '2024-01-02';\n-- Index Only Scan using orders_placed_at_idx on orders  (cost=0.29..8.81 rows=30 width=8) (actual rows=30.00 loops=1)\n--   Index Cond: (placed_at < '2024-01-02 00:00:00+00'::timestamp with time zone)\n--   Heap Fetches: 30          <- never vacuumed: the visibility map is empty\n--   Index Searches: 1\n\n-- Seq Scan + Filter: 2% of rows match and there is no index on status.\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT count(*) FROM orders WHERE status = 'refunded';\n-- Aggregate  (cost=418.00..418.01 rows=1 width=8) (actual rows=1.00 loops=1)\n--   ->  Seq Scan on orders  (cost=0.00..417.00 rows=400 width=0) (actual rows=400.00 loops=1)\n--         Filter: (status = 'refunded'::text)\n--         Rows Removed by Filter: 19600"
+    },
+    {
+      "title": "Join algorithms: Nested Loop, Hash Join, Merge Join",
+      "body": "**Nested Loop** runs its inner child once per outer row. With 5 outer rows and an index on the inner join key it is the cheapest plan there is, and it is the only algorithm for conditions that are not equality (ranges, `OR`, `LIKE`). It is a red flag when the outer side is large: watch for `loops=` in the thousands on the inner side. **Hash Join** builds a hash table on one input (the `Hash` child, normally the smaller side) and streams the other through it: linear time, no index or order needed, equality only. `Batches` greater than 1 means the hash table did not fit in `work_mem` (scaled by `hash_mem_multiplier`, default 2) and spilled. **Merge Join** needs both inputs sorted on the join key and walks them in step; it shines when indexes deliver that order or the query needs the order anyway. The planner chooses from **estimated** row counts, which is why a bad estimate usually shows up as the wrong join algorithm.",
+      "code": "-- Nested Loop: 5 outer customers, the inner index probe runs 5 times.\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT c.email, o.id\nFROM customers c JOIN orders o ON o.customer_id = c.id\nWHERE c.id <= 5;\n-- Nested Loop  (cost=4.64..179.98 rows=50 width=18) (actual rows=50.00 loops=1)\n--   ->  Index Scan using customers_pkey on customers c  (cost=0.28..8.37 rows=5 width=14) (actual rows=5.00 loops=1)\n--         Index Cond: (id <= 5)\n--         Index Searches: 1\n--   ->  Bitmap Heap Scan on orders o  (cost=4.37..34.22 rows=10 width=12) (actual rows=10.00 loops=5)\n--         Recheck Cond: (c.id = customer_id)\n--         Heap Blocks: exact=50\n--         ->  Bitmap Index Scan on orders_customer_id_idx  (cost=0.00..4.36 rows=10 width=0) (actual rows=10.00 loops=5)\n--               Index Cond: (customer_id = c.id)\n--               Index Searches: 5\n\n-- Merge Join over two index-ordered inputs (hash join disabled to show it).\nSET enable_hashjoin = off;\nEXPLAIN (COSTS OFF)\nSELECT count(*) FROM orders o JOIN customers c ON c.id = o.customer_id;\n-- Aggregate\n--   ->  Merge Join\n--         Merge Cond: (o.customer_id = c.id)\n--         ->  Index Only Scan using orders_customer_id_idx on orders o\n--         ->  Index Only Scan using customers_pkey on customers c\nRESET enable_hashjoin;",
+      "diagram": "sqx-joins"
+    },
+    {
+      "title": "cost, rows, loops: what the numbers mean",
+      "body": "`cost` is in arbitrary planner units, anchored at `seq_page_cost = 1` (reading one page sequentially); `random_page_cost` defaults to 4 and `cpu_tuple_cost` to 0.01. The first number is the **startup** cost (work before the first row can be emitted), the second the **total** cost to emit all rows. A node's cost includes its children. Costs are only comparable between plans for the same query on the same database; never compare them with milliseconds. Startup cost explains `LIMIT`: a Sort has startup close to its total because it must consume all input before row one, while an Index Scan in the right order starts at nearly 0 and the Limit stops it early. `rows` is the estimated output of the node, `actual rows` the measured average **per loop**, and `loops` how many times the node ran. Multiply: `actual rows=10.00 loops=5` is 50 rows in total, and with timing on, the time shown is also per loop. Compare estimate and actual at **every** level; the lowest node where they diverge is the one to fix.",
+      "code": "-- Seq Scan cost = pages * seq_page_cost + rows * cpu_tuple_cost (+ cpu_operator_cost per operator per row)\n--   no filter:                 167 * 1.0 + 20000 * 0.01                  = 367\n--   status = 'refunded':       367 + 20000 * 0.0025                      = 417\n--   date_trunc(...) = const:   367 + 20000 * 0.0025 * 2 (function and =) = 467\n\n-- Startup cost matters under LIMIT: the Sort must consume all input before row 1.\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT id, total FROM orders ORDER BY total DESC LIMIT 5;\n-- Limit  (cost=699.19..699.21 rows=5 width=14) (actual rows=5.00 loops=1)\n--   ->  Sort  (cost=699.19..749.19 rows=20000 width=14) (actual rows=5.00 loops=1)\n--         Sort Key: total DESC\n--         Sort Method: top-N heapsort  Memory: 17kB\n--         ->  Seq Scan on orders  (cost=0.00..367.00 rows=20000 width=14) (actual rows=20000.00 loops=1)"
+    },
+    {
+      "title": "Statistics, ANALYZE and stale estimates",
+      "body": "Estimates come from `pg_statistic` (readable through the `pg_stats` view): per column, the null fraction, the number of distinct values, the most common values with their frequencies, and a histogram, collected by sampling (`default_statistics_target = 100`, so up to 30,000 rows). `ANALYZE` refreshes them; autovacuum runs it automatically after roughly 10% of a table changes (`autovacuum_analyze_scale_factor`), which can lag far behind a bulk load, and it never analyzes temporary tables. A value the statistics have never seen is estimated as very rare, which is how a fresh batch of 5,000 `queued` jobs became `rows=1`. Fixes, in order: run `ANALYZE` after bulk loads and in migrations; raise the target for skewed columns (`ALTER TABLE ... ALTER COLUMN ... SET STATISTICS 1000`); and add extended statistics (`CREATE STATISTICS ... (dependencies, ndistinct, mcv) ON city, zip FROM ...`) when columns are correlated, because the planner otherwise multiplies their selectivities as if independent.",
+      "code": "CREATE TABLE jobs (id int PRIMARY KEY, state text NOT NULL);\nCREATE INDEX jobs_state_idx ON jobs (state);\nINSERT INTO jobs SELECT g, 'done' FROM generate_series(1, 10000) g;\nANALYZE jobs;                                   -- statistics: every job is 'done'\nINSERT INTO jobs SELECT g, 'queued' FROM generate_series(10001, 15000) g;\n\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT count(*) FROM jobs WHERE state = 'queued';\n-- Aggregate  (cost=4.31..4.32 rows=1 width=8) (actual rows=1.00 loops=1)\n--   ->  Index Only Scan using jobs_state_idx on jobs  (cost=0.29..4.30 rows=1 width=0) (actual rows=5000.00 loops=1)\n\nANALYZE jobs;\n-- same query again:\n-- Aggregate  (cost=151.28..151.29 rows=1 width=8) (actual rows=1.00 loops=1)\n--   ->  Index Only Scan using jobs_state_idx on jobs  (cost=0.29..138.78 rows=5000 width=0) (actual rows=5000.00 loops=1)",
+      "diagram": "sqx-estimates"
+    },
+    {
+      "title": "Sort, Hash, Aggregate, Limit and memory",
+      "body": "**Sort** shows its `Sort Key` and, with ANALYZE, its `Sort Method`: `quicksort` (in memory), `top-N heapsort` (only the first N rows are kept, used under `LIMIT`), or `external merge  Disk: ...kB`, which means the sort exceeded `work_mem` (default 4MB) and spilled to temp files. **HashAggregate** groups in a hash table (it can spill too: watch `Batches`), while **GroupAggregate** needs sorted input and streams; **Aggregate** with no key is a plain `count(*)`. **Limit** stops pulling from its child after N rows, so whatever is below it should be cheap to start. `work_mem` is per sort or hash node per query, not per connection: a plan with 4 hash joins can use 4 times it (8 times with the hash multiplier), across every parallel worker, which is why it is raised per session (`SET work_mem`) or per role for reports rather than globally.",
+      "code": "SET work_mem = '64kB';\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT id, total FROM orders ORDER BY total, id;\n-- Sort  (cost=2481.77..2531.77 rows=20000 width=14) (actual rows=20000.00 loops=1)\n--   Sort Key: total, id\n--   Sort Method: external merge  Disk: 528kB          <- spilled\n--   ->  Seq Scan on orders  (cost=0.00..367.00 rows=20000 width=14) (actual rows=20000.00 loops=1)\n\nRESET work_mem;                                     -- default 4MB\n-- Sort  (cost=1795.77..1845.77 rows=20000 width=14) (actual rows=20000.00 loops=1)\n--   Sort Key: total, id\n--   Sort Method: quicksort  Memory: 1138kB"
+    },
+    {
+      "title": "Sargable predicates: keep the indexed column bare",
+      "body": "A predicate is **sargable** (search-argument-able) when the planner can turn it into an `Index Cond`: the indexed column alone on one side of an indexable operator (`=`, `<`, `>`, `BETWEEN`, `IN`, `LIKE 'abc%'` with a suitable collation or `text_pattern_ops`), and a constant or parameter of the **same type** on the other. Wrapping the column breaks it: `date_trunc('day', placed_at) = d`, `placed_at::date = d`, `amount_cents / 100.0 > 500`, `id + 1 = 43`, `lower(email) = ...`, `coalesce(col, 0) = 0`. Move the work to the constant side: a **half-open range** `placed_at >= d AND placed_at < d + interval '1 day'` (never `BETWEEN d AND d + '23:59:59'`, which drops fractional seconds), `amount_cents > 50000`. Watch **implicit casts**: `bigint_col = 42.0` casts the column to `numeric`, and a driver that binds a decimal or text parameter does the same. When the expression cannot move, index the expression instead; but `date_trunc` and `::date` on a `timestamptz` depend on the session time zone, are not IMMUTABLE, and cannot be indexed.",
+      "code": "-- Non-sargable: the index holds placed_at, not date_trunc(placed_at).\nEXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)\nSELECT id, total FROM orders WHERE date_trunc('day', placed_at) = '2024-02-01';\n-- Seq Scan on orders  (cost=0.00..467.00 rows=100 width=14) (actual rows=31.00 loops=1)\n--   Filter: (date_trunc('day'::text, placed_at) = '2024-02-01 00:00:00+00'::timestamp with time zone)\n--   Rows Removed by Filter: 19969\n--   Buffers: shared hit=167\n\n-- Sargable: the same rows as a half-open range on the bare column.\nEXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)\nSELECT id, total FROM orders WHERE placed_at >= '2024-02-01' AND placed_at < '2024-02-02';\n-- Index Scan using orders_placed_at_idx on orders  (cost=0.29..8.91 rows=31 width=14) (actual rows=31.00 loops=1)\n--   Index Cond: ((placed_at >= '2024-02-01 00:00:00+00'::timestamp with time zone) AND (placed_at < '2024-02-02 00:00:00+00'::timestamp with time zone))\n--   Index Searches: 1\n--   Buffers: shared hit=4\n\n-- Implicit cast: 42.0 is numeric, so the bigint column is cast and the key is lost.\nEXPLAIN SELECT * FROM orders WHERE id = 42.0;\n-- Seq Scan on orders  (cost=0.00..467.00 rows=100 width=31)\n--   Filter: ((id)::numeric = 42.0)",
+      "diagram": "sqx-sargable"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "A slow dashboard query, diagnosed aloud",
+      "body": "\"The daily report is slow.\" Say the method before touching SQL. **One:** get the real plan with `EXPLAIN (ANALYZE, BUFFERS)` on production-like data (a staging copy or a replica; on a primary, wrap DML in a rolled-back transaction). **Two:** read bottom-up and walk the red-flag list: an estimate off by 10x or more against `actual rows` (stale stats, correlated columns, a function the planner cannot see into); `Rows Removed by Filter` that dwarfs the rows kept after a Seq Scan (missing or unusable index); `Sort Method: external merge` or `Batches` > 1 (memory); a Nested Loop whose inner side has a huge `loops` count (bad row estimate on the outer side); `Heap Fetches` close to `actual rows` on an Index Only Scan (needs VACUUM). **Three:** form one hypothesis, change one thing, re-measure, and compare **buffers**, not just time: the second run is warm in cache and always looks faster. Here, 19,969 of 20,000 rows were removed after reading all 167 pages: an index exists on `placed_at`, but `date_trunc` hides the column from it.",
+      "code": "-- 1. Measure, with BUFFERS (default with ANALYZE in 18):\nEXPLAIN (ANALYZE, BUFFERS, TIMING OFF, SUMMARY OFF)\nSELECT id, total FROM orders WHERE date_trunc('day', placed_at) = '2024-02-01';\n-- Seq Scan on orders  (cost=0.00..467.00 rows=100 width=14) (actual rows=31.00 loops=1)\n--   Filter: (date_trunc('day'::text, placed_at) = '2024-02-01 00:00:00+00'::timestamp with time zone)\n--   Rows Removed by Filter: 19969        <- red flag: 99.8% of the rows read were thrown away\n--   Buffers: shared hit=167               <- every page of the table\n\n-- 2. Is there an index on placed_at? Yes: orders_placed_at_idx. Why unused? A function wraps the column.\n-- 3. Rewrite as a half-open range and measure again: Index Scan, 31 rows, shared hit=4.\nSELECT id, total\nFROM orders\nWHERE placed_at >= timestamptz '2024-02-01 00:00+00'\n  AND placed_at <  timestamptz '2024-02-01 00:00+00' + interval '1 day';",
+      "diagram": "sqx-buffers"
+    },
+    {
+      "title": "OR across two tables: rewrite to UNION",
+      "body": "\"Find orders that are either #77 or placed by `c42@x.io`.\" Both columns are indexed, yet the plan seq-scans both tables: the `OR` mentions two tables, so it cannot be pushed into either scan and is evaluated as a `Join Filter` after joining everything (19,989 rows discarded). Within **one** table, Postgres can combine two indexes with `BitmapOr` (and an `OR` on one column becomes `= ANY`), so you only need this rewrite when the `OR` crosses tables or when its branches need different join paths. Split it into one query per predicate, each sargable on its own, and combine with `UNION`, which removes duplicates when a row satisfies both branches; use `UNION ALL` only when the branches are disjoint (or add `AND NOT (first predicate)` to the second branch, minding NULLs). Measured cost: 477.5 before, 54.15 after, same 11 rows. An `IN (subquery)` or `EXISTS` on one side is another index-friendly shape when the predicate is on a single table.",
+      "code": "-- Before: one OR across two tables (default settings)\nEXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT o.id FROM orders o JOIN customers c ON c.id = o.customer_id\nWHERE o.id = 77 OR c.email = 'c42@x.io';\n-- Hash Join  (cost=58.00..477.50 rows=11 width=8) (actual rows=11.00 loops=1)\n--   Hash Cond: (o.customer_id = c.id)\n--   Join Filter: ((o.id = 77) OR (c.email = 'c42@x.io'::text))\n--   Rows Removed by Join Filter: 19989\n--   ->  Seq Scan on orders o  (cost=0.00..367.00 rows=20000 width=12) (actual rows=20000.00 loops=1)\n--   ->  Hash  (cost=33.00..33.00 rows=2000 width=14) (actual rows=2000.00 loops=1)\n--         ->  Seq Scan on customers c  (cost=0.00..33.00 rows=2000 width=14) (actual rows=2000.00 loops=1)\n\n-- After: one branch per predicate, each with an Index Cond\nSELECT o.id FROM orders o WHERE o.id = 77\nUNION\nSELECT o.id FROM orders o JOIN customers c ON c.id = o.customer_id\nWHERE c.email = 'c42@x.io';\n-- Unique  (cost=54.09..54.15 rows=11 width=8) (actual rows=11.00 loops=1)\n--   ->  Sort ... ->  Append\n--         ->  Index Only Scan using orders_pkey on orders o            Index Cond: (id = 77)\n--         ->  Nested Loop\n--               ->  Index Scan using customers_email_key on customers c   Index Cond: (email = 'c42@x.io'::text)\n--               ->  Bitmap Heap Scan on orders o_1\n--                     ->  Bitmap Index Scan on orders_customer_id_idx      Index Cond: (customer_id = c.id)",
+      "diagram": "sqx-or-union"
+    }
+  ],
+  "example": "-- The demo database behind every plan in this lesson (PGlite, PostgreSQL 18.3, TimeZone UTC).\nCREATE TABLE customers (id int PRIMARY KEY, email text NOT NULL UNIQUE, region text);\nCREATE TABLE orders (\n  id          bigint PRIMARY KEY,\n  customer_id int NOT NULL REFERENCES customers (id),\n  placed_at   timestamptz NOT NULL,\n  status      text NOT NULL,\n  total       numeric(10,2) NOT NULL\n);\nINSERT INTO customers\nSELECT g, 'c' || g || '@x.io', (ARRAY['eu', 'us', 'apac'])[1 + g % 3]\nFROM generate_series(1, 2000) g;\nINSERT INTO orders\nSELECT g, 1 + (g * 7919) % 2000,\n       timestamptz '2024-01-01 00:00+00' + g * interval '47 minutes',\n       CASE WHEN g % 50 = 0 THEN 'refunded' ELSE 'paid' END,\n       (g % 500) + 0.99\nFROM generate_series(1, 20000) g;\nCREATE INDEX orders_placed_at_idx   ON orders (placed_at);\nCREATE INDEX orders_customer_id_idx ON orders (customer_id);\nANALYZE;\n\n-- Then: read each plan bottom-up, compare rows= with actual rows=, look for the red flags.\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT c.region, count(*) AS orders, sum(o.total) AS revenue\nFROM orders o\nJOIN customers c ON c.id = o.customer_id\nWHERE o.placed_at >= '2024-02-01' AND o.placed_at < '2024-03-01'\nGROUP BY c.region\nORDER BY revenue DESC;",
+  "task": "Table `orders(id, customer_id, placed_at timestamptz, total)` has a B-tree index `orders_placed_at_idx` on `placed_at`. A reporting view filters with `date_trunc('month', placed_at) = '2024-02-01 00:00+00'`, which returns the right rows but can never use the index. Recreate the view `feb_2024_orders` with columns `id`, `customer_id`, `placed_at`, `total` so that it returns **exactly** the orders placed in February 2024 in UTC (the session time zone), including the leap day up to its last fraction of a second, and so that its predicate can use `orders_placed_at_idx`. The check selects `id`, `customer_id`, `total` from your view, plus `uses_index`: whether `EXPLAIN` of `SELECT * FROM feb_2024_orders` (with `enable_seqscan = off`) shows an `Index Cond` on `placed_at`. Do not change the table or its index.",
+  "starter": "-- Rewrite the WHERE clause: same rows, but able to use orders_placed_at_idx.\nCREATE VIEW feb_2024_orders AS\nSELECT id, customer_id, placed_at, total\nFROM orders\nWHERE date_trunc('month', placed_at) = timestamptz '2024-02-01 00:00+00';\n\nSELECT * FROM feb_2024_orders;",
+  "hints": [
+    "The index is sorted by `placed_at` itself. Which comparison on the bare column selects \"from the first instant of February up to, but not including, the first instant of March\"?",
+    "Write a half-open range with `>=` and `<`. `BETWEEN '2024-02-01' AND '2024-02-29'` stops at midnight at the start of the leap day, and `<= '2024-02-29 23:59:59'` loses `23:59:59.5`."
+  ],
+  "solution": "The index stores `placed_at` values in order, so the planner can only use it for conditions of the form `placed_at <op> constant`. `date_trunc('month', placed_at)` is a different value per row that the index does not contain, so the starter is evaluated as a `Filter` on every row (a Seq Scan, or with `enable_seqscan = off` still no `Index Cond`). Rewriting the month as a **half-open range** on the bare column, from `2024-02-01 00:00+00` inclusive to `2024-03-01 00:00+00` exclusive, selects exactly the same instants: every fraction of a second on 29 February is below the upper bound, the first instant of March is not, and timestamps entered with another offset are compared as absolute instants, so `2024-03-01 01:30+03` (22:30 UTC on the 29th) is in. The literals carry an explicit `+00` so the view does not depend on the session time zone. `BETWEEN` with a date or `23:59:59` upper bound is the classic wrong answer: it loses the leap day or its last second. `extract(month ...) = 2` alone also keeps February of other years and is still non-sargable. With an index on `placed_at`, the plan becomes an Index or Bitmap scan with `Index Cond: ((placed_at >= ...) AND (placed_at < ...))`, reading only February's rows.\n\n```sql\nCREATE VIEW feb_2024_orders AS\nSELECT id, customer_id, placed_at, total\nFROM orders\nWHERE placed_at >= timestamptz '2024-02-01 00:00+00'\n  AND placed_at <  timestamptz '2024-03-01 00:00+00';\n\nSELECT * FROM feb_2024_orders;\n```",
+  "checklist": [
+    "The indexed column appears bare on one side of each comparison; no function, cast or arithmetic is applied to it.",
+    "The range is half-open: `>=` the first instant, `<` the first instant of the next month.",
+    "`2024-02-29 23:59:59.999+00` is included and `2024-03-01 00:00+00` is excluded.",
+    "Timestamps written with another offset are judged as UTC instants.",
+    "February of 2023 and 2025 is excluded.",
+    "`EXPLAIN SELECT * FROM feb_2024_orders` shows an `Index Cond` on `placed_at`."
+  ],
+  "pitfalls": [
+    "Running `EXPLAIN ANALYZE` on an `UPDATE` or `DELETE` outside a transaction: the change is real. Use `BEGIN; ... ROLLBACK;`.",
+    "Reading `actual rows` as a total on a node with `loops` > 1: it is the per-loop average. Multiply by `loops`.",
+    "Comparing `cost` to milliseconds, or the costs of two different queries as if they were a time.",
+    "Tuning on a tiny dev table: the planner correctly picks a Seq Scan for 100 rows. Test plans on realistic volumes and statistics.",
+    "Judging a rewrite by a single run time: the second run is warm in cache. Compare BUFFERS and row counts.",
+    "Writing `BETWEEN d AND d + '23:59:59'` or `<= '...-29'` for a calendar period instead of a half-open range.",
+    "Comparing an indexed `bigint` with `42.0`, or binding a `numeric`/`text` parameter: the column is cast and the index is skipped.",
+    "Forgetting `ANALYZE` after a bulk load: autovacuum may not have analysed the new data yet, and estimates can be off by orders of magnitude."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Arithmetic on an indexed column",
+      "prompt": "Table `invoices(id, customer_id, amount_cents bigint, issued_on)` has a B-tree index `invoices_amount_cents_idx` on `amount_cents`. A view filters `amount_cents / 100.0 > 500`, which is correct but cannot use the index. Recreate the view `large_invoices` with columns `id`, `amount_cents` returning invoices of **strictly more** than 500.00 so that the predicate can use the index. The check selects `id`, `amount_cents` from your view, plus `uses_index`: whether `EXPLAIN` of `SELECT * FROM large_invoices` (with `enable_seqscan = off`) shows an `Index Cond` on `amount_cents`.",
+      "hints": [
+        "Move the division to the other side: if `amount_cents / 100.0 > 500`, what must `amount_cents` itself be greater than?",
+        "Compare with an integer literal. `amount_cents / 100 > 500` uses integer division and loses 50,001 to 50,099 cents; `amount_cents > 50000.0` is a numeric literal that makes Postgres cast the column."
+      ],
+      "solution": "CREATE VIEW large_invoices AS\nSELECT id, amount_cents\nFROM invoices\nWHERE amount_cents > 50000;\n\nSELECT * FROM large_invoices;",
+      "checklist": [
+        "`amount_cents` stands alone on the left of the comparison.",
+        "Exactly 50,000 cents is excluded; 50,001 is included.",
+        "The constant is a plain integer, so no cast is applied to the column."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Index-friendly OR across two tables",
+      "prompt": "Tables `users(id, email UNIQUE)` and `tickets(id, requester_id, subject)` with an index `tickets_requester_id_idx` on `tickets (requester_id)` (plus the primary key and unique indexes). The support search box finds tickets whose number is 1042 **or** whose requester's email is exactly `kim@acme.io`; the current view joins both tables and filters with an `OR`, so every table is scanned in full. Recreate the view `ticket_search` with columns `id`, `subject`, each matching ticket appearing once, so that **every table access in its plan is driven by an index condition** (no Seq Scan and no full index scan). The check selects `id`, `subject` from your view, plus `index_driven`: true when, in `EXPLAIN` of `SELECT * FROM ticket_search` with `enable_seqscan = off`, the number of scan nodes (Seq Scan, Index Scan, Index Only Scan, Bitmap Index Scan) equals the number of `Index Cond` lines.",
+      "hints": [
+        "An `OR` that mentions two tables cannot become an `Index Cond` on either. Which set operator runs two independent queries and merges their rows?",
+        "One branch looks tickets up by primary key; the other finds the user by email and then the tickets by `requester_id`. A ticket can satisfy both branches: `UNION` removes the duplicate, `UNION ALL` does not."
+      ],
+      "solution": "CREATE VIEW ticket_search AS\nSELECT t.id, t.subject\nFROM tickets t\nWHERE t.id = 1042\nUNION\nSELECT t.id, t.subject\nFROM tickets t\nJOIN users u ON u.id = t.requester_id\nWHERE u.email = 'kim@acme.io';\n\nSELECT * FROM ticket_search;",
+      "checklist": [
+        "Ticket 1042 raised by kim appears once.",
+        "The email comparison is exact: `Kim@acme.io` and `kim@acme.io.old` do not match.",
+        "Two different tickets with the same subject both appear (deduplication happens on the whole row, which includes `id`).",
+        "Each branch has an `Index Cond`: the primary key, the email unique index and `tickets_requester_id_idx`."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "EXPLAIN shows estimated rows=1 but actual rows=48,000 on a scan, and the parent is a Nested Loop. What happened and what do you do?",
+      "answer": "The planner chose a Nested Loop because it expected one outer row; it ran the inner side 48,000 times instead. Find the cause of the misestimate at that leaf: stale statistics (check `last_analyze`/`last_autoanalyze` in `pg_stat_user_tables` and run `ANALYZE`), correlated predicates such as `city = ... AND zip = ...` (add `CREATE STATISTICS` with `dependencies`/`mcv`), a value outside the histogram (newest timestamps after a load), or a function or JSON expression whose selectivity is a default guess (an expression index also gathers statistics on that expression). Fix the estimate rather than disabling nested loops: `enable_*` settings are diagnostics for a session, never a production fix."
+    },
+    {
+      "question": "A query is fast in staging and slow in production. How do you investigate without guessing?",
+      "answer": "Get the production plan: `auto_explain` with `log_min_duration` logs plans of slow statements (with `log_analyze` if you accept the overhead), and `pg_stat_statements` ranks queries by total time and shows calls and shared blocks. Compare row counts and estimates, not just shapes: data volume and distribution differ, statistics differ, and settings (`work_mem`, `random_page_cost`, `effective_cache_size`) may differ (`EXPLAIN (SETTINGS)` lists non-defaults). Also check for a generic plan: prepared statements switch to a parameter-independent plan after five executions if it does not look costlier, which can be bad for skewed values; `plan_cache_mode = force_custom_plan` or `EXPLAIN (GENERIC_PLAN)` helps confirm it."
+    },
+    {
+      "question": "Why might Postgres ignore a perfectly good index?",
+      "answer": "Because it estimates the Seq Scan is cheaper, often correctly: when a large share of rows match, random heap fetches cost more than reading every page in order (`random_page_cost` 4 vs `seq_page_cost` 1; lower it to about 1.1 on SSDs with a well-cached data set). Otherwise the predicate is unusable: a function, arithmetic or cast on the column, a type mismatch from a driver parameter, a `LIKE '%x'` leading wildcard, a composite index whose leading column is not constrained (Postgres 18 can sometimes skip-scan it), a partial index whose predicate the query does not imply, or a non-default collation for `LIKE 'abc%'`. To test, `SET enable_seqscan = off` in a session: if the index plan appears with a higher cost, the planner considered it and rejected it; if not, the index cannot be used for that predicate."
+    },
+    {
+      "question": "How do you EXPLAIN ANALYZE a long-running UPDATE on a 500 GB table in production safely?",
+      "answer": "Prefer not to: plain `EXPLAIN` gives the plan without running it, and most problems (wrong scan, wrong join) show there. If you need actual numbers, run it on a restored copy or a replica-promoted clone. If it must be on the primary, wrap it in `BEGIN ... ROLLBACK`, but know that the rollback does not make it free: it takes row locks for the whole duration (blocking other writers), generates WAL and dead tuples that vacuum must clean, and a `nextval()` is not undone. Use `SET statement_timeout` and `lock_timeout` in that session, and test on a representative `WHERE id BETWEEN` slice first."
+    }
+  ],
+  "takeaways": [
+    "A plan is a tree: read the leaves first and follow rows upward; the first line runs last.",
+    "`cost=startup..total` is in planner units; `actual rows` is per loop, so multiply by `loops`.",
+    "Nested Loop for few outer rows and an indexed inner side, Hash Join for big unsorted equality joins, Merge Join for inputs already sorted.",
+    "EXPLAIN ANALYZE executes the statement: wrap DML in `BEGIN ... ROLLBACK`, and compare BUFFERS, not just time.",
+    "An estimate off by 10x or more is the root of most bad plans: ANALYZE, raise the statistics target, or add extended statistics.",
+    "Keep the indexed column bare: half-open ranges instead of `date_trunc`/casts, constants of the column's type, UNION instead of an OR across tables."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqx-tree",
+        "type": "flow",
+        "title": "Reading a plan bottom-up: rows flow from the leaves to the root",
+        "alt": "Flow diagram of a real plan. At the bottom right a Seq Scan reads 2,000 customers into a Hash node. At the bottom left an Index Scan on orders_placed_at_idx returns 215 orders for one week. Both feed a Hash Join in the middle that outputs 215 rows, which feed a HashAggregate at the top that outputs 3 rows, one per region, to the client.",
+        "caption": "The root is printed first but runs last: start reading at the most indented lines, follow the rows upward and check each node's estimated rows against its actual rows.",
+        "nodes": [
+          {
+            "id": "out",
+            "label": "result",
+            "kind": "client",
+            "col": 4,
+            "row": 0,
+            "sub": "3 rows"
+          },
+          {
+            "id": "agg",
+            "label": "HashAggregate",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "group by region"
+          },
+          {
+            "id": "hj",
+            "label": "Hash Join",
+            "kind": "service",
+            "col": 2,
+            "row": 2,
+            "sub": "est 214, got 215"
+          },
+          {
+            "id": "idx",
+            "label": "Index Scan",
+            "kind": "db",
+            "col": 0,
+            "row": 4,
+            "sub": "orders: one week"
+          },
+          {
+            "id": "hash",
+            "label": "Hash",
+            "kind": "cache",
+            "col": 4,
+            "row": 4,
+            "sub": "2,000 in memory"
+          },
+          {
+            "id": "seq",
+            "label": "Seq Scan",
+            "kind": "db",
+            "col": 4,
+            "row": 5,
+            "sub": "customers"
+          }
+        ],
+        "edges": [
+          {
+            "from": "seq",
+            "to": "hash",
+            "label": "2,000 rows"
+          },
+          {
+            "from": "idx",
+            "to": "hj",
+            "label": "215 rows"
+          },
+          {
+            "from": "hash",
+            "to": "hj",
+            "label": "probe table"
+          },
+          {
+            "from": "hj",
+            "to": "agg",
+            "label": "215 rows"
+          },
+          {
+            "from": "agg",
+            "to": "out",
+            "label": "3 rows"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "A Hash Join first builds its inner side: the Seq Scan reads all 2,000 customers and the `Hash` node puts them in a hash table keyed on `id` (`Batches: 1` means it fit in `work_mem`)."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "Then it streams the outer side: the Index Scan returns the 215 orders of that week (estimated 214, a good estimate) and each one probes the hash table by `customer_id`."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "The join emits 215 matched rows to `HashAggregate`, which keeps one counter per region in a hash table."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Only when its input is exhausted can the aggregate emit its 3 groups. Its startup cost (73.20) is close to its total (73.23) because it must read everything first."
+          }
+        ]
+      },
+      {
+        "id": "sqx-pipeline",
+        "type": "sequence",
+        "title": "From SQL text to rows: where EXPLAIN stops",
+        "alt": "Sequence diagram with five actors: client, parser, rewriter, planner and executor. The client sends SQL text to the parser, which sends a parse tree to the rewriter, which expands views and sends a query tree to the planner. The planner reads table statistics, picks the cheapest plan and either returns it to the client for plain EXPLAIN or hands it to the executor, which runs it and returns rows or, for EXPLAIN ANALYZE, the plan with actual counts.",
+        "caption": "EXPLAIN shows the planner's chosen plan and estimates without running it; EXPLAIN ANALYZE also runs it through the executor, so the statement's side effects happen.",
+        "actors": [
+          {
+            "id": "client",
+            "label": "Client"
+          },
+          {
+            "id": "parser",
+            "label": "Parser"
+          },
+          {
+            "id": "rewriter",
+            "label": "Rewriter"
+          },
+          {
+            "id": "planner",
+            "label": "Planner"
+          },
+          {
+            "id": "executor",
+            "label": "Executor"
+          }
+        ],
+        "messages": [
+          {
+            "from": "client",
+            "to": "parser",
+            "label": "SQL text",
+            "note": "The parser checks the syntax, then analysis resolves table and column names against the catalog and assigns types (this is where `42.0` becomes a `numeric`)."
+          },
+          {
+            "from": "parser",
+            "to": "rewriter",
+            "label": "query tree",
+            "note": "The rewriter applies rules: a view is replaced by its defining query, so the planner optimises the view's SQL together with your filter."
+          },
+          {
+            "from": "rewriter",
+            "to": "planner",
+            "label": "rewritten query tree",
+            "note": "The planner enumerates scan methods, join orders and join algorithms, estimates rows from `pg_statistic` (filled by ANALYZE), and keeps the plan with the lowest total cost."
+          },
+          {
+            "from": "planner",
+            "to": "client",
+            "label": "EXPLAIN: plan + estimates",
+            "style": "reply",
+            "note": "Plain EXPLAIN stops here: nothing is executed, so `EXPLAIN DELETE ...` deletes nothing and the numbers are estimates only."
+          },
+          {
+            "from": "planner",
+            "to": "executor",
+            "label": "plan tree",
+            "note": "Normal queries and EXPLAIN ANALYZE continue: the executor pulls rows from the root, which pulls from its children, down to the scans."
+          },
+          {
+            "from": "executor",
+            "to": "client",
+            "label": "rows",
+            "style": "reply",
+            "note": "A normal query returns its rows."
+          },
+          {
+            "from": "executor",
+            "to": "client",
+            "label": "ANALYZE: plan + actual rows",
+            "style": "reply",
+            "note": "EXPLAIN ANALYZE discards the rows and returns the plan with actual rows, loops, buffers and (unless TIMING OFF) times. Any INSERT, UPDATE or DELETE really happened."
+          }
+        ]
+      },
+      {
+        "id": "sqx-joins",
+        "type": "flow",
+        "title": "Three join algorithms and when each wins",
+        "alt": "Flow diagram with three rows. Nested Loop: for each outer row probe the inner side, which wins with few outer rows and an index on the inner join key. Hash Join: build a hash table on the smaller input and probe it with the other, which wins for large unsorted inputs joined on equality. Merge Join: walk two inputs sorted on the join key in step, which wins when both are already sorted, for example by indexes.",
+        "caption": "No algorithm is best in general: the planner picks from estimated row counts, so a bad estimate picks the wrong algorithm.",
+        "nodes": [
+          {
+            "id": "nl",
+            "label": "Nested Loop",
+            "kind": "service",
+            "col": 0,
+            "row": 0,
+            "sub": "any join condition"
+          },
+          {
+            "id": "nlh",
+            "label": "probe per row",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "inner runs N times"
+          },
+          {
+            "id": "nlw",
+            "label": "few outer rows",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "+ index on inner"
+          },
+          {
+            "id": "hj",
+            "label": "Hash Join",
+            "kind": "service",
+            "col": 0,
+            "row": 2,
+            "sub": "equality only"
+          },
+          {
+            "id": "hjh",
+            "label": "build + probe",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "hash smaller side"
+          },
+          {
+            "id": "hjw",
+            "label": "big, unsorted",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "hash fits work_mem"
+          },
+          {
+            "id": "mj",
+            "label": "Merge Join",
+            "kind": "service",
+            "col": 0,
+            "row": 4,
+            "sub": "equality, sorted"
+          },
+          {
+            "id": "mjh",
+            "label": "walk in step",
+            "kind": "state",
+            "col": 2,
+            "row": 4,
+            "sub": "one pass per side"
+          },
+          {
+            "id": "mjw",
+            "label": "already sorted",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "index order, big"
+          }
+        ],
+        "edges": [
+          {
+            "from": "nl",
+            "to": "nlh",
+            "label": "how"
+          },
+          {
+            "from": "nlh",
+            "to": "nlw",
+            "label": "wins when"
+          },
+          {
+            "from": "hj",
+            "to": "hjh",
+            "label": "how"
+          },
+          {
+            "from": "hjh",
+            "to": "hjw",
+            "label": "wins when"
+          },
+          {
+            "from": "mj",
+            "to": "mjh",
+            "label": "how"
+          },
+          {
+            "from": "mjh",
+            "to": "mjw",
+            "label": "wins when"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Nested Loop runs the inner side once per outer row (`loops` = outer rows). Cheap when the outer side is a handful of rows and the inner side is an index lookup; the only option for non-equality conditions such as `<` or `OR`. A disaster when the outer side is 100,000 rows the planner thought was 1."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Hash Join reads the smaller input once into a hash table, then streams the larger one and probes. Linear in both inputs, needs no index or order, equality only. If the table does not fit in `work_mem` it splits into batches on disk (`Batches: 8`)."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Merge Join needs both inputs sorted on the join key, then walks them together like merging two sorted lists. It wins when indexes already provide the order or the result must be sorted by the key anyway; an explicit Sort of a huge input usually makes Hash Join cheaper."
+          }
+        ]
+      },
+      {
+        "id": "sqx-estimates",
+        "type": "bars",
+        "title": "Row estimate before and after ANALYZE",
+        "alt": "Bar chart from a real PGlite run. After 5,000 queued jobs were inserted into a table analysed when it held only done jobs, the planner estimated 1 row for state = 'queued'. The query actually returned 5,000 rows. After running ANALYZE the estimate became 5,000.",
+        "caption": "A 5,000x miss from stale statistics; one ANALYZE fixes it. Estimates feed every choice above the scan, so a miss at a leaf poisons the whole plan.",
+        "unit": "rows",
+        "bars": [
+          {
+            "label": "estimate, stale stats",
+            "value": 1,
+            "highlight": true
+          },
+          {
+            "label": "actual rows",
+            "value": 5000
+          },
+          {
+            "label": "estimate after ANALYZE",
+            "value": 5000
+          }
+        ]
+      },
+      {
+        "id": "sqx-sargable",
+        "type": "compare",
+        "title": "A function on the column vs a range on the bare column",
+        "alt": "Comparison of two queries returning the same 31 orders of one day. On the left, date_trunc on placed_at forces a Seq Scan of all 20,000 rows; the filter removes 19,969 of them and the scan touches 167 buffers. On the right, a half-open range on the bare column becomes an Index Cond on orders_placed_at_idx, which reads only the 31 matching rows and 4 buffers.",
+        "caption": "The index stores placed_at values, not date_trunc results. Keep the indexed column bare and move the arithmetic to the constant side.",
+        "before": {
+          "label": "date_trunc('day', placed_at) = d",
+          "nodes": [
+            {
+              "id": "tbl",
+              "label": "orders heap",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "20,000 rows"
+            },
+            {
+              "id": "scan",
+              "label": "Seq Scan",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "fn on every row"
+            },
+            {
+              "id": "filt",
+              "label": "Filter",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "19,969 removed"
+            },
+            {
+              "id": "out",
+              "label": "31 rows",
+              "kind": "state",
+              "col": 2,
+              "row": 4,
+              "sub": "167 buffers"
+            }
+          ],
+          "edges": [
+            {
+              "from": "tbl",
+              "to": "scan",
+              "label": "read all"
+            },
+            {
+              "from": "scan",
+              "to": "filt"
+            },
+            {
+              "from": "filt",
+              "to": "out"
+            }
+          ]
+        },
+        "after": {
+          "label": "placed_at >= d AND placed_at < d + 1",
+          "nodes": [
+            {
+              "id": "idx",
+              "label": "placed_at index",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "sorted keys"
+            },
+            {
+              "id": "scan",
+              "label": "Index Scan",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "Index Cond: range"
+            },
+            {
+              "id": "heap",
+              "label": "fetch matches",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "31 heap tuples"
+            },
+            {
+              "id": "out",
+              "label": "31 rows",
+              "kind": "good",
+              "col": 2,
+              "row": 4,
+              "sub": "4 buffers"
+            }
+          ],
+          "edges": [
+            {
+              "from": "idx",
+              "to": "scan",
+              "label": "seek start"
+            },
+            {
+              "from": "scan",
+              "to": "heap"
+            },
+            {
+              "from": "heap",
+              "to": "out"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqx-buffers",
+        "type": "bars",
+        "title": "Buffers touched for the same 31 rows",
+        "alt": "Bar chart from EXPLAIN (ANALYZE, BUFFERS) in PGlite for the orders of one day. Filtering with date_trunc on placed_at runs a Seq Scan that touches 167 shared buffers (the whole table). The equivalent half-open range uses the index and touches 4 buffers.",
+        "caption": "Buffers count 8 kB pages read from cache or disk, and they do not depend on machine speed, so they are the fairest way to compare two rewrites.",
+        "unit": "8 kB buffers",
+        "bars": [
+          {
+            "label": "date_trunc → Seq Scan",
+            "value": 167,
+            "highlight": true
+          },
+          {
+            "label": "range → Index Scan",
+            "value": 4
+          }
+        ]
+      },
+      {
+        "id": "sqx-or-union",
+        "type": "compare",
+        "title": "OR across two joined tables vs UNION of indexed branches",
+        "alt": "Comparison of two plans that return the same 11 orders. On the left, WHERE o.id = 77 OR c.email = e spans two tables, so Postgres seq-scans 20,000 orders and 2,000 customers, hash-joins them and discards 19,989 rows in the Join Filter, total cost 477.5. On the right, a UNION runs an index lookup on orders_pkey for id 77 and a nested loop from the email index to the customer_id index, then de-duplicates, total cost 54.15.",
+        "caption": "An OR that spans tables cannot become an index condition on either one. Split it into branches that each have a sargable predicate, and use UNION (not UNION ALL) when a row can match both.",
+        "before": {
+          "label": "o.id = 77 OR c.email = e",
+          "nodes": [
+            {
+              "id": "o",
+              "label": "orders",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "Seq Scan 20,000"
+            },
+            {
+              "id": "c",
+              "label": "customers",
+              "kind": "db",
+              "col": 2,
+              "row": 0,
+              "sub": "Seq Scan 2,000"
+            },
+            {
+              "id": "hj",
+              "label": "Hash Join",
+              "kind": "bad",
+              "col": 1,
+              "row": 2,
+              "sub": "OR in Join Filter"
+            },
+            {
+              "id": "out",
+              "label": "11 rows",
+              "kind": "bad",
+              "col": 1,
+              "row": 4,
+              "sub": "19,989 discarded"
+            }
+          ],
+          "edges": [
+            {
+              "from": "o",
+              "to": "hj"
+            },
+            {
+              "from": "c",
+              "to": "hj"
+            },
+            {
+              "from": "hj",
+              "to": "out",
+              "label": "cost 477.5"
+            }
+          ]
+        },
+        "after": {
+          "label": "id = 77 UNION email = e",
+          "nodes": [
+            {
+              "id": "e",
+              "label": "email index",
+              "kind": "db",
+              "col": 2,
+              "row": 0,
+              "sub": "Index Cond: email"
+            },
+            {
+              "id": "pk",
+              "label": "orders_pkey",
+              "kind": "db",
+              "col": 0,
+              "row": 2,
+              "sub": "Index Cond: id"
+            },
+            {
+              "id": "nl",
+              "label": "Nested Loop",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "customer_id probe"
+            },
+            {
+              "id": "u",
+              "label": "UNION dedupe",
+              "kind": "good",
+              "col": 1,
+              "row": 4,
+              "sub": "Sort + Unique"
+            },
+            {
+              "id": "out",
+              "label": "11 rows",
+              "kind": "good",
+              "col": 1,
+              "row": 5,
+              "sub": "cost 54.15"
+            }
+          ],
+          "edges": [
+            {
+              "from": "e",
+              "to": "nl",
+              "label": "1 customer"
+            },
+            {
+              "from": "pk",
+              "to": "u",
+              "label": "1 row"
+            },
+            {
+              "from": "nl",
+              "to": "u",
+              "label": "10 rows"
+            },
+            {
+              "from": "u",
+              "to": "out"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE orders (\n  id          bigint PRIMARY KEY,\n  customer_id int NOT NULL,\n  placed_at   timestamptz NOT NULL,\n  total       numeric(10,2) NOT NULL\n);\nCREATE INDEX orders_placed_at_idx ON orders (placed_at);",
+        "starter": "-- Rewrite the WHERE clause: same rows, but able to use orders_placed_at_idx.\nCREATE VIEW feb_2024_orders AS\nSELECT id, customer_id, placed_at, total\nFROM orders\nWHERE date_trunc('month', placed_at) = timestamptz '2024-02-01 00:00+00';\n\nSELECT * FROM feb_2024_orders;",
+        "solution": "CREATE VIEW feb_2024_orders AS\nSELECT id, customer_id, placed_at, total\nFROM orders\nWHERE placed_at >= timestamptz '2024-02-01 00:00+00'\n  AND placed_at <  timestamptz '2024-03-01 00:00+00';\n\nSELECT * FROM feb_2024_orders;",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nSELECT v.id, v.customer_id, v.total, p.uses_index\nFROM feb_2024_orders v\nCROSS JOIN (SELECT coalesce(bool_or(line LIKE '%Index Cond:%placed_at%'), false) AS uses_index\n            FROM plan_of('SELECT * FROM feb_2024_orders') AS line) p",
+        "tests": [
+          {
+            "name": "orders in January, February and March",
+            "seed": "INSERT INTO orders VALUES\n  (1, 10, '2024-01-15 09:00+00', 20.00),\n  (2, 11, '2024-02-10 12:00+00', 35.50),\n  (3, 10, '2024-02-20 08:30+00', 12.00),\n  (4, 12, '2024-03-05 17:45+00', 99.99);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  2,
+                  11,
+                  35.5,
+                  true
+                ],
+                [
+                  3,
+                  10,
+                  12,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "first instant of February in, first instant of March out",
+            "seed": "INSERT INTO orders VALUES\n  (1, 10, '2024-01-31 23:59:59+00', 5.00),\n  (2, 11, '2024-02-01 00:00:00+00', 6.00),\n  (3, 12, '2024-02-29 12:00:00+00', 7.00),\n  (4, 13, '2024-03-01 00:00:00+00', 8.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  2,
+                  11,
+                  6,
+                  true
+                ],
+                [
+                  3,
+                  12,
+                  7,
+                  true
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "leap day just before midnight",
+            "seed": "INSERT INTO orders VALUES\n  (1, 10, '2024-02-29 23:59:59.999+00', 10.00),\n  (2, 10, '2024-02-28 23:00:00+00', 11.00),\n  (3, 10, '2024-02-29 23:59:59.5+00', 12.00),\n  (4, 10, '2024-03-01 00:00:00.001+00', 13.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  10,
+                  10,
+                  true
+                ],
+                [
+                  2,
+                  10,
+                  11,
+                  true
+                ],
+                [
+                  3,
+                  10,
+                  12,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "timestamps written with a +03 offset are judged in UTC",
+            "seed": "INSERT INTO orders VALUES\n  (1, 20, '2024-03-01 01:30+03', 40.00),\n  (2, 21, '2024-02-01 02:00+03', 41.00),\n  (3, 22, '2024-02-01 03:00+03', 42.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  20,
+                  40,
+                  true
+                ],
+                [
+                  3,
+                  22,
+                  42,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "February of other years is excluded",
+            "seed": "INSERT INTO orders VALUES\n  (1, 30, '2023-02-15 10:00+00', 1.00),\n  (2, 31, '2024-02-15 10:00+00', 2.00),\n  (3, 32, '2025-02-15 10:00+00', 3.00),\n  (4, 33, '2024-12-15 10:00+00', 4.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  2,
+                  31,
+                  2,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "several orders at the same instant",
+            "seed": "INSERT INTO orders VALUES\n  (1, 40, '2024-02-14 18:00+00', 25.00),\n  (2, 41, '2024-02-14 18:00+00', 25.00),\n  (3, 42, '2024-02-14 18:00+00', 30.00),\n  (4, 43, '2024-01-14 18:00+00', 25.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  40,
+                  25,
+                  true
+                ],
+                [
+                  2,
+                  41,
+                  25,
+                  true
+                ],
+                [
+                  3,
+                  42,
+                  30,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "no orders in February",
+            "seed": "INSERT INTO orders VALUES\n  (1, 50, '2024-01-31 12:00+00', 9.00),\n  (2, 51, '2024-03-01 12:00+00', 9.00);",
+            "expected": {
+              "columns": [
+                "id",
+                "customer_id",
+                "total",
+                "uses_index"
+              ],
+              "rows": []
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE invoices (\n  id           bigint PRIMARY KEY,\n  customer_id  int NOT NULL,\n  amount_cents bigint NOT NULL,\n  issued_on    date NOT NULL\n);\nCREATE INDEX invoices_amount_cents_idx ON invoices (amount_cents);",
+        "starter": "-- Rewrite the WHERE clause: same rows, but able to use invoices_amount_cents_idx.\nCREATE VIEW large_invoices AS\nSELECT id, amount_cents\nFROM invoices\nWHERE amount_cents / 100.0 > 500;\n\nSELECT * FROM large_invoices;",
+        "solution": "CREATE VIEW large_invoices AS\nSELECT id, amount_cents\nFROM invoices\nWHERE amount_cents > 50000;\n\nSELECT * FROM large_invoices;",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nSELECT v.id, v.amount_cents, p.uses_index\nFROM large_invoices v\nCROSS JOIN (SELECT coalesce(bool_or(line LIKE '%Index Cond:%amount_cents%'), false) AS uses_index\n            FROM plan_of('SELECT * FROM large_invoices') AS line) p",
+        "tests": [
+          {
+            "name": "small, large and boundary invoices",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 12000, '2025-01-03'),\n  (2, 7, 75000, '2025-01-04'),\n  (3, 8, 50000, '2025-01-05'),\n  (4, 9, 50001, '2025-01-06');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  2,
+                  75000,
+                  true
+                ],
+                [
+                  4,
+                  50001,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every invoice is large",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 60000, '2025-02-01'),\n  (2, 8, 120000, '2025-02-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  60000,
+                  true
+                ],
+                [
+                  2,
+                  120000,
+                  true
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "a few cents over 500.00 still counts",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 50050, '2025-03-01'),\n  (2, 7, 50099, '2025-03-02'),\n  (3, 7, 49999, '2025-03-03');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  50050,
+                  true
+                ],
+                [
+                  2,
+                  50099,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "exactly 500.00 is not large",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 50000, '2025-03-01'),\n  (2, 8, 50000, '2025-03-02'),\n  (3, 9, 100000, '2025-03-03');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  3,
+                  100000,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "credit notes are negative",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, -60000, '2025-04-01'),\n  (2, 7, 60000, '2025-04-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  2,
+                  60000,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "amount beyond the int range",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 9000000000000, '2025-05-01'),\n  (2, 7, 100, '2025-05-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": [
+                [
+                  1,
+                  9000000000000,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "nothing above the threshold",
+            "seed": "INSERT INTO invoices VALUES\n  (1, 7, 100, '2025-06-01'),\n  (2, 8, 49999, '2025-06-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "amount_cents",
+                "uses_index"
+              ],
+              "rows": []
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE users (\n  id    int PRIMARY KEY,\n  email text NOT NULL UNIQUE\n);\nCREATE TABLE tickets (\n  id           bigint PRIMARY KEY,\n  requester_id int NOT NULL REFERENCES users (id),\n  subject      text NOT NULL\n);\nCREATE INDEX tickets_requester_id_idx ON tickets (requester_id);",
+        "starter": "-- Same rows, but every table access must be an index lookup.\nCREATE VIEW ticket_search AS\nSELECT t.id, t.subject\nFROM tickets t\nJOIN users u ON u.id = t.requester_id\nWHERE t.id = 1042 OR u.email = 'kim@acme.io';\n\nSELECT * FROM ticket_search;",
+        "solution": "CREATE VIEW ticket_search AS\nSELECT t.id, t.subject\nFROM tickets t\nWHERE t.id = 1042\nUNION\nSELECT t.id, t.subject\nFROM tickets t\nJOIN users u ON u.id = t.requester_id\nWHERE u.email = 'kim@acme.io';\n\nSELECT * FROM ticket_search;",
+        "check": "CREATE OR REPLACE FUNCTION plan_of(q text) RETURNS SETOF text LANGUAGE plpgsql AS $$\nDECLARE r text; BEGIN FOR r IN EXECUTE 'EXPLAIN (COSTS OFF) ' || q LOOP RETURN NEXT r; END LOOP; END $$;\nSET enable_seqscan = off;\nWITH plan AS (\n  SELECT line FROM plan_of('SELECT * FROM ticket_search') AS line\n), shape AS (\n  SELECT count(*) FILTER (WHERE line ~ '(Seq Scan|Index Scan|Index Only Scan) ') AS scans,\n         count(*) FILTER (WHERE line ~ 'Index Cond:') AS conds\n  FROM plan\n)\nSELECT s.id, s.subject, (sh.scans = sh.conds) AS index_driven\nFROM ticket_search s\nCROSS JOIN shape sh",
+        "tests": [
+          {
+            "name": "ticket number and email match different tickets",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (1042, 2, 'VPN drops'),\n  (7, 1, 'Reset password'),\n  (8, 1, 'Laptop fan'),\n  (9, 2, 'New monitor');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  1042,
+                  "VPN drops",
+                  true
+                ],
+                [
+                  7,
+                  "Reset password",
+                  true
+                ],
+                [
+                  8,
+                  "Laptop fan",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "ticket 1042 was also raised by kim",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (1042, 1, 'Printer jam'),\n  (5, 1, 'Wi-Fi slow'),\n  (6, 3, 'Badge lost');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  1042,
+                  "Printer jam",
+                  true
+                ],
+                [
+                  5,
+                  "Wi-Fi slow",
+                  true
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "there is no ticket 1042",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (10, 1, 'Mouse broken'),\n  (11, 2, 'Desk move'),\n  (12, 1, 'Mouse broken');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  10,
+                  "Mouse broken",
+                  true
+                ],
+                [
+                  12,
+                  "Mouse broken",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "kim has raised no tickets",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (1042, 3, 'Access request'),\n  (20, 2, 'Phone setup');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  1042,
+                  "Access request",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "email must match exactly",
+            "seed": "INSERT INTO users VALUES (1, 'Kim@acme.io'), (2, 'kim@acme.io.old'), (3, 'kim@acme.io');\nINSERT INTO tickets VALUES\n  (30, 1, 'Upper-case user'),\n  (31, 2, 'Old account'),\n  (32, 3, 'The real kim');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  32,
+                  "The real kim",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "two tickets with the same subject stay separate",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (1042, 2, 'Same subject'),\n  (40, 1, 'Same subject'),\n  (41, 1, 'Same subject'),\n  (42, 3, 'Same subject');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": [
+                [
+                  1042,
+                  "Same subject",
+                  true
+                ],
+                [
+                  40,
+                  "Same subject",
+                  true
+                ],
+                [
+                  41,
+                  "Same subject",
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "nothing matches",
+            "seed": "INSERT INTO users VALUES (1, 'kim@acme.io'), (2, 'lee@acme.io'), (3, 'max@acme.io');\nINSERT INTO tickets VALUES\n  (50, 2, 'Keyboard'),\n  (51, 3, 'Chair');",
+            "expected": {
+              "columns": [
+                "id",
+                "subject",
+                "index_driven"
+              ],
+              "rows": []
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "BEGIN;\nCREATE TABLE accounts (id int PRIMARY KEY, balance int);\nINSERT INTO accounts VALUES (1, 100), (2, 50);\nCOMMIT;\n\nBEGIN;\nEXPLAIN ANALYZE UPDATE accounts SET balance = 0;\nROLLBACK;\nSELECT id, balance FROM accounts ORDER BY id",
+        "choices": [
+          "1 | 0\n2 | 0",
+          "1 | 100\n2 | 50",
+          "ERROR: EXPLAIN ANALYZE is not allowed inside a transaction block"
+        ],
+        "answer": 1,
+        "explain": "EXPLAIN ANALYZE really ran the UPDATE (both rows were set to 0 inside the transaction), and `ROLLBACK` undid it. This is the safe way to measure DML. Without the transaction the balances would stay 0."
+      },
+      {
+        "code": "CREATE TABLE audit (note text);\nEXPLAIN INSERT INTO audit VALUES ('plain');\nEXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) INSERT INTO audit VALUES ('analyzed');\nSELECT coalesce(string_agg(note, ', '), 'empty') FROM audit",
+        "choices": [
+          "empty",
+          "analyzed",
+          "plain, analyzed"
+        ],
+        "answer": 1,
+        "explain": "Plain EXPLAIN only plans the statement, so `'plain'` is never inserted. EXPLAIN ANALYZE executes it, so `'analyzed'` is really in the table afterwards."
+      },
+      {
+        "code": "CREATE TABLE orders (id bigint PRIMARY KEY);\nSET enable_seqscan = off;\nEXPLAIN (COSTS OFF) SELECT * FROM orders WHERE id = 42.0",
+        "choices": [
+          "Index Only Scan using orders_pkey on orders\n  Index Cond: (id = 42)",
+          "Bitmap Heap Scan on orders\n  Filter: ((id)::numeric = 42.0)\n  ->  Bitmap Index Scan on orders_pkey",
+          "Index Only Scan using orders_pkey on orders\n  Index Cond: (id = 42.0)"
+        ],
+        "answer": 1,
+        "explain": "`42.0` is a `numeric` literal, so the bigint column is cast to numeric and the predicate is a `Filter`. Even with seq scans disabled, the index is only read end to end (no `Index Cond`). With `id = 42` you get `Index Cond: (id = 42)`."
+      },
+      {
+        "code": "EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS OFF)\nSELECT * FROM (VALUES (1), (2), (3), (4)) AS a(n)\nCROSS JOIN LATERAL generate_series(1, a.n) AS g",
+        "choices": [
+          "Nested Loop (actual rows=10.00 loops=1)\n  ->  Values Scan on \"*VALUES*\" (actual rows=4.00 loops=1)\n  ->  Function Scan on generate_series g (actual rows=2.50 loops=4)",
+          "Nested Loop (actual rows=10.00 loops=1)\n  ->  Values Scan on \"*VALUES*\" (actual rows=4.00 loops=1)\n  ->  Function Scan on generate_series g (actual rows=10.00 loops=4)",
+          "Nested Loop (actual rows=10.00 loops=1)\n  ->  Values Scan on \"*VALUES*\" (actual rows=4.00 loops=1)\n  ->  Function Scan on generate_series g (actual rows=4.00 loops=1)"
+        ],
+        "answer": 0,
+        "explain": "The inner side runs once per outer row (`loops=4`) and returns 1, 2, 3 and 4 rows. `actual rows` is the per-loop average, 10 / 4 = 2.50; multiply by `loops` to get the 10 rows the Nested Loop emits."
+      },
+      {
+        "code": "CREATE TABLE events (id int, at timestamptz);\nCREATE INDEX ON events (date_trunc('day', at));\nSELECT 'created'",
+        "choices": [
+          "created",
+          "ERROR: functions in index expression must be marked IMMUTABLE"
+        ],
+        "answer": 1,
+        "explain": "On `timestamptz`, the day boundary depends on the session `TimeZone`, so `date_trunc('day', at)` is only STABLE and cannot be indexed (the same holds for `at::date`). Query with a half-open range on the bare column instead."
+      }
+    ],
+    "tip": "When an interviewer hands you a slow query, do not jump to \"add an index\". Say: \"I'd run EXPLAIN (ANALYZE, BUFFERS) on realistic data, read it bottom-up, and compare estimated with actual rows at each node.\" Then name the red flags you look for (10x estimate misses, rows removed by filter, sorts or hashes spilling to disk, nested loops with huge loop counts), and only then propose the fix: rewrite the predicate to be sargable, refresh statistics, or add the index that matches the access path. Finish by saying you would re-measure with buffers.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "pagination",
+        "observability"
+      ],
+      "lessons": [
+        "design-databases-indexes"
+      ]
+    }
+  }
+}

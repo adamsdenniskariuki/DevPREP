@@ -1,0 +1,1510 @@
+{
+  "id": "sql-upserts",
+  "track": "sql",
+  "title": "Upserts: ON CONFLICT, RETURNING and MERGE",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Insert-or-update without races: why SELECT-then-INSERT breaks under concurrency, how `INSERT ... ON CONFLICT` lets a unique index arbitrate (DO NOTHING, DO UPDATE with `EXCLUDED` and a WHERE), what RETURNING does and does not report, the 'affect row a second time' error, counters and idempotency keys, sequence gaps, and when MERGE is the better tool.",
+  "prerequisites": [
+    "sql-schema-design"
+  ],
+  "prerequisiteNotes": "sql-schema-design: primary keys, UNIQUE constraints (and how they treat NULL) and partial unique indexes. Every upsert is arbitrated by one of those, so you need to know which unique keys a table has before you can write its ON CONFLICT clause.",
+  "objectives": [
+    "Explain why SELECT-then-INSERT races under concurrency and why a transaction alone does not fix it.",
+    "Write `INSERT ... ON CONFLICT` with DO NOTHING and DO UPDATE, using `EXCLUDED` and the target alias correctly.",
+    "Choose a conflict target that matches a unique index: a column list, `ON CONSTRAINT name`, an expression or a partial index with its WHERE.",
+    "Make an update conditional with a WHERE on DO UPDATE, and predict exactly which rows RETURNING reports.",
+    "Avoid 'cannot affect row a second time' by collapsing a batch to one row per key before upserting.",
+    "Use upserts for counters and idempotency keys, explain sequence gaps, and say when MERGE is the better choice."
+  ],
+  "concepts": [
+    {
+      "title": "Why SELECT-then-INSERT races",
+      "body": "The classic bug: `SELECT` to see whether a key exists, and `INSERT` if it does not. Two sessions can both run the SELECT before either INSERT commits, so both see nothing and both insert. With a UNIQUE index the loser waits on the winner's uncommitted index entry and then fails with `23505 unique_violation`; without one you silently store a duplicate. Wrapping both statements in a transaction does not help under READ COMMITTED or REPEATABLE READ, because a SELECT cannot lock a row that does not exist yet. The fix is to make the write itself conditional and let the unique index arbitrate: `INSERT ... ON CONFLICT`. Under the default READ COMMITTED it guarantees, for every proposed row, an insert, an update or a skip: no duplicate and no race error, however many sessions collide.",
+      "code": "-- Racy: both sessions can see 0 rows, then both insert\nSELECT 1 FROM users WHERE email = 'ana@shop.io';\n-- app: if no row came back...\nINSERT INTO users (email) VALUES ('ana@shop.io');\n\n-- Atomic: the unique index decides, the loser just skips\nINSERT INTO users (email) VALUES ('ana@shop.io')\nON CONFLICT (email) DO NOTHING;",
+      "diagram": "squ-race"
+    },
+    {
+      "title": "ON CONFLICT: DO NOTHING, DO UPDATE and EXCLUDED",
+      "body": "`ON CONFLICT` is Postgres syntax (SQLite copied it; the SQL standard has MERGE instead). For each proposed row Postgres probes the **arbiter** unique index. No conflict: the row is inserted. Conflict with `DO NOTHING`: the row is skipped without error. Conflict with `DO UPDATE`: the existing row is locked and the SET list runs. Inside SET and WHERE, the stored row is the table name (or the alias from `INSERT INTO t AS alias`) and the proposed row is the special table `EXCLUDED`, with defaults and BEFORE INSERT triggers already applied. Because both have the same columns, an unqualified column on the right of `=` is ambiguous, so always qualify. DO UPDATE needs a conflict target; DO NOTHING may omit it and then skips a conflict on any unique constraint.",
+      "code": "CREATE TABLE stock (\n  sku text PRIMARY KEY,\n  qty int  NOT NULL\n);\nINSERT INTO stock VALUES ('MUG-1', 5);\n\nINSERT INTO stock AS s (sku, qty)\nVALUES ('MUG-1', 2), ('TEE-1', 4)\nON CONFLICT (sku) DO UPDATE\nSET qty = s.qty + EXCLUDED.qty   -- stored + proposed\nRETURNING sku, qty;\n-- MUG-1 | 7\n-- TEE-1 | 4",
+      "diagram": "squ-decision"
+    },
+    {
+      "title": "The conflict target must match a unique index",
+      "body": "The column list in `ON CONFLICT (cols)` is not a filter: Postgres uses it to **infer** an arbiter, a unique index or constraint on exactly those columns (in any order). A plain index cannot arbitrate: `there is no unique or exclusion constraint matching the ON CONFLICT specification`, raised before any row is written. Other spellings: `ON CONFLICT ON CONSTRAINT name` names a constraint (a bare `CREATE UNIQUE INDEX` is not a constraint, so infer it from columns instead); an expression index is targeted by its expression, `ON CONFLICT (lower(email))`; a **partial** unique index needs its predicate repeated, `ON CONFLICT (email) WHERE NOT deleted`. Finally, NULL keys never conflict, because UNIQUE treats NULLs as distinct: rows with a NULL key are always inserted unless the column is NOT NULL or the constraint is `NULLS NOT DISTINCT` (PG15+).",
+      "code": "-- Live emails are unique; soft-deleted rows do not count\nCREATE TABLE accounts (\n  id      int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email   text NOT NULL,\n  deleted boolean NOT NULL DEFAULT false\n);\nCREATE UNIQUE INDEX accounts_live_email\n  ON accounts (lower(email)) WHERE NOT deleted;\n\nINSERT INTO accounts (email) VALUES ('Ana@Shop.io')\nON CONFLICT (lower(email)) WHERE NOT deleted DO NOTHING;\n\n-- Fails: the expression and predicate must match an index\n-- INSERT ... ON CONFLICT (email) DO NOTHING;\n-- ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification"
+    },
+    {
+      "title": "Conditional updates and what RETURNING reports",
+      "body": "A WHERE on DO UPDATE makes the update conditional, which is how you build 'last write wins': `WHERE EXCLUDED.updated_at > t.updated_at`. When it is false (or NULL) the row is locked but not changed, and no error is raised. RETURNING lists only rows the statement **wrote**: inserted rows and updated rows. A row skipped by DO NOTHING or by a false WHERE returns nothing, so 'get or create, and give me the id' needs care: a follow-up SELECT can miss a row committed after the statement's snapshot, and the common no-op `DO UPDATE SET key = EXCLUDED.key` always returns the row but writes a new row version every time (bloat, triggers, WAL). To tell inserts from updates, Postgres 18 adds `RETURNING old.*, new.*` (`old` is NULL for an inserted row); older code uses `(xmax = 0) AS inserted`, which leans on internals.",
+      "code": "CREATE TABLE prices (\n  sku        text PRIMARY KEY,\n  price      numeric(10,2) NOT NULL,\n  updated_at timestamptz   NOT NULL\n);\nINSERT INTO prices VALUES ('MUG-1', 8.00, '2024-03-05 09:00+00');\n\nINSERT INTO prices AS p VALUES\n  ('MUG-1', 7.50, '2024-03-04 09:00+00'),   -- older: ignored\n  ('TEE-1', 15.00, '2024-03-04 09:00+00')   -- new: inserted\nON CONFLICT (sku) DO UPDATE\nSET price = EXCLUDED.price, updated_at = EXCLUDED.updated_at\nWHERE EXCLUDED.updated_at > p.updated_at\nRETURNING new.sku, old.price AS old_price, new.price;   -- PG18\n-- TEE-1 | NULL | 15.00     (MUG-1 is not returned)"
+    },
+    {
+      "title": "Duplicate keys in one statement",
+      "body": "One INSERT may not update the same target row twice. If the source holds two rows for one key, the second would update a row this command already inserted or updated, and Postgres refuses instead of picking an order: `ON CONFLICT DO UPDATE command cannot affect row a second time`. The whole statement rolls back. DO NOTHING tolerates repeats (the later one is skipped, but which one counts as first depends on the source order), and MERGE has the same rule with its own message. The fix is to decide what two rows for one key mean and collapse the source first: counters add up (`GROUP BY key` with `sum`), snapshots keep the newest (`DISTINCT ON (key) ... ORDER BY key, updated_at DESC`, or `row_number()` = 1), with a tie-breaker so the winner is deterministic.",
+      "code": "-- Fails if a sku appears twice in incoming\nINSERT INTO stock AS s (sku, qty)\nSELECT sku, qty FROM incoming\nON CONFLICT (sku) DO UPDATE SET qty = s.qty + EXCLUDED.qty;\n-- ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time\n\n-- Works: one row per key\nINSERT INTO stock AS s (sku, qty)\nSELECT sku, sum(qty) FROM incoming GROUP BY sku\nON CONFLICT (sku) DO UPDATE SET qty = s.qty + EXCLUDED.qty;",
+      "diagram": "squ-dup-key"
+    },
+    {
+      "title": "Counters, idempotency keys and sequence gaps",
+      "body": "Two everyday upserts. **Counters and rollups**: key the table on the grain (`(tenant_id, day)`) and add instead of overwrite, `SET calls = t.calls + EXCLUDED.calls`; the increment is atomic because the row is locked while it is computed. **Idempotency keys**: the client sends a unique key with a request; the server claims it with `INSERT ... ON CONFLICT (key) DO NOTHING RETURNING key`. A row back means this request owns the key and does the work; no row means it is a retry (replay the stored response, answer 409 if the first attempt is still running, or 422 if the payload differs from the stored fingerprint). One side effect to know: defaults such as an identity's `nextval` are computed before the conflict check, so every skipped or updated row still burns a sequence value. Gaps are normal; never treat ids as a count, and use `bigint` for high-churn upsert tables.",
+      "code": "CREATE TABLE idempotency_keys (\n  key          text PRIMARY KEY,\n  request_hash text NOT NULL,\n  status       text NOT NULL DEFAULT 'started',\n  response     jsonb,\n  created_at   timestamptz NOT NULL DEFAULT now()\n);\n\n-- Claim the key: one row back = first time, do the work\nINSERT INTO idempotency_keys (key, request_hash)\nVALUES ('k-42', 'sha256:9f1c...')\nON CONFLICT (key) DO NOTHING\nRETURNING key;\n\n-- No row back = retry: read what the first attempt stored\nSELECT status, request_hash, response\nFROM idempotency_keys WHERE key = 'k-42';",
+      "diagram": "squ-idem-timeline"
+    },
+    {
+      "title": "MERGE, and when to prefer it",
+      "body": "`MERGE` (SQL standard, Postgres 15+) joins a source to the target on **any** condition and routes each source row through ordered `WHEN MATCHED [AND ...]` / `WHEN NOT MATCHED [AND ...]` branches that can UPDATE, DELETE, INSERT or DO NOTHING. Postgres 17 adds `RETURNING` with `merge_action()` and `WHEN NOT MATCHED BY SOURCE`, so one statement can also delete or retire target rows missing from a full feed. It needs no unique index, and that is its weakness: MERGE decides 'matched' from its snapshot, so if another session inserts the same key concurrently, the NOT MATCHED branch can fail with a unique violation. Prefer ON CONFLICT for concurrent single-key writes (API upserts, counters, idempotency keys). Prefer MERGE for batch syncs that need deletes, several conditional branches or a non-unique match, ideally with one writer at a time.",
+      "code": "MERGE INTO products AS p\nUSING product_snapshot AS s ON p.sku = s.sku\nWHEN MATCHED AND s.discontinued THEN\n  DELETE\nWHEN MATCHED AND s.updated_at > p.updated_at THEN\n  UPDATE SET name = s.name, price = s.price, updated_at = s.updated_at\nWHEN NOT MATCHED AND NOT s.discontinued THEN\n  INSERT (sku, name, price, updated_at)\n  VALUES (s.sku, s.name, s.price, s.updated_at)\nRETURNING merge_action(), p.sku;   -- PG17+",
+      "diagram": "squ-vs-merge"
+    }
+  ],
+  "example": "CREATE TABLE page_views_daily (\n  page_id int  NOT NULL,\n  day     date NOT NULL,\n  views   int  NOT NULL,\n  PRIMARY KEY (page_id, day)\n);\nINSERT INTO page_views_daily VALUES (1, '2024-03-01', 100);\n\n-- A batch with a repeated key and a new key\nWITH batch(page_id, day, views) AS (\n  VALUES (1, DATE '2024-03-01', 10),\n         (1, DATE '2024-03-01', 5),\n         (2, DATE '2024-03-01', 7)\n)\nINSERT INTO page_views_daily AS v (page_id, day, views)\nSELECT page_id, day, sum(views)        -- one row per key first\nFROM batch\nGROUP BY page_id, day\nON CONFLICT (page_id, day) DO UPDATE\nSET views = v.views + EXCLUDED.views   -- add, do not overwrite\nRETURNING page_id, views, old.views AS before;   -- PG18 old/new\n-- 2 |   7 | NULL  (inserted)\n-- 1 | 115 | 100   (updated)\n\n-- Without the GROUP BY:\n-- ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time",
+  "task": "A metering job writes per-tenant API usage into `usage_batch (tenant_id int, day date, calls int, errors int)`. Fold the batch into the rollup table `api_usage_daily (tenant_id int, day date, calls int, errors int)`, whose primary key is `(tenant_id, day)`, with a single statement. A `(tenant_id, day)` that is not in the rollup yet is inserted; one that already exists gets the batch's `calls` and `errors` **added** to its stored values. The batch can contain the same `(tenant_id, day)` several times, even as identical rows, and every row counts. Rows of the rollup that are not in the batch must not change, and an empty batch changes nothing. There is no query to return: the check reads `tenant_id, day, calls, errors` from `api_usage_daily` afterwards.",
+  "starter": "-- Fold usage_batch into api_usage_daily: new keys are inserted,\n-- existing keys get the batch numbers ADDED. The check reads the table.\nINSERT INTO api_usage_daily (tenant_id, day, calls, errors)\nSELECT tenant_id, day, calls, errors\nFROM usage_batch\nON CONFLICT (tenant_id, day) DO UPDATE\nSET calls  = EXCLUDED.calls,\n    errors = EXCLUDED.errors;\n",
+  "hints": [
+    "`EXCLUDED.calls` is the incoming number and `u.calls` (with `INSERT INTO api_usage_daily AS u`) is the stored one. A counter adds them: `SET calls = u.calls + EXCLUDED.calls`.",
+    "A repeated key in the batch makes DO UPDATE fail with 'cannot affect row a second time'. Insert from `SELECT tenant_id, day, sum(calls), sum(errors) FROM usage_batch GROUP BY tenant_id, day` so each key arrives once. Do not use DISTINCT: identical rows are separate events."
+  ],
+  "solution": "INSERT INTO api_usage_daily AS u (tenant_id, day, calls, errors)\nSELECT tenant_id, day, sum(calls), sum(errors)\nFROM usage_batch\nGROUP BY tenant_id, day\nON CONFLICT (tenant_id, day) DO UPDATE\nSET calls  = u.calls  + EXCLUDED.calls,\n    errors = u.errors + EXCLUDED.errors;\n\nThe grain of the rollup is one row per `(tenant_id, day)`, and that is also its primary key, so it is the natural arbiter: `ON CONFLICT (tenant_id, day)`. The batch is at a finer grain (one row per metering event), so it must be collapsed to the rollup's grain first. That serves two purposes: two batch rows for one key would otherwise make the second update hit a row this statement already touched, which Postgres rejects, and summing is exactly what a counter wants. DISTINCT would be wrong, because two identical rows are two real events. In the DO UPDATE, the alias `u` is the stored row and `EXCLUDED` is the summed batch row, so `u.calls + EXCLUDED.calls` adds rather than overwrites (the starter's `SET calls = EXCLUDED.calls` loses history). New keys take the plain INSERT path with the summed values. An empty batch produces no source rows, so nothing happens. `sum(int)` returns `bigint`, which is assigned back into the `int` columns; a counter that can grow past 2^31 should be `bigint` in the table too.",
+  "checklist": [
+    "The conflict target `(tenant_id, day)` is exactly the table's primary key.",
+    "The source is grouped to one row per key with `sum`, not DISTINCT.",
+    "DO UPDATE adds the stored and incoming values, with every column reference qualified.",
+    "Rows outside the batch keep their values, and an empty batch is a no-op."
+  ],
+  "pitfalls": [
+    "Checking existence with SELECT and then inserting from application code: two requests both see nothing and both insert.",
+    "Targeting columns that only have a plain (non-unique) index: the statement fails with 'no unique or exclusion constraint matching'.",
+    "Forgetting the predicate of a partial unique index in the conflict target, or targeting `(email)` when the index is on `lower(email)`.",
+    "Writing `SET n = n + EXCLUDED.n`: a bare `n` is ambiguous between the stored row and EXCLUDED.",
+    "Overwriting a counter with `EXCLUDED.count` instead of adding `t.count + EXCLUDED.count`.",
+    "Upserting a batch with repeated keys and getting 'cannot affect row a second time'; or deduping with DISTINCT and losing real repeats.",
+    "Expecting RETURNING to give back the existing row on DO NOTHING (it returns nothing for skipped rows).",
+    "Relying on NULL keys to conflict: NULLs are distinct in a UNIQUE index, so every row with a NULL key is inserted.",
+    "Treating identity ids as a row count; every conflict burns a sequence value.",
+    "Using MERGE for high-concurrency single-key upserts and being surprised by unique violations from concurrent inserts."
+  ],
+  "walkthrough": [
+    {
+      "title": "Bulk upserts from a staging table",
+      "body": "For a nightly feed of a few million rows, do not upsert row by row from the application: one round trip per row is slow and every row is its own tiny transaction. Instead `COPY` the file into a staging table (temp or UNLOGGED, no constraints, so a malformed line is something you can query rather than a failed load). Validate and normalise there with SQL. Then run one set-based `INSERT INTO target SELECT ... FROM staging ... ON CONFLICT ... DO UPDATE ... WHERE newer`, after collapsing staging to one row per key. Sort the source by key: two loaders that touch overlapping keys in the same order queue behind each other instead of deadlocking. For very large loads, process key ranges in chunks of a few thousand per transaction so row locks, WAL bursts and replication lag stay bounded. Finish with a RETURNING count (or PG18 `old`/`new`) for the job's metrics, then truncate staging.",
+      "diagram": "squ-bulk"
+    },
+    {
+      "title": "Writing the counter upsert out loud",
+      "body": "Start with the grain: 'the rollup has one row per tenant per day, and that pair is the primary key, so it is my arbiter.' Then the source grain: 'the batch has one row per event, so the same key can repeat; I collapse it with GROUP BY and sum, not DISTINCT, because two identical events both count.' Then each outcome: new key, inserted with the sums; existing key, `stored + EXCLUDED`; key not in the batch, untouched. Name the edge cases before the interviewer does: empty batch (no-op), repeated keys (grouped), a key at a month end or on 29 February (dates are just values in the key). Finish with the senior points: the update is atomic because the row is locked, concurrent jobs should feed keys in a consistent order, and a very hot key would be a contention point worth sharding."
+    },
+    {
+      "title": "Get-or-create an id without a race",
+      "body": "Asked for 'return the tag's id, creating the tag if needed', say why the obvious answers are incomplete. `INSERT ... ON CONFLICT DO NOTHING RETURNING id` returns nothing when the tag exists. Adding `UNION ALL SELECT id FROM tags WHERE name = $1` in the same statement shares one snapshot, so under READ COMMITTED it can miss a tag that another session committed after the statement started; the robust pattern is to run the SELECT as a separate statement (it gets a new snapshot) and loop if both come back empty. The alternative `ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id` always returns the id in one statement but writes a new row version on every call, fires update triggers and takes a row lock, which matters for hot rows. Pick the first for read-mostly lookups and the second when simplicity beats write volume."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Register new devices and report only those",
+      "prompt": "Heartbeats arrive in `heartbeats (device_id text, seen_at timestamptz)`. Register every device that is not yet in `devices (device_id text PRIMARY KEY, first_seen timestamptz)`, with `first_seen` set to that device's earliest `seen_at` in the batch. Devices that are already registered must not change, even if the batch has an earlier heartbeat for them. Return `device_id, first_seen` for the newly registered devices only, straight from the INSERT's RETURNING clause. Device ids are case-sensitive, and 'earliest' means the earliest instant.",
+      "hints": [
+        "`ON CONFLICT (device_id) DO NOTHING RETURNING device_id, first_seen` returns exactly the rows that were inserted; skipped ones produce nothing.",
+        "Group first: `SELECT device_id, min(seen_at) FROM heartbeats GROUP BY device_id`, so each device is proposed once with its earliest time."
+      ],
+      "checklist": [
+        "A device already in `devices` is neither returned nor changed.",
+        "A new device with several heartbeats is registered once, at its earliest instant.",
+        "The statement does not fail with a unique violation when the batch contains a known device."
+      ],
+      "solution": "INSERT INTO devices (device_id, first_seen)\nSELECT device_id, min(seen_at)\nFROM heartbeats\nGROUP BY device_id\nON CONFLICT (device_id) DO NOTHING\nRETURNING device_id, first_seen;\n\nDO NOTHING turns a conflict into a skip, and RETURNING reports only rows the statement wrote, so the result is exactly the newly registered devices. Grouping with `min(seen_at)` proposes each device once with its earliest heartbeat (DO NOTHING would tolerate repeats, but then whichever row came first would win). `timestamptz` compares instants, so `05:00+05` (midnight UTC) is earlier than `01:00+00` on the same date."
+    },
+    {
+      "id": "stretch",
+      "title": "Last write wins from a feed with duplicates",
+      "prompt": "A supplier feed lands in `product_feed (feed_id int PRIMARY KEY, sku text, name text, price numeric(10,2), updated_at timestamptz)`. Apply it to `products (sku text PRIMARY KEY, name text, price numeric(10,2), updated_at timestamptz)` in one statement. The feed can hold several versions of one sku: only the one with the latest `updated_at` counts, and if two versions share that latest time, the higher `feed_id` (later arrival) wins. A sku not in `products` is inserted with that version. A sku already in `products` is overwritten (name, price and updated_at) only when the incoming `updated_at` is strictly later than the stored one; otherwise it stays exactly as it is. Skus are case-sensitive. The check reads `sku, name, price, updated_at` from `products`.",
+      "hints": [
+        "Dedupe first or DO UPDATE fails on a repeated sku: `SELECT DISTINCT ON (sku) ... FROM product_feed ORDER BY sku, updated_at DESC, feed_id DESC` keeps the newest version, with feed_id breaking ties.",
+        "Put the 'newer only' rule in a WHERE on the DO UPDATE: `WHERE EXCLUDED.updated_at > p.updated_at` (with `INSERT INTO products AS p`). A false WHERE skips the row silently."
+      ],
+      "checklist": [
+        "Each sku is proposed once, chosen by latest `updated_at` then highest `feed_id`.",
+        "An incoming row with an equal or older `updated_at` leaves the stored row untouched.",
+        "New skus are inserted even when they repeat in the feed.",
+        "The statement never raises 'cannot affect row a second time'."
+      ],
+      "solution": "INSERT INTO products AS p (sku, name, price, updated_at)\nSELECT DISTINCT ON (sku) sku, name, price, updated_at\nFROM product_feed\nORDER BY sku, updated_at DESC, feed_id DESC\nON CONFLICT (sku) DO UPDATE\nSET name       = EXCLUDED.name,\n    price      = EXCLUDED.price,\n    updated_at = EXCLUDED.updated_at\nWHERE EXCLUDED.updated_at > p.updated_at;\n\nTwo separate rules, applied in two places. Inside the feed, `DISTINCT ON (sku)` with `ORDER BY sku, updated_at DESC, feed_id DESC` keeps one deterministic winner per sku; without the dedupe a repeated sku makes DO UPDATE touch the same row twice and the statement fails, and without the feed_id tie-breaker two runs could pick different winners. Against the table, the WHERE on DO UPDATE compares the winner with the stored row, so an equal or older version is skipped and the stored row is not rewritten (no new row version, no trigger). `timestamptz` compares instants, so `13:00+02` is correctly older than `12:00+00`. The same shape with `row_number() OVER (PARTITION BY sku ORDER BY updated_at DESC, feed_id DESC) = 1` in a subquery is equally correct and portable."
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Two workers upsert overlapping batches into the same table and one of them dies with a deadlock. Why, and what do you change?",
+      "answer": "DO UPDATE locks each existing row as it reaches it, in source order. If worker A locks key 1 then needs key 2 while B holds key 2 and needs key 1, Postgres detects the cycle and aborts one with `40P01 deadlock_detected`. Feed keys in a consistent order (`ORDER BY` the key in the INSERT ... SELECT), keep batches small so locks are held briefly, partition work so workers own disjoint key ranges where possible, and retry the aborted transaction, since a deadlock victim is safe to rerun."
+    },
+    {
+      "question": "A single counter row receives 5,000 increments a second. What happens, and how would you redesign it?",
+      "answer": "Every increment takes the same row lock, so writers queue and throughput is capped by one row's commit rate. Each update also writes a new row version (MVCC), so the row churns: lots of WAL and dead tuples for vacuum, mitigated if the update is HOT (no indexed column changed and free space on the page, helped by a lower fillfactor). Fixes: shard the counter (`(key, shard)` with a random shard of 0 to 15, sum on read), buffer increments in the app or a queue and fold them in periodically with one grouped upsert, or append events and roll them up asynchronously. Pick by how fresh the number must be."
+    },
+    {
+      "question": "MERGE is standard SQL. Why not use it for every upsert?",
+      "answer": "MERGE decides matched or not matched from its snapshot. If another session inserts the same key after that, MERGE's INSERT branch hits the unique index and fails with `23505`, whereas ON CONFLICT is built to resolve that race by updating or skipping. So for concurrent single-key upserts (API writes, counters, idempotency keys) ON CONFLICT is the safe primitive. MERGE wins for batch syncs: several conditional branches, DELETE, `WHEN NOT MATCHED BY SOURCE` (PG17) to retire rows missing from a full snapshot, or a match condition that is not a unique key. Run those with one writer, or catch and retry the unique violation."
+    },
+    {
+      "question": "Design the idempotency-key table. What if the retry arrives while the first request is still running?",
+      "answer": "Columns: the key (primary key, ideally scoped per client: `(client_id, key)`), a fingerprint of the request body, a status (`started`, `done`), the stored response, and `created_at` for expiry. Claim the key in its own short transaction with `ON CONFLICT DO NOTHING RETURNING` and commit before calling external systems, so a concurrent retry sees the claim. On a conflict: status `done` replays the stored response; `started` returns 409 or a retry-after; a different fingerprint returns 422, since the client reused a key for another request. Expire keys after a window (for example 24 hours) with a batched delete on `created_at`. The side effect itself should carry the key too (pass it to the payment provider) so a crash between charge and save cannot double-charge."
+    },
+    {
+      "question": "Ids in the table jump from 1041 to 1187. Is that a bug?",
+      "answer": "No. Sequences are non-transactional: a value handed out is never given back. ON CONFLICT computes the default (`nextval`) before it knows there is a conflict, so every skipped or updated row burns a value; rolled-back inserts and sequence caching after a crash also leave gaps. Never use ids as a count or assume contiguity. On a high-conflict upsert table this burn rate can exhaust an `int` sequence long before the table has 2 billion rows, so use `bigint`, or avoid drawing a value for rows that will conflict by filtering known keys out in the source first."
+    },
+    {
+      "question": "The feed is a full snapshot. How do you also remove products that disappeared from it?",
+      "answer": "With MERGE on Postgres 17+: `WHEN NOT MATCHED BY SOURCE THEN DELETE` (or an UPDATE that sets `active = false`, which is safer for history and foreign keys). With ON CONFLICT, run the upsert and then `DELETE FROM products p WHERE NOT EXISTS (SELECT 1 FROM staging s WHERE s.sku = p.sku)` in the same transaction. Guard either version: if the snapshot is empty or suspiciously small (a truncated file), abort instead of wiping the table, for example by checking the staging row count against yesterday's first."
+    }
+  ],
+  "takeaways": [
+    "SELECT-then-INSERT races; let a unique index arbitrate inside the write with `INSERT ... ON CONFLICT`.",
+    "The conflict target must match a unique index or constraint exactly, including a partial index's WHERE or an expression.",
+    "In DO UPDATE, the table name or alias is the stored row and `EXCLUDED` is the proposed row; qualify every column.",
+    "A WHERE on DO UPDATE gives 'only if newer'; skipped rows, like DO NOTHING conflicts, return nothing from RETURNING.",
+    "Collapse the source to one row per key first, or DO UPDATE and MERGE fail with 'cannot affect row a second time'.",
+    "Conflicts still burn sequence values; prefer ON CONFLICT for concurrent upserts and MERGE for multi-branch batch syncs."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "squ-race",
+        "type": "sequence",
+        "title": "SELECT-then-INSERT races; ON CONFLICT does not",
+        "alt": "Sequence diagram with session A, session B and Postgres. Both sessions select key K1 and both get zero rows. A inserts K1; B inserts K1 too and has to wait on A's uncommitted index entry. When A commits, B fails with a unique violation. B's retry with INSERT ON CONFLICT DO NOTHING succeeds as a no-op with no error.",
+        "caption": "A check in the application only sees the past. Let the unique index arbitrate inside the INSERT itself.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Session A"
+          },
+          {
+            "id": "b",
+            "label": "Session B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "SELECT ... WHERE key = 'K1'"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "0 rows",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "SELECT ... WHERE key = 'K1'"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "0 rows",
+            "style": "reply",
+            "note": "Both sessions now believe K1 is free. Neither SELECT locked anything: there was no row to lock."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "INSERT key 'K1'"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "INSERT 0 1",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "INSERT key 'K1'",
+            "note": "B finds A's uncommitted entry in the unique index and waits for A's transaction to finish."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "ERROR 23505 unique_violation",
+            "style": "fail",
+            "note": "A committed, so B's row is a duplicate. Without the UNIQUE index both rows would be stored."
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "INSERT ... ON CONFLICT DO NOTHING"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "INSERT 0 0 (no error)",
+            "style": "reply",
+            "note": "Same race, but the conflict is an outcome, not an exception: the row is skipped and the transaction carries on."
+          }
+        ]
+      },
+      {
+        "id": "squ-decision",
+        "type": "flow",
+        "title": "What ON CONFLICT does with each proposed row",
+        "alt": "Decision flow. A proposed row is checked against the arbiter unique index. With no conflict it is inserted and returned. On a conflict with DO NOTHING it is skipped and RETURNING gives no row for it. With DO UPDATE the existing row is locked and the WHERE clause is tested: true updates the row and returns it, false or NULL leaves it unchanged and returns nothing.",
+        "caption": "Three outcomes per row: inserted, updated or skipped. RETURNING only reports the first two.",
+        "nodes": [
+          {
+            "id": "ins",
+            "label": "proposed row",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "chk",
+            "label": "key conflict?",
+            "kind": "decision",
+            "col": 2,
+            "row": 0,
+            "sub": "arbiter index"
+          },
+          {
+            "id": "new",
+            "label": "insert it",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "RETURNING: new row"
+          },
+          {
+            "id": "dn",
+            "label": "DO NOTHING",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "skip, no error"
+          },
+          {
+            "id": "du",
+            "label": "DO UPDATE",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "lock existing row"
+          },
+          {
+            "id": "wh",
+            "label": "WHERE true?",
+            "kind": "decision",
+            "col": 4,
+            "row": 2,
+            "sub": "e.g. newer only"
+          },
+          {
+            "id": "none",
+            "label": "no row back",
+            "kind": "note",
+            "col": 0,
+            "row": 4,
+            "sub": "RETURNING empty"
+          },
+          {
+            "id": "skip",
+            "label": "row unchanged",
+            "kind": "bad",
+            "col": 2,
+            "row": 4,
+            "sub": "RETURNING empty"
+          },
+          {
+            "id": "upd",
+            "label": "update it",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "RETURNING: new"
+          }
+        ],
+        "edges": [
+          {
+            "from": "ins",
+            "to": "chk",
+            "label": "probe"
+          },
+          {
+            "from": "chk",
+            "to": "new",
+            "label": "no"
+          },
+          {
+            "from": "chk",
+            "to": "dn",
+            "label": "yes"
+          },
+          {
+            "from": "chk",
+            "to": "du",
+            "label": "yes"
+          },
+          {
+            "from": "du",
+            "to": "wh",
+            "label": "SET + EXCLUDED"
+          },
+          {
+            "from": "wh",
+            "to": "upd",
+            "label": "true"
+          },
+          {
+            "from": "wh",
+            "to": "skip",
+            "label": "false / NULL",
+            "style": "fail"
+          },
+          {
+            "from": "dn",
+            "to": "none"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Each proposed row is probed against the **arbiter**: the unique index or constraint that the conflict target names."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "No existing row has that key: the row is inserted, exactly like a plain INSERT, and RETURNING reports it."
+          },
+          {
+            "edges": [
+              2,
+              7
+            ],
+            "text": "Conflict with `DO NOTHING`: the row is skipped silently. RETURNING produces nothing for it, so you cannot read the existing id from this statement."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "Conflict with `DO UPDATE`: Postgres locks the existing row and evaluates the SET list, where the table name means the stored row and `EXCLUDED` means the proposed one."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "The optional WHERE is true: the row is updated and RETURNING reports its new values."
+          },
+          {
+            "edges": [
+              6
+            ],
+            "text": "The WHERE is false or NULL: the row stays locked until commit but is not changed, and RETURNING gives nothing for it."
+          }
+        ]
+      },
+      {
+        "id": "squ-dup-key",
+        "type": "flow",
+        "title": "Duplicate keys inside one upsert",
+        "alt": "Flow. A batch holds two rows for key A and one for key B. Upserting it as is fails with the error that ON CONFLICT DO UPDATE cannot affect a row a second time. Deduplicating first with GROUP BY or DISTINCT ON turns it into one row per key, A with 3 and B with 5, and the upsert then succeeds.",
+        "caption": "One statement may touch each target row once. Collapse the source to one row per key first.",
+        "nodes": [
+          {
+            "id": "batch",
+            "label": "batch rows",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "A:1, A:2, B:5"
+          },
+          {
+            "id": "direct",
+            "label": "upsert as is",
+            "kind": "state",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "err",
+            "label": "ERROR",
+            "kind": "bad",
+            "col": 4,
+            "row": 0,
+            "sub": "row a second time"
+          },
+          {
+            "id": "dedupe",
+            "label": "dedupe by key",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "GROUP BY key"
+          },
+          {
+            "id": "agg",
+            "label": "A:3, B:5",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "one row per key"
+          },
+          {
+            "id": "ok",
+            "label": "upsert",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "each row once"
+          }
+        ],
+        "edges": [
+          {
+            "from": "batch",
+            "to": "direct"
+          },
+          {
+            "from": "direct",
+            "to": "err",
+            "label": "A updated twice",
+            "style": "fail"
+          },
+          {
+            "from": "batch",
+            "to": "dedupe",
+            "label": "fix first"
+          },
+          {
+            "from": "dedupe",
+            "to": "agg",
+            "label": "sum or latest"
+          },
+          {
+            "from": "agg",
+            "to": "ok",
+            "label": "ON CONFLICT"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Key A appears twice in one statement. The second A would update a row this same command already inserted or updated, so Postgres raises `ON CONFLICT DO UPDATE command cannot affect row a second time` and the whole statement rolls back."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Decide what two rows for one key mean: counters add up (`GROUP BY key` with `sum`), snapshots keep the latest (`DISTINCT ON (key) ... ORDER BY key, updated_at DESC`)."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Now each key appears once and the upsert succeeds. MERGE has the same rule and the same fix."
+          }
+        ]
+      },
+      {
+        "id": "squ-idem-timeline",
+        "type": "timeline",
+        "title": "An idempotency key absorbs a retry",
+        "alt": "Timeline of a payment request. The client sends a POST with idempotency key k-42. The server claims the key with INSERT ON CONFLICT DO NOTHING RETURNING, which returns a row. The card is charged and the response saved on the key row. The response is lost and the client times out, then retries with the same key. The insert now returns no row, so the server replays the stored response and the customer is charged once.",
+        "caption": "The unique key turns \"did I already do this?\" into an atomic insert. No row back means someone already did.",
+        "events": [
+          {
+            "at": "T+0",
+            "label": "Client sends POST /payments with Idempotency-Key k-42",
+            "kind": "trigger"
+          },
+          {
+            "at": "T+5 ms",
+            "label": "INSERT k-42 ... ON CONFLICT DO NOTHING RETURNING key: one row, this request owns k-42",
+            "kind": "mitigate"
+          },
+          {
+            "at": "T+40 ms",
+            "label": "Card is charged; status and response body are saved on the k-42 row",
+            "kind": "mitigate"
+          },
+          {
+            "at": "T+60 ms",
+            "label": "The response is lost on the network and the client times out",
+            "kind": "impact"
+          },
+          {
+            "at": "T+2 s",
+            "label": "Client retries the same request with the same key k-42",
+            "kind": "trigger"
+          },
+          {
+            "at": "T+2 s",
+            "label": "The claiming insert returns no row: k-42 exists, so nothing is charged again",
+            "kind": "detect"
+          },
+          {
+            "at": "T+2 s",
+            "label": "Server replays the stored response: one charge, two identical answers",
+            "kind": "resolve"
+          }
+        ]
+      },
+      {
+        "id": "squ-vs-merge",
+        "type": "compare",
+        "title": "INSERT ... ON CONFLICT versus MERGE",
+        "alt": "Side-by-side comparison. On the left, INSERT ON CONFLICT probes a required unique index: no match inserts, a match updates or skips, and both paths are race-safe per row. On the right, MERGE joins source rows to the target on any condition and routes them to WHEN MATCHED (update or delete) or WHEN NOT MATCHED (insert), but a concurrent insert of the same key can still make it fail with a unique violation.",
+        "caption": "ON CONFLICT is the concurrency-safe insert-or-update. MERGE is the more expressive batch sync.",
+        "before": {
+          "label": "INSERT ... ON CONFLICT (Postgres)",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "proposed rows",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "arb",
+              "label": "unique index",
+              "kind": "db",
+              "col": 2,
+              "row": 0,
+              "sub": "required arbiter"
+            },
+            {
+              "id": "ins",
+              "label": "INSERT",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "no conflict"
+            },
+            {
+              "id": "upd",
+              "label": "UPDATE/NOTHING",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "on conflict"
+            },
+            {
+              "id": "safe",
+              "label": "race-safe",
+              "kind": "good",
+              "col": 1,
+              "row": 4,
+              "sub": "atomic per row"
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "arb",
+              "label": "probe"
+            },
+            {
+              "from": "arb",
+              "to": "ins",
+              "label": "no match"
+            },
+            {
+              "from": "arb",
+              "to": "upd",
+              "label": "match"
+            },
+            {
+              "from": "ins",
+              "to": "safe"
+            },
+            {
+              "from": "upd",
+              "to": "safe"
+            }
+          ]
+        },
+        "after": {
+          "label": "MERGE (SQL standard, PG15+)",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "source rows",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "join",
+              "label": "ON condition",
+              "kind": "decision",
+              "col": 2,
+              "row": 0,
+              "sub": "any join"
+            },
+            {
+              "id": "m",
+              "label": "WHEN MATCHED",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "UPDATE / DELETE"
+            },
+            {
+              "id": "nm",
+              "label": "NOT MATCHED",
+              "kind": "state",
+              "col": 2,
+              "row": 2,
+              "sub": "INSERT"
+            },
+            {
+              "id": "risk",
+              "label": "may fail 23505",
+              "kind": "bad",
+              "col": 1,
+              "row": 4,
+              "sub": "concurrent insert"
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "join",
+              "label": "join"
+            },
+            {
+              "from": "join",
+              "to": "m",
+              "label": "matched"
+            },
+            {
+              "from": "join",
+              "to": "nm",
+              "label": "no match"
+            },
+            {
+              "from": "nm",
+              "to": "risk",
+              "label": "race",
+              "style": "fail"
+            }
+          ]
+        }
+      },
+      {
+        "id": "squ-bulk",
+        "type": "flow",
+        "title": "Bulk upsert through a staging table",
+        "alt": "Pipeline flow. A feed file is copied into a staging table that has no constraints. A SELECT deduplicates it to one row per key, sorted by key, and feeds a single INSERT ON CONFLICT with a WHERE newer clause into the target table. Large loads are split into chunks of a few thousand keys.",
+        "caption": "Load fast and loose into staging, then dedupe, sort and upsert into the constrained table in one statement per chunk.",
+        "nodes": [
+          {
+            "id": "file",
+            "label": "feed / CSV",
+            "kind": "external",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "stage",
+            "label": "staging table",
+            "kind": "db",
+            "col": 2,
+            "row": 0,
+            "sub": "no constraints"
+          },
+          {
+            "id": "dedupe",
+            "label": "dedupe + sort",
+            "kind": "state",
+            "col": 4,
+            "row": 0,
+            "sub": "DISTINCT ON key"
+          },
+          {
+            "id": "ups",
+            "label": "ON CONFLICT",
+            "kind": "state",
+            "col": 4,
+            "row": 2,
+            "sub": "WHERE newer"
+          },
+          {
+            "id": "target",
+            "label": "target table",
+            "kind": "db",
+            "col": 2,
+            "row": 2,
+            "sub": "unique key"
+          },
+          {
+            "id": "chunk",
+            "label": "chunk big loads",
+            "kind": "note",
+            "col": 4,
+            "row": 4,
+            "sub": "short txns"
+          }
+        ],
+        "edges": [
+          {
+            "from": "file",
+            "to": "stage",
+            "label": "COPY"
+          },
+          {
+            "from": "stage",
+            "to": "dedupe",
+            "label": "SELECT"
+          },
+          {
+            "from": "dedupe",
+            "to": "ups",
+            "label": "one row per key"
+          },
+          {
+            "from": "ups",
+            "to": "target",
+            "label": "insert / update"
+          },
+          {
+            "from": "ups",
+            "to": "chunk",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`COPY` the raw feed into a staging table (temp or UNLOGGED, no constraints) so a bad line does not abort a half-applied load and you can inspect it with SQL."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "Collapse to one row per key and sort by key. Dedupe avoids the 'affect row a second time' error; a consistent key order keeps concurrent loaders from deadlocking."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "One `INSERT ... SELECT ... ON CONFLICT DO UPDATE ... WHERE newer` applies the whole chunk set-based, not one round trip per row."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "For millions of rows, upsert in chunks of a few thousand keys per transaction so row locks and WAL bursts stay small."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE api_usage_daily (\n  tenant_id int  NOT NULL,\n  day       date NOT NULL,\n  calls     int  NOT NULL CHECK (calls >= 0),\n  errors    int  NOT NULL CHECK (errors >= 0),\n  PRIMARY KEY (tenant_id, day)\n);\n\nCREATE TABLE usage_batch (\n  tenant_id int  NOT NULL,\n  day       date NOT NULL,\n  calls     int  NOT NULL,\n  errors    int  NOT NULL\n);",
+        "starter": "-- Fold usage_batch into api_usage_daily: new keys are inserted,\n-- existing keys get the batch numbers ADDED. The check reads the table.\nINSERT INTO api_usage_daily (tenant_id, day, calls, errors)\nSELECT tenant_id, day, calls, errors\nFROM usage_batch\nON CONFLICT (tenant_id, day) DO UPDATE\nSET calls  = EXCLUDED.calls,\n    errors = EXCLUDED.errors;\n",
+        "solution": "INSERT INTO api_usage_daily AS u (tenant_id, day, calls, errors)\nSELECT tenant_id, day, sum(calls), sum(errors)\nFROM usage_batch\nGROUP BY tenant_id, day\nON CONFLICT (tenant_id, day) DO UPDATE\nSET calls  = u.calls  + EXCLUDED.calls,\n    errors = u.errors + EXCLUDED.errors;\n",
+        "check": "SELECT tenant_id, day, calls, errors FROM api_usage_daily",
+        "tests": [
+          {
+            "name": "new keys are inserted and existing keys are added to",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(1, '2024-03-01', 100, 2),\n(2, '2024-03-01', 50, 0);\nINSERT INTO usage_batch VALUES\n(1, '2024-03-01', 10, 1),\n(1, '2024-03-02', 7, 0),\n(3, '2024-03-01', 4, 4);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  1,
+                  "2024-03-01",
+                  110,
+                  3
+                ],
+                [
+                  1,
+                  "2024-03-02",
+                  7,
+                  0
+                ],
+                [
+                  2,
+                  "2024-03-01",
+                  50,
+                  0
+                ],
+                [
+                  3,
+                  "2024-03-01",
+                  4,
+                  4
+                ]
+              ]
+            }
+          },
+          {
+            "name": "the batch repeats a key",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(1, '2024-03-01', 100, 2);\nINSERT INTO usage_batch VALUES\n(1, '2024-03-01', 10, 0),\n(1, '2024-03-01', 5, 1),\n(2, '2024-03-02', 3, 0),\n(2, '2024-03-02', 2, 2);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  1,
+                  "2024-03-01",
+                  115,
+                  3
+                ],
+                [
+                  2,
+                  "2024-03-02",
+                  5,
+                  2
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "an empty batch leaves the table unchanged",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(1, '2024-03-01', 100, 2),\n(2, '2024-03-01', 50, 0);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  1,
+                  "2024-03-01",
+                  100,
+                  2
+                ],
+                [
+                  2,
+                  "2024-03-01",
+                  50,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an empty table: every batch key is new, repeats summed",
+            "seed": "INSERT INTO usage_batch VALUES\n(4, '2024-05-10', 1, 0),\n(4, '2024-05-10', 2, 1),\n(4, '2024-05-11', 3, 0),\n(5, '2024-05-10', 9, 9);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  4,
+                  "2024-05-10",
+                  3,
+                  1
+                ],
+                [
+                  4,
+                  "2024-05-11",
+                  3,
+                  0
+                ],
+                [
+                  5,
+                  "2024-05-10",
+                  9,
+                  9
+                ]
+              ]
+            }
+          },
+          {
+            "name": "leap day and month end stay separate days",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(5, '2024-02-28', 1, 0),\n(5, '2024-02-29', 2, 0);\nINSERT INTO usage_batch VALUES\n(5, '2024-02-29', 3, 1),\n(5, '2024-03-01', 4, 0),\n(5, '2024-02-28', 0, 0);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  5,
+                  "2024-02-28",
+                  1,
+                  0
+                ],
+                [
+                  5,
+                  "2024-02-29",
+                  5,
+                  1
+                ],
+                [
+                  5,
+                  "2024-03-01",
+                  4,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "identical batch rows all count (no DISTINCT)",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(1, '2024-06-30', 1, 1);\nINSERT INTO usage_batch VALUES\n(1, '2024-06-30', 1, 0),\n(1, '2024-06-30', 1, 0),\n(1, '2024-06-30', 1, 0);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  1,
+                  "2024-06-30",
+                  4,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "rows outside the batch are untouched and a zero-call row still creates its key",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(7, '2024-01-01', 9, 9),\n(8, '2024-01-02', 5, 0);\nINSERT INTO usage_batch VALUES\n(8, '2024-01-01', 0, 0),\n(7, '2024-01-02', 2, 0);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  7,
+                  "2024-01-01",
+                  9,
+                  9
+                ],
+                [
+                  7,
+                  "2024-01-02",
+                  2,
+                  0
+                ],
+                [
+                  8,
+                  "2024-01-01",
+                  0,
+                  0
+                ],
+                [
+                  8,
+                  "2024-01-02",
+                  5,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "same day for different tenants are different keys",
+            "seed": "INSERT INTO api_usage_daily VALUES\n(1, '2024-04-01', 10, 0),\n(2, '2024-04-01', 20, 1);\nINSERT INTO usage_batch VALUES\n(2, '2024-04-01', 5, 0),\n(3, '2024-04-01', 1, 1),\n(1, '2024-04-01', 1, 0),\n(2, '2024-04-01', 5, 2);",
+            "expected": {
+              "columns": [
+                "tenant_id",
+                "day",
+                "calls",
+                "errors"
+              ],
+              "rows": [
+                [
+                  1,
+                  "2024-04-01",
+                  11,
+                  0
+                ],
+                [
+                  2,
+                  "2024-04-01",
+                  30,
+                  3
+                ],
+                [
+                  3,
+                  "2024-04-01",
+                  1,
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE devices (\n  device_id  text PRIMARY KEY,\n  first_seen timestamptz NOT NULL\n);\n\nCREATE TABLE heartbeats (\n  device_id text NOT NULL,\n  seen_at   timestamptz NOT NULL\n);",
+        "starter": "-- Register unknown devices from heartbeats (first_seen = earliest heartbeat)\n-- and return device_id, first_seen for the NEWLY registered ones only.\nINSERT INTO devices (device_id, first_seen)\nSELECT device_id, seen_at\nFROM heartbeats\nRETURNING device_id, first_seen;\n",
+        "solution": "INSERT INTO devices (device_id, first_seen)\nSELECT device_id, min(seen_at)\nFROM heartbeats\nGROUP BY device_id\nON CONFLICT (device_id) DO NOTHING\nRETURNING device_id, first_seen;\n",
+        "tests": [
+          {
+            "name": "known devices are skipped",
+            "seed": "INSERT INTO devices VALUES ('dev-1', '2024-03-01 08:00+00');\nINSERT INTO heartbeats VALUES\n('dev-1', '2024-03-02 09:00+00'),\n('dev-2', '2024-03-02 09:05+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "dev-2",
+                  "2024-03-02 09:05:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a new device with several heartbeats is registered once at its earliest time",
+            "seed": "INSERT INTO heartbeats VALUES\n('dev-7', '2024-03-02 10:00+00'),\n('dev-7', '2024-03-02 09:00+00'),\n('dev-8', '2024-03-02 11:30+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "dev-7",
+                  "2024-03-02 09:00:00+00"
+                ],
+                [
+                  "dev-8",
+                  "2024-03-02 11:30:00+00"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "every device is already known",
+            "seed": "INSERT INTO devices VALUES\n('dev-1', '2024-03-01 08:00+00'),\n('dev-2', '2024-03-01 08:00+00');\nINSERT INTO heartbeats VALUES\n('dev-1', '2024-03-02 09:00+00'),\n('dev-2', '2024-03-02 09:00+00'),\n('dev-2', '2024-03-02 09:10+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "an earlier heartbeat does not re-register a known device",
+            "seed": "INSERT INTO devices VALUES ('dev-1', '2024-03-05 08:00+00');\nINSERT INTO heartbeats VALUES\n('dev-1', '2024-03-01 07:00+00'),\n('dev-3', '2024-03-01 07:00+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "dev-3",
+                  "2024-03-01 07:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "device ids are case-sensitive",
+            "seed": "INSERT INTO devices VALUES ('AB-1', '2024-01-01 00:00+00');\nINSERT INTO heartbeats VALUES\n('ab-1', '2024-01-02 00:00+00'),\n('AB-1', '2024-01-02 00:00+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "ab-1",
+                  "2024-01-02 00:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "earliest is by instant, across time zones",
+            "seed": "INSERT INTO heartbeats VALUES\n('dev-9', '2024-03-02 01:00+00'),\n('dev-9', '2024-03-01 23:30-02'),\n('dev-9', '2024-03-02 05:00+05');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "dev-9",
+                  "2024-03-02 00:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an empty devices table: every device is new",
+            "seed": "INSERT INTO heartbeats VALUES\n('a', '2024-02-29 12:00+00'),\n('b', '2024-02-29 12:00+00'),\n('a', '2024-02-29 11:59+00'),\n('c', '2024-03-01 00:00+00');",
+            "expected": {
+              "columns": [
+                "device_id",
+                "first_seen"
+              ],
+              "rows": [
+                [
+                  "a",
+                  "2024-02-29 11:59:00+00"
+                ],
+                [
+                  "b",
+                  "2024-02-29 12:00:00+00"
+                ],
+                [
+                  "c",
+                  "2024-03-01 00:00:00+00"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE products (\n  sku        text PRIMARY KEY,\n  name       text NOT NULL,\n  price      numeric(10,2) NOT NULL,\n  updated_at timestamptz NOT NULL\n);\n\nCREATE TABLE product_feed (\n  feed_id    int  PRIMARY KEY,\n  sku        text NOT NULL,\n  name       text NOT NULL,\n  price      numeric(10,2) NOT NULL,\n  updated_at timestamptz NOT NULL\n);",
+        "starter": "-- Apply product_feed to products: newest feed row per sku, and only\n-- overwrite a stored row when the incoming one is strictly newer.\nINSERT INTO products (sku, name, price, updated_at)\nSELECT sku, name, price, updated_at\nFROM product_feed\nON CONFLICT (sku) DO UPDATE\nSET name = EXCLUDED.name,\n    price = EXCLUDED.price,\n    updated_at = EXCLUDED.updated_at;\n",
+        "solution": "INSERT INTO products AS p (sku, name, price, updated_at)\nSELECT DISTINCT ON (sku) sku, name, price, updated_at\nFROM product_feed\nORDER BY sku, updated_at DESC, feed_id DESC\nON CONFLICT (sku) DO UPDATE\nSET name       = EXCLUDED.name,\n    price      = EXCLUDED.price,\n    updated_at = EXCLUDED.updated_at\nWHERE EXCLUDED.updated_at > p.updated_at;\n",
+        "check": "SELECT sku, name, price, updated_at FROM products",
+        "tests": [
+          {
+            "name": "the feed repeats a sku; its newest version wins",
+            "seed": "INSERT INTO products VALUES ('MUG-1', 'Mug', 8.00, '2024-03-01 10:00+00');\nINSERT INTO product_feed VALUES\n(1, 'MUG-1', 'Mug v2', 9.00, '2024-03-02 10:00+00'),\n(2, 'MUG-1', 'Mug v3', 9.50, '2024-03-03 10:00+00'),\n(3, 'TEE-1', 'Tee', 15.00, '2024-03-02 12:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  "Mug v3",
+                  9.5,
+                  "2024-03-03 10:00:00+00"
+                ],
+                [
+                  "TEE-1",
+                  "Tee",
+                  15,
+                  "2024-03-02 12:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an older incoming row does not overwrite a newer stored one",
+            "seed": "INSERT INTO products VALUES\n('CAP-1', 'Cap', 12.00, '2024-03-05 09:00+00'),\n('BAG-1', 'Bag', 30.00, '2024-03-01 09:00+00');\nINSERT INTO product_feed VALUES\n(1, 'CAP-1', 'Old cap', 10.00, '2024-03-04 09:00+00'),\n(2, 'BAG-1', 'Tote bag', 28.00, '2024-03-02 09:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "BAG-1",
+                  "Tote bag",
+                  28,
+                  "2024-03-02 09:00:00+00"
+                ],
+                [
+                  "CAP-1",
+                  "Cap",
+                  12,
+                  "2024-03-05 09:00:00+00"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "an equal timestamp is not newer",
+            "seed": "INSERT INTO products VALUES ('PEN-1', 'Pen', 1.00, '2024-04-01 08:00+00');\nINSERT INTO product_feed VALUES\n(1, 'PEN-1', 'Pen (dup)', 1.25, '2024-04-01 08:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "PEN-1",
+                  "Pen",
+                  1,
+                  "2024-04-01 08:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a tie on the newest time goes to the higher feed_id",
+            "seed": "INSERT INTO product_feed VALUES\n(9, 'INK-1', 'Ink B', 4.20, '2024-04-02 08:00+00'),\n(5, 'INK-1', 'Ink A', 4.00, '2024-04-02 08:00+00'),\n(7, 'INK-1', 'Ink C', 4.10, '2024-04-01 08:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "INK-1",
+                  "Ink B",
+                  4.2,
+                  "2024-04-02 08:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every feed version is older than the stored row",
+            "seed": "INSERT INTO products VALUES ('LAMP-1', 'Lamp', 40.00, '2024-05-05 00:00+00');\nINSERT INTO product_feed VALUES\n(1, 'LAMP-1', 'Lamp v0', 35.00, '2024-05-03 00:00+00'),\n(2, 'LAMP-1', 'Lamp v1', 38.00, '2024-05-04 00:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "LAMP-1",
+                  "Lamp",
+                  40,
+                  "2024-05-05 00:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an empty feed changes nothing",
+            "seed": "INSERT INTO products VALUES\n('MUG-1', 'Mug', 8.00, '2024-03-01 10:00+00'),\n('TEE-1', 'Tee', 15.00, '2024-03-01 10:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  "Mug",
+                  8,
+                  "2024-03-01 10:00:00+00"
+                ],
+                [
+                  "TEE-1",
+                  "Tee",
+                  15,
+                  "2024-03-01 10:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "skus are case-sensitive and new skus dedupe too",
+            "seed": "INSERT INTO products VALUES ('SOCK-1', 'Sock', 3.00, '2024-01-01 00:00+00');\nINSERT INTO product_feed VALUES\n(1, 'sock-1', 'sock lower', 2.00, '2024-01-02 00:00+00'),\n(2, 'sock-1', 'sock lower v2', 2.50, '2024-01-03 00:00+00'),\n(3, 'SOCK-1', 'Sock v2', 3.50, '2024-01-02 00:00+00');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "SOCK-1",
+                  "Sock v2",
+                  3.5,
+                  "2024-01-02 00:00:00+00"
+                ],
+                [
+                  "sock-1",
+                  "sock lower v2",
+                  2.5,
+                  "2024-01-03 00:00:00+00"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "newer is by instant: a later local time can be an earlier moment",
+            "seed": "INSERT INTO products VALUES\n('HAT-1', 'Hat', 20.00, '2024-03-01 12:00+00'),\n('BOX-1', 'Box', 2.00, '2024-03-01 12:00+00');\nINSERT INTO product_feed VALUES\n(1, 'HAT-1', 'Hat v2', 22.00, '2024-03-01 13:00+02'),\n(2, 'BOX-1', 'Box v2', 2.10, '2024-03-01 09:30-03');",
+            "expected": {
+              "columns": [
+                "sku",
+                "name",
+                "price",
+                "updated_at"
+              ],
+              "rows": [
+                [
+                  "BOX-1",
+                  "Box v2",
+                  2.1,
+                  "2024-03-01 12:30:00+00"
+                ],
+                [
+                  "HAT-1",
+                  "Hat",
+                  20,
+                  "2024-03-01 12:00:00+00"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "CREATE TEMP TABLE tags (k int PRIMARY KEY, v text);\nINSERT INTO tags VALUES (1, 'a');\nINSERT INTO tags VALUES (1, 'b'), (2, 'c')\nON CONFLICT (k) DO NOTHING\nRETURNING k, v;",
+        "choices": [
+          "1 | a\n2 | c",
+          "2 | c",
+          "1 | b\n2 | c",
+          "ERROR: duplicate key value violates unique constraint \"tags_pkey\""
+        ],
+        "answer": 1,
+        "explain": "RETURNING reports only rows the statement actually wrote. The conflicting `(1, 'b')` was skipped, and DO NOTHING does not hand back the existing row, so a get-or-create needs a second lookup (or a no-op DO UPDATE)."
+      },
+      {
+        "code": "CREATE TEMP TABLE hits (k int PRIMARY KEY, n int);\nINSERT INTO hits VALUES (1, 1), (1, 2)\nON CONFLICT (k) DO UPDATE SET n = hits.n + EXCLUDED.n;\nSELECT k, n FROM hits;",
+        "choices": [
+          "1 | 3",
+          "1 | 2",
+          "ERROR: ON CONFLICT DO UPDATE command cannot affect row a second time",
+          "ERROR: duplicate key value violates unique constraint \"hits_pkey\""
+        ],
+        "answer": 2,
+        "explain": "The same key appears twice in one statement, so the second row would update a row this command already wrote. Postgres refuses rather than pick an order. Aggregate first: `SELECT k, sum(n) ... GROUP BY k`. (With DO NOTHING the second row would just be skipped.)"
+      },
+      {
+        "code": "CREATE TEMP TABLE subs (\n  id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email text UNIQUE\n);\nINSERT INTO subs (email) VALUES ('a@x.io');\nINSERT INTO subs (email) VALUES ('a@x.io') ON CONFLICT DO NOTHING;\nINSERT INTO subs (email) VALUES ('b@x.io');\nSELECT id, email FROM subs ORDER BY id;",
+        "choices": [
+          "1 | a@x.io\n2 | b@x.io",
+          "1 | a@x.io\n3 | b@x.io",
+          "ERROR: duplicate key value violates unique constraint \"subs_email_key\""
+        ],
+        "answer": 1,
+        "explain": "Defaults, including the identity's `nextval`, are computed before the conflict check, so the skipped row still consumed id 2. Sequences never roll back: gaps are normal and ids are not a row count."
+      },
+      {
+        "code": "CREATE TEMP TABLE stock (sku text PRIMARY KEY, qty int);\nINSERT INTO stock VALUES ('A', 5);\nINSERT INTO stock VALUES ('A', 2)\nON CONFLICT (sku) DO UPDATE SET qty = qty + EXCLUDED.qty\nRETURNING qty;",
+        "choices": [
+          "7",
+          "4",
+          "2",
+          "ERROR: column reference \"qty\" is ambiguous"
+        ],
+        "answer": 3,
+        "explain": "Inside DO UPDATE both the stored row and `EXCLUDED` have a `qty`, so a bare `qty` is ambiguous. Qualify it: `SET qty = stock.qty + EXCLUDED.qty` (or use the alias from `INSERT INTO stock AS s`). The target of SET itself is never qualified."
+      },
+      {
+        "code": "CREATE TEMP TABLE prices (sku text PRIMARY KEY, price int, ver int);\nINSERT INTO prices VALUES ('A', 10, 5);\nINSERT INTO prices VALUES ('A', 12, 3)\nON CONFLICT (sku) DO UPDATE\nSET price = EXCLUDED.price, ver = EXCLUDED.ver\nWHERE prices.ver < EXCLUDED.ver\nRETURNING sku, price;",
+        "choices": [
+          "A | 12",
+          "A | 10",
+          "(no rows)",
+          "ERROR: duplicate key value violates unique constraint \"prices_pkey\""
+        ],
+        "answer": 2,
+        "explain": "Version 3 is older than the stored 5, so the WHERE is false: the row is left as it is and nothing is returned. A false WHERE on DO UPDATE is a silent skip, not an error, which is exactly what 'last write wins' needs."
+      },
+      {
+        "code": "CREATE TEMP TABLE users (id int PRIMARY KEY, email text);\nCREATE INDEX ON users (email);\nINSERT INTO users VALUES (1, 'a@x.io')\nON CONFLICT (email) DO NOTHING;",
+        "choices": [
+          "(no rows)",
+          "ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification",
+          "ERROR: duplicate key value violates unique constraint \"users_pkey\""
+        ],
+        "answer": 1,
+        "explain": "The conflict target must match a unique index or constraint. A plain index on `email` cannot arbitrate, so the statement fails before inserting anything, even on an empty table. Make the index UNIQUE (or target `(id)`)."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (k int PRIMARY KEY, n int);\nINSERT INTO t VALUES (1, 5);\nWITH m AS (\n  MERGE INTO t\n  USING (VALUES (3, 4), (1, 2)) AS s(k, n) ON t.k = s.k\n  WHEN MATCHED THEN UPDATE SET n = t.n + s.n\n  WHEN NOT MATCHED THEN INSERT VALUES (s.k, s.n)\n  RETURNING merge_action() AS action, t.k, t.n\n)\nSELECT action, k, n FROM m ORDER BY k;",
+        "choices": [
+          "UPDATE | 1 | 7\nINSERT | 3 | 4",
+          "UPDATE | 1 | 2\nINSERT | 3 | 4",
+          "INSERT | 1 | 2\nINSERT | 3 | 4"
+        ],
+        "answer": 0,
+        "explain": "Postgres 17 added RETURNING to MERGE, and `merge_action()` says which branch handled each source row. In RETURNING, the target's columns show the new values, so key 1 reports 5 + 2 = 7."
+      }
+    ],
+    "tip": "Before writing an upsert, say three things out loud: the unique key that arbitrates it ('the primary key is tenant and day'), what happens on each outcome (new key, existing key, skipped), and whether the source can repeat a key. Interviewers who ask for 'insert or update' are usually probing the race and the duplicate-key case, so name both before they do.",
+    "links": {
+      "guides": [
+        "idempotency-keys",
+        "stripe-idempotency",
+        "transactions-isolation",
+        "database-indexes",
+        "retries-backoff",
+        "webhooks"
+      ],
+      "lessons": [
+        "sql-schema-design",
+        "design-api-data-model",
+        "design-consistency",
+        "design-queues-events"
+      ]
+    }
+  }
+}
