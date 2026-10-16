@@ -1,0 +1,1863 @@
+{
+  "id": "sql-schema-design",
+  "track": "sql",
+  "title": "Schema design, keys and constraints",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Model entities and relationships (1:1, 1:N, M:N with a junction table), pick surrogate or natural keys, normalise to 3NF and know when to stop, and make the database enforce the rules with PRIMARY KEY, FOREIGN KEY actions, UNIQUE, NOT NULL, CHECK and DEFAULT. Plus the type choices that prevent bugs: `numeric` for money and `timestamptz` for instants.",
+  "prerequisites": [
+    "sql-joins"
+  ],
+  "prerequisiteNotes": "sql-joins: how rows from two tables are matched on a key, and what a foreign key looks like from the query side. Schema design decides which joins your queries will need, so you should be able to read an inner and a left join comfortably first.",
+  "objectives": [
+    "Turn a short product description into tables, naming each relationship's cardinality and where its foreign key lives.",
+    "Model a many-to-many relationship with a junction table whose composite primary key stops duplicate pairs.",
+    "Choose between a surrogate `GENERATED ALWAYS AS IDENTITY` key and a natural key, and defend the choice.",
+    "Explain 1NF, 2NF and 3NF in plain words using an update anomaly, and say what denormalising costs.",
+    "Declare PRIMARY KEY, FOREIGN KEY (with CASCADE, RESTRICT or SET NULL), UNIQUE, NOT NULL, CHECK and DEFAULT, and predict how each treats NULL.",
+    "Add constraints to a table that already has data, backfilling first so the ALTER succeeds."
+  ],
+  "concepts": [
+    {
+      "title": "Entities, relationships and cardinality",
+      "body": "Start from the nouns in the brief: each thing with its own identity and lifecycle (student, course, department) becomes a table, one row per instance. Then name every relationship's **cardinality**. **1:N** (a department has many courses): the foreign key goes on the many side, `courses.dept_id`. **1:1** (a student has at most one profile): put the foreign key on the optional side and make it UNIQUE too, often by making it the primary key, so a second profile for the same student is impossible. **M:N** (students take many courses, courses have many students): no column on either side can hold it, so add a **junction table** `enrolments(student_id, course_code)` with a foreign key to each side and a **composite primary key** on the pair. Facts about the pairing itself, such as the grade, live on the junction row. Lists stuffed into one column (`course_codes text` with `'DB101,ALG200'`) cannot be joined, indexed or constrained.",
+      "code": "CREATE TABLE departments (\n  dept_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  name    text NOT NULL UNIQUE\n);\n\n-- 1:N  the FK sits on the many side\nCREATE TABLE courses (\n  code    text PRIMARY KEY,\n  title   text NOT NULL,\n  dept_id int  NOT NULL REFERENCES departments (dept_id)\n);\n\nCREATE TABLE students (\n  student_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email      text NOT NULL UNIQUE\n);\n\n-- 1:1  the FK is also the PK, so at most one profile per student\nCREATE TABLE student_profiles (\n  student_id int PRIMARY KEY REFERENCES students (student_id) ON DELETE CASCADE,\n  bio        text\n);\n\n-- M:N  a junction table with a composite PK\nCREATE TABLE enrolments (\n  student_id  int  REFERENCES students (student_id),\n  course_code text REFERENCES courses (code),\n  grade       int,\n  PRIMARY KEY (student_id, course_code)\n);",
+      "diagram": "sqn-er"
+    },
+    {
+      "title": "Keys: surrogate identity versus natural keys",
+      "body": "A **natural key** is data that already identifies the thing: an ISO country code, a course code, an ISBN. A **surrogate key** is a meaningless number the database hands out. Use a natural key when it is short, truly unique and never changes; otherwise use a surrogate and keep the natural candidate as a UNIQUE column. Emails look unique but people change them, so `students` gets a surrogate `student_id` plus `email UNIQUE`. In Postgres write `int GENERATED ALWAYS AS IDENTITY` (standard SQL; use `bigint` for tables that may pass two billion rows). `ALWAYS` rejects a hand-picked id unless the insert says `OVERRIDING SYSTEM VALUE`; `BY DEFAULT` lets callers supply one, which is handy for data loads but lets ids collide with the sequence later. The older `serial` is a Postgres shorthand for a sequence default: it works, but the column does not own its sequence as cleanly and does not block manual ids. Values from either can have gaps (rolled-back inserts still use a number), so never treat ids as a count.",
+      "code": "CREATE TABLE countries (\n  iso2 char(2) PRIMARY KEY,          -- natural: short, stable, already unique\n  name text NOT NULL\n);\n\nCREATE TABLE customers (\n  customer_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,  -- surrogate\n  email       text NOT NULL UNIQUE,  -- natural candidate, but it can change\n  country     char(2) NOT NULL REFERENCES countries (iso2)\n);\n\nINSERT INTO customers (email, country) VALUES ('ana@shop.io', 'PT');  -- id 1\nINSERT INTO customers (customer_id, email, country) VALUES (7, 'x@shop.io', 'PT');\n-- ERROR: cannot insert a non-DEFAULT value into column \"customer_id\""
+    },
+    {
+      "title": "Normalisation in plain language",
+      "body": "Normalisation means **every fact is stored once**, so it can only be changed in one place. The classic failure is the **update anomaly**: a flat `orders_flat` table repeats the customer's name on every order line, someone renames the customer, one line is missed, and now the database holds two answers. The normal forms are a checklist. **1NF**: one value per cell and no repeating groups (no `'MUG-1,TEE-2'` lists, no `phone1, phone2, phone3`). **2NF**: with a composite key, every non-key column depends on the **whole** key; in `order_lines(order_id, sku, product_name, qty)` the product name depends only on `sku`, so it moves to `products`. **3NF**: non-key columns depend on the key and **nothing but the key**; in `orders(order_id, customer_email, customer_name)` the name depends on the email, not on the order, so it moves to `customers`. The usual summary: the key, the whole key and nothing but the key. Aim for 3NF by default; there are higher forms, but they rarely come up in interviews.",
+      "code": "-- Before: customer and product facts repeated on every line\n-- orders_flat(order_id, customer_email, customer_name, sku, product_name, qty, unit_price)\n\n-- After (3NF): each fact has exactly one home\nCREATE TABLE customers   (customer_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n                          email text NOT NULL UNIQUE, name text NOT NULL);\nCREATE TABLE products    (sku text PRIMARY KEY, name text NOT NULL);\nCREATE TABLE orders      (order_id int PRIMARY KEY,\n                          customer_id int NOT NULL REFERENCES customers);\nCREATE TABLE order_lines (order_id int REFERENCES orders ON DELETE CASCADE,\n                          sku text REFERENCES products,\n                          qty int NOT NULL CHECK (qty > 0),\n                          unit_price numeric(10,2) NOT NULL,  -- price paid then\n                          PRIMARY KEY (order_id, sku));\n\nUPDATE customers SET name = 'Ana Costa' WHERE email = 'ana@shop.io';  -- one row",
+      "diagram": "sqn-normal"
+    },
+    {
+      "title": "Constraints: PRIMARY KEY, UNIQUE, NOT NULL, CHECK, DEFAULT",
+      "body": "Constraints are rules the database checks on every insert and update, from every client, forever. `PRIMARY KEY` = UNIQUE + NOT NULL, one per table. `UNIQUE` treats NULLs as **distinct**, so any number of rows may have a NULL in a unique column; add `NULLS NOT DISTINCT` (Postgres 15+) when at most one NULL is allowed. `NOT NULL` is the cheapest rule and the most often forgotten: make columns required unless missing is a real state. `CHECK (expr)` rejects a row only when the expression is **false**; NULL makes most expressions UNKNOWN, and UNKNOWN passes, so `CHECK (grade BETWEEN 0 AND 100)` happily accepts a NULL grade. Add `NOT NULL` when NULL is not allowed. A CHECK can compare columns in the same row (`CHECK (ends_at > starts_at)`) but not other rows or tables. `DEFAULT` fills a value when the insert omits the column; it does not replace an explicit NULL. Name constraints you will talk about (`CONSTRAINT grade_range CHECK (...)`) so error messages and migrations read well.",
+      "code": "CREATE TABLE bookings (\n  booking_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  room       text NOT NULL,\n  starts_at  timestamptz NOT NULL,\n  ends_at    timestamptz NOT NULL,\n  status     text NOT NULL DEFAULT 'pending'\n             CHECK (status IN ('pending', 'confirmed', 'cancelled')),\n  coupon     text UNIQUE,                     -- many NULLs allowed\n  CONSTRAINT ends_after_start CHECK (ends_at > starts_at)\n);\n\n-- At most one row with a NULL, Postgres 15+:\nCREATE TABLE settings (scope text, value text, UNIQUE NULLS NOT DISTINCT (scope));"
+    },
+    {
+      "title": "Foreign keys and ON DELETE",
+      "body": "`REFERENCES parent (col)` guarantees every non-NULL value points at an existing parent row; the referenced column must be a primary key or UNIQUE. What happens when the parent is deleted is a business decision you spell out. `ON DELETE CASCADE` deletes the children too: right for rows that mean nothing without the parent (enrolments of a deleted student, lines of a deleted order). `ON DELETE RESTRICT` refuses the delete while children exist (error 23001, `restrict_violation`): right when history matters (a course with enrolments, a customer with invoices). `ON DELETE SET NULL` keeps the child and blanks the link: right for optional links (a course's lead lecturer leaves). The default, `NO ACTION`, also refuses; it differs from RESTRICT in being checked at the end of the statement, or at commit if the constraint is deferred, and it raises 23503 `foreign_key_violation`. `ON UPDATE` has the same options. Two practical notes: a nullable FK column allows orphan-looking NULLs, so add NOT NULL when the link is mandatory; and Postgres does **not** index the referencing column for you, so cascades and joins on `enrolments.course_code` scan unless you add an index.",
+      "code": "CREATE TABLE lecturers (lecturer_id int PRIMARY KEY, name text NOT NULL);\n\nCREATE TABLE courses (\n  code    text PRIMARY KEY,\n  lead_id int REFERENCES lecturers ON DELETE SET NULL   -- optional link\n);\n\nCREATE TABLE enrolments (\n  student_id  int  NOT NULL REFERENCES students ON DELETE CASCADE,  -- owned rows\n  course_code text NOT NULL REFERENCES courses  ON DELETE RESTRICT, -- keep history\n  PRIMARY KEY (student_id, course_code)\n);\n\nDELETE FROM courses WHERE code = 'DB101';\n-- ERROR: update or delete on table \"courses\" violates RESTRICT setting of foreign key constraint ...",
+      "diagram": "sqn-cascade"
+    },
+    {
+      "title": "Rules in the database or in the application?",
+      "body": "Validate in the application for good error messages, and **enforce** in the database for correctness. An app-side check such as \"SELECT the email, insert if absent\" is a race: two requests can both see no row and both insert. Only a UNIQUE constraint makes that impossible, because the database checks it atomically with the insert, across every server, script and migration that touches the table. The same goes for foreign keys (no orphans after a buggy delete) and CHECKs (no negative stock from a hand-run UPDATE). Keep in the app what the database cannot express cheaply: rules that span many rows (\"at most 3 active bookings per user\"), calls to other systems, and rules that change weekly. Catch the constraint error by its SQLSTATE (`23505` unique, `23503` foreign key, `23001` RESTRICT, `23514` check, `23502` not null) and turn it into a friendly message, rather than checking first and hoping.",
+      "code": "-- Racy: two requests can both pass the SELECT\nSELECT 1 FROM users WHERE email = 'ana@shop.io';\nINSERT INTO users (email) VALUES ('ana@shop.io');\n\n-- Safe: the constraint decides; handle the conflict explicitly\nALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);\nINSERT INTO users (email) VALUES ('ana@shop.io')\nON CONFLICT (email) DO NOTHING\nRETURNING user_id;   -- no row back means it already existed",
+      "diagram": "sqn-race"
+    },
+    {
+      "title": "Types that prevent bugs: money, time, text",
+      "body": "Store money as `numeric(p, s)` (exact decimal), never `real`/`float8`: binary floating point cannot represent 0.1, so `0.1::float8 + 0.2` is `0.30000000000000004`, and sums drift by cents. Alternatively store integer minor units (`amount_cents bigint`) and a currency code. Postgres has a `money` type, but it depends on the server's locale setting, so most teams avoid it. Store instants as `timestamptz`: Postgres converts input to UTC and displays it in the session time zone, so values from different zones compare correctly. Plain `timestamp` has no zone and silently means whatever the writer assumed. Use `date` for calendar days with no time (a birthday). Prefer `text` with a CHECK on length over `varchar(n)`; in Postgres they perform the same. Use `boolean`, not `'Y'/'N'`. For a closed set of values, a CHECK with `IN (...)` or a small lookup table with a foreign key both work; the lookup table is easier to extend.",
+      "code": "SELECT 0.1::float8 + 0.2 AS float_sum,      -- 0.30000000000000004\n       0.1::numeric + 0.2 AS numeric_sum;   -- 0.3\n\nCREATE TABLE payments (\n  payment_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  amount     numeric(12,2) NOT NULL CHECK (amount > 0),\n  currency   char(3) NOT NULL,\n  paid_at    timestamptz NOT NULL DEFAULT now()\n);\n\nSELECT '2024-03-01 09:30:00+02'::timestamptz;  -- shown as 2024-03-01 07:30:00+00 in UTC"
+    },
+    {
+      "title": "Soft deletes, denormalising and naming",
+      "body": "A **soft delete** sets `deleted_at timestamptz` instead of removing the row, to keep history or allow undo. It has costs: every query must filter `deleted_at IS NULL`, foreign keys still point at \"deleted\" rows, and a plain `UNIQUE (email)` now blocks a user from signing up again with the email of their deleted account. The usual fix is a **partial unique index**, `CREATE UNIQUE INDEX ... ON users (email) WHERE deleted_at IS NULL`, covered in the indexes lesson. **Denormalising** (copying a fact somewhere else on purpose, such as an `order_count` on customers or a customer name on an invoice) buys cheaper reads and costs extra writes, a way for copies to disagree, and code (triggers, jobs) to keep them in sync. Do it for measured read hot spots or for facts that must be frozen in time (the price and address on an invoice are history, not a copy). Naming: snake_case, plural or singular table names but consistently, `<table>_id` for keys so joins read naturally, and the same name for an FK as for the column it references.",
+      "code": "ALTER TABLE users ADD COLUMN deleted_at timestamptz;\n\n-- Soft delete:\nUPDATE users SET deleted_at = now() WHERE user_id = 42;\n\n-- Every read now needs the filter:\nSELECT user_id, email FROM users WHERE deleted_at IS NULL;\n\n-- Deliberate denormalisation: the invoice freezes what was true then\nCREATE TABLE invoices (\n  invoice_id    bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  customer_id   bigint NOT NULL REFERENCES customers,\n  billing_name  text NOT NULL,      -- copied on purpose, never updated\n  total         numeric(12,2) NOT NULL\n);"
+    }
+  ],
+  "example": "-- A small ticketing schema, designed out loud\nCREATE TABLE venues (\n  venue_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  name     text NOT NULL UNIQUE,\n  seats    int  NOT NULL CHECK (seats > 0)\n);\n\nCREATE TABLE events (\n  event_id  int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  venue_id  int NOT NULL REFERENCES venues ON DELETE RESTRICT,  -- keep history\n  title     text NOT NULL,\n  starts_at timestamptz NOT NULL,\n  ends_at   timestamptz NOT NULL,\n  CONSTRAINT ends_after_start CHECK (ends_at > starts_at)\n);\n\nCREATE TABLE tickets (\n  event_id   int  NOT NULL REFERENCES events ON DELETE CASCADE,\n  seat       text NOT NULL,\n  price      numeric(10,2) NOT NULL CHECK (price >= 0),\n  holder     text,                                   -- NULL until sold\n  PRIMARY KEY (event_id, seat)                       -- a seat sells once per event\n);\n\nINSERT INTO venues (name, seats) VALUES ('Hall A', 200);\nINSERT INTO events (venue_id, title, starts_at, ends_at)\nVALUES (1, 'SQL night', '2024-05-01 18:00+00', '2024-05-01 21:00+00');\nINSERT INTO tickets VALUES (1, 'A1', 25.00, 'Ana'), (1, 'A2', 25.00, NULL);\n\nINSERT INTO tickets VALUES (1, 'A1', 25.00, 'Ben');\n-- ERROR: duplicate key value violates unique constraint \"tickets_pkey\"\n\nSELECT e.title, count(*) AS seats_listed, count(t.holder) AS seats_sold\nFROM events e JOIN tickets t ON t.event_id = e.event_id\nGROUP BY e.event_id, e.title;\n-- SQL night | 2 | 1",
+  "task": "Create three tables for a small university. `students`: `student_id int` generated **always** as identity and the primary key, `email text` required and unique, `full_name text` required. `courses`: `code text` as a natural primary key, `title text` required, `capacity int` required with default 30 and a CHECK that it is above 0. `enrolments` is the junction table between them: `student_id int` and `course_code text`, both required foreign keys (to `students.student_id` and `courses.code`) that together form the composite primary key; `grade int`, which may be NULL (not graded yet) but otherwise must be between 0 and 100 inclusive; and `enrolled_at timestamptz`, required with default `now()`. Deleting a student must delete their enrolments; deleting a course that still has enrolments must fail. There is no query to write: each test runs statements against your tables (inserts by column name, deletes and counts; ids start at 1) and reports for each one whether it succeeded or which kind of constraint rejected it.",
+  "starter": "-- Create students, courses and enrolments with the keys and rules from the task.\n-- The tests insert rows by column name and report what each statement did.\nCREATE TABLE students (\n  student_id serial PRIMARY KEY,\n  email      text,\n  full_name  text\n);\n\nCREATE TABLE courses (\n  code     text PRIMARY KEY,\n  title    text,\n  capacity int\n);\n\nCREATE TABLE enrolments (\n  enrolment_id serial PRIMARY KEY,\n  student_id   int REFERENCES students (student_id),\n  course_code  text REFERENCES courses (code),\n  grade        int,\n  enrolled_at  timestamp\n);\n",
+  "hints": [
+    "A pair can only be enrolled once, so the pair is the key: `PRIMARY KEY (student_id, course_code)` on `enrolments`, with no separate id column. Each half is also a foreign key.",
+    "Put the delete behaviour on the foreign keys in `enrolments`: `ON DELETE CASCADE` towards students, `ON DELETE RESTRICT` towards courses. A CHECK lets NULL through, so `grade` needs no extra handling to allow NULL."
+  ],
+  "solution": "CREATE TABLE students (\n  student_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email      text NOT NULL UNIQUE,\n  full_name  text NOT NULL\n);\n\nCREATE TABLE courses (\n  code     text PRIMARY KEY,\n  title    text NOT NULL,\n  capacity int  NOT NULL DEFAULT 30 CHECK (capacity > 0)\n);\n\nCREATE TABLE enrolments (\n  student_id  int  NOT NULL REFERENCES students (student_id) ON DELETE CASCADE,\n  course_code text NOT NULL REFERENCES courses (code) ON DELETE RESTRICT,\n  grade       int  CHECK (grade BETWEEN 0 AND 100),\n  enrolled_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (student_id, course_code)\n);\n\nEach rule maps to one declaration. `GENERATED ALWAYS AS IDENTITY` gives a surrogate key and rejects hand-picked ids; email is a natural candidate that can change, so it is UNIQUE rather than the key. The course code is short and stable, so it is the natural primary key and enrolments can store it directly. The junction table's composite primary key both identifies the row and makes a repeated enrolment a `unique_violation`, and because primary key columns are implicitly NOT NULL a half-filled pair is rejected too. The two foreign keys carry the business decisions: CASCADE because enrolments mean nothing without the student, RESTRICT because a course with history must not vanish (the default NO ACTION would also pass here). `CHECK (grade BETWEEN 0 AND 100)` rejects 101 and -1 and lets NULL through, because a CHECK fails only on FALSE. `timestamptz` with `DEFAULT now()` records the instant unambiguously. In an interview, add: the PK index on `(student_id, course_code)` serves lookups by student, but finding the students of a course, and the RESTRICT check on a course delete, want an index on `enrolments (course_code)`.",
+  "checklist": [
+    "Every column that must have a value is NOT NULL, and every table has a primary key.",
+    "The junction table's primary key is the pair, so the same student cannot enrol in the same course twice.",
+    "Each foreign key states its ON DELETE behaviour, and I can say why CASCADE, RESTRICT or SET NULL.",
+    "My CHECK constraints allow NULL where the column is optional and NOT NULL is used where it is not.",
+    "Money is `numeric`, instants are `timestamptz`, and ids come from `GENERATED ALWAYS AS IDENTITY`."
+  ],
+  "pitfalls": [
+    "Giving a junction table its own `id serial PRIMARY KEY` and no UNIQUE on the pair, so the same enrolment can be inserted twice.",
+    "Expecting `UNIQUE` to allow only one NULL. NULLs are distinct by default; use NOT NULL or `NULLS NOT DISTINCT`.",
+    "Expecting `CHECK (x > 0)` to reject NULL. UNKNOWN passes a CHECK; add NOT NULL.",
+    "Storing money in `float8` or `real` and losing cents in sums; use `numeric(p, s)` or integer cents.",
+    "Using `timestamp` for event times written from several time zones; use `timestamptz`.",
+    "Using a natural key that changes (email, phone, a name), which forces updates in every referencing table.",
+    "Checking uniqueness in application code with SELECT-then-INSERT, which races under concurrent requests.",
+    "Adding `SET NOT NULL` or a CHECK to a table whose existing rows break it: the ALTER fails until you backfill.",
+    "Forgetting that foreign key columns are not indexed automatically, so cascades and joins from the parent side scan the child table."
+  ],
+  "walkthrough": [
+    {
+      "title": "From one flat table to 3NF, step by step",
+      "body": "Interviewers often hand you a spreadsheet-shaped table and ask what is wrong with it. Narrate the normal forms in order. First 1NF: a cell such as `skus = 'MUG-1,TEE-2'` holds a list, so split it into one row per order line; the key becomes `(order_id, sku)`. Then 2NF: ask of each non-key column which part of the key decides it. `product_name` is decided by `sku` alone, a partial dependency, so it moves to `products(sku, name)`. Then 3NF: `customer_name` is decided by `customer_email`, which is decided by `order_id`, a transitive dependency, so customers get their own table and orders keep only `customer_id`. Finish by naming the anomaly each step removes: a rename now touches one row, and deleting the last order no longer deletes the only record of a product.",
+      "diagram": "sqn-nf-steps"
+    },
+    {
+      "title": "Designing the enrolment schema out loud",
+      "body": "Say the entities and the grain first: one row per student, one per course, one per (student, course) enrolment. Then go column by column and say the rule as you type it: required or not, unique or not, which values are legal, what the default is. Then each foreign key with its delete behaviour and one sentence of reason. Finally mention what you would add next: an index on `enrolments (course_code)` for the reverse lookup and the RESTRICT check, and possibly a CHECK or trigger for capacity. Capacity is a rule across many rows (count enrolments per course), which a CHECK cannot express, so it needs a trigger with locking, or an application check under a lock on the course row. Saying where the database's declarative rules stop is a senior signal.",
+      "code": "-- grain: one row per student / course / (student, course)\nCREATE TABLE enrolments (\n  student_id  int  NOT NULL REFERENCES students ON DELETE CASCADE,   -- owned\n  course_code text NOT NULL REFERENCES courses  ON DELETE RESTRICT,  -- history\n  grade       int  CHECK (grade BETWEEN 0 AND 100),                  -- NULL = not graded\n  enrolled_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (student_id, course_code)\n);\nCREATE INDEX enrolments_course_idx ON enrolments (course_code);  -- reverse lookups"
+    },
+    {
+      "title": "Adding constraints to a table that already has rows",
+      "body": "`ALTER TABLE ... ADD CONSTRAINT` validates every existing row, so the statement fails if any row breaks the rule. Find the offenders first (`SELECT ... WHERE stock IS NULL`), fix them with an UPDATE (backfill a default, or delete true junk), then add the rule. Several changes can go in one ALTER TABLE, separated by commas, which also means one table scan. On a big, busy table, a plain ADD CONSTRAINT holds a strong lock while it scans. For CHECK and FOREIGN KEY constraints Postgres offers a two-step version: `ADD CONSTRAINT ... NOT VALID` applies the rule to new writes immediately without scanning, and a later `VALIDATE CONSTRAINT` checks old rows under a weaker lock. Since Postgres 12, `SET NOT NULL` skips its scan if a validated `CHECK (col IS NOT NULL)` already proves it.",
+      "code": "SELECT count(*) FROM products WHERE stock IS NULL;     -- find offenders\nUPDATE products SET stock = 0 WHERE stock IS NULL;      -- backfill\n\nALTER TABLE products\n  ALTER COLUMN stock SET DEFAULT 0,\n  ALTER COLUMN stock SET NOT NULL,\n  ADD CONSTRAINT products_stock_check CHECK (stock >= 0);\n\n-- Large table, two steps:\nALTER TABLE orders ADD CONSTRAINT orders_total_check CHECK (total >= 0) NOT VALID;\nALTER TABLE orders VALIDATE CONSTRAINT orders_total_check;"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Tighten an existing products table",
+      "prompt": "The table `products (sku text, name text, price numeric(10,2), stock int)` already exists with rows and no constraints. Using ALTER TABLE (and an UPDATE where needed): make `sku` the primary key; make `name` NOT NULL; add a CHECK that `price` is not negative, while still allowing a NULL price (not priced yet); and make `stock` default to 0, NOT NULL and never negative. Some existing rows have a NULL `stock`: set those to 0 first. Every other existing row already satisfies the rules. The tests then insert, update and count rows and report which constraint (if any) rejected each statement.",
+      "hints": [
+        "Run `UPDATE products SET stock = 0 WHERE stock IS NULL` before `SET NOT NULL`, or the ALTER fails on the existing rows.",
+        "One `ALTER TABLE products` can take several comma-separated actions: `ADD PRIMARY KEY (sku)`, `ALTER COLUMN name SET NOT NULL`, `ADD CONSTRAINT ... CHECK (price >= 0)`, `ALTER COLUMN stock SET DEFAULT 0`, and so on."
+      ],
+      "checklist": [
+        "Existing NULL stock values are 0 afterwards; nothing else in the old rows changed.",
+        "A NULL price is still accepted, a negative one is not.",
+        "A row inserted without `stock` gets 0, and an explicit NULL stock is rejected."
+      ],
+      "solution": "UPDATE products SET stock = 0 WHERE stock IS NULL;\n\nALTER TABLE products\n  ADD PRIMARY KEY (sku),\n  ALTER COLUMN name SET NOT NULL,\n  ADD CONSTRAINT products_price_check CHECK (price >= 0),\n  ALTER COLUMN stock SET DEFAULT 0,\n  ALTER COLUMN stock SET NOT NULL,\n  ADD CONSTRAINT products_stock_check CHECK (stock >= 0);"
+    },
+    {
+      "id": "stretch",
+      "title": "Normalise a flat orders table",
+      "prompt": "`orders_flat (order_id int, customer_email text, customer_name text, sku text, product_name text, qty int, unit_price numeric(10,2))` holds one row per order line with customer and product facts repeated. Create `customers (customer_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY, email text NOT NULL UNIQUE, name text NOT NULL)`, `products (sku text PRIMARY KEY, name text NOT NULL)`, `orders (order_id int PRIMARY KEY, customer_id int NOT NULL` referencing customers`)` and `order_lines (order_id int NOT NULL` referencing orders with `ON DELETE CASCADE`, `sku text NOT NULL` referencing products, `qty int NOT NULL CHECK (qty > 0)`, `unit_price numeric(10,2) NOT NULL CHECK (unit_price >= 0)`, primary key `(order_id, sku))`. Then migrate the data with INSERT ... SELECT. Emails were typed inconsistently: store them trimmed and lower-cased, one customer per resulting email. When a customer's name or a product's name differs between rows, keep the one from the row with the highest `order_id` (ids grow over time; all rows of one order agree). The unit price stays on each line, since it is the price paid then. Each `(order_id, sku)` appears once in `orders_flat`. The check summarises customers (orders and amount spent), products (lines and units sold) and tries a duplicate email, an unknown sku and a zero quantity.",
+      "hints": [
+        "Normalise the email the same way everywhere: `lower(btrim(customer_email))`. `SELECT DISTINCT ON (that expression) ... ORDER BY that expression, order_id DESC` keeps one row per customer: the newest.",
+        "Insert parents before children: customers and products, then orders (join back to customers on the normalised email to get `customer_id`), then order_lines straight from `orders_flat`."
+      ],
+      "checklist": [
+        "`' Ana@Shop.io'` and `'ana@shop.io'` become one customer, stored as `ana@shop.io`.",
+        "Names come from the highest `order_id`, not from whichever row happened to be read last.",
+        "Totals per customer are unchanged by the migration: the price stays on the line, in `numeric`.",
+        "The new tables reject a duplicate email, an unknown sku and a zero quantity."
+      ],
+      "solution": "CREATE TABLE customers (\n  customer_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email       text NOT NULL UNIQUE,\n  name        text NOT NULL\n);\n\nCREATE TABLE products (\n  sku  text PRIMARY KEY,\n  name text NOT NULL\n);\n\nCREATE TABLE orders (\n  order_id    int PRIMARY KEY,\n  customer_id int NOT NULL REFERENCES customers (customer_id)\n);\n\nCREATE TABLE order_lines (\n  order_id   int  NOT NULL REFERENCES orders (order_id) ON DELETE CASCADE,\n  sku        text NOT NULL REFERENCES products (sku),\n  qty        int  NOT NULL CHECK (qty > 0),\n  unit_price numeric(10,2) NOT NULL CHECK (unit_price >= 0),\n  PRIMARY KEY (order_id, sku)\n);\n\n-- One customer per normalised email; the name on their newest order wins.\nINSERT INTO customers (email, name)\nSELECT DISTINCT ON (lower(btrim(customer_email)))\n       lower(btrim(customer_email)), customer_name\nFROM orders_flat\nORDER BY lower(btrim(customer_email)), order_id DESC;\n\n-- One product per sku; the newest name wins.\nINSERT INTO products (sku, name)\nSELECT DISTINCT ON (sku) sku, product_name\nFROM orders_flat\nORDER BY sku, order_id DESC;\n\nINSERT INTO orders (order_id, customer_id)\nSELECT DISTINCT f.order_id, c.customer_id\nFROM orders_flat f\nJOIN customers c ON c.email = lower(btrim(f.customer_email));\n\n-- The price paid belongs to the line, not to the product.\nINSERT INTO order_lines (order_id, sku, qty, unit_price)\nSELECT order_id, sku, qty, unit_price\nFROM orders_flat;"
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Would you use a UUID or a bigint identity as the primary key?",
+      "answer": "A `bigint` identity is small (8 bytes), fast to compare and inserts at the right edge of the B-tree, so the index stays compact. UUIDs (16 bytes) can be generated by clients and other services without a round trip and do not leak row counts, which helps for public ids, offline clients and merging data from many sources. Random UUIDv4 values scatter inserts across the index; time-ordered UUIDv7 (Postgres 18 adds a built-in `uuidv7()`) keeps most of the locality. A common split: bigint internally, plus a UUID column exposed in URLs."
+    },
+    {
+      "question": "How do you add a required column to a 500-million-row table without downtime?",
+      "answer": "Add the column with a constant default: since Postgres 11 `ADD COLUMN ... DEFAULT 0` is a metadata change, not a rewrite. If the value must be computed, add it nullable, backfill in small batches, then add `CHECK (col IS NOT NULL) NOT VALID`, run `VALIDATE CONSTRAINT` (weaker lock), and finally `SET NOT NULL`, which uses the validated CHECK to skip the full scan. Deploy application code that writes the column before the constraint goes on."
+    },
+    {
+      "question": "Users can delete their account and sign up again with the same email. You use soft deletes. How do you keep emails unique?",
+      "answer": "A plain `UNIQUE (email)` would block the re-signup because the soft-deleted row still holds the email. Use a partial unique index: `CREATE UNIQUE INDEX users_live_email ON users (email) WHERE deleted_at IS NULL`, so uniqueness applies only to live rows. If emails should be case-insensitive, index `lower(email)` (or use a case-insensitive collation) and query with the same expression."
+    },
+    {
+      "question": "Where would you denormalise in an e-commerce schema, and what does it cost?",
+      "answer": "Freeze history on purpose: the price on the order line and the shipping address on the order are facts of that moment, not copies. For performance, a cached `order_count` or `rating_avg` on a product page, or a reporting table or materialised view. The costs are extra writes on every change, a window where copies disagree, and the code (triggers, jobs, refreshes) that keeps them in step and must be tested. Measure the read cost first and keep the normalised data as the source of truth."
+    },
+    {
+      "question": "Does Postgres index foreign keys for you?",
+      "answer": "It indexes the referenced side (it must be a primary key or UNIQUE) but not the referencing column. Without an index on `enrolments (course_code)`, deleting or updating a course scans enrolments to enforce RESTRICT or CASCADE, and joins from courses to enrolments scan too. A composite primary key `(student_id, course_code)` serves lookups by `student_id` (its leading column), not by `course_code` alone."
+    }
+  ],
+  "takeaways": [
+    "Name every relationship's cardinality: the FK goes on the many side, 1:1 is an FK that is also unique, and M:N needs a junction table keyed on the pair.",
+    "Normalise so each fact lives once (the key, the whole key and nothing but the key); denormalise deliberately and pay for the sync.",
+    "Let the database enforce rules with constraints; app-side checks alone race and miss other writers.",
+    "NULL slips through: UNIQUE allows many NULLs and CHECK passes UNKNOWN, so add NOT NULL wherever missing is not a real state.",
+    "Use `GENERATED ALWAYS AS IDENTITY` for surrogate keys, `numeric` for money, `timestamptz` for instants, and choose ON DELETE on purpose."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqn-er",
+        "type": "flow",
+        "title": "ER diagram: departments, courses, students",
+        "alt": "Entity-relationship diagram drawn as a flow. Departments has a one-to-many link to courses. Courses and students each have a one-to-many link into the enrolments junction table, whose primary key is the pair of student and course. Students has a one-to-one link to student_profiles, whose primary key is also its foreign key.",
+        "caption": "M:N is two 1:N links meeting in a junction table; 1:1 is a foreign key that is also unique.",
+        "nodes": [
+          {
+            "id": "dept",
+            "label": "departments",
+            "kind": "db",
+            "col": 0,
+            "row": 0,
+            "sub": "dept_id PK"
+          },
+          {
+            "id": "course",
+            "label": "courses",
+            "kind": "db",
+            "col": 2,
+            "row": 0,
+            "sub": "code PK, dept FK"
+          },
+          {
+            "id": "enrol",
+            "label": "enrolments",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "PK (student, code)"
+          },
+          {
+            "id": "student",
+            "label": "students",
+            "kind": "db",
+            "col": 2,
+            "row": 4,
+            "sub": "student_id PK"
+          },
+          {
+            "id": "profile",
+            "label": "student_profiles",
+            "kind": "db",
+            "col": 4,
+            "row": 4,
+            "sub": "student_id PK+FK"
+          },
+          {
+            "id": "note",
+            "label": "grade lives here",
+            "kind": "note",
+            "col": 4,
+            "row": 2,
+            "sub": "fact of the pair"
+          }
+        ],
+        "edges": [
+          {
+            "from": "dept",
+            "to": "course",
+            "label": "1 : N"
+          },
+          {
+            "from": "course",
+            "to": "enrol",
+            "label": "1 : N"
+          },
+          {
+            "from": "student",
+            "to": "enrol",
+            "label": "1 : N"
+          },
+          {
+            "from": "student",
+            "to": "profile",
+            "label": "1 : 1"
+          },
+          {
+            "from": "enrol",
+            "to": "note",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "1:N: a department has many courses, so `courses` carries `dept_id`. The FK always sits on the many side."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "M:N: students and courses meet in `enrolments`. Each side is an ordinary 1:N into the junction table, and its primary key is the pair."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Facts about the pairing, such as the grade or the enrolment time, belong on the junction row, not on either side."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "1:1: `student_profiles.student_id` is both the foreign key and the primary key, so a student can have at most one profile."
+          }
+        ]
+      },
+      {
+        "id": "sqn-normal",
+        "type": "compare",
+        "title": "Renaming a customer: flat table versus 3NF",
+        "alt": "Comparison of renaming a customer. On the left, orders_flat repeats the customer name on every line, so a rename must rewrite three rows and if one is missed the names disagree. On the right, the name lives once in customers, orders point at it by customer_id, and the rename updates exactly one row.",
+        "caption": "Normalisation removes the update anomaly: a fact stored once cannot disagree with itself.",
+        "before": {
+          "label": "orders_flat (repeated facts)",
+          "nodes": [
+            {
+              "id": "flat",
+              "label": "orders_flat",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "name on each line"
+            },
+            {
+              "id": "drift",
+              "label": "names disagree",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "one line missed"
+            },
+            {
+              "id": "upd",
+              "label": "rename customer",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "rows",
+              "label": "3 rows rewritten",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "every order line"
+            }
+          ],
+          "edges": [
+            {
+              "from": "upd",
+              "to": "rows",
+              "label": "touches"
+            },
+            {
+              "from": "rows",
+              "to": "drift",
+              "label": "if one fails"
+            },
+            {
+              "from": "flat",
+              "to": "drift",
+              "label": "anomaly"
+            }
+          ]
+        },
+        "after": {
+          "label": "customers + orders (3NF)",
+          "nodes": [
+            {
+              "id": "cust",
+              "label": "customers",
+              "kind": "db",
+              "col": 0,
+              "row": 0,
+              "sub": "name stored once"
+            },
+            {
+              "id": "orders",
+              "label": "orders",
+              "kind": "db",
+              "col": 2,
+              "row": 0,
+              "sub": "customer_id FK"
+            },
+            {
+              "id": "upd",
+              "label": "rename customer",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "one",
+              "label": "1 row updated",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "orders unchanged"
+            }
+          ],
+          "edges": [
+            {
+              "from": "cust",
+              "to": "orders",
+              "label": "1 : N"
+            },
+            {
+              "from": "upd",
+              "to": "one",
+              "label": "touches"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqn-nf-steps",
+        "type": "flow",
+        "title": "Normalising a flat order table to 3NF",
+        "alt": "Flow from a raw order table with a list of skus in one cell, to 1NF with one row per order line and key order_id plus sku, to 2NF after product names move into a products table, to 3NF after customer names move into a customers table.",
+        "caption": "Each normal form moves one kind of dependency into its own table: lists, then partial, then transitive.",
+        "nodes": [
+          {
+            "id": "raw",
+            "label": "raw orders",
+            "kind": "bad",
+            "col": 0,
+            "row": 0,
+            "sub": "skus 'A1,B2'"
+          },
+          {
+            "id": "nf1",
+            "label": "1NF",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "key (order, sku)"
+          },
+          {
+            "id": "nf2",
+            "label": "2NF",
+            "kind": "state",
+            "col": 4,
+            "row": 0,
+            "sub": "no partial deps"
+          },
+          {
+            "id": "prod",
+            "label": "products",
+            "kind": "db",
+            "col": 2,
+            "row": 2,
+            "sub": "sku -> name"
+          },
+          {
+            "id": "nf3",
+            "label": "3NF",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "only the key"
+          },
+          {
+            "id": "cust",
+            "label": "customers",
+            "kind": "db",
+            "col": 2,
+            "row": 4,
+            "sub": "email -> name"
+          }
+        ],
+        "edges": [
+          {
+            "from": "raw",
+            "to": "nf1",
+            "label": "one value/cell"
+          },
+          {
+            "from": "nf1",
+            "to": "prod",
+            "label": "move out"
+          },
+          {
+            "from": "nf1",
+            "to": "nf2",
+            "label": "sku part only"
+          },
+          {
+            "from": "nf2",
+            "to": "nf3",
+            "label": "via email"
+          },
+          {
+            "from": "nf3",
+            "to": "cust",
+            "label": "move out"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "1NF: split the list in one cell into one row per order line. The key becomes `(order_id, sku)`."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "2NF: `product_name` depends only on `sku`, part of the key. Move it to `products(sku, name)`."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "3NF: `customer_name` depends on `customer_email`, not directly on the order. Move it to `customers` and keep only `customer_id` on orders."
+          }
+        ]
+      },
+      {
+        "id": "sqn-cascade",
+        "type": "flow",
+        "title": "What ON DELETE does to child rows",
+        "alt": "Three rows of a flow. Deleting a student with ON DELETE CASCADE also deletes their enrolments. Deleting a course that still has enrolments with ON DELETE RESTRICT fails with error 23001, restrict_violation. Deleting a lecturer with ON DELETE SET NULL keeps the courses and sets their lead_id to NULL.",
+        "caption": "CASCADE removes owned rows, RESTRICT protects history, SET NULL keeps the child and drops the optional link.",
+        "nodes": [
+          {
+            "id": "ds",
+            "label": "DELETE student",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "stu",
+            "label": "students",
+            "kind": "db",
+            "col": 2,
+            "row": 0,
+            "sub": "row removed"
+          },
+          {
+            "id": "enr",
+            "label": "enrolments",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "theirs deleted"
+          },
+          {
+            "id": "dc",
+            "label": "DELETE course",
+            "kind": "client",
+            "col": 0,
+            "row": 2,
+            "sub": "still in use"
+          },
+          {
+            "id": "crs",
+            "label": "courses",
+            "kind": "db",
+            "col": 2,
+            "row": 2,
+            "sub": "row kept"
+          },
+          {
+            "id": "err",
+            "label": "ERROR 23001",
+            "kind": "bad",
+            "col": 4,
+            "row": 2,
+            "sub": "restrict_violation"
+          },
+          {
+            "id": "dl",
+            "label": "DELETE lecturer",
+            "kind": "client",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "lec",
+            "label": "lecturers",
+            "kind": "db",
+            "col": 2,
+            "row": 4,
+            "sub": "row removed"
+          },
+          {
+            "id": "nul",
+            "label": "lead_id = NULL",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "courses kept"
+          }
+        ],
+        "edges": [
+          {
+            "from": "ds",
+            "to": "stu"
+          },
+          {
+            "from": "stu",
+            "to": "enr",
+            "label": "CASCADE"
+          },
+          {
+            "from": "dc",
+            "to": "crs"
+          },
+          {
+            "from": "crs",
+            "to": "err",
+            "label": "RESTRICT",
+            "style": "fail"
+          },
+          {
+            "from": "dl",
+            "to": "lec"
+          },
+          {
+            "from": "lec",
+            "to": "nul",
+            "label": "SET NULL"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "CASCADE: enrolments cannot exist without their student, so Postgres deletes them in the same statement."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "RESTRICT: enrolments still reference the course, so the delete fails at once with `restrict_violation` (23001) and nothing changes. The default NO ACTION fails too, with `foreign_key_violation` (23503)."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "SET NULL: the course outlives its lead lecturer; only the optional link is cleared, so the FK column must be nullable."
+          }
+        ]
+      },
+      {
+        "id": "sqn-race",
+        "type": "sequence",
+        "title": "Check-then-insert races; UNIQUE does not",
+        "alt": "Sequence diagram with two app servers and Postgres. Both servers select the email ana@shop.io and both get zero rows. Server A inserts it successfully. Server B then inserts the same email; because the column has a UNIQUE constraint, Postgres rejects it with a unique violation instead of storing a duplicate.",
+        "caption": "An application check only sees the past; a constraint is checked atomically with the write.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "App server A"
+          },
+          {
+            "id": "b",
+            "label": "App server B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "SELECT email = 'ana@…'"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "0 rows",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "SELECT email = 'ana@…'"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "0 rows",
+            "style": "reply",
+            "note": "Both servers now believe the email is free."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "INSERT ana@…"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "ok",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "INSERT ana@…"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "23505 unique_violation",
+            "style": "fail",
+            "note": "Without the UNIQUE constraint this row would be stored: two accounts with one email."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "-- You create the tables in this exercise: students, courses and enrolments.",
+        "starter": "-- Create students, courses and enrolments with the keys and rules from the task.\n-- The tests insert rows by column name and report what each statement did.\nCREATE TABLE students (\n  student_id serial PRIMARY KEY,\n  email      text,\n  full_name  text\n);\n\nCREATE TABLE courses (\n  code     text PRIMARY KEY,\n  title    text,\n  capacity int\n);\n\nCREATE TABLE enrolments (\n  enrolment_id serial PRIMARY KEY,\n  student_id   int REFERENCES students (student_id),\n  course_code  text REFERENCES courses (code),\n  grade        int,\n  enrolled_at  timestamp\n);\n",
+        "solution": "CREATE TABLE students (\n  student_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email      text NOT NULL UNIQUE,\n  full_name  text NOT NULL\n);\n\nCREATE TABLE courses (\n  code     text PRIMARY KEY,\n  title    text NOT NULL,\n  capacity int  NOT NULL DEFAULT 30 CHECK (capacity > 0)\n);\n\nCREATE TABLE enrolments (\n  student_id  int  NOT NULL REFERENCES students (student_id) ON DELETE CASCADE,\n  course_code text NOT NULL REFERENCES courses (code) ON DELETE RESTRICT,\n  grade       int  CHECK (grade BETWEEN 0 AND 100),\n  enrolled_at timestamptz NOT NULL DEFAULT now(),\n  PRIMARY KEY (student_id, course_code)\n);\n",
+        "check": "CREATE TEMP TABLE probe_result (step int, probe text, outcome text);\nDO $$\nDECLARE p record; v text;\nBEGIN\n  FOR p IN SELECT * FROM lab_probe ORDER BY step LOOP\n    BEGIN\n      IF upper(left(p.stmt, 6)) = 'SELECT' THEN EXECUTE p.stmt INTO v;\n      ELSE EXECUTE p.stmt; v := 'ok';\n      END IF;\n    EXCEPTION\n      WHEN unique_violation THEN v := 'unique_violation';\n      WHEN foreign_key_violation OR restrict_violation THEN v := 'foreign_key_violation';\n      WHEN check_violation THEN v := 'check_violation';\n      WHEN not_null_violation THEN v := 'not_null_violation';\n      WHEN generated_always THEN v := 'generated_always';\n      WHEN OTHERS THEN v := 'error: ' || SQLERRM;\n    END;\n    INSERT INTO probe_result VALUES (p.step, p.probe, v);\n  END LOOP;\nEND $$;\nSELECT step, probe, outcome FROM probe_result",
+        "tests": [
+          {
+            "name": "valid rows are accepted and a repeated enrolment is rejected",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'add student Ben', $p$INSERT INTO students (email, full_name) VALUES ('ben@uni.io', 'Ben Okoro')$p$),\n(3, 'add course DB101', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(4, 'add course ALG200', $p$INSERT INTO courses (code, title) VALUES ('ALG200', 'Algorithms')$p$),\n(5, 'Ana takes DB101, no grade yet', $p$INSERT INTO enrolments (student_id, course_code) VALUES (1, 'DB101')$p$),\n(6, 'Ana also takes ALG200', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'ALG200', 88)$p$),\n(7, 'Ben takes DB101', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (2, 'DB101', 72)$p$),\n(8, 'Ana takes DB101 again', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'DB101', 95)$p$),\n(9, 'count enrolments', $p$SELECT count(*) FROM enrolments$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "add student Ben",
+                  "ok"
+                ],
+                [
+                  3,
+                  "add course DB101",
+                  "ok"
+                ],
+                [
+                  4,
+                  "add course ALG200",
+                  "ok"
+                ],
+                [
+                  5,
+                  "Ana takes DB101, no grade yet",
+                  "ok"
+                ],
+                [
+                  6,
+                  "Ana also takes ALG200",
+                  "ok"
+                ],
+                [
+                  7,
+                  "Ben takes DB101",
+                  "ok"
+                ],
+                [
+                  8,
+                  "Ana takes DB101 again",
+                  "unique_violation"
+                ],
+                [
+                  9,
+                  "count enrolments",
+                  "3"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "deleting a student cascades; deleting a course in use is blocked",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'add student Ben', $p$INSERT INTO students (email, full_name) VALUES ('ben@uni.io', 'Ben Okoro')$p$),\n(3, 'add course DB101', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(4, 'Ana takes DB101', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'DB101', 64)$p$),\n(5, 'Ben takes DB101', $p$INSERT INTO enrolments (student_id, course_code) VALUES (2, 'DB101')$p$),\n(6, 'delete course DB101', $p$DELETE FROM courses WHERE code = 'DB101'$p$),\n(7, 'delete student Ana', $p$DELETE FROM students WHERE student_id = 1$p$),\n(8, 'count enrolments', $p$SELECT count(*) FROM enrolments$p$),\n(9, 'who is left enrolled', $p$SELECT string_agg(student_id::text, ',') FROM enrolments$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "add student Ben",
+                  "ok"
+                ],
+                [
+                  3,
+                  "add course DB101",
+                  "ok"
+                ],
+                [
+                  4,
+                  "Ana takes DB101",
+                  "ok"
+                ],
+                [
+                  5,
+                  "Ben takes DB101",
+                  "ok"
+                ],
+                [
+                  6,
+                  "delete course DB101",
+                  "foreign_key_violation"
+                ],
+                [
+                  7,
+                  "delete student Ana",
+                  "ok"
+                ],
+                [
+                  8,
+                  "count enrolments",
+                  "1"
+                ],
+                [
+                  9,
+                  "who is left enrolled",
+                  "2"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "grade must be 0 to 100; NULL and both boundaries are accepted",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'add student Ben', $p$INSERT INTO students (email, full_name) VALUES ('ben@uni.io', 'Ben Okoro')$p$),\n(3, 'add student Chen', $p$INSERT INTO students (email, full_name) VALUES ('chen@uni.io', 'Chen Wei')$p$),\n(4, 'add course DB101', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(5, 'add course ALG200', $p$INSERT INTO courses (code, title) VALUES ('ALG200', 'Algorithms')$p$),\n(6, 'grade 0', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'DB101', 0)$p$),\n(7, 'grade 100', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (2, 'DB101', 100)$p$),\n(8, 'grade NULL', $p$INSERT INTO enrolments (student_id, course_code) VALUES (3, 'DB101')$p$),\n(9, 'grade 101', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'ALG200', 101)$p$),\n(10, 'grade -1', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (2, 'ALG200', -1)$p$),\n(11, 'grade 55', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (3, 'ALG200', 55)$p$),\n(12, 'count enrolments', $p$SELECT count(*) FROM enrolments$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "add student Ben",
+                  "ok"
+                ],
+                [
+                  3,
+                  "add student Chen",
+                  "ok"
+                ],
+                [
+                  4,
+                  "add course DB101",
+                  "ok"
+                ],
+                [
+                  5,
+                  "add course ALG200",
+                  "ok"
+                ],
+                [
+                  6,
+                  "grade 0",
+                  "ok"
+                ],
+                [
+                  7,
+                  "grade 100",
+                  "ok"
+                ],
+                [
+                  8,
+                  "grade NULL",
+                  "ok"
+                ],
+                [
+                  9,
+                  "grade 101",
+                  "check_violation"
+                ],
+                [
+                  10,
+                  "grade -1",
+                  "check_violation"
+                ],
+                [
+                  11,
+                  "grade 55",
+                  "ok"
+                ],
+                [
+                  12,
+                  "count enrolments",
+                  "4"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an enrolment for a missing student or course is rejected",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'add course DB101', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(3, 'unknown student 99', $p$INSERT INTO enrolments (student_id, course_code) VALUES (99, 'DB101')$p$),\n(4, 'unknown course NOPE', $p$INSERT INTO enrolments (student_id, course_code) VALUES (1, 'NOPE')$p$),\n(5, 'course code in lower case', $p$INSERT INTO enrolments (student_id, course_code) VALUES (1, 'db101')$p$),\n(6, 'NULL student', $p$INSERT INTO enrolments (student_id, course_code) VALUES (NULL, 'DB101')$p$),\n(7, 'NULL course', $p$INSERT INTO enrolments (student_id, course_code) VALUES (1, NULL)$p$),\n(8, 'count enrolments', $p$SELECT count(*) FROM enrolments$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "add course DB101",
+                  "ok"
+                ],
+                [
+                  3,
+                  "unknown student 99",
+                  "foreign_key_violation"
+                ],
+                [
+                  4,
+                  "unknown course NOPE",
+                  "foreign_key_violation"
+                ],
+                [
+                  5,
+                  "course code in lower case",
+                  "foreign_key_violation"
+                ],
+                [
+                  6,
+                  "NULL student",
+                  "not_null_violation"
+                ],
+                [
+                  7,
+                  "NULL course",
+                  "not_null_violation"
+                ],
+                [
+                  8,
+                  "count enrolments",
+                  "0"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "duplicate email, missing name and a hand-picked student_id are rejected",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'same email again', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Costa')$p$),\n(3, 'NULL email', $p$INSERT INTO students (email, full_name) VALUES (NULL, 'Dan Moss')$p$),\n(4, 'NULL full_name', $p$INSERT INTO students (email, full_name) VALUES ('eve@uni.io', NULL)$p$),\n(5, 'explicit student_id', $p$INSERT INTO students (student_id, email, full_name) VALUES (50, 'zoe@uni.io', 'Zoe Hart')$p$),\n(6, 'count students', $p$SELECT count(*) FROM students$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "same email again",
+                  "unique_violation"
+                ],
+                [
+                  3,
+                  "NULL email",
+                  "not_null_violation"
+                ],
+                [
+                  4,
+                  "NULL full_name",
+                  "not_null_violation"
+                ],
+                [
+                  5,
+                  "explicit student_id",
+                  "generated_always"
+                ],
+                [
+                  6,
+                  "count students",
+                  "1"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "capacity defaults to 30 and must be positive; enrolled_at is a timestamptz default",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add course DB101 without capacity', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(2, 'read default capacity', $p$SELECT capacity FROM courses WHERE code = 'DB101'$p$),\n(3, 'capacity 0', $p$INSERT INTO courses (code, title, capacity) VALUES ('ALG200', 'Algorithms', 0)$p$),\n(4, 'capacity NULL', $p$INSERT INTO courses (code, title, capacity) VALUES ('ALG200', 'Algorithms', NULL)$p$),\n(5, 'capacity 1', $p$INSERT INTO courses (code, title, capacity) VALUES ('ALG200', 'Algorithms', 1)$p$),\n(6, 'NULL title', $p$INSERT INTO courses (code, title) VALUES ('NET300', NULL)$p$),\n(7, 'course code reused', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases II')$p$),\n(8, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(9, 'Ana takes DB101', $p$INSERT INTO enrolments (student_id, course_code) VALUES (1, 'DB101')$p$),\n(10, 'enrolled_at type', $p$SELECT pg_typeof(enrolled_at)::text FROM enrolments$p$),\n(11, 'enrolled_at filled in', $p$SELECT (enrolled_at IS NOT NULL)::text FROM enrolments$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add course DB101 without capacity",
+                  "ok"
+                ],
+                [
+                  2,
+                  "read default capacity",
+                  "30"
+                ],
+                [
+                  3,
+                  "capacity 0",
+                  "check_violation"
+                ],
+                [
+                  4,
+                  "capacity NULL",
+                  "not_null_violation"
+                ],
+                [
+                  5,
+                  "capacity 1",
+                  "ok"
+                ],
+                [
+                  6,
+                  "NULL title",
+                  "not_null_violation"
+                ],
+                [
+                  7,
+                  "course code reused",
+                  "unique_violation"
+                ],
+                [
+                  8,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  9,
+                  "Ana takes DB101",
+                  "ok"
+                ],
+                [
+                  10,
+                  "enrolled_at type",
+                  "timestamp with time zone"
+                ],
+                [
+                  11,
+                  "enrolled_at filled in",
+                  "true"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an unused course can be deleted and a deleted student frees the email",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'add student Ana', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(2, 'add course DB101', $p$INSERT INTO courses (code, title) VALUES ('DB101', 'Databases')$p$),\n(3, 'add course ART110', $p$INSERT INTO courses (code, title) VALUES ('ART110', 'Drawing')$p$),\n(4, 'Ana takes DB101', $p$INSERT INTO enrolments (student_id, course_code, grade) VALUES (1, 'DB101', 81)$p$),\n(5, 'delete unused course ART110', $p$DELETE FROM courses WHERE code = 'ART110'$p$),\n(6, 'delete student Ana', $p$DELETE FROM students WHERE email = 'ana@uni.io'$p$),\n(7, 'count enrolments', $p$SELECT count(*) FROM enrolments$p$),\n(8, 'Ana signs up again', $p$INSERT INTO students (email, full_name) VALUES ('ana@uni.io', 'Ana Silva')$p$),\n(9, 'DB101 can go now', $p$DELETE FROM courses WHERE code = 'DB101'$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "add student Ana",
+                  "ok"
+                ],
+                [
+                  2,
+                  "add course DB101",
+                  "ok"
+                ],
+                [
+                  3,
+                  "add course ART110",
+                  "ok"
+                ],
+                [
+                  4,
+                  "Ana takes DB101",
+                  "ok"
+                ],
+                [
+                  5,
+                  "delete unused course ART110",
+                  "ok"
+                ],
+                [
+                  6,
+                  "delete student Ana",
+                  "ok"
+                ],
+                [
+                  7,
+                  "count enrolments",
+                  "0"
+                ],
+                [
+                  8,
+                  "Ana signs up again",
+                  "ok"
+                ],
+                [
+                  9,
+                  "DB101 can go now",
+                  "ok"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE products (\n  sku   text,\n  name  text,\n  price numeric(10,2),\n  stock int\n);",
+        "starter": "-- Add the keys and rules from the task to the existing products table.\nALTER TABLE products ADD PRIMARY KEY (sku);\nALTER TABLE products ALTER COLUMN stock SET NOT NULL;\n",
+        "solution": "UPDATE products SET stock = 0 WHERE stock IS NULL;\n\nALTER TABLE products\n  ADD PRIMARY KEY (sku),\n  ALTER COLUMN name SET NOT NULL,\n  ADD CONSTRAINT products_price_check CHECK (price >= 0),\n  ALTER COLUMN stock SET DEFAULT 0,\n  ALTER COLUMN stock SET NOT NULL,\n  ADD CONSTRAINT products_stock_check CHECK (stock >= 0);\n",
+        "check": "CREATE TEMP TABLE probe_result (step int, probe text, outcome text);\nDO $$\nDECLARE p record; v text;\nBEGIN\n  FOR p IN SELECT * FROM lab_probe ORDER BY step LOOP\n    BEGIN\n      IF upper(left(p.stmt, 6)) = 'SELECT' THEN EXECUTE p.stmt INTO v;\n      ELSE EXECUTE p.stmt; v := 'ok';\n      END IF;\n    EXCEPTION\n      WHEN unique_violation THEN v := 'unique_violation';\n      WHEN foreign_key_violation OR restrict_violation THEN v := 'foreign_key_violation';\n      WHEN check_violation THEN v := 'check_violation';\n      WHEN not_null_violation THEN v := 'not_null_violation';\n      WHEN generated_always THEN v := 'generated_always';\n      WHEN OTHERS THEN v := 'error: ' || SQLERRM;\n    END;\n    INSERT INTO probe_result VALUES (p.step, p.probe, v);\n  END LOOP;\nEND $$;\nSELECT step, probe, outcome FROM probe_result",
+        "tests": [
+          {
+            "name": "NULL stock is backfilled to 0 and a repeated sku is rejected",
+            "seed": "INSERT INTO products VALUES\n('MUG-1', 'Mug', 8.50, 12),\n('TEE-2', 'T-shirt', 15.00, NULL),\n('CAP-3', 'Cap', NULL, NULL);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'rows with NULL stock', $p$SELECT count(*) FROM products WHERE stock IS NULL$p$),\n(2, 'total stock', $p$SELECT sum(stock) FROM products$p$),\n(3, 'add MUG-1 again', $p$INSERT INTO products (sku, name, price, stock) VALUES ('MUG-1', 'Big mug', '9.00', 1)$p$),\n(4, 'count products', $p$SELECT count(*) FROM products$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "rows with NULL stock",
+                  "0"
+                ],
+                [
+                  2,
+                  "total stock",
+                  "12"
+                ],
+                [
+                  3,
+                  "add MUG-1 again",
+                  "unique_violation"
+                ],
+                [
+                  4,
+                  "count products",
+                  "3"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "negative price and a missing name are rejected; stock defaults to 0",
+            "seed": "INSERT INTO products VALUES\n('MUG-1', 'Mug', 8.50, 12),\n('TEE-2', 'T-shirt', 15.00, 4);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'negative price', $p$INSERT INTO products (sku, name, price, stock) VALUES ('BAG-9', 'Bag', '-1.00', 3)$p$),\n(2, 'no name', $p$INSERT INTO products (sku, price, stock) VALUES ('BAG-9', 20.00, 3)$p$),\n(3, 'no stock given', $p$INSERT INTO products (sku, name, price) VALUES ('PEN-4', 'Pen', 1.20)$p$),\n(4, 'read PEN-4 stock', $p$SELECT stock FROM products WHERE sku = 'PEN-4'$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "negative price",
+                  "check_violation"
+                ],
+                [
+                  2,
+                  "no name",
+                  "not_null_violation"
+                ],
+                [
+                  3,
+                  "no stock given",
+                  "ok"
+                ],
+                [
+                  4,
+                  "read PEN-4 stock",
+                  "0"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "price may be NULL or 0 but never below 0",
+            "seed": "INSERT INTO products VALUES ('MUG-1', 'Mug', 8.50, 12);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'price NULL (not priced yet)', $p$INSERT INTO products (sku, name, price, stock) VALUES ('NEW-1', 'Sticker', NULL, 5)$p$),\n(2, 'price 0.00', $p$INSERT INTO products (sku, name, price, stock) VALUES ('FREE-2', 'Flyer', '0.00', 100)$p$),\n(3, 'price -0.01', $p$INSERT INTO products (sku, name, price, stock) VALUES ('BAD-3', 'Badge', '-0.01', 1)$p$),\n(4, 'raise price to NULL', $p$UPDATE products SET price = NULL WHERE sku = 'MUG-1'$p$),\n(5, 'cut price below 0', $p$UPDATE products SET price = -5 WHERE sku = 'MUG-1'$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "price NULL (not priced yet)",
+                  "ok"
+                ],
+                [
+                  2,
+                  "price 0.00",
+                  "ok"
+                ],
+                [
+                  3,
+                  "price -0.01",
+                  "check_violation"
+                ],
+                [
+                  4,
+                  "raise price to NULL",
+                  "ok"
+                ],
+                [
+                  5,
+                  "cut price below 0",
+                  "check_violation"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "stock cannot be NULL or negative; 0 is fine",
+            "seed": "INSERT INTO products VALUES ('MUG-1', 'Mug', 8.50, 2);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'explicit NULL stock', $p$INSERT INTO products (sku, name, price, stock) VALUES ('PEN-4', 'Pen', '1.20', NULL)$p$),\n(2, 'stock -1', $p$INSERT INTO products (sku, name, price, stock) VALUES ('PEN-4', 'Pen', '1.20', -1)$p$),\n(3, 'stock 0', $p$INSERT INTO products (sku, name, price, stock) VALUES ('PEN-4', 'Pen', '1.20', 0)$p$),\n(4, 'sell more than we have', $p$UPDATE products SET stock = stock - 5 WHERE sku = 'MUG-1'$p$),\n(5, 'sell what we have', $p$UPDATE products SET stock = stock - 2 WHERE sku = 'MUG-1'$p$),\n(6, 'MUG-1 stock now', $p$SELECT stock FROM products WHERE sku = 'MUG-1'$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "explicit NULL stock",
+                  "not_null_violation"
+                ],
+                [
+                  2,
+                  "stock -1",
+                  "check_violation"
+                ],
+                [
+                  3,
+                  "stock 0",
+                  "ok"
+                ],
+                [
+                  4,
+                  "sell more than we have",
+                  "check_violation"
+                ],
+                [
+                  5,
+                  "sell what we have",
+                  "ok"
+                ],
+                [
+                  6,
+                  "MUG-1 stock now",
+                  "0"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "sku cannot be NULL and is case-sensitive",
+            "seed": "INSERT INTO products VALUES ('MUG-1', 'Mug', 8.50, 12);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'NULL sku', $p$INSERT INTO products (sku, name, price, stock) VALUES (NULL, 'Ghost', '1.00', 1)$p$),\n(2, 'mug-1 in lower case', $p$INSERT INTO products (sku, name, price, stock) VALUES ('mug-1', 'Mini mug', '4.00', 1)$p$),\n(3, 'MUG-1 with a trailing space', $p$INSERT INTO products (sku, name, price, stock) VALUES ('MUG-1 ', 'Mug variant', '4.00', 1)$p$),\n(4, 'count products', $p$SELECT count(*) FROM products$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "NULL sku",
+                  "not_null_violation"
+                ],
+                [
+                  2,
+                  "mug-1 in lower case",
+                  "ok"
+                ],
+                [
+                  3,
+                  "MUG-1 with a trailing space",
+                  "ok"
+                ],
+                [
+                  4,
+                  "count products",
+                  "3"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "existing rows survive unchanged apart from the backfill",
+            "seed": "INSERT INTO products VALUES\n('MUG-1', 'Mug', 8.50, 12),\n('TEE-2', 'T-shirt', 15.00, 0),\n('CAP-3', 'Cap', NULL, NULL),\n('BOOK-7', 'Notebook', 24.99, 1);\nCREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'all rows', $p$SELECT string_agg(sku || ':' || coalesce(price::text, '-') || ':' || stock, ',' ORDER BY sku) FROM products$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "all rows",
+                  "BOOK-7:24.99:1,CAP-3:-:0,MUG-1:8.50:12,TEE-2:15.00:0"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an empty table still gets every rule",
+            "seed": "CREATE TEMP TABLE lab_probe (step int, probe text, stmt text);\nINSERT INTO lab_probe VALUES\n(1, 'first product', $p$INSERT INTO products (sku, name, price, stock) VALUES ('MUG-1', 'Mug', '8.50', 12)$p$),\n(2, 'same sku', $p$INSERT INTO products (sku, name, price, stock) VALUES ('MUG-1', 'Mug', '8.50', 12)$p$),\n(3, 'no name', $p$INSERT INTO products (sku) VALUES ('X-1')$p$),\n(4, 'count products', $p$SELECT count(*) FROM products$p$);",
+            "expected": {
+              "columns": [
+                "step",
+                "probe",
+                "outcome"
+              ],
+              "rows": [
+                [
+                  1,
+                  "first product",
+                  "ok"
+                ],
+                [
+                  2,
+                  "same sku",
+                  "unique_violation"
+                ],
+                [
+                  3,
+                  "no name",
+                  "not_null_violation"
+                ],
+                [
+                  4,
+                  "count products",
+                  "1"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE orders_flat (\n  order_id       int,\n  customer_email text,\n  customer_name  text,\n  sku            text,\n  product_name   text,\n  qty            int,\n  unit_price     numeric(10,2)\n);",
+        "starter": "CREATE TABLE customers (\n  customer_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email       text NOT NULL UNIQUE,\n  name        text NOT NULL\n);\n\nCREATE TABLE products (\n  sku  text PRIMARY KEY,\n  name text NOT NULL\n);\n\nCREATE TABLE orders (\n  order_id    int PRIMARY KEY,\n  customer_id int NOT NULL REFERENCES customers (customer_id)\n);\n\nCREATE TABLE order_lines (\n  order_id   int  NOT NULL REFERENCES orders (order_id) ON DELETE CASCADE,\n  sku        text NOT NULL REFERENCES products (sku),\n  qty        int  NOT NULL CHECK (qty > 0),\n  unit_price numeric(10,2) NOT NULL CHECK (unit_price >= 0),\n  PRIMARY KEY (order_id, sku)\n);\n\n-- TODO: this copies the mess instead of fixing it\nINSERT INTO customers (email, name)\nSELECT DISTINCT customer_email, customer_name FROM orders_flat;\n\nINSERT INTO products (sku, name)\nSELECT DISTINCT sku, product_name FROM orders_flat;\n\nINSERT INTO orders (order_id, customer_id)\nSELECT DISTINCT f.order_id, c.customer_id\nFROM orders_flat f\nJOIN customers c ON c.email = f.customer_email;\n\nINSERT INTO order_lines (order_id, sku, qty, unit_price)\nSELECT order_id, sku, qty, unit_price FROM orders_flat;\n",
+        "solution": "CREATE TABLE customers (\n  customer_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email       text NOT NULL UNIQUE,\n  name        text NOT NULL\n);\n\nCREATE TABLE products (\n  sku  text PRIMARY KEY,\n  name text NOT NULL\n);\n\nCREATE TABLE orders (\n  order_id    int PRIMARY KEY,\n  customer_id int NOT NULL REFERENCES customers (customer_id)\n);\n\nCREATE TABLE order_lines (\n  order_id   int  NOT NULL REFERENCES orders (order_id) ON DELETE CASCADE,\n  sku        text NOT NULL REFERENCES products (sku),\n  qty        int  NOT NULL CHECK (qty > 0),\n  unit_price numeric(10,2) NOT NULL CHECK (unit_price >= 0),\n  PRIMARY KEY (order_id, sku)\n);\n\n-- One customer per normalised email; the name on their newest order wins.\nINSERT INTO customers (email, name)\nSELECT DISTINCT ON (lower(btrim(customer_email)))\n       lower(btrim(customer_email)), customer_name\nFROM orders_flat\nORDER BY lower(btrim(customer_email)), order_id DESC;\n\n-- One product per sku; the newest name wins.\nINSERT INTO products (sku, name)\nSELECT DISTINCT ON (sku) sku, product_name\nFROM orders_flat\nORDER BY sku, order_id DESC;\n\nINSERT INTO orders (order_id, customer_id)\nSELECT DISTINCT f.order_id, c.customer_id\nFROM orders_flat f\nJOIN customers c ON c.email = lower(btrim(f.customer_email));\n\n-- The price paid belongs to the line, not to the product.\nINSERT INTO order_lines (order_id, sku, qty, unit_price)\nSELECT order_id, sku, qty, unit_price\nFROM orders_flat;\n",
+        "check": "CREATE TEMP TABLE rule_result (rule text, outcome text);\nDO $$ BEGIN\n  BEGIN\n    INSERT INTO customers (email, name) SELECT email, 'Copy' FROM customers LIMIT 1;\n    INSERT INTO rule_result VALUES ('duplicate email', 'accepted');\n  EXCEPTION WHEN unique_violation THEN INSERT INTO rule_result VALUES ('duplicate email', 'rejected');\n  END;\n  BEGIN\n    INSERT INTO order_lines (order_id, sku, qty, unit_price) SELECT order_id, 'NO-SUCH-SKU', 1, 1.00 FROM orders LIMIT 1;\n    INSERT INTO rule_result VALUES ('unknown sku', 'accepted');\n  EXCEPTION WHEN foreign_key_violation THEN INSERT INTO rule_result VALUES ('unknown sku', 'rejected');\n  END;\n  BEGIN\n    UPDATE order_lines SET qty = 0 WHERE ctid = (SELECT ctid FROM order_lines LIMIT 1);\n    INSERT INTO rule_result VALUES ('zero qty', 'accepted');\n  EXCEPTION WHEN check_violation THEN INSERT INTO rule_result VALUES ('zero qty', 'rejected');\n  END;\nEND $$;\nSELECT 'customer' AS kind, c.email AS key, c.name, count(DISTINCT o.order_id)::int AS n,\n       coalesce(sum(l.qty * l.unit_price), 0) AS amount\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.customer_id\nLEFT JOIN order_lines l ON l.order_id = o.order_id\nGROUP BY c.customer_id, c.email, c.name\nUNION ALL\nSELECT 'product', p.sku, p.name, count(l.order_id)::int, coalesce(sum(l.qty), 0)\nFROM products p\nLEFT JOIN order_lines l ON l.sku = p.sku\nGROUP BY p.sku, p.name\nUNION ALL\nSELECT 'rule', rule, outcome, NULL, NULL FROM rule_result",
+        "tests": [
+          {
+            "name": "same customer typed two ways, and a renamed customer",
+            "seed": "INSERT INTO orders_flat VALUES\n(101, 'ana@shop.io', 'Ana Silva', 'MUG-1', 'Mug', 2, 8.5),\n(101, 'ana@shop.io', 'Ana Silva', 'TEE-2', 'T-shirt', 1, 15.0),\n(102, 'ben@shop.io', 'Ben Okoro', 'MUG-1', 'Mug', 1, 8.5),\n(103, ' Ana@Shop.io', 'Ana Costa', 'CAP-3', 'Cap', 3, 6.0);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "ana@shop.io",
+                  "Ana Costa",
+                  2,
+                  50.0
+                ],
+                [
+                  "customer",
+                  "ben@shop.io",
+                  "Ben Okoro",
+                  1,
+                  8.5
+                ],
+                [
+                  "product",
+                  "MUG-1",
+                  "Mug",
+                  2,
+                  3
+                ],
+                [
+                  "product",
+                  "TEE-2",
+                  "T-shirt",
+                  1,
+                  1
+                ],
+                [
+                  "product",
+                  "CAP-3",
+                  "Cap",
+                  1,
+                  3
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a product renamed later and sold at a new price",
+            "seed": "INSERT INTO orders_flat VALUES\n(201, 'kim@shop.io', 'Kim Lee', 'BAG-9', 'Tote bag', 1, 20.0),\n(202, 'kim@shop.io', 'Kim Lee', 'BAG-9', 'Canvas tote', 2, 18.0),\n(202, 'kim@shop.io', 'Kim Lee', 'PEN-4', 'Pen', 10, 1.2);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "kim@shop.io",
+                  "Kim Lee",
+                  2,
+                  68.0
+                ],
+                [
+                  "product",
+                  "BAG-9",
+                  "Canvas tote",
+                  2,
+                  3
+                ],
+                [
+                  "product",
+                  "PEN-4",
+                  "Pen",
+                  1,
+                  10
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "a single order line",
+            "seed": "INSERT INTO orders_flat VALUES\n(7, 'solo@shop.io', 'Sol Ortiz', 'MUG-1', 'Mug', 1, 8.5);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "solo@shop.io",
+                  "Sol Ortiz",
+                  1,
+                  8.5
+                ],
+                [
+                  "product",
+                  "MUG-1",
+                  "Mug",
+                  1,
+                  1
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "trailing spaces and capitals across three orders",
+            "seed": "INSERT INTO orders_flat VALUES\n(301, 'LI@SHOP.IO', 'Li Na', 'MUG-1', 'Mug', 1, 8.5),\n(302, 'li@shop.io  ', 'Li Na', 'MUG-1', 'Mug', 1, 8.0),\n(303, 'Li@shop.io', 'Na Li', 'TEE-2', 'T-shirt', 2, 15.0),\n(304, 'max@shop.io', 'Max Roy', 'TEE-2', 'T-shirt', 1, 15.0);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "li@shop.io",
+                  "Na Li",
+                  3,
+                  46.5
+                ],
+                [
+                  "customer",
+                  "max@shop.io",
+                  "Max Roy",
+                  1,
+                  15.0
+                ],
+                [
+                  "product",
+                  "MUG-1",
+                  "Mug",
+                  2,
+                  2
+                ],
+                [
+                  "product",
+                  "TEE-2",
+                  "T-shirt",
+                  2,
+                  3
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "order ids arrive out of order: the highest id wins, not the last row",
+            "seed": "INSERT INTO orders_flat VALUES\n(410, 'eva@shop.io', 'Eva Berg', 'CAP-3', 'Cap', 1, 6.0),\n(405, 'eva@shop.io', 'Eva Berg-Lund', 'CAP-3', 'Baseball cap', 1, 7.0);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "eva@shop.io",
+                  "Eva Berg",
+                  2,
+                  13.0
+                ],
+                [
+                  "product",
+                  "CAP-3",
+                  "Cap",
+                  2,
+                  2
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "cents add up exactly",
+            "seed": "INSERT INTO orders_flat VALUES\n(501, 'raj@shop.io', 'Raj Patel', 'GUM-5', 'Gum', 3, 0.1),\n(501, 'raj@shop.io', 'Raj Patel', 'MINT-6', 'Mints', 1, 0.2),\n(502, 'raj@shop.io', 'Raj Patel', 'GUM-5', 'Gum', 7, 0.1);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "raj@shop.io",
+                  "Raj Patel",
+                  2,
+                  1.2
+                ],
+                [
+                  "product",
+                  "GUM-5",
+                  "Gum",
+                  2,
+                  10
+                ],
+                [
+                  "product",
+                  "MINT-6",
+                  "Mints",
+                  1,
+                  1
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "two customers share a name but not an email",
+            "seed": "INSERT INTO orders_flat VALUES\n(601, 'sam1@shop.io', 'Sam Diaz', 'PEN-4', 'Pen', 2, 1.2),\n(602, 'sam2@shop.io', 'Sam Diaz', 'PEN-4', 'Pen', 1, 1.2),\n(603, 'sam1@shop.io', 'Sam Diaz', 'PEN-4', 'Pen', 5, 1.0);",
+            "expected": {
+              "columns": [
+                "kind",
+                "key",
+                "name",
+                "n",
+                "amount"
+              ],
+              "rows": [
+                [
+                  "customer",
+                  "sam1@shop.io",
+                  "Sam Diaz",
+                  2,
+                  7.4
+                ],
+                [
+                  "customer",
+                  "sam2@shop.io",
+                  "Sam Diaz",
+                  1,
+                  1.2
+                ],
+                [
+                  "product",
+                  "PEN-4",
+                  "Pen",
+                  3,
+                  8
+                ],
+                [
+                  "rule",
+                  "duplicate email",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "unknown sku",
+                  "rejected",
+                  null,
+                  null
+                ],
+                [
+                  "rule",
+                  "zero qty",
+                  "rejected",
+                  null,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "CREATE TEMP TABLE members (email text UNIQUE);\nINSERT INTO members VALUES (NULL), (NULL), ('a@x.io');\nSELECT count(*) FROM members;",
+        "choices": [
+          "3",
+          "2",
+          "ERROR: duplicate key value violates unique constraint \"members_email_key\""
+        ],
+        "answer": 0,
+        "explain": "UNIQUE treats NULLs as distinct by default (NULL = NULL is not true), so both NULL rows are accepted. Use NOT NULL or `UNIQUE NULLS NOT DISTINCT` to forbid the second NULL."
+      },
+      {
+        "code": "SELECT 0.1::float8 + 0.2 AS float_sum,\n       0.1::numeric + 0.2 AS numeric_sum;",
+        "choices": [
+          "0.3 | 0.3",
+          "0.30000000000000004 | 0.3",
+          "0.30000000000000004 | 0.30000000000000004"
+        ],
+        "answer": 1,
+        "explain": "`float8` is binary floating point, and 0.1 has no exact binary form. The untyped `0.2` adopts the other operand's type. `numeric` is exact decimal, which is why money belongs in it."
+      },
+      {
+        "code": "CREATE TEMP TABLE teams (team_id int PRIMARY KEY);\nCREATE TEMP TABLE players (\n  name text,\n  team_id int REFERENCES teams ON DELETE SET NULL\n);\nINSERT INTO teams VALUES (1), (2);\nINSERT INTO players VALUES ('Ann', 1), ('Bo', 2);\nDELETE FROM teams WHERE team_id = 1;\nSELECT name, team_id FROM players ORDER BY name;",
+        "choices": [
+          "Bo | 2",
+          "Ann | NULL\nBo | 2",
+          "ERROR: update or delete on table \"teams\" violates foreign key constraint \"players_team_id_fkey\" on table \"players\""
+        ],
+        "answer": 1,
+        "explain": "SET NULL keeps the child row and clears its link. CASCADE would have deleted Ann; the default NO ACTION (or RESTRICT) would have raised the error."
+      },
+      {
+        "code": "CREATE TEMP TABLE reviews (stars int CHECK (stars BETWEEN 1 AND 5));\nINSERT INTO reviews VALUES (NULL);\nSELECT count(*) FROM reviews;",
+        "choices": [
+          "0",
+          "1",
+          "ERROR: new row for relation \"reviews\" violates check constraint \"reviews_stars_check\""
+        ],
+        "answer": 1,
+        "explain": "`NULL BETWEEN 1 AND 5` is UNKNOWN, and a CHECK rejects a row only when the expression is FALSE. Add NOT NULL to forbid missing ratings."
+      },
+      {
+        "code": "CREATE TEMP TABLE prefs (scope text, UNIQUE NULLS NOT DISTINCT (scope));\nINSERT INTO prefs VALUES (NULL);\nINSERT INTO prefs VALUES (NULL);\nSELECT count(*) FROM prefs;",
+        "choices": [
+          "2",
+          "1",
+          "ERROR: duplicate key value violates unique constraint \"prefs_scope_key\""
+        ],
+        "answer": 2,
+        "explain": "`NULLS NOT DISTINCT` (Postgres 15+) makes NULLs compare equal for this constraint, so the second NULL is a duplicate and the statement fails."
+      },
+      {
+        "code": "CREATE TEMP TABLE accounts (\n  account_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  email text NOT NULL UNIQUE\n);\nINSERT INTO accounts (email) VALUES ('a@x.io');\nDO $$ BEGIN\n  INSERT INTO accounts (email) VALUES ('a@x.io');\nEXCEPTION WHEN unique_violation THEN NULL;\nEND $$;\nINSERT INTO accounts (email) VALUES ('b@x.io');\nSELECT account_id, email FROM accounts ORDER BY account_id;",
+        "choices": [
+          "1 | a@x.io\n2 | b@x.io",
+          "1 | a@x.io\n3 | b@x.io",
+          "ERROR: duplicate key value violates unique constraint \"accounts_email_key\""
+        ],
+        "answer": 1,
+        "explain": "The failed insert still took value 2 from the identity sequence, and sequences are never rolled back. Identity values are unique, not gap-free, so never use them as a count."
+      }
+    ],
+    "tip": "Before writing DDL, say the grain and the relationships out loud: \"one row per student, one per course, one per enrolment; enrolment is M:N so it is keyed on the pair\". Then, for each column, state the rule as you type it (required? unique? legal range? default?) and for each foreign key say what happens on delete and why. Interviewers grade the reasoning as much as the syntax.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "schema-migrations",
+        "transactions-isolation"
+      ],
+      "lessons": [
+        "design-api-data-model",
+        "design-databases-indexes"
+      ]
+    }
+  }
+}

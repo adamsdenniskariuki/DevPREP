@@ -1,0 +1,1895 @@
+{
+  "id": "sql-window-functions",
+  "track": "sql",
+  "title": "Window functions",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Window functions compute over related rows without collapsing them: `PARTITION BY` and `ORDER BY` inside `OVER`, `ROW_NUMBER` versus `RANK` versus `DENSE_RANK` on ties, top-N per group, running totals and moving averages, frames (`ROWS`, `RANGE`, `GROUPS` and the peer-including default), `LAG`/`LEAD`, `FIRST_VALUE`/`LAST_VALUE`, named windows and gaps-and-islands.",
+  "prerequisites": [
+    "sql-aggregates"
+  ],
+  "prerequisiteNotes": "sql-aggregates: `GROUP BY`, aggregate functions, `HAVING` and how NULLs behave in `count` and `sum`. A window is an aggregate that keeps its rows, so you need to know what the aggregate would have returned first.",
+  "objectives": [
+    "Explain how a window differs from `GROUP BY`, and where window functions run in the logical order of a query.",
+    "Choose between `ROW_NUMBER`, `RANK` and `DENSE_RANK` from the task's tie rule, and write top-N per group with a CTE and an outer filter.",
+    "Write running totals and moving averages with an explicit frame, and explain why the default frame with `ORDER BY` adds peers together.",
+    "Use `LAG`/`LEAD` with offsets and defaults for change-over-time questions, and give `LAST_VALUE` the full frame it needs.",
+    "Solve gaps-and-islands and sessionization problems with the row-number difference and the running-sum-of-flags patterns."
+  ],
+  "concepts": [
+    {
+      "title": "A window keeps every row",
+      "body": "An aggregate with `GROUP BY` folds each group into one output row, so the detail columns are gone. The same aggregate followed by `OVER (...)` becomes a **window function**: it is computed over a set of related rows (the window) but the result is attached to **each** input row, and the row count does not change. That is what makes questions like \"each engineer's share of the team payroll\" or \"salary minus the team average\" one query instead of a join back to an aggregated subquery. Every aggregate (`sum`, `avg`, `count`, `min`, `max`, `bool_and`, `string_agg`...) works as a window function; ranking and offset functions (`row_number`, `rank`, `lag`...) work **only** with `OVER`. `OVER ()` with nothing inside means one window: the whole result set.",
+      "code": "SELECT e.name,\n       e.team_id,\n       e.salary,\n       sum(e.salary) OVER (PARTITION BY e.team_id)              AS team_payroll,\n       round(100 * e.salary / sum(e.salary) OVER (PARTITION BY e.team_id), 1) AS pct_of_team,\n       e.salary - avg(e.salary) OVER (PARTITION BY e.team_id)  AS vs_team_avg,\n       count(*) OVER ()                                         AS headcount\nFROM engineers e;",
+      "diagram": "sqw-groupby"
+    },
+    {
+      "title": "PARTITION BY, ORDER BY, and when windows run",
+      "body": "Inside `OVER`, `PARTITION BY` splits rows into independent groups (like `GROUP BY`, but nothing collapses) and `ORDER BY` orders rows **within** each partition; it is unrelated to the query's final `ORDER BY`. Logically, window functions are evaluated after `FROM`, `WHERE`, `GROUP BY` and `HAVING`, and before `DISTINCT`, `ORDER BY` and `LIMIT`. Two consequences interviewers check: you **cannot** reference a window function in `WHERE`, `GROUP BY` or `HAVING` (filter in an outer query instead; Postgres has no `QUALIFY`), and in a grouped query the window runs over the groups, so `sum(sum(amount)) OVER ()` is the grand total next to each group's total. You may use a window function in the query's `ORDER BY`.",
+      "code": "-- Each team's payroll and its share of the company total: window over grouped rows.\nSELECT team_id,\n       sum(salary)                                     AS payroll,\n       round(100 * sum(salary) / sum(sum(salary)) OVER (), 1) AS pct_of_company\nFROM engineers\nGROUP BY team_id\nORDER BY payroll DESC;",
+      "diagram": "sqw-order"
+    },
+    {
+      "title": "Ranking: ROW_NUMBER, RANK, DENSE_RANK, NTILE",
+      "body": "All three number rows in the window's `ORDER BY` order; they differ only on **ties** (peers, rows with equal sort keys). `row_number()` gives 1, 2, 3, 4 and breaks ties **arbitrarily**, so the same query can return different rows on different runs unless the order is total. `rank()` gives tied rows the same number and then skips: 1, 2, 2, 4 (the rank is the position). `dense_rank()` does not skip: 1, 2, 2, 3 (the rank is the distinct value's place). Pick from the tie rule in the task: \"exactly N rows\" means `row_number` plus a tie-breaker; \"top N distinct salaries\" means `dense_rank`; \"everyone who would place in the top N\" means `rank`. `ntile(4)` deals rows into 4 nearly equal buckets (the first buckets get the extra rows), useful for quartiles. Watch NULLs: Postgres sorts NULL as larger than any value, so `ORDER BY x DESC` puts NULLs **first** unless you write `NULLS LAST` or filter them out.",
+      "code": "SELECT name, salary,\n       row_number() OVER (ORDER BY salary DESC, id) AS rn,   -- tie-breaker makes it deterministic\n       rank()       OVER (ORDER BY salary DESC)     AS rnk,  -- 1, 2, 2, 4\n       dense_rank() OVER (ORDER BY salary DESC)     AS drnk, -- 1, 2, 2, 3\n       ntile(4)     OVER (ORDER BY salary DESC)     AS quartile\nFROM engineers\nWHERE salary IS NOT NULL;"
+    },
+    {
+      "title": "Top-N per group",
+      "body": "The most asked window question. Rank within each partition in a CTE or subquery, then filter in the outer query: `WHERE rnk <= N`. Decide the tie rule out loud before writing, because it decides the function, and partition by the group's **key**, not its display name (two teams can share a name). For N = 1 Postgres also has `DISTINCT ON (team_id) ... ORDER BY team_id, salary DESC` (one row per group, ties broken by the rest of the `ORDER BY`), and when there are few groups with many rows each, `CROSS JOIN LATERAL (SELECT ... ORDER BY salary DESC LIMIT N)` can use an index on `(team_id, salary DESC)` to read only N rows per group. Since PostgreSQL 15 the planner also stops a `row_number`/`rank`/`dense_rank` window early when the outer filter is `<= N`.",
+      "code": "WITH ranked AS (\n  SELECT team_id, name, salary,\n         dense_rank() OVER (PARTITION BY team_id ORDER BY salary DESC) AS rnk\n  FROM engineers\n  WHERE salary IS NOT NULL\n)\nSELECT team_id, name, salary, rnk\nFROM ranked\nWHERE rnk <= 2;\n\n-- Exactly one top earner per team (Postgres-specific):\nSELECT DISTINCT ON (team_id) team_id, name, salary\nFROM engineers\nWHERE salary IS NOT NULL\nORDER BY team_id, salary DESC, id;",
+      "diagram": "sqw-topn"
+    },
+    {
+      "title": "Frames: ROWS, RANGE, GROUPS and the default",
+      "body": "Aggregates and `first_value`/`last_value`/`nth_value` work on the **frame**, a slice of the partition relative to the current row. `ROWS` counts physical rows; `RANGE` measures by the sort key's value (`RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW` means \"dates within the last 7 days\", even with missing days; it needs exactly one `ORDER BY` column); `GROUPS` counts peer groups. Without `ORDER BY` the frame is the whole partition. **With** `ORDER BY` and no frame clause it is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, and in `RANGE` mode \"current row\" includes all its peers. So a running total ordered by a non-unique column jumps by the whole tie group at once and repeats the same value on each tied row. Fix it by making the order total (`ORDER BY posted_on, id`) or by writing `ROWS`. `EXCLUDE CURRENT ROW` / `EXCLUDE TIES` exist too (\"average of the others\").",
+      "code": "SELECT day, amount,\n       sum(amount) OVER (ORDER BY day)                                    AS range_default, -- peers summed together\n       sum(amount) OVER (ORDER BY day ROWS UNBOUNDED PRECEDING)           AS rows_running,  -- row by row\n       count(*)    OVER (ORDER BY day GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW) AS this_and_prev_day_rows\nFROM sales;",
+      "diagram": "sqw-peers"
+    },
+    {
+      "title": "Running totals and moving averages",
+      "body": "A running total is `sum(x) OVER (PARTITION BY k ORDER BY t, id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`. A moving average over the last 3 rows is `avg(x) OVER (... ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)`. The first rows have smaller frames (one value, then two), which is often what you want; if the spec says \"NULL until there are 3 days\", add `CASE WHEN count(*) OVER w = 3 THEN avg(x) OVER w END`. Say whether \"last 7 days\" means 7 rows or 7 calendar days: with missing dates, `ROWS 6 PRECEDING` reaches back further in time than `RANGE INTERVAL '6 days' PRECEDING`. `avg` over integers returns `numeric` with many decimals, so `round(..., 2)` the output.",
+      "code": "SELECT day, amount,\n       sum(amount) OVER w_run                        AS running_total,\n       round(avg(amount) OVER w_3rows, 2)            AS avg_3_rows,\n       round(avg(amount) OVER (ORDER BY day\n             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW), 2) AS avg_7_calendar_days\nFROM daily_sales\nWINDOW w_run   AS (ORDER BY day ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),\n       w_3rows AS (ORDER BY day ROWS BETWEEN 2 PRECEDING AND CURRENT ROW);",
+      "diagram": "sqw-frame"
+    },
+    {
+      "title": "LAG, LEAD, FIRST_VALUE, LAST_VALUE and named windows",
+      "body": "`lag(x, n, default)` reads `x` from n rows earlier in the window's order (`lead` reads later rows); the default (else NULL) is returned when that row does not exist. They ignore the frame. They answer day-over-day change, \"time since previous event\" and \"next status\" questions without a self-join. They look at the previous **row**, not the previous calendar day: if days can be missing, compare the dates as well, or fill the calendar with `generate_series` first. `first_value` and `last_value` read the frame, and the default frame ends at the current row, so `last_value(x) OVER (ORDER BY t)` is just the current row's `x`. Give it `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, or use `first_value` with the order reversed. A `WINDOW w AS (...)` clause names a definition so several functions share it (and one sort). Another window may build on it by adding `ORDER BY` or a frame, but only if `w` has no frame clause.",
+      "code": "SELECT day, temp_c,\n       temp_c - lag(temp_c) OVER w                    AS change,      -- NULL on the first day\n       day - lag(day, 1, day) OVER w                  AS days_since,  -- 0 on the first day\n       lead(temp_c) OVER w                            AS tomorrow,\n       first_value(temp_c) OVER w                     AS first_temp,\n       last_value(temp_c) OVER (w ROWS BETWEEN UNBOUNDED PRECEDING\n                                   AND UNBOUNDED FOLLOWING) AS last_temp\nFROM readings\nWINDOW w AS (PARTITION BY station_id ORDER BY day);"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Top two earners per team, aloud",
+      "body": "Start with the grain: \"one output row per engineer who places in their team's top two salaries\". Then the tie rule: the spec says two people on the same salary are both included and the next amount is still second, which is `dense_rank`; if it had said \"the next amount is third\", that is `rank`; \"exactly two people\" is `row_number` with a tie-breaker such as `id`. Next, the edge cases: NULL salaries would sort first under `DESC`, so filter them out (or `NULLS LAST` plus a filter); partition by `team_id` because team names are not unique. Finally the shape: the rank goes in a CTE because `WHERE` cannot see window functions. Say the cost: one sort by `(team_id, salary DESC)`, or an index scan if such an index exists.",
+      "code": "WITH ranked AS (\n  SELECT t.name AS team, e.name AS engineer, e.salary,\n         dense_rank() OVER (PARTITION BY e.team_id ORDER BY e.salary DESC) AS salary_rank\n  FROM engineers e\n  JOIN teams t ON t.id = e.team_id\n  WHERE e.salary IS NOT NULL\n)\nSELECT team, engineer, salary, salary_rank\nFROM ranked\nWHERE salary_rank <= 2;"
+    },
+    {
+      "title": "Gaps and islands: the row-number difference",
+      "body": "\"Longest streak of consecutive days\" is the classic senior-level window question. Reduce to one row per member per day (`DISTINCT`, using the UTC date), number the days per member in date order, and subtract: within a run of consecutive days both the date and the row number go up by 1, so `day - row_number` is constant for the whole run and changes after any gap. That difference is an **island key**; `GROUP BY member_id, island_key` gives each streak's length (`count(*)`) and start (`min(day)`). Pick the best streak per member with another `row_number` (or `DISTINCT ON`), and `LEFT JOIN` from the members table so members with no logins appear. The same trick works on integers (consecutive seat numbers, ticket ids).",
+      "code": "WITH days AS (\n  SELECT DISTINCT member_id, (logged_in_at AT TIME ZONE 'UTC')::date AS day\n  FROM logins\n), islands AS (\n  SELECT member_id, day,\n         day - (row_number() OVER (PARTITION BY member_id ORDER BY day))::int AS island\n  FROM days\n)\nSELECT member_id, island, min(day) AS streak_start, count(*) AS streak_len\nFROM islands\nGROUP BY member_id, island\nORDER BY member_id, streak_start;",
+      "diagram": "sqw-islands"
+    },
+    {
+      "title": "Sessions with LAG and a running sum of flags",
+      "body": "When the island rule is \"a gap longer than 30 minutes starts a new session\", the difference trick does not apply, but a two-step pattern does. First, `lag` compares each event with the previous one and sets a flag: 1 if this event starts a session (no previous event, or the gap is over 30 minutes), else 0. Second, a running `sum` of the flags numbers the sessions: it increases exactly at each session start. Then `GROUP BY user_id, session_no`. The first event's `lag` is NULL, so the comparison is NULL and the `CASE` falls to `ELSE 1`, which is what we want; say that out loud. If two events can share a timestamp, add a tie-breaker to both windows.",
+      "code": "WITH clicks(user_id, at) AS (VALUES\n  (7, timestamptz '2025-03-04 09:00+00'), (7, '2025-03-04 09:12+00'), (7, '2025-03-04 09:40+00'),\n  (7, '2025-03-04 11:15+00'),\n  (7, '2025-03-04 14:02+00'), (7, '2025-03-04 14:20+00'), (7, '2025-03-04 14:31+00')\n), flagged AS (\n  SELECT user_id, at,\n         CASE WHEN at - lag(at) OVER (PARTITION BY user_id ORDER BY at) <= interval '30 minutes'\n              THEN 0 ELSE 1 END AS is_new\n  FROM clicks\n), numbered AS (\n  SELECT user_id, at,\n         sum(is_new) OVER (PARTITION BY user_id ORDER BY at) AS session_no\n  FROM flagged\n)\nSELECT user_id, session_no, min(at) AS started, count(*) AS events\nFROM numbered\nGROUP BY user_id, session_no\nORDER BY user_id, session_no;",
+      "diagram": "sqw-sessions"
+    }
+  ],
+  "example": "-- Daily revenue per store: running total, 3-row moving average, day-over-day change and rank within the month.\nSELECT store_id,\n       day,\n       revenue,\n       sum(revenue) OVER w_run                                  AS month_to_date,\n       round(avg(revenue) OVER (w ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS avg_3d,\n       revenue - lag(revenue, 1, revenue) OVER w                AS change,\n       dense_rank() OVER (PARTITION BY store_id, date_trunc('month', day)\n                          ORDER BY revenue DESC)                AS rank_in_month\nFROM daily_revenue\nWINDOW w     AS (PARTITION BY store_id ORDER BY day),\n       w_run AS (PARTITION BY store_id, date_trunc('month', day) ORDER BY day\n                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)\nORDER BY store_id, day;",
+  "task": "Tables `teams(id, name)` and `engineers(id, team_id, name, salary)`. For every team, return the engineers paid one of the team's **two highest distinct salaries**. Ties are all kept: people on the same salary share a rank, and the next lower salary gets the next rank (top 180k and two people on 150k gives ranks 1, 2, 2). Return `team` (the team's name), `engineer` (the engineer's name), `salary` and `salary_rank` (1 or 2), in any row order. Engineers with a NULL salary are never ranked or returned. Team names are not unique: rank within each team id. Teams with no paid engineers do not appear.",
+  "starter": "-- Return team, engineer, salary, salary_rank for each team's top two salaries (ties included).\nSELECT team, engineer, salary, salary_rank\nFROM (\n  SELECT t.name AS team, e.name AS engineer, e.salary,\n         row_number() OVER (PARTITION BY t.name ORDER BY e.salary DESC) AS salary_rank\n  FROM engineers e\n  JOIN teams t ON t.id = e.team_id\n) ranked\nWHERE salary_rank <= 2;",
+  "hints": [
+    "The task says the next salary after a tie is still rank 2. Which of `row_number`, `rank` and `dense_rank` gives 1, 2, 2 and then 3?",
+    "Compute the rank in a CTE and filter `salary_rank <= 2` outside it. Before ranking, check where `ORDER BY salary DESC` puts a NULL salary."
+  ],
+  "solution": "Rank inside a CTE, then filter outside, because `WHERE` runs before window functions. The tie rule (\"two highest distinct salaries\", tied people share a rank, no gaps) is exactly `dense_rank`: `rank` would give 1, 1, 3 for a tie at the top and drop the third-highest person, and the starter's `row_number` keeps one of two tied engineers arbitrarily. Partition by `e.team_id`, not the team name, because two teams can share a name and must be ranked separately. Postgres sorts NULL above every value, so under `ORDER BY salary DESC` an unknown salary would take rank 1; the `WHERE e.salary IS NOT NULL` inside the CTE removes those rows before ranking, which also makes teams with only unpaid engineers disappear. Cost: one sort by `(team_id, salary DESC)` over the joined rows, O(n log n); an index on `engineers (team_id, salary DESC)` lets Postgres skip the sort, and since version 15 the `<= 2` filter lets the window stop early in each partition.\n\n```sql\nWITH ranked AS (\n  SELECT t.name AS team,\n         e.name AS engineer,\n         e.salary,\n         dense_rank() OVER (PARTITION BY e.team_id ORDER BY e.salary DESC) AS salary_rank\n  FROM engineers e\n  JOIN teams t ON t.id = e.team_id\n  WHERE e.salary IS NOT NULL\n)\nSELECT team, engineer, salary, salary_rank\nFROM ranked\nWHERE salary_rank <= 2;\n```",
+  "checklist": [
+    "Tied salaries share a rank, and the next lower salary is rank 2 even after a tie at the top.",
+    "A NULL salary never appears and never pushes a real salary down to rank 2.",
+    "Two teams with the same name are ranked independently (partition by `team_id`).",
+    "The rank is filtered in an outer query, not in `WHERE` next to the window function.",
+    "Output columns are exactly `team`, `engineer`, `salary`, `salary_rank`, in that order."
+  ],
+  "pitfalls": [
+    "Using `row_number` when the task includes ties: one of two tied rows is dropped, and which one can change between runs.",
+    "Putting the window function in `WHERE` or `HAVING`: it is an error because windows are computed after them. Filter in an outer query.",
+    "A running total with `ORDER BY` on a non-unique column: the default `RANGE` frame adds all peers at once, so tied rows show the same total. Add a tie-breaker or use `ROWS`.",
+    "`last_value(x) OVER (ORDER BY t)` returns the current row's `x`, because the default frame ends at the current row.",
+    "Forgetting that `ORDER BY x DESC` puts NULLs first in Postgres, so a NULL becomes rank 1.",
+    "Treating `lag` as \"yesterday\": it is the previous row, which may be several days back when dates are missing.",
+    "Partitioning by a non-unique display column (a name) instead of the key, which merges different groups."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Running balance per account",
+      "prompt": "Table `ledger_entries(id, account_id, posted_on, amount)`. For every entry, return the account's balance after that entry: the sum of the account's amounts up to and including it. Entries apply in order of `posted_on`, and entries on the same day apply in `id` order. Return `account_id`, `entry_id`, `posted_on`, `amount`, `balance`, sorted by `account_id`, `posted_on`, `entry_id`.",
+      "hints": [
+        "`sum(amount) OVER (PARTITION BY account_id ORDER BY ...)` is a running total; what does the default frame do with two entries on the same day?",
+        "Make the window's order total with `posted_on, id`, and write the frame explicitly: `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`."
+      ],
+      "solution": "SELECT account_id,\n       id AS entry_id,\n       posted_on,\n       amount,\n       sum(amount) OVER (PARTITION BY account_id\n                         ORDER BY posted_on, id\n                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balance\nFROM ledger_entries\nORDER BY account_id, posted_on, entry_id;",
+      "checklist": [
+        "Two entries on the same day get different balances, applied in `id` order.",
+        "Each account's balance starts from zero; accounts never mix.",
+        "Negative amounts (refunds) reduce the balance, which may go below zero."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Longest login streak",
+      "prompt": "Tables `members(id, handle)` and `logins(id, member_id, logged_in_at timestamptz)`. A member's streak is a run of consecutive **UTC calendar days** with at least one login each. For every member, return `member_id`, `longest_streak` (number of days in their longest streak) and `streak_start` (the first day of that streak, as a date). If two streaks are equally long, report the earlier one. Members who never logged in appear with `longest_streak` 0 and `streak_start` NULL. Any row order.",
+      "hints": [
+        "Reduce to one row per member per UTC day first. Then `day - row_number() OVER (PARTITION BY member_id ORDER BY day)` is the same for every day in a streak.",
+        "Group by member and that key for each streak's length and start, pick one streak per member with `row_number() ... ORDER BY streak_len DESC, streak_start`, and `LEFT JOIN` from `members`."
+      ],
+      "solution": "WITH days AS (\n  SELECT DISTINCT member_id, (logged_in_at AT TIME ZONE 'UTC')::date AS day\n  FROM logins\n), islands AS (\n  SELECT member_id, day,\n         day - (row_number() OVER (PARTITION BY member_id ORDER BY day))::int AS island\n  FROM days\n), streaks AS (\n  SELECT member_id, min(day) AS streak_start, count(*) AS streak_len\n  FROM islands\n  GROUP BY member_id, island\n), best AS (\n  SELECT member_id, streak_start, streak_len,\n         row_number() OVER (PARTITION BY member_id ORDER BY streak_len DESC, streak_start) AS pick\n  FROM streaks\n)\nSELECT m.id AS member_id,\n       coalesce(b.streak_len, 0) AS longest_streak,\n       b.streak_start\nFROM members m\nLEFT JOIN best b ON b.member_id = m.id AND b.pick = 1;",
+      "checklist": [
+        "Several logins on one day count as one day.",
+        "Days are UTC dates: 23:50 and 00:10 the next day are two consecutive days, and a `+03` timestamp may fall on the previous UTC day.",
+        "Ties between streaks report the earliest start; members without logins appear with 0 and NULL."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How does Postgres execute a window function, and what index helps?",
+      "answer": "The WindowAgg node needs its input sorted by the `PARTITION BY` keys and then the `ORDER BY` keys, and computes every function in one pass over each partition. Functions that share the same window definition share that sort; a different definition means another sort. An index matching `(team_id, salary DESC)` can provide the order and remove the sort. For top-N filters, PostgreSQL 15+ adds a run condition so `row_number`/`rank`/`dense_rank`/`count` stop producing rows once `<= N` can no longer be true in a partition. `EXPLAIN` shows it as `Run Condition`."
+    },
+    {
+      "question": "Top-N per group on a huge table with only a few groups: is the window still the best plan?",
+      "answer": "The window reads every row and sorts (or scans the whole index). With few groups and a `(team_id, salary DESC)` index, `SELECT ... FROM teams t CROSS JOIN LATERAL (SELECT ... FROM engineers e WHERE e.team_id = t.id ORDER BY salary DESC LIMIT 2) top` does one short index scan per group and reads about 2 rows each. It returns exactly N rows per group, so ties need care. For N = 1, `DISTINCT ON (team_id)` is concise. Pick by measuring with `EXPLAIN ANALYZE`."
+    },
+    {
+      "question": "Can you write top-N per group without window functions?",
+      "answer": "Yes, with a correlated subquery: keep a row when `(SELECT count(DISTINCT e2.salary) FROM engineers e2 WHERE e2.team_id = e.team_id AND e2.salary > e.salary) < 2`. That is the same rule as `dense_rank() <= 2`, but it rescans the team for each row, O(n²) per group without a good index. It is useful on old engines; on Postgres, use the window or `LATERAL`."
+    },
+    {
+      "question": "A 7-day moving average over a table where some days have no rows: what changes?",
+      "answer": "`ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` takes the last 7 rows, which can cover 10 calendar days. `RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW` takes the rows whose date is within 6 days, so it handles gaps, but it averages only the days that exist. If a missing day should count as 0, build the calendar with `generate_series(min_day, max_day, interval '1 day')`, `LEFT JOIN` the data, `coalesce` to 0, then use `ROWS`."
+    }
+  ],
+  "takeaways": [
+    "A window function computes over related rows and keeps every row; `GROUP BY` collapses them.",
+    "Windows run after `WHERE`/`GROUP BY`/`HAVING`: filter on a rank in an outer query or CTE.",
+    "The tie rule picks the function: `row_number` for exactly N, `rank` for positions with gaps, `dense_rank` for distinct values.",
+    "With `ORDER BY` and no frame, the frame is `RANGE ... CURRENT ROW` and includes peers; make the order total or use `ROWS`.",
+    "`lag`/`lead` take an offset and a default; `last_value` needs a frame that reaches the end of the partition.",
+    "Gaps-and-islands: `value - row_number()` is constant inside a consecutive run; sessions: running sum of `lag`-based start flags."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqw-groupby",
+        "type": "compare",
+        "title": "GROUP BY collapses rows; a window keeps them",
+        "alt": "Comparison of the same four engineer rows. On the left, GROUP BY team folds Ana and Ben into one Payments row with total 330k and Dev and Eli into one Search row with 335k, so the names are gone. On the right, sum(salary) OVER (PARTITION BY team) keeps all four rows and writes the team total next to each one.",
+        "caption": "Same partitions, same sums: GROUP BY returns one row per group, a window returns every input row with the group value attached.",
+        "before": {
+          "label": "GROUP BY team",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "Ana 180k",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "Payments"
+            },
+            {
+              "id": "b",
+              "label": "Ben 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "Payments"
+            },
+            {
+              "id": "d",
+              "label": "Dev 170k",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "Search"
+            },
+            {
+              "id": "f",
+              "label": "Eli 165k",
+              "kind": "state",
+              "col": 0,
+              "row": 3,
+              "sub": "Search"
+            },
+            {
+              "id": "p",
+              "label": "Payments 330k",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "names gone"
+            },
+            {
+              "id": "s",
+              "label": "Search 335k",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "names gone"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "p",
+              "label": "fold"
+            },
+            {
+              "from": "b",
+              "to": "p",
+              "label": "fold"
+            },
+            {
+              "from": "d",
+              "to": "s",
+              "label": "fold"
+            },
+            {
+              "from": "f",
+              "to": "s",
+              "label": "fold"
+            }
+          ]
+        },
+        "after": {
+          "label": "sum(salary) OVER (PARTITION BY team)",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "Ana 180k",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "Payments"
+            },
+            {
+              "id": "b",
+              "label": "Ben 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "Payments"
+            },
+            {
+              "id": "d",
+              "label": "Dev 170k",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "Search"
+            },
+            {
+              "id": "f",
+              "label": "Eli 165k",
+              "kind": "state",
+              "col": 0,
+              "row": 3,
+              "sub": "Search"
+            },
+            {
+              "id": "a2",
+              "label": "Ana | 330k",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "row kept"
+            },
+            {
+              "id": "b2",
+              "label": "Ben | 330k",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "row kept"
+            },
+            {
+              "id": "d2",
+              "label": "Dev | 335k",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "row kept"
+            },
+            {
+              "id": "f2",
+              "label": "Eli | 335k",
+              "kind": "good",
+              "col": 2,
+              "row": 3,
+              "sub": "row kept"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "a2"
+            },
+            {
+              "from": "b",
+              "to": "b2"
+            },
+            {
+              "from": "d",
+              "to": "d2"
+            },
+            {
+              "from": "f",
+              "to": "f2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqw-order",
+        "type": "flow",
+        "title": "Where window functions run in a query",
+        "alt": "Flow diagram of logical query order. The top row goes FROM and JOIN, then WHERE, then GROUP BY, then HAVING, then window functions. The flow turns down to the SELECT list and continues right to left through DISTINCT, ORDER BY and LIMIT, and finally to an outer query's WHERE, which is the first place a filter can see a rank.",
+        "caption": "Windows are computed after WHERE, GROUP BY and HAVING, so filtering on a rank needs an outer query or CTE.",
+        "nodes": [
+          {
+            "id": "from",
+            "label": "FROM / JOIN",
+            "kind": "db",
+            "col": 0,
+            "row": 0,
+            "sub": "build rows"
+          },
+          {
+            "id": "where",
+            "label": "WHERE",
+            "kind": "state",
+            "col": 1,
+            "row": 0,
+            "sub": "no ranks yet"
+          },
+          {
+            "id": "group",
+            "label": "GROUP BY",
+            "kind": "state",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "having",
+            "label": "HAVING",
+            "kind": "state",
+            "col": 3,
+            "row": 0
+          },
+          {
+            "id": "win",
+            "label": "window funcs",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "OVER (...) here"
+          },
+          {
+            "id": "sel",
+            "label": "SELECT list",
+            "kind": "state",
+            "col": 4,
+            "row": 2,
+            "sub": "aliases born"
+          },
+          {
+            "id": "dist",
+            "label": "DISTINCT",
+            "kind": "state",
+            "col": 3,
+            "row": 2
+          },
+          {
+            "id": "ord",
+            "label": "ORDER BY",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "may use a window"
+          },
+          {
+            "id": "lim",
+            "label": "LIMIT",
+            "kind": "state",
+            "col": 1,
+            "row": 2
+          },
+          {
+            "id": "outer",
+            "label": "outer WHERE",
+            "kind": "good",
+            "col": 0,
+            "row": 2,
+            "sub": "rnk <= 2 works"
+          }
+        ],
+        "edges": [
+          {
+            "from": "from",
+            "to": "where"
+          },
+          {
+            "from": "where",
+            "to": "group"
+          },
+          {
+            "from": "group",
+            "to": "having"
+          },
+          {
+            "from": "having",
+            "to": "win"
+          },
+          {
+            "from": "win",
+            "to": "sel"
+          },
+          {
+            "from": "sel",
+            "to": "dist"
+          },
+          {
+            "from": "dist",
+            "to": "ord"
+          },
+          {
+            "from": "ord",
+            "to": "lim"
+          },
+          {
+            "from": "lim",
+            "to": "outer",
+            "label": "CTE / subquery"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              2
+            ],
+            "text": "Rows are built, filtered by `WHERE`, grouped and filtered again by `HAVING`. No window value exists yet, which is why `WHERE row_number() OVER (...) = 1` is an error."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "Window functions see the rows that survived, after grouping, so `sum(sum(x)) OVER ()` is legal: the inner `sum` is the group aggregate."
+          },
+          {
+            "edges": [
+              4,
+              5,
+              6,
+              7
+            ],
+            "text": "The SELECT list names the results, then `DISTINCT`, `ORDER BY` (which may use a window value) and `LIMIT` run."
+          },
+          {
+            "edges": [
+              8
+            ],
+            "text": "To filter on a rank, wrap the query in a CTE or subquery: to the outer query the rank is just a column."
+          }
+        ]
+      },
+      {
+        "id": "sqw-topn",
+        "type": "compare",
+        "title": "Top 2 per team with a tie at second place",
+        "alt": "Comparison of two ways to keep the top two earners of a team where Ben and Caro both earn 150k. On the left, row_number numbers them 2 and 3 in an arbitrary order, so filtering on 2 or less silently drops one of them. On the right, dense_rank gives both the value 2, so both are kept along with Ana at rank 1.",
+        "caption": "ROW_NUMBER breaks ties arbitrarily; when the task says ties are included, rank with DENSE_RANK (distinct values) or RANK (positions).",
+        "before": {
+          "label": "row_number() ... <= 2",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "Ana 180k",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "row_number 1"
+            },
+            {
+              "id": "b",
+              "label": "Ben 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "row_number 2"
+            },
+            {
+              "id": "c",
+              "label": "Caro 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "row_number 3"
+            },
+            {
+              "id": "ka",
+              "label": "kept",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "kb",
+              "label": "kept",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "won a coin toss"
+            },
+            {
+              "id": "kc",
+              "label": "dropped",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "same pay as Ben"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "ka"
+            },
+            {
+              "from": "b",
+              "to": "kb"
+            },
+            {
+              "from": "c",
+              "to": "kc"
+            }
+          ]
+        },
+        "after": {
+          "label": "dense_rank() ... <= 2",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "Ana 180k",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "dense_rank 1"
+            },
+            {
+              "id": "b",
+              "label": "Ben 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "dense_rank 2"
+            },
+            {
+              "id": "c",
+              "label": "Caro 150k",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "dense_rank 2"
+            },
+            {
+              "id": "ka",
+              "label": "kept",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "kb",
+              "label": "kept",
+              "kind": "good",
+              "col": 2,
+              "row": 1
+            },
+            {
+              "id": "kc",
+              "label": "kept",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "tie included"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "ka"
+            },
+            {
+              "from": "b",
+              "to": "kb"
+            },
+            {
+              "from": "c",
+              "to": "kc"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqw-peers",
+        "type": "compare",
+        "title": "The default frame includes peers",
+        "alt": "Comparison of a running total over four sales: day 1 plus 10, day 2 plus 5, day 2 plus 7, day 3 plus 1. On the left, ORDER BY day with the default RANGE frame gives 10, 22, 22, 23 because both day-2 rows are peers and are summed together. On the right, ORDER BY day, id gives a total order and the totals are 10, 15, 22, 23.",
+        "caption": "With ORDER BY and no frame, the frame is RANGE ... CURRENT ROW: rows with equal sort keys are added together. Make the order total or use ROWS.",
+        "before": {
+          "label": "ORDER BY day (default RANGE)",
+          "nodes": [
+            {
+              "id": "r1",
+              "label": "day 1  +10",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "r2",
+              "label": "day 2  +5",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "peer of +7"
+            },
+            {
+              "id": "r3",
+              "label": "day 2  +7",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "peer of +5"
+            },
+            {
+              "id": "r4",
+              "label": "day 3  +1",
+              "kind": "state",
+              "col": 0,
+              "row": 3
+            },
+            {
+              "id": "o1",
+              "label": "10",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "o2",
+              "label": "22",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "already has +7"
+            },
+            {
+              "id": "o3",
+              "label": "22",
+              "kind": "bad",
+              "col": 2,
+              "row": 2
+            },
+            {
+              "id": "o4",
+              "label": "23",
+              "kind": "good",
+              "col": 2,
+              "row": 3
+            }
+          ],
+          "edges": [
+            {
+              "from": "r1",
+              "to": "o1"
+            },
+            {
+              "from": "r2",
+              "to": "o2"
+            },
+            {
+              "from": "r3",
+              "to": "o3"
+            },
+            {
+              "from": "r4",
+              "to": "o4"
+            }
+          ]
+        },
+        "after": {
+          "label": "ORDER BY day, id (or ROWS)",
+          "nodes": [
+            {
+              "id": "r1",
+              "label": "day 1  +10",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "r2",
+              "label": "day 2  +5",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "id 2"
+            },
+            {
+              "id": "r3",
+              "label": "day 2  +7",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "id 3"
+            },
+            {
+              "id": "r4",
+              "label": "day 3  +1",
+              "kind": "state",
+              "col": 0,
+              "row": 3
+            },
+            {
+              "id": "o1",
+              "label": "10",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "o2",
+              "label": "15",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "row by row"
+            },
+            {
+              "id": "o3",
+              "label": "22",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            },
+            {
+              "id": "o4",
+              "label": "23",
+              "kind": "good",
+              "col": 2,
+              "row": 3
+            }
+          ],
+          "edges": [
+            {
+              "from": "r1",
+              "to": "o1"
+            },
+            {
+              "from": "r2",
+              "to": "o2"
+            },
+            {
+              "from": "r3",
+              "to": "o3"
+            },
+            {
+              "from": "r4",
+              "to": "o4"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqw-frame",
+        "type": "flow",
+        "title": "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW, sliding",
+        "alt": "Flow diagram with five daily sales rows across the top: Monday 10, Tuesday 20, Wednesday 30, Thursday 10, Friday 50. Below each is its 3-day moving average. Arrows from up to three rows above feed each average: Monday averages only itself to 10, Tuesday averages Monday and Tuesday to 15, Wednesday averages three days to 20, Thursday averages Tuesday to Thursday to 20, and Friday averages Wednesday to Friday to 30.",
+        "caption": "A frame is a per-row slice of the partition; stepping through it shows the window moving one row at a time while every row is kept.",
+        "nodes": [
+          {
+            "id": "mon",
+            "label": "Mon 10",
+            "kind": "state",
+            "col": 0,
+            "row": 0,
+            "sub": "sales"
+          },
+          {
+            "id": "tue",
+            "label": "Tue 20",
+            "kind": "state",
+            "col": 1,
+            "row": 0,
+            "sub": "sales"
+          },
+          {
+            "id": "wed",
+            "label": "Wed 30",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "sales"
+          },
+          {
+            "id": "thu",
+            "label": "Thu 10",
+            "kind": "state",
+            "col": 3,
+            "row": 0,
+            "sub": "sales"
+          },
+          {
+            "id": "fri",
+            "label": "Fri 50",
+            "kind": "state",
+            "col": 4,
+            "row": 0,
+            "sub": "sales"
+          },
+          {
+            "id": "omon",
+            "label": "avg 10",
+            "kind": "good",
+            "col": 0,
+            "row": 4,
+            "sub": "frame: Mon"
+          },
+          {
+            "id": "otue",
+            "label": "avg 15",
+            "kind": "good",
+            "col": 1,
+            "row": 4,
+            "sub": "frame: Mon–Tue"
+          },
+          {
+            "id": "owed",
+            "label": "avg 20",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "frame: Mon–Wed"
+          },
+          {
+            "id": "othu",
+            "label": "avg 20",
+            "kind": "good",
+            "col": 3,
+            "row": 4,
+            "sub": "frame: Tue–Thu"
+          },
+          {
+            "id": "ofri",
+            "label": "avg 30",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "frame: Wed–Fri"
+          }
+        ],
+        "edges": [
+          {
+            "from": "mon",
+            "to": "omon"
+          },
+          {
+            "from": "mon",
+            "to": "otue"
+          },
+          {
+            "from": "tue",
+            "to": "otue"
+          },
+          {
+            "from": "mon",
+            "to": "owed"
+          },
+          {
+            "from": "tue",
+            "to": "owed"
+          },
+          {
+            "from": "wed",
+            "to": "owed"
+          },
+          {
+            "from": "tue",
+            "to": "othu"
+          },
+          {
+            "from": "wed",
+            "to": "othu"
+          },
+          {
+            "from": "thu",
+            "to": "othu"
+          },
+          {
+            "from": "wed",
+            "to": "ofri"
+          },
+          {
+            "from": "thu",
+            "to": "ofri"
+          },
+          {
+            "from": "fri",
+            "to": "ofri"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Monday: the frame wants two preceding rows but the partition starts here, so it holds only Monday. Average 10."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "Tuesday: Monday and Tuesday are in the frame. (10 + 20) / 2 = 15. Early rows average fewer values; say so if the interviewer expects NULL until the window is full."
+          },
+          {
+            "edges": [
+              3,
+              4,
+              5
+            ],
+            "text": "Wednesday: the frame is full for the first time: (10 + 20 + 30) / 3 = 20."
+          },
+          {
+            "edges": [
+              6,
+              7,
+              8
+            ],
+            "text": "Thursday: the frame slides; Monday drops out and Thursday enters: (20 + 30 + 10) / 3 = 20."
+          },
+          {
+            "edges": [
+              9,
+              10,
+              11
+            ],
+            "text": "Friday: (30 + 10 + 50) / 3 = 30. Each output row still exists; only the frame moved."
+          }
+        ]
+      },
+      {
+        "id": "sqw-islands",
+        "type": "flow",
+        "title": "Gaps and islands: day minus row_number",
+        "alt": "Flow diagram of one member's login days: March 1, 2 and 3 numbered 1 to 3, and March 6 numbered 4. Subtracting the row number from the day gives February 28 for the first three days and March 2 for March 6. Grouping by that key gives a 3-day streak from March 1 to March 3 and a 1-day streak on March 6.",
+        "caption": "Within a run of consecutive days, the day and the row number both go up by one, so their difference is constant; a gap changes it.",
+        "nodes": [
+          {
+            "id": "d1",
+            "label": "Mar 1",
+            "kind": "state",
+            "col": 0,
+            "row": 0,
+            "sub": "rn 1"
+          },
+          {
+            "id": "d2",
+            "label": "Mar 2",
+            "kind": "state",
+            "col": 0,
+            "row": 1,
+            "sub": "rn 2"
+          },
+          {
+            "id": "d3",
+            "label": "Mar 3",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "rn 3"
+          },
+          {
+            "id": "d4",
+            "label": "Mar 6",
+            "kind": "state",
+            "col": 0,
+            "row": 4,
+            "sub": "rn 4"
+          },
+          {
+            "id": "k1",
+            "label": "key Feb 28",
+            "kind": "decision",
+            "col": 2,
+            "row": 1,
+            "sub": "day − rn"
+          },
+          {
+            "id": "k2",
+            "label": "key Mar 2",
+            "kind": "decision",
+            "col": 2,
+            "row": 4,
+            "sub": "day − rn"
+          },
+          {
+            "id": "s1",
+            "label": "streak: 3 days",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "Mar 1 – Mar 3"
+          },
+          {
+            "id": "s2",
+            "label": "streak: 1 day",
+            "kind": "state",
+            "col": 4,
+            "row": 4,
+            "sub": "Mar 6"
+          }
+        ],
+        "edges": [
+          {
+            "from": "d1",
+            "to": "k1",
+            "label": "1 − 1"
+          },
+          {
+            "from": "d2",
+            "to": "k1",
+            "label": "2 − 2"
+          },
+          {
+            "from": "d3",
+            "to": "k1",
+            "label": "3 − 3"
+          },
+          {
+            "from": "d4",
+            "to": "k2",
+            "label": "6 − 4"
+          },
+          {
+            "from": "k1",
+            "to": "s1",
+            "label": "count, min"
+          },
+          {
+            "from": "k2",
+            "to": "s2",
+            "label": "count, min"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              2
+            ],
+            "text": "Deduplicate to one row per day, then number the days per member in date order. March 1–3 minus 1, 2, 3 all land on February 28 (2025)."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "After the gap, March 6 is row 4: the difference jumps to March 2, a new island."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "`GROUP BY member_id, key`: `count(*)` is the streak length and `min(day)` its first day."
+          }
+        ]
+      },
+      {
+        "id": "sqw-sessions",
+        "type": "bars",
+        "title": "Events per session after a 30-minute gap rule",
+        "alt": "Bar chart of the three sessions found in the walkthrough's seven clicks by user 7 on 4 March 2025: the session starting at 09:00 has 3 events, the session at 11:15 has 1 event, and the session at 14:02 has 3 events.",
+        "caption": "LAG flags each click that starts a session; a running sum of those flags numbers the sessions; GROUP BY counts them.",
+        "unit": "events",
+        "bars": [
+          {
+            "label": "session 1 · 09:00",
+            "value": 3
+          },
+          {
+            "label": "session 2 · 11:15",
+            "value": 1,
+            "highlight": true
+          },
+          {
+            "label": "session 3 · 14:02",
+            "value": 3
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE teams (\n  id   int PRIMARY KEY,\n  name text NOT NULL\n);\nCREATE TABLE engineers (\n  id      int PRIMARY KEY,\n  team_id int NOT NULL REFERENCES teams(id),\n  name    text NOT NULL,\n  salary  numeric(10,2)\n);",
+        "starter": "-- Return team, engineer, salary, salary_rank for each team's top two salaries (ties included).\nSELECT team, engineer, salary, salary_rank\nFROM (\n  SELECT t.name AS team, e.name AS engineer, e.salary,\n         row_number() OVER (PARTITION BY t.name ORDER BY e.salary DESC) AS salary_rank\n  FROM engineers e\n  JOIN teams t ON t.id = e.team_id\n) ranked\nWHERE salary_rank <= 2;",
+        "solution": "WITH ranked AS (\n  SELECT t.name AS team,\n         e.name AS engineer,\n         e.salary,\n         dense_rank() OVER (PARTITION BY e.team_id ORDER BY e.salary DESC) AS salary_rank\n  FROM engineers e\n  JOIN teams t ON t.id = e.team_id\n  WHERE e.salary IS NOT NULL\n)\nSELECT team, engineer, salary, salary_rank\nFROM ranked\nWHERE salary_rank <= 2;",
+        "tests": [
+          {
+            "name": "distinct salaries in two teams",
+            "seed": "INSERT INTO teams VALUES (1, 'Payments'), (2, 'Search');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 180000), (2, 1, 'Ben', 150000), (3, 1, 'Caro', 120000),\n  (4, 2, 'Dev', 170000), (5, 2, 'Eli', 165000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Payments",
+                  "Ana",
+                  180000,
+                  1
+                ],
+                [
+                  "Payments",
+                  "Ben",
+                  150000,
+                  2
+                ],
+                [
+                  "Search",
+                  "Dev",
+                  170000,
+                  1
+                ],
+                [
+                  "Search",
+                  "Eli",
+                  165000,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "tie for second place keeps both",
+            "seed": "INSERT INTO teams VALUES (1, 'Payments');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 180000), (2, 1, 'Ben', 150000), (3, 1, 'Caro', 150000), (4, 1, 'Dan', 120000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Payments",
+                  "Ana",
+                  180000,
+                  1
+                ],
+                [
+                  "Payments",
+                  "Ben",
+                  150000,
+                  2
+                ],
+                [
+                  "Payments",
+                  "Caro",
+                  150000,
+                  2
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "NULL salary is not ranked first",
+            "seed": "INSERT INTO teams VALUES (1, 'Payments');\nINSERT INTO engineers VALUES (1, 1, 'Ana', NULL), (2, 1, 'Ben', 150000), (3, 1, 'Caro', 140000), (4, 1, 'Dan', 130000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Payments",
+                  "Ben",
+                  150000,
+                  1
+                ],
+                [
+                  "Payments",
+                  "Caro",
+                  140000,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "tie at the top: next salary is rank 2, not 3",
+            "seed": "INSERT INTO teams VALUES (1, 'Search');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 200000), (2, 1, 'Ben', 200000), (3, 1, 'Caro', 190000), (4, 1, 'Dan', 100000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Search",
+                  "Ana",
+                  200000,
+                  1
+                ],
+                [
+                  "Search",
+                  "Ben",
+                  200000,
+                  1
+                ],
+                [
+                  "Search",
+                  "Caro",
+                  190000,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "two teams with the same name rank separately",
+            "seed": "INSERT INTO teams VALUES (1, 'Platform'), (2, 'Platform');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 100000), (2, 1, 'Ben', 90000), (3, 1, 'Caro', 80000),\n  (4, 2, 'Dev', 95000), (5, 2, 'Eli', 85000), (6, 2, 'Fay', 75000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Platform",
+                  "Ana",
+                  100000,
+                  1
+                ],
+                [
+                  "Platform",
+                  "Ben",
+                  90000,
+                  2
+                ],
+                [
+                  "Platform",
+                  "Dev",
+                  95000,
+                  1
+                ],
+                [
+                  "Platform",
+                  "Eli",
+                  85000,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "team with a single engineer",
+            "seed": "INSERT INTO teams VALUES (1, 'Payments'), (2, 'Search');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 120000.50), (2, 2, 'Dev', 99000), (3, 2, 'Eli', 98000.25), (4, 2, 'Fay', 97000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Payments",
+                  "Ana",
+                  120000.5,
+                  1
+                ],
+                [
+                  "Search",
+                  "Dev",
+                  99000,
+                  1
+                ],
+                [
+                  "Search",
+                  "Eli",
+                  98000.25,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "everyone on the team earns the same",
+            "seed": "INSERT INTO teams VALUES (1, 'Infra');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 120000), (2, 1, 'Ben', 120000), (3, 1, 'Caro', 120000);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Infra",
+                  "Ana",
+                  120000,
+                  1
+                ],
+                [
+                  "Infra",
+                  "Ben",
+                  120000,
+                  1
+                ],
+                [
+                  "Infra",
+                  "Caro",
+                  120000,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "team whose engineers all have NULL salary is absent",
+            "seed": "INSERT INTO teams VALUES (1, 'Payments'), (2, 'Interns'), (3, 'Empty');\nINSERT INTO engineers VALUES (1, 1, 'Ana', 130000), (2, 2, 'Ivo', NULL), (3, 2, 'Jo', NULL);",
+            "expected": {
+              "columns": [
+                "team",
+                "engineer",
+                "salary",
+                "salary_rank"
+              ],
+              "rows": [
+                [
+                  "Payments",
+                  "Ana",
+                  130000,
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE ledger_entries (\n  id         int PRIMARY KEY,\n  account_id int NOT NULL,\n  posted_on  date NOT NULL,\n  amount     numeric(10,2) NOT NULL\n);",
+        "starter": "-- Return account_id, entry_id, posted_on, amount, balance; sort by account_id, posted_on, entry_id.\nSELECT account_id, id AS entry_id, posted_on, amount,\n       sum(amount) OVER (PARTITION BY account_id ORDER BY posted_on) AS balance\nFROM ledger_entries\nORDER BY account_id, posted_on, entry_id;",
+        "solution": "SELECT account_id,\n       id AS entry_id,\n       posted_on,\n       amount,\n       sum(amount) OVER (PARTITION BY account_id\n                         ORDER BY posted_on, id\n                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS balance\nFROM ledger_entries\nORDER BY account_id, posted_on, entry_id;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "one account, one entry per day",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 10, '2025-01-02', 100), (2, 10, '2025-01-03', 50), (3, 10, '2025-01-05', 25.50);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  10,
+                  1,
+                  "2025-01-02",
+                  100,
+                  100
+                ],
+                [
+                  10,
+                  2,
+                  "2025-01-03",
+                  50,
+                  150
+                ],
+                [
+                  10,
+                  3,
+                  "2025-01-05",
+                  25.5,
+                  175.5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "two entries on the same day",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 10, '2025-01-02', 100), (2, 10, '2025-01-03', 40), (3, 10, '2025-01-03', 60), (4, 10, '2025-01-04', 5);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  10,
+                  1,
+                  "2025-01-02",
+                  100,
+                  100
+                ],
+                [
+                  10,
+                  2,
+                  "2025-01-03",
+                  40,
+                  140
+                ],
+                [
+                  10,
+                  3,
+                  "2025-01-03",
+                  60,
+                  200
+                ],
+                [
+                  10,
+                  4,
+                  "2025-01-04",
+                  5,
+                  205
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "accounts interleaved by date",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 10, '2025-01-01', 10), (2, 20, '2025-01-01', 500), (3, 10, '2025-01-02', 15), (4, 20, '2025-01-03', 1), (5, 10, '2025-01-04', 5);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  10,
+                  1,
+                  "2025-01-01",
+                  10,
+                  10
+                ],
+                [
+                  10,
+                  3,
+                  "2025-01-02",
+                  15,
+                  25
+                ],
+                [
+                  10,
+                  5,
+                  "2025-01-04",
+                  5,
+                  30
+                ],
+                [
+                  20,
+                  2,
+                  "2025-01-01",
+                  500,
+                  500
+                ],
+                [
+                  20,
+                  4,
+                  "2025-01-03",
+                  1,
+                  501
+                ]
+              ]
+            }
+          },
+          {
+            "name": "refund makes the balance drop below zero",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 7, '2025-02-01', 20), (2, 7, '2025-02-02', -35.75), (3, 7, '2025-02-03', 10);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  7,
+                  1,
+                  "2025-02-01",
+                  20,
+                  20
+                ],
+                [
+                  7,
+                  2,
+                  "2025-02-02",
+                  -35.75,
+                  -15.75
+                ],
+                [
+                  7,
+                  3,
+                  "2025-02-03",
+                  10,
+                  -5.75
+                ]
+              ]
+            }
+          },
+          {
+            "name": "same-day entries inserted out of id order",
+            "seed": "INSERT INTO ledger_entries VALUES (9, 3, '2025-03-10', 1), (4, 3, '2025-03-10', 2), (6, 3, '2025-03-10', 4), (1, 3, '2025-03-11', 8);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  3,
+                  4,
+                  "2025-03-10",
+                  2,
+                  2
+                ],
+                [
+                  3,
+                  6,
+                  "2025-03-10",
+                  4,
+                  6
+                ],
+                [
+                  3,
+                  9,
+                  "2025-03-10",
+                  1,
+                  7
+                ],
+                [
+                  3,
+                  1,
+                  "2025-03-11",
+                  8,
+                  15
+                ]
+              ]
+            }
+          },
+          {
+            "name": "single entry",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 42, '2025-06-30', 0.01);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  42,
+                  1,
+                  "2025-06-30",
+                  0.01,
+                  0.01
+                ]
+              ]
+            }
+          },
+          {
+            "name": "month end and leap day in date order",
+            "seed": "INSERT INTO ledger_entries VALUES (1, 5, '2024-03-01', 3), (2, 5, '2024-02-29', 2), (3, 5, '2024-02-28', 1), (4, 5, '2024-01-31', 10);",
+            "expected": {
+              "columns": [
+                "account_id",
+                "entry_id",
+                "posted_on",
+                "amount",
+                "balance"
+              ],
+              "rows": [
+                [
+                  5,
+                  4,
+                  "2024-01-31",
+                  10,
+                  10
+                ],
+                [
+                  5,
+                  3,
+                  "2024-02-28",
+                  1,
+                  11
+                ],
+                [
+                  5,
+                  2,
+                  "2024-02-29",
+                  2,
+                  13
+                ],
+                [
+                  5,
+                  1,
+                  "2024-03-01",
+                  3,
+                  16
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE members (\n  id     int PRIMARY KEY,\n  handle text NOT NULL\n);\nCREATE TABLE logins (\n  id           bigint PRIMARY KEY,\n  member_id    int NOT NULL REFERENCES members(id),\n  logged_in_at timestamptz NOT NULL\n);",
+        "starter": "-- Return member_id, longest_streak, streak_start for every member.\nWITH numbered AS (\n  SELECT member_id,\n         logged_in_at::date AS day,\n         logged_in_at::date - (row_number() OVER (PARTITION BY member_id ORDER BY logged_in_at))::int AS grp\n  FROM logins\n), streaks AS (\n  SELECT member_id, grp, min(day) AS streak_start, count(*) AS streak_len\n  FROM numbered\n  GROUP BY member_id, grp\n)\nSELECT member_id, max(streak_len) AS longest_streak, min(streak_start) AS streak_start\nFROM streaks\nGROUP BY member_id;",
+        "solution": "WITH days AS (\n  SELECT DISTINCT member_id, (logged_in_at AT TIME ZONE 'UTC')::date AS day\n  FROM logins\n), islands AS (\n  SELECT member_id, day,\n         day - (row_number() OVER (PARTITION BY member_id ORDER BY day))::int AS island\n  FROM days\n), streaks AS (\n  SELECT member_id, min(day) AS streak_start, count(*) AS streak_len\n  FROM islands\n  GROUP BY member_id, island\n), best AS (\n  SELECT member_id, streak_start, streak_len,\n         row_number() OVER (PARTITION BY member_id ORDER BY streak_len DESC, streak_start) AS pick\n  FROM streaks\n)\nSELECT m.id AS member_id,\n       coalesce(b.streak_len, 0) AS longest_streak,\n       b.streak_start\nFROM members m\nLEFT JOIN best b ON b.member_id = m.id AND b.pick = 1;",
+        "tests": [
+          {
+            "name": "one member, a gap splits two streaks",
+            "seed": "INSERT INTO members VALUES (1, 'kit');\nINSERT INTO logins VALUES (1, 1, '2025-03-01 08:00+00'), (2, 1, '2025-03-02 08:00+00'), (3, 1, '2025-03-06 08:00+00'),\n  (4, 1, '2025-03-07 08:00+00'), (5, 1, '2025-03-08 08:00+00'), (6, 1, '2025-03-09 08:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  4,
+                  "2025-03-06"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "repeat logins on one day, and a member who never logged in",
+            "seed": "INSERT INTO members VALUES (1, 'kit'), (2, 'lou');\nINSERT INTO logins VALUES (1, 1, '2025-03-01 08:00+00'), (2, 1, '2025-03-01 12:00+00'), (3, 1, '2025-03-01 18:00+00'),\n  (4, 1, '2025-03-02 09:00+00'), (5, 1, '2025-03-03 09:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  3,
+                  "2025-03-01"
+                ],
+                [
+                  2,
+                  0,
+                  null
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "logins either side of midnight UTC are consecutive days",
+            "seed": "INSERT INTO members VALUES (1, 'kit');\nINSERT INTO logins VALUES (1, 1, '2025-05-10 23:50+00'), (2, 1, '2025-05-11 00:10+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  2,
+                  "2025-05-10"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "leap day keeps the streak going",
+            "seed": "INSERT INTO members VALUES (1, 'kit');\nINSERT INTO logins VALUES (1, 1, '2024-02-28 10:00+00'), (2, 1, '2024-02-29 10:00+00'), (3, 1, '2024-03-01 10:00+00'), (4, 1, '2024-03-03 10:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  3,
+                  "2024-02-28"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "equal streaks report the earlier start",
+            "seed": "INSERT INTO members VALUES (1, 'kit');\nINSERT INTO logins VALUES (1, 1, '2025-04-20 09:00+00'), (2, 1, '2025-04-21 09:00+00'),\n  (3, 1, '2025-04-01 09:00+00'), (4, 1, '2025-04-02 09:00+00'), (5, 1, '2025-04-10 09:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  2,
+                  "2025-04-01"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "non-UTC offset is converted to the UTC day",
+            "seed": "INSERT INTO members VALUES (1, 'kit');\nINSERT INTO logins VALUES (1, 1, '2025-07-02 01:30+03'), (2, 1, '2025-07-02 12:00+00'), (3, 1, '2025-07-03 12:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  3,
+                  "2025-07-01"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "several members with single logins and none",
+            "seed": "INSERT INTO members VALUES (1, 'kit'), (2, 'lou'), (3, 'max');\nINSERT INTO logins VALUES (1, 2, '2025-01-15 09:00+00'), (2, 1, '2025-01-01 09:00+00'), (3, 1, '2025-01-03 09:00+00');",
+            "expected": {
+              "columns": [
+                "member_id",
+                "longest_streak",
+                "streak_start"
+              ],
+              "rows": [
+                [
+                  1,
+                  1,
+                  "2025-01-01"
+                ],
+                [
+                  2,
+                  1,
+                  "2025-01-15"
+                ],
+                [
+                  3,
+                  0,
+                  null
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "WITH pay(name, amount) AS (VALUES ('ana', 300), ('bo', 250), ('cy', 250), ('di', 200))\nSELECT name, rank() OVER w, dense_rank() OVER w\nFROM pay\nWINDOW w AS (ORDER BY amount DESC)\nORDER BY amount DESC, name",
+        "choices": [
+          "ana | 1 | 1\nbo | 2 | 2\ncy | 2 | 2\ndi | 4 | 3",
+          "ana | 1 | 1\nbo | 2 | 2\ncy | 2 | 2\ndi | 3 | 3",
+          "ana | 1 | 1\nbo | 2 | 2\ncy | 3 | 2\ndi | 4 | 3"
+        ],
+        "answer": 0,
+        "explain": "`rank` leaves a gap after a tie (two rows share 2, so the next is 4: its position). `dense_rank` has no gaps (the next distinct value is 3). Both give tied rows the same number; only `row_number` would split them."
+      },
+      {
+        "code": "WITH sales(day, amount) AS (VALUES (1, 10), (2, 5), (2, 7), (3, 1))\nSELECT day, amount, sum(amount) OVER (ORDER BY day) AS running\nFROM sales\nORDER BY day, amount",
+        "choices": [
+          "1 | 10 | 10\n2 | 5 | 15\n2 | 7 | 22\n3 | 1 | 23",
+          "1 | 10 | 10\n2 | 5 | 22\n2 | 7 | 22\n3 | 1 | 23",
+          "1 | 10 | 23\n2 | 5 | 23\n2 | 7 | 23\n3 | 1 | 23"
+        ],
+        "answer": 1,
+        "explain": "With `ORDER BY` and no frame clause the frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which ends at the last **peer** of the current row. Both day-2 rows are peers, so each sees 10 + 5 + 7 = 22. Add a tie-breaker to the window's `ORDER BY` or use `ROWS` to get 15 then 22."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (3), (1), (2))\nSELECT x FROM t WHERE row_number() OVER (ORDER BY x) = 1",
+        "choices": [
+          "1",
+          "3",
+          "ERROR: window functions are not allowed in WHERE"
+        ],
+        "answer": 2,
+        "explain": "`WHERE` is evaluated before window functions exist. Compute the number in a CTE or subquery and filter in the outer query. Postgres has no `QUALIFY` clause."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (1), (2), (3))\nSELECT x, first_value(x) OVER (ORDER BY x), last_value(x) OVER (ORDER BY x)\nFROM t ORDER BY x",
+        "choices": [
+          "1 | 1 | 3\n2 | 1 | 3\n3 | 1 | 3",
+          "1 | 1 | 1\n2 | 1 | 2\n3 | 1 | 3",
+          "1 | 1 | 1\n2 | 2 | 2\n3 | 3 | 3"
+        ],
+        "answer": 1,
+        "explain": "The default frame stops at the current row, so the last row of the frame is the current row. `last_value` needs `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, or use `first_value` with the order reversed."
+      },
+      {
+        "code": "WITH temps(day, c) AS (VALUES (1, 20), (2, 23), (3, 21))\nSELECT day, c - lag(c) OVER (ORDER BY day), c - lag(c, 1, c) OVER (ORDER BY day)\nFROM temps ORDER BY day",
+        "choices": [
+          "1 | NULL | 0\n2 | 3 | 3\n3 | -2 | -2",
+          "1 | 0 | 0\n2 | 3 | 3\n3 | -2 | -2",
+          "1 | 20 | 0\n2 | 3 | 3\n3 | -2 | -2",
+          "1 | NULL | NULL\n2 | 3 | 3\n3 | -2 | -2"
+        ],
+        "answer": 0,
+        "explain": "The first row has no previous row, so `lag(c)` is NULL and so is the difference. The third argument is the default used when the offset falls outside the partition; passing `c` itself makes the first change 0."
+      }
+    ],
+    "tip": "Before typing, say three things: the grain (\"one row per engineer\"), the partition and order (\"within team id, salary high to low\"), and the tie rule (\"ties share a rank, no gaps, so DENSE_RANK\"). Then write the ranked CTE and the outer filter, and mention that `WHERE` cannot see window functions and that a running total ordered by a non-unique column needs a tie-breaker.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "pagination"
+      ],
+      "lessons": [
+        "sql-aggregates",
+        "arrays-prefix-foundations",
+        "sliding-window-distinct"
+      ]
+    }
+  }
+}

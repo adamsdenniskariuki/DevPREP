@@ -4,7 +4,7 @@ import { palettes } from '../src/appearance'
 import { color, contrast, over } from './contrast'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
-const LANGUAGES = ['python', 'typescript']
+const LANGUAGES = ['python', 'typescript', 'sql']
 const read = (path: string) => JSON.parse(readFileSync(new URL(`../content/${path}`, import.meta.url), 'utf8'))
 const languageTracks = LANGUAGES.map(id => read(`${id}/track.json`))
 const lessons = LANGUAGES.flatMap(id => readdirSync(new URL(`../content/${id}/`, import.meta.url)).filter(file => file !== 'track.json').map(file => read(`${id}/${file}`)))
@@ -49,7 +49,7 @@ for (const track of languageTracks) {
     const picker = page.getByRole('combobox', { name: 'In this lesson' })
     await picker.selectOption({ label: await picker.locator('option', { hasText: 'Predict the output' }).innerText() })
     for (const [index, item] of first.lab.predict.entries()) {
-      await page.getByRole('group', { name: `Snippet ${index + 1}: what does it print?` }).getByRole('radio', { name: item.choices[item.answer], exact: true }).check()
+      await page.getByRole('group', { name: `Snippet ${index + 1}: what does it ${first.lab.lang === 'sql' ? 'return' : 'print'}?` }).getByRole('radio', { name: item.choices[item.answer], exact: true }).check()
     }
     await page.getByRole('button', { name: 'Check answers' }).click()
     await expect(page.getByText(`${first.lab.predict.length} of ${first.lab.predict.length}`)).toBeVisible()
@@ -78,6 +78,14 @@ for (const track of languageTracks) test(`the core exercise runs in ${track.titl
     await expect(results.locator('.type-errors summary')).toHaveText('1 type error · the code still ran')
     await expect(results).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`)
     await expect(results.locator('.type-errors')).toContainText("Type 'string' is not assignable to type 'number'.")
+    await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
+  }
+  if (first.lab.lang === 'sql') {
+    await results.locator('.sql-compare summary').first().click()
+    await expect(results.locator('.sql-compare').first().locator('.sql-table').first()).toBeVisible()
+    await page.getByRole('textbox', { name: /Your solution/ }).fill('SELECT * FROM no_such_table')
+    await page.getByRole('button', { name: 'Run tests' }).click()
+    await expect(results.locator('.sql-error').first()).toContainText('relation "no_such_table" does not exist')
     await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
   }
   await page.reload()

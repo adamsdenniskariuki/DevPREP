@@ -4,13 +4,16 @@ import { PYODIDE_VERSION } from './pyodide-version'
 import type { PyWorkerMessage } from './py.worker'
 import { TYPESCRIPT_VERSION } from './ts-version'
 import type { TsWorkerMessage } from './ts.worker'
+import { PGLITE_VERSION } from './pglite-version'
+import { SQL_TIMEOUT_MS, type SqlRunRequest, type SqlRunResponse } from './sql-core'
+import type { SqlWorkerMessage } from './sql.worker'
 
 export type RunReport =
   | RunResponse
   | { kind: 'timeout'; ms: number }
   | { kind: 'load-error'; error: string }
 
-export type RunPhase = 'loading-python' | 'loading-typescript' | 'running'
+export type RunPhase = 'loading-python' | 'loading-typescript' | 'loading-sql' | 'running'
 /** Languages the runner executes: problem languages plus TypeScript (labs only). */
 export type RunLanguage = CodeLanguage | 'ts'
 /** TypeScript runs as JavaScript after type-checking; the extra second covers compiling. */
@@ -18,6 +21,9 @@ export const TS_TIMEOUT_MS = TIMEOUT_MS.js + 1000
 
 const PYTHON_LOAD_TIMEOUT_MS = 180_000
 const TYPESCRIPT_LOAD_TIMEOUT_MS = 120_000
+const SQL_LOAD_TIMEOUT_MS = 120_000
+let sqlWorker: Worker | undefined
+let sqlReady: Promise<void> | undefined
 let tsWorker: Worker | undefined
 let tsReady: Promise<void> | undefined
 let jsWorker: Worker | undefined
@@ -31,6 +37,10 @@ export function pyodideIndexURL(base = document.baseURI) {
 
 export function typescriptBaseURL(base = document.baseURI) {
   return new URL(`typescript/${TYPESCRIPT_VERSION}/`, base).href
+}
+
+export function pgliteBaseURL(base = document.baseURI) {
+  return new URL(`pglite/${PGLITE_VERSION}/`, base).href
 }
 
 function reply<T>(worker: Worker, ms: number, accept: (data: unknown) => T | undefined): Promise<T | 'timeout'> {
@@ -128,6 +138,72 @@ async function runTypeScript(request: RunRequest, onPhase: (phase: RunPhase) => 
   // A runaway loop blocks the worker, so stop it; the next run reloads the compiler from cache.
   resetTypeScript()
   return { kind: 'timeout', ms: Math.round(performance.now() - started) }
+}
+
+function resetSql() {
+  sqlWorker?.terminate()
+  sqlWorker = undefined
+  sqlReady = undefined
+}
+
+/** Starts (or reuses) the Postgres worker and resolves once PGlite has booted. */
+export function prepareSql(): Promise<void> {
+  if (!sqlReady) {
+    const worker = new Worker(new URL('./sql.worker.ts', import.meta.url), { type: 'module', name: 'devprep-sql' })
+    sqlWorker = worker
+    sqlReady = (async () => {
+      const done = reply(worker, SQL_LOAD_TIMEOUT_MS, data => {
+        const message = data as { type: string; error?: string }
+        if (message.type === 'ready') return 'ready'
+        if (message.type === 'load-error') return `error:${message.error}`
+      })
+      worker.postMessage({ type: 'init', baseURL: pgliteBaseURL() } satisfies SqlWorkerMessage)
+      const result = await done
+      if (result !== 'ready') throw new Error(result === 'timeout' ? 'Postgres took too long to load. Check your connection and try again.' : result.slice(6))
+    })()
+    sqlReady.catch(resetSql)
+  }
+  return sqlReady
+}
+
+export type SqlReport = SqlRunResponse | { kind: 'timeout'; ms: number } | { kind: 'load-error'; error: string }
+
+async function runSqlOnce(request: SqlRunRequest, onPhase: (phase: RunPhase) => void): Promise<SqlReport> {
+  onPhase('loading-sql')
+  try {
+    await prepareSql()
+  } catch (error) {
+    return { kind: 'load-error', error: error instanceof Error ? error.message : String(error) }
+  }
+  const worker = sqlWorker!
+  onPhase('running')
+  const started = performance.now()
+  const pending = reply(worker, SQL_TIMEOUT_MS, data => {
+    const message = data as { type: string; fatal?: boolean; result?: SqlRunResponse }
+    return message.type === 'result' ? message : undefined
+  })
+  worker.postMessage({ type: 'run', ...request } satisfies SqlWorkerMessage)
+  try {
+    const message = await pending
+    if (message !== 'timeout') {
+      if (message.fatal) resetSql()
+      return message.result!
+    }
+  } catch (error) {
+    resetSql()
+    return { kind: 'error', error: error instanceof Error ? error.message : String(error) }
+  }
+  // A runaway query (say, an endless recursive CTE) cannot be cancelled inside PGlite, so stop the worker.
+  // The next run boots a fresh database from the cached files.
+  resetSql()
+  return { kind: 'timeout', ms: Math.round(performance.now() - started) }
+}
+
+/** Runs SQL test cases on in-browser Postgres, sharing the one-at-a-time queue with the code runner. */
+export function runSqlCode(request: SqlRunRequest, onPhase: (phase: RunPhase) => void = () => {}): Promise<SqlReport> {
+  const next = queue.then(() => runSqlOnce(request, onPhase))
+  queue = next.catch(() => undefined)
+  return next
 }
 
 async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {

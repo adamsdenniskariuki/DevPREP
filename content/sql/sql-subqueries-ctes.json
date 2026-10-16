@@ -1,0 +1,474 @@
+{
+  "id": "sql-subqueries-ctes",
+  "track": "sql",
+  "title": "Subqueries, CTEs and recursive queries",
+  "minutes": 55,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "Scalar, correlated and derived-table subqueries, `EXISTS` versus `IN` (and the `NOT IN` NULL trap), `WITH` for readable pipelines and when Postgres inlines a CTE, recursive CTEs for hierarchies and graphs with depth, breadcrumb paths and cycle protection, and `LATERAL` for top-N per row.",
+  "prerequisites": ["sql-joins", "sql-aggregates"],
+  "prerequisiteNotes": "sql-joins: inner and outer joins, semi- and anti-join thinking, and how a join multiplies rows; a recursive CTE is a join repeated level by level. sql-aggregates: `GROUP BY`, `avg`/`min`/`count` and how they treat NULLs, which the correlated-average and shortest-hop queries rely on.",
+  "objectives": [
+    "Use a scalar subquery where a single value is needed, and say what happens when it returns zero rows (NULL) or more than one row (an error).",
+    "Write a correlated subquery, explain its per-row meaning, and know when Postgres turns it into a join and when it stays a per-row SubPlan.",
+    "Choose between `EXISTS`, `IN`, `NOT EXISTS` and `NOT IN`, and explain why `NOT IN` returns nothing when the subquery contains a NULL.",
+    "Structure a query as named steps with `WITH`, and know that Postgres 12+ inlines a non-recursive CTE referenced once unless it is marked `MATERIALIZED`.",
+    "Write a recursive CTE with an anchor and a recursive member that walks a hierarchy, carrying depth and a breadcrumb path, and say exactly why it terminates.",
+    "Make a graph traversal terminate on cyclic data with a visited-path array or the `CYCLE` clause, and use `LATERAL` for top-N per row."
+  ],
+  "concepts": [
+    {
+      "title": "Scalar subqueries: exactly one value or NULL",
+      "body": "A subquery in parentheses used where an expression is expected (in `SELECT`, `WHERE`, `SET`) is a **scalar subquery**. It must return one column and **at most** one row. Zero rows is not an error: the value is NULL, which then poisons comparisons (`price > NULL` is unknown, so the row is filtered). Two or more rows fail at run time with `more than one row returned by a subquery used as an expression`, and only when data actually produces a second row, so the bug can hide in testing and appear in production. Make the single row a guarantee, not a hope: aggregate (`max`, `avg`), filter on a unique key, or add `ORDER BY ... LIMIT 1` when you really mean \"the latest one\".",
+      "code": "-- one value for the whole query: fine\nSELECT id, price, price - (SELECT avg(price) FROM products) AS vs_avg\nFROM products;\n\n-- zero rows -> NULL, so this WHERE keeps nothing\nSELECT * FROM products\nWHERE price > (SELECT price FROM products WHERE sku = 'no-such-sku');\n\n-- may return many rows -> runtime error the day a second match appears\nSELECT name, (SELECT total FROM orders o WHERE o.customer_id = c.id) AS total\nFROM customers c;\n\n-- say which row you mean\nSELECT name,\n       (SELECT total FROM orders o WHERE o.customer_id = c.id\n        ORDER BY placed_at DESC, id DESC LIMIT 1) AS latest_total\nFROM customers c;"
+    },
+    {
+      "title": "Correlated subqueries and what the planner does with them",
+      "body": "A **correlated** subquery refers to a column of the outer query (`o.customer_id = c.id`), so its meaning is \"evaluate once per outer row\". That is the right mental model for correctness, and it reads naturally for \"above the average of their own group\". Performance is a separate question. Postgres pulls `EXISTS` and `IN (subquery)` up into **semi-joins** and `NOT EXISTS` into an **anti-join**, so those usually run as one hash or merge join. A correlated **scalar** subquery with an aggregate is not decorrelated: `EXPLAIN` shows a `SubPlan` executed for each outer row. On a large table rewrite it as a join to a grouped derived table, or use a window function such as `avg(price) OVER (PARTITION BY area)`, so the averages are computed in one pass.",
+      "code": "-- per-row meaning: compare each listing with its own area\nSELECT l.id, l.nightly_price\nFROM listings l\nWHERE l.nightly_price > (\n  SELECT avg(x.nightly_price) FROM listings x\n  WHERE x.area = l.area                -- correlation\n);\n\n-- same result, averages computed once (join to a grouped derived table)\nSELECT l.id, l.nightly_price\nFROM listings l\nJOIN (SELECT area, avg(nightly_price) AS area_avg\n      FROM listings GROUP BY area) a ON a.area = l.area\nWHERE l.nightly_price > a.area_avg;\n\n-- or one pass with a window function\nSELECT id, nightly_price FROM (\n  SELECT id, nightly_price, avg(nightly_price) OVER (PARTITION BY area) AS area_avg\n  FROM listings\n) t\nWHERE nightly_price > area_avg;",
+      "diagram": "sqs-correlated"
+    },
+    {
+      "title": "EXISTS versus IN, and the NOT IN trap",
+      "body": "`EXISTS (subquery)` is true when the subquery returns any row; the select list is ignored, so `SELECT 1` is the idiom (even `EXISTS (SELECT NULL)` is true). `x IN (subquery)` is true when some value equals `x`. For the positive case both become semi-joins and neither duplicates outer rows, unlike a plain join. The negative case differs: `x NOT IN (1, NULL)` means `x <> 1 AND x <> NULL`, and `x <> NULL` is unknown, so the whole condition is never true and the query returns **no rows** as soon as one NULL appears in the list. `NOT EXISTS` asks \"is there a matching row?\", which a NULL never is, so it does what people mean and plans as an anti-join. Rule for interviews: use `NOT EXISTS` for anti-joins, or `LEFT JOIN ... WHERE right.key IS NULL`.",
+      "code": "-- customers who never ordered: correct even if orders.customer_id has NULLs\nSELECT c.id, c.name\nFROM customers c\nWHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);\n\n-- returns zero rows the moment one order has customer_id = NULL\nSELECT c.id, c.name\nFROM customers c\nWHERE c.id NOT IN (SELECT o.customer_id FROM orders o);\n\n-- equivalent anti-join with an outer join\nSELECT c.id, c.name\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nWHERE o.id IS NULL;",
+      "diagram": "sqs-notin"
+    },
+    {
+      "title": "Derived tables and WITH: name the steps",
+      "body": "A subquery in `FROM` is a **derived table**: a temporary result you can join and filter like a table. Standard SQL and Postgres before 16 require an alias (`FROM (SELECT ...) AS t`); Postgres 16+ accepts it without one, but name it anyway for portability and readability. A **CTE** (`WITH name AS (...)`) is the same idea moved to the top, so a long query reads as a pipeline of named steps and a step can be referenced more than once. On performance: since Postgres 12 a non-recursive, side-effect-free CTE referenced **once** is inlined into the main query, so filters push down into it. Write `AS MATERIALIZED` to force it to be computed once and stored (an optimisation fence, useful when an expensive step is reused or when you want to stop the planner from inlining), or `AS NOT MATERIALIZED` to inline even a CTE referenced twice. Before 12 every CTE was a fence, which is why older advice says CTEs are slow.",
+      "code": "WITH paid AS (\n  SELECT customer_id, sum(amount) AS spent\n  FROM payments\n  WHERE status = 'paid'\n  GROUP BY customer_id\n),\nranked AS (\n  SELECT customer_id, spent,\n         rank() OVER (ORDER BY spent DESC) AS rnk\n  FROM paid\n)\nSELECT c.name, r.spent\nFROM ranked r\nJOIN customers c ON c.id = r.customer_id\nWHERE r.rnk <= 3;\n\n-- force a single evaluation of an expensive step used twice\nWITH big AS MATERIALIZED (\n  SELECT * FROM events WHERE kind = 'checkout'\n)\nSELECT (SELECT count(*) FROM big), (SELECT count(DISTINCT user_id) FROM big);"
+    },
+    {
+      "title": "Recursive CTEs: anchor, recursive member, stop",
+      "body": "`WITH RECURSIVE t AS (anchor UNION ALL recursive_member)` is iteration, not recursion. Postgres runs the **anchor** once; its rows form the first working table and go to the output. Then it runs the **recursive member**, which references `t` exactly once and sees **only the previous iteration's rows**, not everything so far. New rows are appended to the output and become the next working table. It stops when an iteration produces **no rows**. So termination is your job: each step must eventually find nothing, which holds for a tree walked from the roots (leaves have no children) but not for cyclic data. Columns are fixed by the anchor, so cast there if the recursive part produces wider values (`name::text`, `ARRAY[id]`). Carry the extras you need along the way: `depth + 1` for the level, `path || name` for a breadcrumb, and an array of visited ids for cycle checks.",
+      "code": "-- every employee with their level and chain of command\nWITH RECURSIVE chain AS (\n  SELECT id, name, 0 AS depth, ARRAY[name] AS path        -- anchor: the top\n  FROM staff\n  WHERE manager_id IS NULL\n  UNION ALL\n  SELECT s.id, s.name, c.depth + 1, c.path || s.name      -- one level down\n  FROM staff s\n  JOIN chain c ON s.manager_id = c.id\n)\nSELECT id, depth, array_to_string(path, ' > ') AS breadcrumb\nFROM chain\nORDER BY path;\n\n-- a number series without generate_series\nWITH RECURSIVE n(i) AS (\n  SELECT 1\n  UNION ALL\n  SELECT i + 1 FROM n WHERE i < 5   -- the WHERE is the stop condition\n)\nSELECT i FROM n;",
+      "diagram": "sqs-recursive"
+    },
+    {
+      "title": "Cycles: make the walk terminate",
+      "body": "On a graph (transit links, a bill of materials with a bad edit, friend-of-friend) the recursive member can keep finding rows forever, and the query runs until it times out. Three defences. **Visited array**: carry `ARRAY[start_id]` and only step to `to_id <> ALL(visited)`, appending each new id; every path is then simple, so the walk ends. **UNION instead of UNION ALL**: duplicates of rows already produced are discarded, which stops a walk whose rows repeat exactly, but it does not help once you carry a changing column such as depth. **The `CYCLE` clause** (SQL standard, Postgres 14+): `CYCLE id SET is_cycle USING path` maintains the path for you and marks a row whose `id` was already on its path; that row is still emitted but not expanded, so filter `WHERE NOT is_cycle`. Path tracking enumerates every simple path, which can explode on dense graphs; for shortest hops keep `min(depth)` per node and add a depth bound if the graph is large.",
+      "code": "-- stations reachable from Central, fewest links each\nWITH RECURSIVE walk AS (\n  SELECT s.id AS station_id, 0 AS hops, ARRAY[s.id] AS visited\n  FROM stations s WHERE s.name = 'Central'\n  UNION ALL\n  SELECT l.to_station, w.hops + 1, w.visited || l.to_station\n  FROM walk w\n  JOIN links l ON l.from_station = w.station_id\n  WHERE l.to_station <> ALL (w.visited)          -- never revisit on this path\n)\nSELECT station_id, min(hops) AS min_hops\nFROM walk WHERE hops > 0\nGROUP BY station_id;\n\n-- the same guard with the standard CYCLE clause\nWITH RECURSIVE walk(station_id, hops) AS (\n  SELECT id, 0 FROM stations WHERE name = 'Central'\n  UNION ALL\n  SELECT l.to_station, w.hops + 1\n  FROM walk w JOIN links l ON l.from_station = w.station_id\n) CYCLE station_id SET is_cycle USING path\nSELECT station_id, min(hops) AS min_hops\nFROM walk WHERE hops > 0 AND NOT is_cycle\nGROUP BY station_id;",
+      "diagram": "sqs-cycle"
+    },
+    {
+      "title": "LATERAL: a subquery per row that returns rows",
+      "body": "A scalar subquery can return only one value. When you need **several rows or columns per outer row**, such as the three latest orders per customer, use `LATERAL`: a derived table in `FROM` that may reference columns of tables to its left, evaluated per left row. `CROSS JOIN LATERAL` drops left rows with no matches; `LEFT JOIN LATERAL ... ON true` keeps them with NULLs. With an index on `(customer_id, placed_at DESC)` each lateral probe is a short index scan, which beats ranking the whole orders table when there are few customers and many orders. Set-returning functions in `FROM` (`unnest`, `jsonb_array_elements`) are implicitly lateral.",
+      "code": "-- the three latest orders for each customer, customers without orders kept\nSELECT c.id AS customer_id, o.id AS order_id, o.placed_at\nFROM customers c\nLEFT JOIN LATERAL (\n  SELECT id, placed_at\n  FROM orders\n  WHERE orders.customer_id = c.id\n  ORDER BY placed_at DESC, id DESC\n  LIMIT 3\n) o ON true\nORDER BY c.id, o.placed_at DESC;"
+    }
+  ],
+  "example": "-- Org chart: all reports under one manager (id 2), with depth and the chain below the manager\nCREATE TEMP TABLE staff (id int PRIMARY KEY, manager_id int REFERENCES staff(id), name text NOT NULL);\nINSERT INTO staff VALUES\n  (1, NULL, 'Ines'), (2, 1, 'Omar'), (3, 1, 'Lena'),\n  (4, 2, 'Priya'), (5, 2, 'Tomas'), (6, 3, 'Wen'), (7, 3, 'Ade'), (8, 5, 'Hugo');\n\nWITH RECURSIVE under AS (\n  SELECT id, name, 1 AS depth, name AS chain\n  FROM staff\n  WHERE manager_id = 2                       -- anchor: direct reports\n  UNION ALL\n  SELECT s.id, s.name, u.depth + 1, u.chain || ' > ' || s.name\n  FROM staff s\n  JOIN under u ON s.manager_id = u.id        -- reports of the previous level\n)\nSELECT id, name, depth, chain\nFROM under\nORDER BY depth, name, id;\n-- 4 | Priya | 1 | Priya\n-- 5 | Tomas | 1 | Tomas\n-- 8 | Hugo  | 2 | Tomas > Hugo",
+  "task": "A shop stores its product categories as a tree in `categories(id, parent_id, name)`; top-level categories have `parent_id` NULL and every other category points at an existing parent. Return **every** category with three columns in this order: `category_id`, `depth` (top-level categories are 0, their children 1, and so on) and `path`, the breadcrumb of names from the top-level category down to this one joined with `' > '` (for example `Outdoor > Camping > Tents`). The tree can be any depth and there may be several top-level categories. Ids say nothing about the order of levels: a child may have a smaller id than its parent. Row order does not matter.",
+  "starter": "-- Only looks one level up, so deeper categories get the wrong depth and a cut-off path\nSELECT c.id AS category_id,\n       CASE WHEN p.id IS NULL THEN 0 ELSE 1 END AS depth,\n       concat_ws(' > ', p.name, c.name) AS path\nFROM categories c\nLEFT JOIN categories p ON p.id = c.parent_id;\n",
+  "hints": [
+    "You cannot know the depth in advance, so self-joins will never be enough. Start from the rows you know the answer for (the top-level categories: depth 0, path = their own name) and repeatedly attach children to rows you already have.",
+    "`WITH RECURSIVE tree AS (SELECT id, 0, name FROM categories WHERE parent_id IS NULL UNION ALL SELECT c.id, t.depth + 1, t.path || ' > ' || c.name FROM categories c JOIN tree t ON c.parent_id = t.id)`, then select the three columns with their aliases."
+  ],
+  "solution": "WITH RECURSIVE tree AS (\n  SELECT id, 0 AS depth, name AS path\n  FROM categories\n  WHERE parent_id IS NULL\n  UNION ALL\n  SELECT c.id, t.depth + 1, t.path || ' > ' || c.name\n  FROM categories c\n  JOIN tree t ON c.parent_id = t.id\n)\nSELECT id AS category_id, depth, path\nFROM tree;\n\nThe anchor produces the top-level categories with depth 0 and a path equal to their own name. Each iteration of the recursive member joins `categories` to the rows produced by the **previous** iteration only, so it finds exactly the next level, adds one to the depth and appends the child's name to the parent's breadcrumb. Leaves have no children, so an iteration eventually returns nothing and the query stops; every category is reached exactly once because each has one parent and the data is a tree. Nothing depends on id order, because levels are discovered by following `parent_id`, not by sorting. `name` is `text`, so the anchor's column type already fits the longer paths; with `varchar(n)` you would cast the anchor (`name::text`) to avoid a type mismatch error. With an index on `categories(parent_id)` each iteration is an index lookup per parent, so the whole walk is proportional to the number of categories.",
+  "checklist": [
+    "The anchor selects `parent_id IS NULL` (not `= NULL`) and sets depth 0 and the path to the name itself.",
+    "The recursive member joins on `c.parent_id = t.id`, child to parent, and references the CTE exactly once.",
+    "Output columns are exactly `category_id`, `depth`, `path`, in that order.",
+    "Several top-level categories, children with smaller ids than their parents and deep chains all work, and duplicate names under different parents get different paths."
+  ],
+  "pitfalls": [
+    "Using `NOT IN (subquery)` for an anti-join; one NULL in the subquery and it returns no rows. Use `NOT EXISTS`.",
+    "A scalar subquery that returns one row in test data and two in production, which fails at run time with `more than one row returned by a subquery used as an expression`.",
+    "Comparing groups with `x.area = l.area` in a correlated subquery when `area` can be NULL; NULL rows never match their own group. Use `IS NOT DISTINCT FROM` if NULL is a real group.",
+    "Joining the recursive member the wrong way round (`t.parent_id = c.id`), which walks up instead of down.",
+    "A recursive CTE on data that can contain a cycle with no visited check and no `CYCLE` clause; it never stops on its own.",
+    "Building a path whose type does not match the anchor (`varchar(20)` anchor, longer text later) and getting a type error; cast in the anchor.",
+    "Assuming a CTE is always an optimisation fence (true before Postgres 12) or always inlined (not when referenced twice or marked `MATERIALIZED`)."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace a recursive CTE iteration by iteration",
+      "body": "Run the org-chart query from the recursive CTE concept on the example data: Ines at the top, Omar and Lena under her, Priya and Tomas under Omar, Wen and Ade under Lena, and Hugo under Tomas. The anchor emits **1** row (Ines, depth 0). Iteration 1 joins `staff` to that single row and emits **2** (Omar, Lena). Iteration 2 sees only those two and emits **4** (Priya, Tomas, Wen, Ade). Iteration 3 sees those four and emits **1** (Hugo). Iteration 4 finds no one whose manager is Hugo, emits **0**, and the query stops with 1 + 2 + 4 + 1 = 8 rows. Being able to say these counts out loud is the quickest way to prove in an interview that you know the working table only holds the previous level.",
+      "diagram": "sqs-levels"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, say the grain: one row per category, and the depth is unknown, so this is a recursive walk from the roots. Second, write the anchor and run it alone: top-level categories with `0` and their name. Third, add the recursive member that joins children to the previous level, extending depth and path, and check termination out loud: a tree has no cycles, leaves have no children, so an iteration returns nothing. Finish by naming the output columns with `AS` and mentioning the index on `parent_id` and what you would add if the data could contain a cycle (a visited array or `CYCLE id SET is_cycle USING seen`)."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Pricier than the neighbourhood",
+      "prompt": "Table `listings(id, area, nightly_price)` holds holiday rentals. Return `listing_id` and `nightly_price` for every listing whose price is **strictly above** the average price of listings in the same area. Listings with a NULL `area` form one group of their own and are compared with each other. Listings with a NULL price are ignored: they are not in any average and never qualify. Area names are compared exactly (case matters). Row order does not matter.",
+      "hints": [
+        "A correlated subquery reads naturally: `WHERE l.nightly_price > (SELECT avg(x.nightly_price) FROM listings x WHERE <same area as l>)`.",
+        "`x.area = l.area` is never true when both are NULL; `x.area IS NOT DISTINCT FROM l.area` treats two NULLs as equal."
+      ],
+      "solution": "SELECT l.id AS listing_id, l.nightly_price\nFROM listings l\nWHERE l.nightly_price > (\n  SELECT avg(x.nightly_price)\n  FROM listings x\n  WHERE x.area IS NOT DISTINCT FROM l.area\n);",
+      "checklist": [
+        "A price equal to its area's average does not qualify.",
+        "Listings with a NULL area are compared with the other NULL-area listings.",
+        "A NULL price neither qualifies nor changes the average, because `avg` skips NULLs."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Reachable stations on a looping network",
+      "prompt": "A transit network has `stations(id, name)` with unique names and directed `links(from_station, to_station)`. The network contains loops, possibly a link back to the start, a station linked to itself, and duplicate links. Return every station reachable from the station named `Central` by following one or more links, with columns `station` (its name) and `min_hops` (the fewest links needed), excluding `Central` itself. If Central has no outgoing links the result is empty. The query must terminate on cyclic data. Row order does not matter.",
+      "hints": [
+        "Carry an array of the station ids already on the current path, start it as `ARRAY[central_id]`, and only follow a link when `to_station <> ALL(visited)`.",
+        "Many paths can reach the same station; aggregate at the end with `min(hops)` grouped by station, and drop the start with `hops > 0` (the visited check already prevents returning to Central)."
+      ],
+      "solution": "WITH RECURSIVE walk AS (\n  SELECT s.id AS station_id, 0 AS hops, ARRAY[s.id] AS visited\n  FROM stations s\n  WHERE s.name = 'Central'\n  UNION ALL\n  SELECT l.to_station, w.hops + 1, w.visited || l.to_station\n  FROM walk w\n  JOIN links l ON l.from_station = w.station_id\n  WHERE l.to_station <> ALL (w.visited)\n)\nSELECT s.name AS station, min(w.hops) AS min_hops\nFROM walk w\nJOIN stations s ON s.id = w.station_id\nWHERE w.hops > 0\nGROUP BY s.id, s.name;",
+      "checklist": [
+        "The walk terminates on loops, self-links and links back to Central.",
+        "A shortcut wins: each station appears once with its fewest hops.",
+        "Central is not in the output, and unreachable stations are not either."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your stretch query is slow on a real network with 5,000 stations. Why, and what would you change?",
+      "answer": "Path tracking enumerates every simple path, which grows exponentially on a dense graph, even though only the shortest hop count is wanted. Options: bound the depth (`WHERE hops < 20`); compute breadth-first per level and keep only stations not seen at an earlier level, which needs a procedural loop or a temp table in PL/pgSQL because the recursive member cannot aggregate or reference earlier iterations; precompute reachability in a closure table refreshed on change; or move the graph to a tool built for it (pgRouting, a graph store). Index `links(from_station)` either way."
+    },
+    {
+      "question": "When would you add `MATERIALIZED` to a CTE, and when would you avoid it?",
+      "answer": "Add it when an expensive, side-effect-free step is referenced several times and recomputing it is worse than storing it, or when you deliberately want a fence (for example to stop the planner from pushing a predicate into a step where it picks a bad plan). Avoid it on a CTE referenced once with a selective outer filter: materialising computes the whole step and the outer `WHERE` cannot use indexes inside it. Since Postgres 12 that inlining is the default; `EXPLAIN` shows a `CTE Scan` when a CTE is materialised."
+    },
+    {
+      "question": "Rewrite \"customers with no orders\" three ways. Which do you prefer?",
+      "answer": "`NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)`, `LEFT JOIN orders o ON o.customer_id = c.id WHERE o.id IS NULL`, and `c.id NOT IN (SELECT customer_id FROM orders)`. The first two plan as an anti-join and are equivalent; `NOT EXISTS` states the intent most directly. `NOT IN` is wrong if `orders.customer_id` can be NULL (it returns nothing) and is planned as a hashed SubPlan rather than an anti-join, so avoid it unless the column is `NOT NULL`, and even then prefer `NOT EXISTS`."
+    },
+    {
+      "question": "How would you store a hierarchy so that \"all descendants\" is fast without recursion?",
+      "answer": "Adjacency list (`parent_id`) is simplest to update and needs a recursive CTE to read. Alternatives trade write cost for read speed: a **materialised path** (`'1.4.9'`, or the `ltree` extension with a GiST index) answers subtree queries with a prefix match; a **closure table** stores every ancestor-descendant pair with depth, so descendants are one indexed lookup but moves rewrite many rows; nested sets make reads cheap and inserts expensive. For a few thousand rows and frequent edits, keep `parent_id` plus an index and recurse."
+    }
+  ],
+  "takeaways": [
+    "A scalar subquery must return at most one row: zero rows gives NULL, two rows is a runtime error, so guarantee one with an aggregate, a unique key or `LIMIT 1`.",
+    "Correlated means \"per outer row\" for meaning; Postgres turns `EXISTS`/`IN` into semi-joins but runs a correlated scalar aggregate as a per-row SubPlan.",
+    "`NOT IN` with a NULL in the list returns nothing; use `NOT EXISTS` for anti-joins.",
+    "A recursive CTE is a loop: the recursive member sees only the previous iteration and the query stops when an iteration is empty.",
+    "On graphs, termination needs a visited array, the `CYCLE` clause or a depth bound; trees terminate because leaves have no children."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqs-correlated",
+        "type": "sequence",
+        "title": "A correlated scalar subquery runs per outer row",
+        "alt": "Sequence diagram with three participants: the outer scan of listings, the SubPlan that computes the area average, and the result. For each listing the outer scan passes its area to the SubPlan, which returns that area's average; the outer scan keeps the row only when its price is above it. The planner keeps this as a SubPlan, while EXISTS and IN become semi-joins.",
+        "caption": "Correlated means evaluated per outer row; for a scalar aggregate Postgres literally does that, so rewrite hot ones as a grouped join or a window.",
+        "actors": [
+          {"id": "outer", "label": "Outer scan"},
+          {"id": "sub", "label": "SubPlan avg()"},
+          {"id": "out", "label": "Result"}
+        ],
+        "messages": [
+          {"from": "outer", "to": "sub", "label": "row 1: area = Harbor", "note": "The subquery's `WHERE x.area = l.area` uses the current outer row's value."},
+          {"from": "sub", "to": "outer", "label": "avg = 250", "style": "reply"},
+          {"from": "outer", "to": "out", "label": "200 > 250? drop", "style": "fail"},
+          {"from": "outer", "to": "sub", "label": "row 2: area = Harbor", "note": "Same area again, but the SubPlan runs again: one execution per outer row."},
+          {"from": "sub", "to": "outer", "label": "avg = 250", "style": "reply"},
+          {"from": "outer", "to": "out", "label": "300 > 250? keep"},
+          {"from": "outer", "to": "sub", "label": "row 3: area = NULL", "note": "`x.area = NULL` matches nothing, so avg() of no rows is NULL."},
+          {"from": "sub", "to": "outer", "label": "avg = NULL", "style": "reply"},
+          {"from": "outer", "to": "out", "label": "price > NULL? drop", "style": "fail", "note": "Unknown is not true. Use IS NOT DISTINCT FROM if NULL areas form a group."}
+        ]
+      },
+      {
+        "id": "sqs-notin",
+        "type": "compare",
+        "title": "NOT IN versus NOT EXISTS when the list holds a NULL",
+        "alt": "Comparison for outer value 2 against a subquery returning 1 and NULL. On the left, 2 NOT IN (1, NULL) expands to 2 <> 1 AND 2 <> NULL, which is unknown, so the row is dropped and the query returns no rows. On the right, NOT EXISTS looks for a row equal to 2, finds none, and keeps the row.",
+        "caption": "NOT IN turns one NULL into unknown for every row; NOT EXISTS only asks whether a matching row exists.",
+        "before": {
+          "label": "x NOT IN (SELECT y ...)",
+          "nodes": [
+            {"id": "x", "label": "outer x = 2", "kind": "client", "col": 0, "row": 0, "sub": "list: 1, NULL"},
+            {"id": "test", "label": "2<>1 AND 2<>NULL", "kind": "decision", "col": 2, "row": 0, "sub": "true AND unknown"},
+            {"id": "drop", "label": "unknown", "kind": "bad", "col": 2, "row": 2, "sub": "row filtered"},
+            {"id": "res", "label": "result", "kind": "bad", "col": 0, "row": 2, "sub": "no rows at all"}
+          ],
+          "edges": [
+            {"from": "x", "to": "test", "label": "expand"},
+            {"from": "test", "to": "drop"},
+            {"from": "drop", "to": "res", "label": "same for 3, 4"}
+          ]
+        },
+        "after": {
+          "label": "NOT EXISTS (... y = x)",
+          "nodes": [
+            {"id": "x", "label": "outer x = 2", "kind": "client", "col": 0, "row": 0, "sub": "rows: 1, NULL"},
+            {"id": "test", "label": "any y = 2?", "kind": "decision", "col": 2, "row": 0, "sub": "1 no, NULL no"},
+            {"id": "keep", "label": "none found", "kind": "good", "col": 2, "row": 2, "sub": "row kept"},
+            {"id": "res", "label": "result", "kind": "good", "col": 0, "row": 2, "sub": "2, 3, 4"}
+          ],
+          "edges": [
+            {"from": "x", "to": "test", "label": "probe"},
+            {"from": "test", "to": "keep"},
+            {"from": "keep", "to": "res", "label": "anti-join"}
+          ]
+        }
+      },
+      {
+        "id": "sqs-recursive",
+        "type": "flow",
+        "title": "How WITH RECURSIVE evaluates",
+        "alt": "Flow diagram of recursive CTE evaluation. The anchor member runs once and fills the working table and the result. The recursive member joins the working table to the base table. If it produced rows, they are appended to the result and become the next working table; if it produced no rows, evaluation stops and the accumulated result is returned.",
+        "caption": "The recursive member only ever sees the previous iteration's rows; an empty iteration is the only stop signal.",
+        "nodes": [
+          {"id": "anchor", "label": "anchor member", "kind": "service", "col": 0, "row": 0, "sub": "runs once"},
+          {"id": "work", "label": "working table", "kind": "state", "col": 2, "row": 0, "sub": "previous level"},
+          {"id": "rec", "label": "recursive member", "kind": "service", "col": 2, "row": 2, "sub": "JOIN base table"},
+          {"id": "any", "label": "any new rows?", "kind": "decision", "col": 4, "row": 2},
+          {"id": "stop", "label": "stop", "kind": "good", "col": 4, "row": 4, "sub": "iteration empty"},
+          {"id": "result", "label": "result", "kind": "storage", "col": 0, "row": 4, "sub": "UNION ALL of all"}
+        ],
+        "edges": [
+          {"from": "anchor", "to": "work", "label": "seed"},
+          {"from": "anchor", "to": "result", "label": "emit"},
+          {"from": "work", "to": "rec", "label": "read"},
+          {"from": "rec", "to": "any"},
+          {"from": "any", "to": "work", "label": "yes: replace"},
+          {"from": "rec", "to": "result", "label": "emit"},
+          {"from": "any", "to": "stop", "label": "no"},
+          {"from": "stop", "to": "result", "label": "return"}
+        ],
+        "steps": [
+          {"edges": [0, 1], "text": "The anchor runs once. Its rows (the roots, depth 0) go to the output and become the first working table."},
+          {"edges": [2, 3], "text": "The recursive member joins the base table to the working table only, so it finds exactly the next level."},
+          {"edges": [5], "text": "Whatever it produced is appended to the output (UNION ALL keeps duplicates; UNION would drop rows already seen)."},
+          {"edges": [4], "text": "If it produced rows, they replace the working table and the member runs again: depth 1, then 2, and so on."},
+          {"edges": [6, 7], "text": "When an iteration returns nothing (leaves have no children), evaluation stops and the accumulated rows are the CTE's result."}
+        ]
+      },
+      {
+        "id": "sqs-cycle",
+        "type": "flow",
+        "title": "A loop in the network and the visited-array guard",
+        "alt": "Flow diagram of a transit network: Central links to Market, Market to Museum, Museum to Harbor, Harbor to Airport, and Airport links back to Market, forming a loop. At Airport the walk tries Market again; a decision checks whether Market is already in the visited array, and because it is, that branch is pruned instead of looping forever.",
+        "caption": "Carrying the path and refusing to revisit a station turns an endless loop into a finite set of simple paths.",
+        "nodes": [
+          {"id": "c", "label": "Central", "kind": "client", "col": 0, "row": 0, "sub": "hops 0"},
+          {"id": "m", "label": "Market", "kind": "state", "col": 2, "row": 0, "sub": "hops 1"},
+          {"id": "mu", "label": "Museum", "kind": "state", "col": 4, "row": 0, "sub": "hops 2"},
+          {"id": "h", "label": "Harbor", "kind": "state", "col": 4, "row": 2, "sub": "hops 3"},
+          {"id": "a", "label": "Airport", "kind": "state", "col": 2, "row": 2, "sub": "hops 4"},
+          {"id": "guard", "label": "Market in path?", "kind": "decision", "col": 2, "row": 4, "sub": "{C,M,Mu,H,A}"},
+          {"id": "prune", "label": "branch pruned", "kind": "good", "col": 4, "row": 4, "sub": "walk ends"},
+          {"id": "loop", "label": "no guard", "kind": "bad", "col": 0, "row": 4, "sub": "never stops"}
+        ],
+        "edges": [
+          {"from": "c", "to": "m", "label": "link"},
+          {"from": "m", "to": "mu", "label": "link"},
+          {"from": "mu", "to": "h", "label": "link"},
+          {"from": "h", "to": "a", "label": "link"},
+          {"from": "a", "to": "m", "label": "loop back", "style": "fail"},
+          {"from": "a", "to": "guard", "label": "try Market"},
+          {"from": "guard", "to": "prune", "label": "yes"},
+          {"from": "guard", "to": "loop", "label": "if unchecked", "style": "fail"}
+        ],
+        "steps": [
+          {"edges": [0, 1, 2, 3], "text": "Each iteration follows one more link and appends the station to the path: Central, Market, Museum, Harbor, Airport."},
+          {"edges": [4], "text": "Airport links back to Market. Without a guard the walk would go Market, Museum, Harbor, Airport, Market... forever."},
+          {"edges": [5, 6], "text": "`to_station <> ALL(visited)` sees Market already on this path, so the recursive member produces no row for it and the iteration ends empty."},
+          {"edges": [7], "text": "With no check, every iteration keeps producing rows and the query runs until the statement timeout."}
+        ]
+      },
+      {
+        "id": "sqs-levels",
+        "type": "bars",
+        "title": "Rows produced by each iteration of the org-chart walk",
+        "alt": "Bar chart of rows produced per iteration for the eight-person example org chart: the anchor produces 1 row, iteration 1 produces 2, iteration 2 produces 4, iteration 3 produces 1, and iteration 4 produces no rows (not drawn), which stops the recursion.",
+        "caption": "Exact counts for the example data: 1 + 2 + 4 + 1 = 8 rows, and the empty iteration 4 (no bar) is what ends the query.",
+        "unit": "rows",
+        "bars": [
+          {"label": "anchor (depth 0)", "value": 1},
+          {"label": "iteration 1", "value": 2},
+          {"label": "iteration 2", "value": 4, "highlight": true},
+          {"label": "iteration 3", "value": 1}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE categories (\n  id int PRIMARY KEY,\n  parent_id int REFERENCES categories(id),\n  name text NOT NULL\n);",
+        "starter": "-- Only looks one level up, so deeper categories get the wrong depth and a cut-off path\nSELECT c.id AS category_id,\n       CASE WHEN p.id IS NULL THEN 0 ELSE 1 END AS depth,\n       concat_ws(' > ', p.name, c.name) AS path\nFROM categories c\nLEFT JOIN categories p ON p.id = c.parent_id;\n",
+        "solution": "WITH RECURSIVE tree AS (\n  SELECT id, 0 AS depth, name AS path\n  FROM categories\n  WHERE parent_id IS NULL\n  UNION ALL\n  SELECT c.id, t.depth + 1, t.path || ' > ' || c.name\n  FROM categories c\n  JOIN tree t ON c.parent_id = t.id\n)\nSELECT id AS category_id, depth, path\nFROM tree;\n",
+        "tests": [
+          {
+            "name": "three levels under one root plus a second root",
+            "seed": "INSERT INTO categories VALUES\n  (1, NULL, 'Outdoor'), (2, 1, 'Camping'), (3, 2, 'Tents'), (4, 1, 'Cycling'), (5, NULL, 'Kitchen');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[1, 0, "Outdoor"], [2, 1, "Outdoor > Camping"], [3, 2, "Outdoor > Camping > Tents"], [4, 1, "Outdoor > Cycling"], [5, 0, "Kitchen"]]}
+          },
+          {
+            "name": "a single top-level category",
+            "seed": "INSERT INTO categories VALUES (10, NULL, 'Books');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[10, 0, "Books"]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "children with smaller ids than their parents",
+            "seed": "INSERT INTO categories VALUES (3, NULL, 'Home'), (1, 3, 'Lamps'), (2, 1, 'Desk lamps');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[3, 0, "Home"], [1, 1, "Home > Lamps"], [2, 2, "Home > Lamps > Desk lamps"]]}
+          },
+          {
+            "name": "six-level chain",
+            "seed": "INSERT INTO categories VALUES\n  (1, NULL, 'Electronics'), (2, 1, 'Computers'), (3, 2, 'Laptops'),\n  (4, 3, 'Gaming'), (5, 4, '17-inch'), (6, 5, 'Refurbished');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[1, 0, "Electronics"], [2, 1, "Electronics > Computers"], [3, 2, "Electronics > Computers > Laptops"], [4, 3, "Electronics > Computers > Laptops > Gaming"], [5, 4, "Electronics > Computers > Laptops > Gaming > 17-inch"], [6, 5, "Electronics > Computers > Laptops > Gaming > 17-inch > Refurbished"]]}
+          },
+          {
+            "name": "same name under different parents",
+            "seed": "INSERT INTO categories VALUES\n  (1, NULL, 'Men'), (2, NULL, 'Women'), (3, 1, 'Shoes'), (4, 2, 'Shoes'), (5, 4, 'Boots'), (6, 3, 'Boots');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[1, 0, "Men"], [2, 0, "Women"], [3, 1, "Men > Shoes"], [4, 1, "Women > Shoes"], [5, 2, "Women > Shoes > Boots"], [6, 2, "Men > Shoes > Boots"]]}
+          },
+          {
+            "name": "many siblings and an uneven tree",
+            "seed": "INSERT INTO categories VALUES\n  (1, NULL, 'Garden'), (2, 1, 'Seeds'), (3, 1, 'Tools'), (4, 1, 'Furniture'),\n  (5, 3, 'Hand tools'), (6, 5, 'Trowels'), (7, NULL, 'Pets');",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": [[1, 0, "Garden"], [2, 1, "Garden > Seeds"], [3, 1, "Garden > Tools"], [4, 1, "Garden > Furniture"], [5, 2, "Garden > Tools > Hand tools"], [6, 3, "Garden > Tools > Hand tools > Trowels"], [7, 0, "Pets"]]}
+          },
+          {
+            "name": "empty catalogue",
+            "seed": "",
+            "expected": {"columns": ["category_id", "depth", "path"], "rows": []}
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE listings (\n  id int PRIMARY KEY,\n  area text,\n  nightly_price numeric(10,2)\n);",
+        "starter": "-- Compares every listing with the average of ALL listings, not its own area\nSELECT id AS listing_id, nightly_price\nFROM listings\nWHERE nightly_price > (SELECT avg(nightly_price) FROM listings);\n",
+        "solution": "SELECT l.id AS listing_id, l.nightly_price\nFROM listings l\nWHERE l.nightly_price > (\n  SELECT avg(x.nightly_price)\n  FROM listings x\n  WHERE x.area IS NOT DISTINCT FROM l.area\n);\n",
+        "tests": [
+          {
+            "name": "two areas with different price levels",
+            "seed": "INSERT INTO listings VALUES\n  (1, 'Harbor', 200.00), (2, 'Harbor', 300.00), (3, 'Harbor', 250.00),\n  (4, 'Old Town', 80.00), (5, 'Old Town', 120.00);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[2, 300], [5, 120]]}
+          },
+          {
+            "name": "a price equal to the average does not count",
+            "seed": "INSERT INTO listings VALUES (1, 'Docks', 90.00), (2, 'Docks', 100.00), (3, 'Docks', 110.00);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[3, 110]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "listings without an area are compared with each other",
+            "seed": "INSERT INTO listings VALUES (1, NULL, 50.00), (2, NULL, 70.00), (3, 'Harbor', 100.00), (4, 'Harbor', 140.00);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[2, 70], [4, 140]]}
+          },
+          {
+            "name": "a NULL price is ignored",
+            "seed": "INSERT INTO listings VALUES (1, 'Mill', 100.00), (2, 'Mill', NULL), (3, 'Mill', 140.00);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[3, 140]]}
+          },
+          {
+            "name": "a lone listing is never above itself",
+            "seed": "INSERT INTO listings VALUES (1, 'Park', 500.00), (2, 'Bay', 10.00), (3, 'Bay', 20.50);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[3, 20.5]]}
+          },
+          {
+            "name": "area names that differ only by case are different areas",
+            "seed": "INSERT INTO listings VALUES (1, 'Harbor', 100.00), (2, 'Harbor', 200.00), (3, 'harbor', 50.00), (4, 'harbor', 49.99);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": [[2, 200], [3, 50]]}
+          },
+          {
+            "name": "every listing priced the same",
+            "seed": "INSERT INTO listings VALUES (1, 'Quay', 75.00), (2, 'Quay', 75.00), (3, NULL, 75.00);",
+            "expected": {"columns": ["listing_id", "nightly_price"], "rows": []}
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE stations (\n  id int PRIMARY KEY,\n  name text NOT NULL UNIQUE\n);\nCREATE TABLE links (\n  from_station int NOT NULL REFERENCES stations(id),\n  to_station int NOT NULL REFERENCES stations(id)\n);",
+        "starter": "-- A hop cap stops the loop, but it also hides stations further away\nWITH RECURSIVE walk(station_id, hops) AS (\n  SELECT id, 0 FROM stations WHERE name = 'Central'\n  UNION ALL\n  SELECT l.to_station, w.hops + 1\n  FROM walk w\n  JOIN links l ON l.from_station = w.station_id\n  WHERE w.hops < 3\n)\nSELECT s.name AS station, min(w.hops) AS min_hops\nFROM walk w\nJOIN stations s ON s.id = w.station_id\nWHERE w.hops > 0\nGROUP BY s.name;\n",
+        "solution": "WITH RECURSIVE walk AS (\n  SELECT s.id AS station_id, 0 AS hops, ARRAY[s.id] AS visited\n  FROM stations s\n  WHERE s.name = 'Central'\n  UNION ALL\n  SELECT l.to_station, w.hops + 1, w.visited || l.to_station\n  FROM walk w\n  JOIN links l ON l.from_station = w.station_id\n  WHERE l.to_station <> ALL (w.visited)\n)\nSELECT s.name AS station, min(w.hops) AS min_hops\nFROM walk w\nJOIN stations s ON s.id = w.station_id\nWHERE w.hops > 0\nGROUP BY s.id, s.name;\n",
+        "tests": [
+          {
+            "name": "a line with a loop back into the middle",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'Market'), (3, 'Museum'), (4, 'Harbor'), (5, 'Airport');\nINSERT INTO links VALUES (1, 2), (2, 3), (3, 4), (4, 5), (5, 2);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["Market", 1], ["Museum", 2], ["Harbor", 3], ["Airport", 4]]}
+          },
+          {
+            "name": "a shortcut beats the long way round",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'Park'), (3, 'Zoo');\nINSERT INTO links VALUES (1, 2), (2, 3), (1, 3);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["Park", 1], ["Zoo", 1]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "a link back to Central is not a result",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'Mill'), (3, 'Bridge');\nINSERT INTO links VALUES (1, 2), (2, 1), (2, 3), (3, 1);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["Mill", 1], ["Bridge", 2]]}
+          },
+          {
+            "name": "a self-link and an unreachable branch",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'Depot'), (3, 'North'), (4, 'South');\nINSERT INTO links VALUES (1, 2), (2, 2), (3, 4), (4, 3);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["Depot", 1]]}
+          },
+          {
+            "name": "every link runs both ways",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'East'), (3, 'Far'), (4, 'West'), (5, 'Pier');\nINSERT INTO links VALUES (1, 2), (2, 1), (2, 3), (3, 2), (3, 4), (4, 3), (4, 1), (1, 4), (2, 4), (4, 2), (3, 5), (5, 3);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["East", 1], ["West", 1], ["Far", 2], ["Pier", 3]]}
+          },
+          {
+            "name": "duplicate links and a long tail",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'A1'), (3, 'A2'), (4, 'A3'), (5, 'A4'), (6, 'A5'), (7, 'A6');\nINSERT INTO links VALUES (1, 2), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 4);",
+            "expected": {"columns": ["station", "min_hops"], "rows": [["A1", 1], ["A2", 2], ["A3", 3], ["A4", 4], ["A5", 5], ["A6", 6]]}
+          },
+          {
+            "name": "Central has only incoming links",
+            "seed": "INSERT INTO stations VALUES (1, 'Central'), (2, 'Spur');\nINSERT INTO links VALUES (2, 1), (2, 2);",
+            "expected": {"columns": ["station", "min_hops"], "rows": []}
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "WITH t(x) AS (VALUES (1), (2))\nSELECT (SELECT x FROM t) AS only_value;",
+        "choices": ["1", "1\n2", "NULL", "ERROR: more than one row returned by a subquery used as an expression"],
+        "answer": 3,
+        "explain": "A scalar subquery may return at most one row. Two rows is a runtime error, not \"the first one\". Use an aggregate or `ORDER BY ... LIMIT 1` to say which row you mean."
+      },
+      {
+        "code": "WITH a(x) AS (VALUES (1), (2), (3)),\n     b(y) AS (VALUES (1), (NULL))\nSELECT count(*) FROM a WHERE x NOT IN (SELECT y FROM b);",
+        "choices": ["2", "0", "3", "ERROR: NULL value in NOT IN list"],
+        "answer": 1,
+        "explain": "`2 NOT IN (1, NULL)` is `2 <> 1 AND 2 <> NULL`, which is unknown, and `WHERE` keeps only true. Every row is filtered. `NOT EXISTS` would return 2."
+      },
+      {
+        "code": "WITH RECURSIVE n(i) AS (\n  SELECT 1\n  UNION ALL\n  SELECT i + 1 FROM n WHERE i <= 5\n)\nSELECT count(*), max(i) FROM n;",
+        "choices": ["5 | 5", "6 | 6", "5 | 6", "6 | 5"],
+        "answer": 1,
+        "explain": "The stop condition is checked on the previous row: when `i = 5` passes `i <= 5`, the member still produces 6. Only from 6 does it produce nothing, so the rows are 1 to 6."
+      },
+      {
+        "code": "WITH RECURSIVE r(x) AS (\n  SELECT 1\n  UNION\n  SELECT x % 3 + 1 FROM r\n)\nSELECT count(*) FROM r;",
+        "choices": ["3", "ERROR: canceling statement due to statement timeout", "1", "4"],
+        "answer": 0,
+        "explain": "The values cycle 1, 2, 3, 1, ... but `UNION` (not `UNION ALL`) discards rows already produced, so the fourth iteration is empty and the query stops with three rows. With `UNION ALL` it would never end."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (1), (2), (3))\nSELECT count(*) FROM t\nWHERE x > (SELECT x FROM t WHERE x > 10);",
+        "choices": ["3", "0", "ERROR: subquery returned no rows"],
+        "answer": 1,
+        "explain": "A scalar subquery with no rows is NULL, not an error. `x > NULL` is unknown for every row, so nothing is counted."
+      },
+      {
+        "code": "SELECT EXISTS (SELECT NULL) AS a,\n       EXISTS (SELECT 1 WHERE false) AS b;",
+        "choices": ["false | false", "true | false", "NULL | false"],
+        "answer": 1,
+        "explain": "`EXISTS` only checks whether the subquery returns a row; the select list is never looked at. A row containing NULL is still a row."
+      }
+    ],
+    "tip": "Before writing a recursive CTE, say three things out loud: the anchor (\"the roots, depth 0\"), the step (\"children of the previous level\") and why it stops (\"leaves have no children\" or \"we never revisit a station on the same path\"). Then write and run the anchor alone before adding `UNION ALL`. Interviewers mostly want to hear the termination argument.",
+    "links": {
+      "problems": ["reachable-count", "grid-shortest-path"],
+      "guides": ["database-indexes"],
+      "lessons": ["sql-joins", "sql-aggregates", "graph-bfs-shortest-hops", "graph-dfs-components"]
+    }
+  }
+}

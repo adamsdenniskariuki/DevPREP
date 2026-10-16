@@ -1,0 +1,246 @@
+{
+  "id": "sql",
+  "kind": "language",
+  "title": "SQL & Postgres",
+  "description": "Interview SQL on real Postgres: NULL logic, grouping, every join, CTEs, window functions, dates and JSONB, and schema design, checked against result sets.",
+  "lessons": [
+    "sql-select-basics",
+    "sql-aggregates",
+    "sql-joins",
+    "sql-subqueries-ctes",
+    "sql-window-functions",
+    "sql-sets-case",
+    "sql-dates-strings-json",
+    "sql-schema-design"
+  ],
+  "placement": [
+    {
+      "question": "What does this return?",
+      "code": "WITH t(x) AS (VALUES (1), (2), (3))\nSELECT count(*) FROM t WHERE x NOT IN (1, NULL);",
+      "choices": [
+        "`2`",
+        "`0`",
+        "`3`",
+        "`ERROR`"
+      ],
+      "answer": 1,
+      "explain": "`x <> NULL` is UNKNOWN, so `x <> 1 AND x <> NULL` is never TRUE and every row is filtered out.",
+      "lessons": [
+        "sql-select-basics"
+      ]
+    },
+    {
+      "question": "Which keeps tickets whose `status` is NULL while excluding closed ones?",
+      "choices": [
+        "`WHERE status <> 'closed'`",
+        "`WHERE status IS DISTINCT FROM 'closed'`",
+        "`WHERE NOT status = 'closed'`",
+        "`WHERE status != 'closed'`"
+      ],
+      "answer": 1,
+      "explain": "The other three are UNKNOWN for a NULL status, and WHERE keeps only TRUE. `IS DISTINCT FROM` treats NULL as different from 'closed'.",
+      "lessons": [
+        "sql-select-basics"
+      ]
+    },
+    {
+      "question": "What does this return?",
+      "code": "WITH t(x) AS (VALUES (1), (NULL), (3))\nSELECT count(*), count(x), avg(x) FROM t",
+      "choices": [
+        "`3 | 3 | 1.33`",
+        "`3 | 2 | 2`",
+        "`2 | 2 | 2`",
+        "`3 | 2 | 1.33`"
+      ],
+      "answer": 1,
+      "explain": "`count(*)` counts all rows; `count(x)` and `avg` skip the NULL, so the average is 4 / 2.",
+      "lessons": [
+        "sql-aggregates"
+      ]
+    },
+    {
+      "question": "You need per-seller order count and paid revenue. Why is `WHERE status = 'paid'` wrong here?",
+      "choices": [
+        "It is fine; WHERE and FILTER are equivalent",
+        "It removes unpaid orders before grouping, so the order count is too low",
+        "WHERE cannot reference `status` in a grouped query",
+        "It makes `sum` return NULL for every seller"
+      ],
+      "answer": 1,
+      "explain": "WHERE applies to every measure. Filter only the revenue: `sum(amount) FILTER (WHERE status = 'paid')`.",
+      "lessons": [
+        "sql-aggregates"
+      ]
+    },
+    {
+      "question": "What does this return?",
+      "code": "WITH p(id) AS (VALUES (1), (2), (3)),\n     l(pid) AS (VALUES (1), (NULL))\nSELECT count(*) FROM p WHERE id NOT IN (SELECT pid FROM l);",
+      "choices": [
+        "`2`",
+        "`0`",
+        "`3`",
+        "`1`"
+      ],
+      "answer": 1,
+      "explain": "One NULL in the subquery makes every `NOT IN` test unknown, so no row qualifies. `NOT EXISTS` would return 2.",
+      "lessons": [
+        "sql-joins"
+      ]
+    },
+    {
+      "question": "Customers with no paid orders must appear with 0. Where does `o.status = 'paid'` go in `customers c LEFT JOIN orders o`?",
+      "choices": [
+        "In WHERE",
+        "In the ON clause",
+        "In HAVING",
+        "Either: they are equivalent"
+      ],
+      "answer": 1,
+      "explain": "In WHERE it removes the NULL-padded rows and turns the LEFT JOIN into an inner join; in ON it only decides which orders match.",
+      "lessons": [
+        "sql-joins"
+      ]
+    },
+    {
+      "question": "How many rows does this return?",
+      "code": "WITH a(x) AS (VALUES (1), (2), (3)),\n     b(y) AS (VALUES (1), (NULL))\nSELECT x FROM a WHERE x NOT IN (SELECT y FROM b);",
+      "choices": [
+        "0",
+        "2",
+        "3",
+        "An error"
+      ],
+      "answer": 0,
+      "explain": "`2 NOT IN (1, NULL)` is `2 <> 1 AND 2 <> NULL`, which is unknown, so every row is filtered. `NOT EXISTS` would return 2 and 3.",
+      "lessons": [
+        "sql-subqueries-ctes"
+      ]
+    },
+    {
+      "question": "In `WITH RECURSIVE t AS (anchor UNION ALL recursive_member)`, which rows does the recursive member see when it references `t`?",
+      "choices": [
+        "Every row produced so far",
+        "Only the rows produced by the previous iteration",
+        "Only the anchor's rows",
+        "The whole base table"
+      ],
+      "answer": 1,
+      "explain": "Each iteration joins against the working table, which holds just the previous iteration's new rows; evaluation stops when an iteration produces nothing.",
+      "lessons": [
+        "sql-subqueries-ctes"
+      ]
+    },
+    {
+      "question": "What does this return?",
+      "code": "WITH t(x) AS (VALUES (3), (1), (2))\nSELECT x FROM t WHERE row_number() OVER (ORDER BY x) = 1",
+      "choices": [
+        "`1`",
+        "`3`",
+        "An error: window functions are not allowed in WHERE"
+      ],
+      "answer": 2,
+      "explain": "`WHERE` is evaluated before window functions. Compute the row number in a CTE or subquery and filter in the outer query.",
+      "lessons": [
+        "sql-window-functions"
+      ]
+    },
+    {
+      "question": "Days 1, 2, 2, 3 with amounts 10, 5, 7, 1. What does `sum(amount) OVER (ORDER BY day)` give for the two day-2 rows?",
+      "choices": [
+        "15 and 22",
+        "22 and 22",
+        "22 and 15",
+        "23 and 23"
+      ],
+      "answer": 1,
+      "explain": "The default frame with `ORDER BY` is `RANGE ... CURRENT ROW`, which includes peers, so both day-2 rows see 10 + 5 + 7. Add a tie-breaker or use `ROWS`.",
+      "lessons": [
+        "sql-window-functions"
+      ]
+    },
+    {
+      "question": "What does this return?",
+      "code": "SELECT 1\nUNION\nSELECT 2\nINTERSECT\nSELECT 3;",
+      "choices": [
+        "`1`",
+        "no rows",
+        "`1` and `2`"
+      ],
+      "answer": 0,
+      "explain": "`INTERSECT` binds tighter than `UNION`: `1 UNION (2 INTERSECT 3)` is just `1`.",
+      "lessons": [
+        "sql-sets-case"
+      ]
+    },
+    {
+      "question": "A searched `CASE WHEN amount < 50 THEN 'small' WHEN amount < 200 THEN 'medium' ELSE 'large' END` sees a NULL amount. What does it return?",
+      "choices": [
+        "NULL",
+        "`'small'`",
+        "`'large'`",
+        "an error"
+      ],
+      "answer": 2,
+      "explain": "`NULL < 50` is not true, so every WHEN falls through and the row takes `ELSE 'large'`. Test `amount IS NULL` first.",
+      "lessons": [
+        "sql-sets-case"
+      ]
+    },
+    {
+      "question": "What does this return?",
+      "code": "WITH t(ts) AS (VALUES (timestamptz '2024-03-01 15:00:00+00'))\nSELECT count(*) FROM t WHERE ts BETWEEN '2024-03-01' AND '2024-03-01';",
+      "choices": [
+        "`0`",
+        "`1`",
+        "An error"
+      ],
+      "answer": 0,
+      "explain": "Both date bounds become midnight, so only 00:00:00 matches; use `>= day AND < day + 1`.",
+      "lessons": [
+        "sql-dates-strings-json"
+      ]
+    },
+    {
+      "question": "Which expression returns NULL when `last_name` is NULL?",
+      "choices": [
+        "`first_name || ' ' || last_name`",
+        "`concat(first_name, ' ', last_name)`",
+        "`concat_ws(' ', first_name, last_name)`"
+      ],
+      "answer": 0,
+      "explain": "`||` is strict: any NULL operand makes the result NULL; `concat` and `concat_ws` skip NULLs.",
+      "lessons": [
+        "sql-dates-strings-json"
+      ]
+    },
+    {
+      "question": "What does the final SELECT return?",
+      "code": "CREATE TABLE u (email text UNIQUE);\nINSERT INTO u VALUES (NULL), (NULL), ('a@x.io');\nSELECT count(*) FROM u;",
+      "choices": [
+        "3",
+        "2",
+        "An error on the second insert",
+        "1"
+      ],
+      "answer": 0,
+      "explain": "UNIQUE treats NULLs as distinct by default, so both NULL rows go in. Use NULLS NOT DISTINCT to allow only one NULL.",
+      "lessons": [
+        "sql-schema-design"
+      ]
+    },
+    {
+      "question": "Deleting a student should remove their enrolments, but deleting a course with enrolments should be refused. Which FKs on `enrolments` do that?",
+      "choices": [
+        "student_id ON DELETE CASCADE, course_code ON DELETE RESTRICT",
+        "student_id ON DELETE RESTRICT, course_code ON DELETE CASCADE",
+        "Both ON DELETE SET NULL",
+        "Both ON DELETE CASCADE"
+      ],
+      "answer": 0,
+      "explain": "CASCADE removes the child rows along with the parent. RESTRICT blocks the parent delete while child rows still exist.",
+      "lessons": [
+        "sql-schema-design"
+      ]
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 import type { Diagram } from './guide-types'
 
-export type Track = 'dsa' | 'system-design' | 'ml' | 'ai' | 'behavioral' | 'python' | 'typescript'
+export type Track = 'dsa' | 'system-design' | 'ml' | 'ai' | 'behavioral' | 'python' | 'typescript' | 'sql'
 /** Language tracks teach one programming language; lessons there carry a runnable lab. */
-export type LabLanguage = 'py' | 'ts'
+export type LabLanguage = 'py' | 'ts' | 'sql'
 export type PathTag = 'swe' | 'senior'
 
 export interface TeachingSection {
@@ -69,6 +69,35 @@ export interface LabExercise {
   typeChecks?: string
 }
 
+/** One SQL test case: seed rows inserted after the schema, and the exact result table expected. */
+export interface SqlLabTest {
+  name: string
+  seed: string
+  expected: { columns: string[]; rows: unknown[][] }
+}
+
+/**
+ * A runnable SQL exercise on in-browser Postgres. Each case starts from a fresh database: `schema`, then the
+ * case seed, then the learner's SQL. The last statement that returns rows (or the `check` query) is compared.
+ */
+export interface SqlExercise {
+  id: 'core' | 'warmup' | 'stretch'
+  schema: string
+  starter: string
+  solution: string
+  /** Rows must come back in this order (the task asks for ORDER BY). */
+  ordered?: boolean
+  /** Query run after the learner's SQL, for tasks that change data or schema rather than select. */
+  check?: string
+  tests: SqlLabTest[]
+  hiddenTests: SqlLabTest[]
+}
+
+export type AnyLabExercise = LabExercise | SqlExercise
+export function isSqlExercise(exercise: AnyLabExercise): exercise is SqlExercise {
+  return 'schema' in exercise
+}
+
 /** "Predict the output" item. `choices[answer]` is the exact printed output. */
 export interface PredictItem {
   code: string
@@ -80,7 +109,7 @@ export interface PredictItem {
 export interface LessonLab {
   lang: LabLanguage
   diagrams: Diagram[]
-  exercises: LabExercise[]
+  exercises: AnyLabExercise[]
   predict: PredictItem[]
   tip: string
   links: { problems?: string[]; guides?: string[]; lessons?: string[] }

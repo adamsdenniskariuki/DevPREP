@@ -2,7 +2,8 @@ import { useRef, type KeyboardEvent } from 'react'
 import type { CodeLanguage } from '../problem-types'
 import { MAX_CODE_LENGTH } from '../code-drafts'
 
-const INDENT: Record<CodeLanguage, string> = { js: '  ', py: '    ' }
+type EditorLanguage = CodeLanguage | 'sql'
+const INDENT: Record<EditorLanguage, string> = { js: '  ', py: '    ', sql: '  ' }
 
 function insert(area: HTMLTextAreaElement, text: string, onChange: (value: string) => void) {
   area.focus()
@@ -19,7 +20,7 @@ function insert(area: HTMLTextAreaElement, text: string, onChange: (value: strin
  */
 export default function CodeEditor({ id, lang, value, onChange, describedBy }: {
   id: string
-  lang: CodeLanguage
+  lang: EditorLanguage
   value: string
   onChange: (value: string) => void
   describedBy?: string
@@ -38,7 +39,7 @@ export default function CodeEditor({ id, lang, value, onChange, describedBy }: {
       const before = area.value.slice(0, area.selectionStart)
       const line = before.slice(before.lastIndexOf('\n') + 1)
       let indent = /^[ \t]*/.exec(line)?.[0] ?? ''
-      if ((lang === 'py' && /:\s*$/.test(line)) || (lang === 'js' && /[{[(]\s*$/.test(line))) indent += INDENT[lang]
+      if ((lang === 'py' && /:\s*$/.test(line)) || (lang !== 'py' && /[{[(]\s*$/.test(line))) indent += INDENT[lang]
       event.preventDefault()
       insert(area, `\n${indent}`, onChange)
     }
