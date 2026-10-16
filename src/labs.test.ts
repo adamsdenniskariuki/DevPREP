@@ -12,7 +12,7 @@ import { lessonQueue } from './planner'
 import { emptyProgress, parseBackup, recordMock, recordPlacement, serializeBackup, updateProfile, type Progress } from './progress'
 import { problemIndex } from './problems'
 import { PY_HARNESS, runJsAsync, runPython } from './runner/core'
-import { createTsCompiler, formatDiagnostic, libClosure } from './runner/ts-core'
+import { checkWithTypeChecks, createTsCompiler, formatDiagnostic, libClosure } from './runner/ts-core'
 import { TYPESCRIPT_VERSION } from './runner/ts-version'
 
 const labs = await loadLabs()
@@ -94,9 +94,21 @@ describe('TypeScript labs (compiler + runner)', () => {
     expect(stuck).toMatchObject({ kind: 'done', outcomes: [{ pass: false }] })
   })
 
+  it('splits type-check failures from learner diagnostics, including unused @ts-expect-error lines', () => {
+    const checks = 'type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _a = Expect<Equal<ReturnType<typeof pick>, number>>\n// @ts-expect-error pick takes a number\npick("x")'
+    const good = checkWithTypeChecks(compiler.check, 'function pick(n: number): number { return n }', checks)
+    expect(good).toEqual({ diagnostics: [], typeChecks: { pass: true, errors: [] } })
+    const loose = checkWithTypeChecks(compiler.check, 'const bad: number = "x"\nfunction pick(n: any): any { return n }', checks)
+    expect(loose.diagnostics.map(diagnostic => [diagnostic.line, diagnostic.code])).toEqual([[1, 2322]])
+    expect(loose.typeChecks?.pass).toBe(false)
+    expect(loose.typeChecks?.errors.map(error => [error.line, error.code])).toEqual([[3, 2344], [4, 2578]])
+    expect(checkWithTypeChecks(compiler.check, 'const n = 1')).toEqual({ diagnostics: [], typeChecks: undefined })
+  })
+
   it.each(tsLabs)('%s: every solution type-checks and passes its tests, and every starter fails one', async (_id, lab) => {
     for (const exercise of lab.exercises) {
       expect(compiler.check(exercise.solution).map(formatDiagnostic), exercise.id).toEqual([])
+      if (exercise.typeChecks) expect(checkWithTypeChecks(compiler.check, exercise.solution, exercise.typeChecks).typeChecks, exercise.id).toEqual({ pass: true, errors: [] })
       const cases = [...exercise.tests, ...exercise.hiddenTests]
       const result = await runJsAsync({ code: compiler.transpile(exercise.solution), name: exercise.function, cases })
       expect(result, exercise.id).toMatchObject({ kind: 'done' })

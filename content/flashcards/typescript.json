@@ -241,6 +241,186 @@
       "front": "How do you get the resolved value type of an async function `load` without restating it?",
       "back": "`Awaited<ReturnType<typeof load>>`. `typeof` turns the value into a type, `ReturnType` gives `Promise<X>`, and `Awaited` unwraps it recursively. `Parameters<typeof load>` gives the argument tuple.",
       "level": "se"
+    },
+    {
+      "id": "typescript-tagged-union-states",
+      "front": "Why model request state as a discriminated union instead of `{ loading: boolean; data?: T; error?: string }`?",
+      "back": "The bag of optionals admits nonsense such as loading with an error or success without data, and every read needs `?.` or `!`. A union with a literal tag (`status: 'idle' | 'loading' | 'success' | 'failure'`) lists only the legal states: illegal literals fail to compile, and checking the tag gives exactly that state's fields.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-assert-never",
+      "front": "How do you make a `switch` over a union fail to compile when a new variant is added?",
+      "back": "End it with `default: return assertNever(x)` where `function assertNever(x: never): never { throw ... }`. After all cases `x` is `never`; a new, unhandled variant leaves its type there, which is not assignable to `never`. At runtime the helper throws on data that does not match the types.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-guards-trusted",
+      "front": "Does TypeScript check that a type guard `x is T` or an assertion `asserts x is T` is correct?",
+      "back": "No. It only checks that the guard returns a boolean (or that the assertion returns nothing). The body is trusted, so `return 'name' in x` typed as `x is User` makes `{ name: 42 }` a `User`, and an empty assertion body asserts everything. Check every field and test guards with bad input.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-optimistic-narrowing",
+      "front": "After `if (box.state.status === 'loading') { reset(); ... }`, is `box.state` still narrowed?",
+      "back": "Yes. Property narrowings are not invalidated by function calls, even if `reset` replaced `box.state`. The checker still says `loading`; at runtime it may be `idle`. Copy into a `const` before calling out, or re-check after the call.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-no-unchecked-indexed",
+      "front": "Does `strict: true` make `arr[0]` include `undefined`?",
+      "back": "No. `strict` turns on `strictNullChecks`, `noImplicitAny`, `useUnknownInCatchVariables` and others, but not `noUncheckedIndexedAccess`. Without it, index 0 of an empty `number[]` is typed `number` and `.toFixed()` throws at runtime; with it, indexed reads are `T | undefined` and must be handled.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-distributive-conditional",
+      "front": "What is `ToArray<string | number>` if `type ToArray<T> = T extends unknown ? T[] : never`, and how do you stop that?",
+      "back": "`string[] | number[]`. A conditional type on a naked type parameter distributes: it runs once per union member and unions the results. Wrap both sides in a tuple, `[T] extends [unknown] ? T[] : never`, to check the union as a whole and get `(string | number)[]`.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-mapped-modifiers",
+      "front": "How do you remove `readonly` and `?` with a mapped type?",
+      "back": "Prefix the modifier with `-`: `{ -readonly [K in keyof T]: T[K] }` is a `Mutable<T>` and `{ [K in keyof T]-?: T[K] }` is `Required<T>` (it also strips the `undefined` the `?` added). Mapping over `keyof T` is homomorphic, so it keeps existing modifiers and maps arrays and tuples to arrays and tuples.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-key-remap-as",
+      "front": "How do you rename or drop keys in a mapped type?",
+      "back": "Use an `as` clause (TS 4.1+): `{ [K in keyof T as NewKey]: T[K] }`. A template literal such as `get${Capitalize<string & K>}` renames keys; remapping to `never` removes the key, e.g. `as K extends 'password' ? never : K`. The value type still uses the original `K`.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-infer-keyword",
+      "front": "How is `ReturnType` written, and what does `infer` do?",
+      "back": "`type ReturnType<F extends (...args: any) => any> = F extends (...args: any) => infer R ? R : any`. `infer R` declares a type variable filled in by matching the pattern; it is only allowed in a conditional type's `extends` clause. On an overloaded function it matches the last signature.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-recursive-type-limits",
+      "front": "What goes wrong with a naive recursive `DeepReadonly<T>`?",
+      "back": "Mapping over a function drops its call signature, so return functions unchanged first. `Map`, `Set` and `Date` are mapped member by member and keep mutating methods. Deep or infinite instantiation fails with TS2589. And it is compile-time only: you still need a recursive `Object.freeze` to stop writes at runtime.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-live-bindings",
+      "front": "A module does `count++` after exporting `count`. Who sees the new value: an ESM `import { count }` or a CJS `const { count } = require(...)`?",
+      "back": "Only the ESM import. ESM imports are live, read-only bindings to the exporter's variable. CJS `module.exports = { count }` copies the value at that moment, and destructuring copies it again. Objects are shared either way; only the binding differs. Note that `export default count` is a one-time value too.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-module-cycle",
+      "front": "What does a circular import see in CommonJS and in ES modules?",
+      "back": "CJS: the second `require` returns the half-built `module.exports`, so properties assigned later read as `undefined`, and a later `module.exports = {...}` replacement is never seen. ESM: bindings are linked, but a `let`/`const`/`class` export read before its declaration runs throws a TDZ `ReferenceError`. Hoisted function declarations work. Fix: move shared code to a third module or read lazily.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-catch-unknown",
+      "front": "Why is `e` typed `unknown` in `catch (e)`, and how do you use it?",
+      "back": "Anything can be thrown, so strict mode (`useUnknownInCatchVariables`) types it `unknown`, and only `unknown` or `any` annotations are allowed. Narrow with `instanceof Error` (or a subclass), normalise other values with a `toError` that wraps them and sets `cause`, and rethrow what you cannot handle.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-finally-return",
+      "front": "What happens if a `finally` block contains `return`?",
+      "back": "It replaces the pending completion: an earlier `return` is overridden and an exception in flight is silently discarded. Use `finally` only for cleanup. Also, `return x` computes `x` before `finally` runs, so reassigning `x` in `finally` does not change the returned value.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-result-vs-throw",
+      "front": "When should a function return a `Result` union instead of throwing?",
+      "back": "Return `{ ok: true; value } | { ok: false; error }` for expected failures the caller must handle (validation, parse errors, not found, declined payment): the type forces the `ok` check. Throw for bugs, broken invariants and failures only a top-level handler can deal with. Convert at the boundary and keep one style per layer.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-derived-field-order",
+      "front": "In `class Child extends Base`, when do Child's field initialisers run, and why does it matter?",
+      "back": "Right after `super()` returns: base fields, base constructor body, then derived fields, then the derived constructor body. If the base constructor calls a method Child overrides, that override sees Child's fields as `undefined`. Don't call overridable methods from constructors.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-private-vs-hash-private",
+      "front": "`private secret` versus `#secret`: what is different at runtime?",
+      "back": "`private` is erased: `secret` is a normal enumerable property, visible to `Object.keys`/`JSON.stringify` and reachable via `obj['secret']`. `#secret` is a JavaScript private slot: unreachable outside the class body (even by subclasses), not listed anywhere, and `#secret in obj` is a brand check.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-class-structural-typing",
+      "front": "Is `const p: Point = { x: 1, y: 2 }` allowed for `class Point { constructor(public x: number, public y: number) {} }`? Is `p instanceof Point`?",
+      "back": "Allowed: class instance types are structural. But `p instanceof Point` is false because it was never constructed by `Point`. Adding a `private`, `protected` or `#` member makes the class nominal and rejects look-alikes.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-memo-cache-key",
+      "front": "What goes wrong with `memoize` keyed by `String(args)`, and what is a better default?",
+      "back": "Keys collide: `[1]` and `['1']` both give `'1'`, and every object becomes `'[object Object]'`. Use `JSON.stringify(args)` (or a caller-supplied `keyOf`), a `WeakMap` for identity keys, check `cache.has(key)` so `undefined` results stay cached, and bound the cache.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-freeze-shallow",
+      "front": "Does `Object.freeze` or `as const` make data immutable?",
+      "back": "`Object.freeze` is enforced at runtime but shallow: nested arrays/objects stay writable. `as const` (like `readonly`) is compile-time only. Prefer returning new values: spread, `toSorted`, `toReversed`, `toSpliced`, `with` (ES2023).",
+      "level": "se"
+    },
+    {
+      "id": "typescript-test-doubles",
+      "front": "What is the difference between a stub, a fake, a spy and a mock?",
+      "back": "A stub returns canned answers and checks nothing. A fake is a working but simpler implementation, such as an in-memory store. A spy records calls so you can assert on them afterwards. A mock is set up with expectations and fails if they are not met. Prefer injecting fakes through parameters over module mocking.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-inject-clock",
+      "front": "How do you make code that uses `Date.now()` or `Math.random()` testable?",
+      "back": "Make them parameters. Pass a `Clock` with `now()` (production wraps `Date.now`, tests use a `FakeClock` with `advance(ms)`) and an `Rng` (`() => number`; production passes `Math.random`, tests pass a seeded generator). A default parameter keeps existing call sites unchanged.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-no-sleep-tests",
+      "front": "Why not `await sleep(100)` in a test, and what do you do instead?",
+      "back": "A sleep guesses how long the work takes: too short and the test flakes, too long and the suite is slow. Await the promise the code returns, or use fake timers (`vi.useFakeTimers()`, `advanceTimersByTime`) to move time by hand. Always return or await an async test's promise.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-types-not-tests",
+      "front": "The code type-checks. Why does it still need tests?",
+      "back": "Types are erased at run time and check shapes, not values. A function typed `number` can still return `NaN`, an off-by-one index or `-1`, and JSON from the network is whatever the server sent. Types remove a class of bugs, while tests check behaviour and boundaries.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-node-vs-browser",
+      "front": "Name the main differences between Node and the browser as JavaScript hosts.",
+      "back": "Globals: `window`/`document` versus `process`/`Buffer`, with `globalThis` in both. I/O: DOM and storage versus `node:fs`/`net`, while `fetch`, `URL` and timers exist in both. Event loop: Node adds `process.nextTick` and `setImmediate`, and browsers add rendering steps. Threads: Web Workers versus `worker_threads`. Trust: a same-origin sandbox versus full OS access.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-fill-shared-rows",
+      "front": "What is wrong with `new Array(3).fill(new Array(3).fill(0))` for a grid, and what do you write instead?",
+      "back": "`fill` evaluates its argument once, so all three slots hold the same row array and writing `grid[0][0]` changes every row. Use `Array.from({ length: rows }, () => new Array(cols).fill(0))` so the factory makes one array per row.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-map-parseint",
+      "front": "Why does `['1', '2', '3'].map(parseInt)` return `[1, NaN, NaN]`?",
+      "back": "`map` calls its callback with (value, index, array), so the index becomes `parseInt`'s radix: radix 0 means base 10, radix 1 is invalid, and '3' is not a binary digit. Use `map(Number)` or `map(s => parseInt(s, 10))`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-shift-queue",
+      "front": "Why avoid `queue.shift()` in BFS, and what is the idiom instead?",
+      "back": "`shift` removes index 0 and moves every other element down, O(n) per call, so BFS can become O(n²). Keep pushing to the end and read with a head index: `for (let head = 0; head < queue.length; head++) { const node = queue[head]; ... }`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-min-heap-indexes",
+      "front": "In an array-backed binary heap, what are the parent and child indexes of `i`, and what do push and pop do?",
+      "back": "Parent `(i - 1) >> 1`, children `2i + 1` and `2i + 2`. push appends and sifts up while the item beats its parent; pop takes the root, moves the last item to index 0 and sifts down to the better child. Both O(log n). JavaScript has no built-in heap.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-comparator-nan",
+      "front": "A comparator does `(a.time ?? Infinity) - (b.time ?? Infinity)`. What breaks?",
+      "back": "When both times are missing, `Infinity - Infinity` is `NaN`, which the sort treats as 0, so those items keep whatever order they arrived in and no tie-break applies. Return a number from separate comparators chained with explicit tie-breaks, and return 0 for the time key when either side is `null`.",
+      "level": "se"
     }
   ]
 }

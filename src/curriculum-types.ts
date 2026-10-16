@@ -62,6 +62,11 @@ export interface LabExercise {
   solution: string
   tests: LabTest[]
   hiddenTests: LabTest[]
+  /**
+   * TypeScript labs only: type-level assertions compiled after the learner's code (never run). Every line must
+   * type-check, and each `// @ts-expect-error` line must really be an error, so the checks prove the types are right.
+   */
+  typeChecks?: string
 }
 
 /** "Predict the output" item. `choices[answer]` is the exact printed output. */

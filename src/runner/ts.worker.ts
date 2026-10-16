@@ -1,6 +1,6 @@
 import type { TypeScriptApi } from './ts-core'
-import { createTsCompiler, formatDiagnostic, type TsDiagnostic } from './ts-core'
-import { runJsAsync, type RunRequest, type RunResponse } from './core'
+import { checkWithTypeChecks, createTsCompiler, formatDiagnostic, type TsDiagnostic } from './ts-core'
+import { runJsAsync, type RunRequest, type RunResponse, type TypeCheckOutcome } from './core'
 
 export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest)
 
@@ -40,17 +40,18 @@ scope.onmessage = async (event: MessageEvent<TsWorkerMessage>) => {
   }
   const instance = await compiler!
   let diagnostics: TsDiagnostic[] = []
+  let typeChecks: TypeCheckOutcome | undefined
   let code: string
   try {
-    diagnostics = instance.check(message.code)
+    ;({ diagnostics, typeChecks } = checkWithTypeChecks(instance.check, message.code, message.typeChecks))
     code = instance.transpile(message.code)
   } catch (error) {
     scope.postMessage({ type: 'result', result: { kind: 'error', error: error instanceof Error ? error.message : String(error), output: '', diagnostics } })
     return
   }
   const response = await runJsAsync({ ...message, code })
-  const result: RunResponse = response.kind === 'error' && diagnostics.length
-    ? { ...response, error: `${response.error}\n\nType errors:\n${diagnostics.map(formatDiagnostic).join('\n')}`, diagnostics }
-    : { ...response, diagnostics }
+  const result: RunResponse = response.kind === 'error'
+    ? diagnostics.length ? { ...response, error: `${response.error}\n\nType errors:\n${diagnostics.map(formatDiagnostic).join('\n')}`, diagnostics } : { ...response, diagnostics }
+    : { ...response, diagnostics, typeChecks }
   scope.postMessage({ type: 'result', result })
 }

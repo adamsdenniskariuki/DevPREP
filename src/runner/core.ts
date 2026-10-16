@@ -16,10 +16,18 @@ export interface RunRequest {
   code: string
   name: string
   cases: ProblemTest[]
+  /** TypeScript only: type-level assertions compiled after the code. They never run; they must type-check. */
+  typeChecks?: string
+}
+
+/** Outcome of an exercise's type checks. Error lines are relative to the type-check block. */
+export interface TypeCheckOutcome {
+  pass: boolean
+  errors: TypeDiagnostic[]
 }
 
 export type RunResponse =
-  | { kind: 'done'; outcomes: CaseOutcome[]; output: string; diagnostics?: TypeDiagnostic[] }
+  | { kind: 'done'; outcomes: CaseOutcome[]; output: string; diagnostics?: TypeDiagnostic[]; typeChecks?: TypeCheckOutcome }
   | { kind: 'error'; error: string; output: string; diagnostics?: TypeDiagnostic[] }
 
 /** A TypeScript type error in learner code (TypeScript labs only; the code still runs). */

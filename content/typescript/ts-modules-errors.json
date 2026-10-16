@@ -1,0 +1,1426 @@
+{
+  "id": "ts-modules-errors",
+  "track": "typescript",
+  "title": "Modules and error handling",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "ES modules versus CommonJS (static graph, live bindings, run-once caching, cycles and the TDZ, default versus named, dynamic `import()`, type-only imports, interop), then errors: `Error` subclasses, `cause`, `finally`, `unknown` in `catch`, async failures, Result types and where retries belong.",
+  "prerequisites": [
+    "ts-promises-async"
+  ],
+  "prerequisiteNotes": "ts-promises-async: a rejected promise only reaches a `try/catch` that awaits it, `Promise.allSettled` never rejects, and retry wraps `return await op()` in a loop. This lesson decides which failures deserve a throw, which deserve a Result, and which deserve a retry.",
+  "objectives": [
+    "Contrast CommonJS and ES modules: run-time `require` versus a static graph, copied values versus live bindings, synchronous versus async-capable loading.",
+    "Explain why a module body runs once, in what order a graph evaluates, and what a circular import sees (partial exports in CommonJS, a TDZ `ReferenceError` in ESM).",
+    "Know what default versus named exports, dynamic `import()` and `import type` do at run time, and name the common CJS/ESM interop traps.",
+    "Throw `Error` subclasses with a proper `name` and a `cause`, and predict how `finally` interacts with `return` and `throw`.",
+    "Narrow a `catch (e)` variable of type `unknown` into an `Error` safely, and know which async failures a `try` can and cannot see.",
+    "Choose between exceptions and a typed `Result` union, and say where retries belong and which errors must never be retried."
+  ],
+  "concepts": [
+    {
+      "title": "CommonJS versus ES modules",
+      "body": "**CommonJS** (CJS, Node's original system) is a function call: `require(path)` runs at the moment it is reached, synchronously, can take any computed string, and returns whatever object the module put on `module.exports`. **ES modules** (ESM, the language standard) are declarations: `import` and `export` must sit at the top level with string-literal specifiers, so the engine can parse the whole dependency graph, link every import to its export **before any code runs**, and load files asynchronously (which is what enables top-level `await`). Static structure is also why bundlers can tree-shake ESM and why a misspelled named import fails at link time instead of producing `undefined` later. ESM code is always in strict mode, has no `require`, `module` or `__dirname`, and uses `import.meta.url` instead.",
+      "code": "// math.cjs (CommonJS)\nlet count = 0\nfunction inc() { count++ }\nmodule.exports = { count, inc }       // snapshot of count right now\n\n// main.cjs\nconst name = process.env.MATH ?? './math.cjs'\nconst { count, inc } = require(name)  // dynamic path, runs math.cjs now\n\n// math.mjs (ES module)\nexport let count = 0\nexport function inc() { count++ }\n\n// main.mjs\nimport { count, inc } from './math.mjs' // static, hoisted, linked first",
+      "diagram": "tsx-esm-cjs"
+    },
+    {
+      "title": "Live bindings versus copied values",
+      "body": "An ESM import is a **live, read-only view** of the exporting module's variable, not a copy. If `math.mjs` runs `count++`, every importer sees the new `count`; assigning to an imported name is a `TypeError` at run time (and a TypeScript error). CJS has no such link: `module.exports = { count }` copies the current number into a property, so later `count++` inside the module is invisible to anyone who destructured it. Objects are shared either way (both see mutations of the same object); the difference is only about the **binding**. One subtle ESM case: `export default expr` evaluates `expr` once and exports that value, so `export default count` is **not** live, while `export { count as default }` is. The code simulates both models with a getter (live) and a plain property (copy).",
+      "code": "let count = 0\nfunction inc(): void { count++ }\n\nconst esmView = { get count() { return count } }  // like `import { count }`\nconst cjsView = { count, inc }                    // like `module.exports = { count, inc }`\n\ncjsView.inc()\nconsole.log(esmView.count)  // 1: the getter reads the variable\nconsole.log(cjsView.count)  // 0: a copy taken at export time"
+    },
+    {
+      "title": "Evaluation order: every module runs once",
+      "body": "A module's top-level code runs **once per resolved specifier** (per file path in CJS, per URL in ESM); every later `require` or `import` gets the **cached** instance. That is why a module is a natural singleton (a config object, a connection pool) and why side effects at the top level happen exactly once. ESM evaluates in three phases: **load and parse** the whole graph, **link** imports to exports, then **evaluate** in post-order depth-first order, so dependencies run before the modules that import them and siblings run in the order their `import` statements appear. CJS evaluates lazily, depth first, as each `require` call is reached. Two paths that resolve to two different files (two copies of a package in `node_modules`) produce two instances, which breaks singletons and `instanceof`.",
+      "code": "// main.mjs\nimport './a.mjs'   // a imports b, so: b runs, then a\nimport './b.mjs'   // already evaluated: not run again\nconsole.log('main')\n// Output: b, a, main\n\n// CJS cache, simulated\nconst cache = new Map<string, object>()\nfunction requireOnce(path: string, body: () => object): object {\n  let exports = cache.get(path)\n  if (!exports) { exports = body(); cache.set(path, exports) }\n  return exports\n}",
+      "diagram": "tsx-esm-phases"
+    },
+    {
+      "title": "Circular imports see half-built modules",
+      "body": "When `a` requires `b` and `b` requires `a`, the loader must hand `b` **something** for `a`, because `a` has started but not finished. CJS returns `a`'s `module.exports` object **as it is right now**: properties assigned later are missing (`undefined`), and if `a` later **replaces** `module.exports` with a new object, `b` keeps the stale empty one forever. ESM links bindings before running anything, so `b` gets real bindings to `a`, but `a`'s `let`, `const` and `class` exports are in the **temporal dead zone** until their declaration runs: reading one throws `ReferenceError`. Exported `function` declarations are initialised during linking, so calling them across a cycle works. Fixes: read the import lazily inside a function, or move the shared piece into a third module both can depend on.",
+      "code": "// a.mjs                                // b.mjs\nimport { b } from './b.mjs'               import { a, helper } from './a.mjs'\nexport const a = 'A'                     export const b = 'B'\nexport function helper() { return 'h' }  helper()          // fine: hoisted function\n                                         console.log(a)    // ReferenceError: a is in the TDZ",
+      "diagram": "tsx-cycle"
+    },
+    {
+      "title": "Default versus named, dynamic `import()`, type-only imports",
+      "body": "Named exports keep one name across the codebase, so renames, auto-imports and grep work; a default export is just a binding called `default` that each importer names freely. Many teams prefer named exports for that reason. Dynamic `import(specifier)` is an expression that returns a **promise** of the module namespace object (`ns.default` holds the default export); it works in both ESM and CJS, accepts a computed string, and is how you lazy-load or code-split. `import type { User }` (or `import { type User }`) is **erased** entirely: types do not exist at run time, so a type-only import never loads or runs the module. Under `verbatimModuleSyntax`, TypeScript keeps every import not marked `type` exactly as written, so marking type imports is required, and a side-effect import like `import './polyfills'` is always kept.",
+      "code": "// user.ts\nexport interface User { id: string }\nexport function save(u: User): void { /* ... */ }\nexport default class Repo {}\n\n// app.ts\nimport Repo, { save, type User } from './user'   // `User` vanishes from the JS\nimport type { Options } from './options'          // whole line erased\n\nasync function openEditor(): Promise<void> {\n  const editor = await import('./editor')         // loaded on first call only\n  editor.default.mount()\n}"
+    },
+    {
+      "title": "Interop pain points between CJS and ESM",
+      "body": "In Node, a package is ESM when its `package.json` has `\"type\": \"module\"` or the file ends in `.mjs`, and CJS for `.cjs` or no `type`. ESM can `import` a CJS file: the default import is its `module.exports`, and named imports work only when Node can statically detect the property names. CJS loading ESM traditionally had to use `await import()`; `require()` of an ES module threw `ERR_REQUIRE_ESM`, and only recent Node versions (22.12 and later) allow it for modules without top-level `await`. Code compiled from ESM to CJS marks itself with `exports.__esModule = true` and puts the default on `exports.default`, which is why TypeScript's `esModuleInterop` emits a helper so `import x from 'cjs-lib'` gets `module.exports`. Relative ESM imports in Node need the file extension. A package loaded once as CJS and once as ESM is the **dual package hazard**: two instances, two singletons, failing `instanceof`.",
+      "code": "// tsconfig for a modern Node package\n{\n  \"compilerOptions\": {\n    \"module\": \"nodenext\",          // follow Node's real CJS/ESM rules per file\n    \"verbatimModuleSyntax\": true,  // what you write is what is emitted\n    \"esModuleInterop\": true\n  }\n}\n\n// ESM importing CJS\nimport legacy from './legacy.cjs'   // legacy === module.exports\n// CJS importing ESM (always works)\nconst { parse } = await import('./parser.mjs')"
+    },
+    {
+      "title": "Throw `Error` objects, subclass them, chain with `cause`",
+      "body": "JavaScript lets you `throw` **any** value (`throw 'oops'`, `throw 404`), but only `Error` objects carry a `stack`, a `message` and a `name` that tools understand, so throw `Error`s and convert anything else at the boundary. Subclass `Error` for failures callers handle differently, and **set** `name`, because the inherited `name` is `'Error'` and that is what logs print. With ES2015+ output, `instanceof` works on subclasses; with an ES5 target it did not without `Object.setPrototypeOf(this, new.target.prototype)`. ES2022 added `cause`: `new Error(message, { cause })` wraps a low-level error without losing it, and Node prints the chain. `AggregateError` (from `Promise.any`) holds many errors in `.errors`.",
+      "code": "class NotFoundError extends Error {\n  override name = 'NotFoundError'\n  constructor(readonly resource: string, options?: ErrorOptions) {\n    super(`${resource} not found`, options)\n  }\n}\n\nfunction loadUser(raw: string): { id: string } {\n  try {\n    return JSON.parse(raw)\n  } catch (e) {\n    throw new NotFoundError('user', { cause: e })  // keep the SyntaxError\n  }\n}"
+    },
+    {
+      "title": "`catch (e)` is `unknown`: narrow before you use it",
+      "body": "Because anything can be thrown, TypeScript's `strict` mode enables `useUnknownInCatchVariables` (since 4.4): the catch variable is `unknown`, so `e.message` does not compile until you narrow. You may annotate it only as `unknown` or `any`, never as a specific class, because TypeScript cannot know what was thrown. Narrow with `instanceof Error` (or your subclass) and handle the rest with a normaliser like `toError(e)` that wraps strings and odd values in an `Error` with `cause` set to the original. If you do not need the value, `catch { ... }` (optional binding, ES2019) is cleaner. Rethrow what you cannot handle instead of swallowing it.",
+      "code": "try {\n  riskyStep()\n} catch (e) {                         // e: unknown\n  if (e instanceof NotFoundError) return null\n  if (e instanceof Error) log(e.message)\n  else log(`non-error thrown: ${String(e)}`)\n  throw e                             // rethrow what we cannot handle\n}",
+      "diagram": "tsx-catch"
+    },
+    {
+      "title": "`finally` always runs and can override the outcome",
+      "body": "`finally` runs after the `try` (or `catch`) finishes by any route: falling through, `return`, `throw`, `break` or `continue`. If the `finally` block itself **returns** or **throws**, that new completion **replaces** the pending one: a `return` in `finally` silently discards an exception in flight and overrides an earlier `return`. So use `finally` only for cleanup (release a lock, clear a timer, close a handle) and never `return` from it. The value of `return x` is computed **before** `finally` runs, so reassigning `x` there does not change what is returned. In `async` code, `try { return await p } finally { ... }` runs cleanup after `p` settles; without the `await`, it runs too early.",
+      "code": "function attempt(): string {\n  try {\n    throw new Error('lost')\n  } finally {\n    return 'finally wins'   // the error vanishes: never do this\n  }\n}\n\nfunction value(): number {\n  let x = 1\n  try {\n    return x               // 1 is captured here\n  } finally {\n    x = 2                  // too late: still returns 1\n  }\n}"
+    },
+    {
+      "title": "Async errors: what a `try` can and cannot see",
+      "body": "A `try/catch` catches a rejection only if the promise is **awaited inside** the `try`. A promise you start and do not await (fire-and-forget) rejects later, outside the `try`, and with no handler it becomes an **unhandled rejection**: Node 15+ crashes the process and browsers fire `unhandledrejection`. A `throw` inside a `setTimeout` callback or an event listener runs on a later task, so no surrounding `try` sees it either. To collect many failures without fail-fast, use `Promise.allSettled` and inspect each `status`. Treat process-level hooks (`process.on('unhandledRejection')`) as last-resort logging, not error handling.",
+      "code": "async function save(): Promise<void> { throw new Error('disk full') }\n\nasync function bad(): Promise<void> {\n  try {\n    save()                  // not awaited: rejection escapes, unhandled\n  } catch { /* never runs */ }\n}\n\nasync function good(): Promise<string[]> {\n  const results = await Promise.allSettled([save(), save()])\n  return results.map(r => (r.status === 'fulfilled' ? 'ok' : String(r.reason)))\n}"
+    },
+    {
+      "title": "Exceptions or a `Result` type?",
+      "body": "A function's TypeScript signature says nothing about what it throws, so callers forget to handle it. A **Result** (or Either) union such as `{ ok: true; value: T } | { ok: false; error: E }` puts **expected** failures in the return type: the compiler forces the caller to check `ok` before touching `value`, and `E` can be a precise union of domain errors. Use Results for outcomes the caller is expected to handle (validation, parse failure, not found, a payment declined). Keep exceptions for bugs and broken invariants, and for failures nobody nearby can fix (out of memory, a misconfigured service), where unwinding to a top-level handler is right. Convert at boundaries: wrap a throwing API once with `tryAsync` and pass Results inward.",
+      "code": "type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E }\n\ntype ParseError = { kind: 'empty' } | { kind: 'not-a-number'; input: string }\n\nfunction parsePort(text: string): Result<number, ParseError> {\n  if (!text.trim()) return { ok: false, error: { kind: 'empty' } }\n  const n = Number(text)\n  return Number.isInteger(n) ? { ok: true, value: n } : { ok: false, error: { kind: 'not-a-number', input: text } }\n}\n\nconst r = parsePort('80x')\nif (r.ok) console.log(r.value + 1)\nelse console.log(r.error.kind)        // 'not-a-number'",
+      "diagram": "tsx-result"
+    },
+    {
+      "title": "Where retries belong",
+      "body": "Retry only **transient** failures (timeouts, connection resets, 429 and 503 responses) and never deterministic ones (validation errors, 400, 404): retrying those only repeats the failure. Retry only operations that are **idempotent** or carry an idempotency key, or a retried payment charges twice. Retry at **one layer**: if the client, the gateway and the service each try 3 times, one user action can become `3 * 3 * 3 = 27` calls against a struggling dependency. Bound the loop with a maximum attempt count and an overall deadline, use exponential backoff with jitter, honour `Retry-After`, and let a circuit breaker stop calling a dependency that is clearly down. Make retryability explicit, for example a `retryable` flag on your error class, instead of guessing from message strings.",
+      "code": "class HttpError extends Error {\n  override name = 'HttpError'\n  constructor(readonly status: number, message: string) {\n    super(message)\n  }\n  get retryable(): boolean {\n    return this.status === 429 || this.status >= 500\n  }\n}\n\nfunction shouldRetry(e: unknown, attempt: number, max: number): boolean {\n  return attempt < max && e instanceof HttpError && e.retryable\n}"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Build a CJS-style loader with a cache",
+      "body": "A `require` implementation needs a **cache** keyed by module name. On a call: if the name is cached, return the cached exports object, even if that module is still running (that is the cycle case). Otherwise create an empty exports object and put it in the cache **before** running the module body, then run the body, which may call `require` recursively for its own dependencies, and finally fill in the exports and return them. Caching after the body runs is the classic bug: a cycle then never finds the module in the cache and recurses until the stack overflows, which is exactly what real Node avoids by registering the module first.",
+      "code": "function load(name: string): Exports {\n  const cached = cache.get(name)\n  if (cached) return cached          // may be partial\n  const exports: Exports = {}\n  cache.set(name, exports)           // register BEFORE running the body\n  for (const dep of modules[name].deps) load(dep)\n  exports.value = modules[name].value\n  return exports\n}",
+      "diagram": "tsx-loader"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First write the inner `load(name)` with the cache check, then the existence check that throws `Error(\"Cannot find module 'x'\")` (use `Object.hasOwn` so names like `toString` are not found on the prototype). Second, register an empty exports object, log `run name`, and for each dependency call `load` and log what it returned, printing `?` when `value` is still unset; use `??`, not `||`, so an empty-string value prints as empty rather than `?`. Third, wrap the top-level `load(entry)` in `try/catch`, narrow the `unknown` error, and append `error: ...` to the log. Mention that real Node also deletes a module from the cache when its body throws, so a later `require` retries it."
+    }
+  ],
+  "example": "class NotFoundError extends Error {\n  override name = 'NotFoundError'\n  constructor(readonly resource: string, options?: ErrorOptions) {\n    super(`${resource} not found`, options)\n  }\n}\n\ntype Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E }\n\nconst users = new Map([['u1', 'Ada']])\n\nfunction findUser(id: string): Result<string, NotFoundError> {\n  const name = users.get(id)\n  return name === undefined ? { ok: false, error: new NotFoundError(`user ${id}`) } : { ok: true, value: name }\n}\n\nfunction greet(id: string): string {\n  const r = findUser(id)\n  if (!r.ok) return `${r.error.name}: ${r.error.message}`\n  return `hello ${r.value}`\n}\n\nconsole.log(greet('u1'))   // hello Ada\nconsole.log(greet('u2'))   // NotFoundError: user u2 not found\n\ntry {\n  try {\n    JSON.parse('{oops')\n  } catch (e) {\n    throw new Error('config unreadable', { cause: e })\n  }\n} catch (e) {\n  if (e instanceof Error && e.cause instanceof Error) console.log(e.message, '<-', e.cause.name)\n}\n// config unreadable <- SyntaxError",
+  "task": "Write `runLoader(modules, entry)`, a tiny CommonJS-style loader. `modules` maps a name to `{ deps, value }`. Loading a module logs `\"run name\"`, then loads each dependency in order and logs `\"name got dep=v\"` where `v` is that dependency's exported `value`, or `?` if it is not set yet; after its dependencies it exports its own `value`. Each module body runs **at most once**: a repeat load returns the cached exports, and in a cycle that means the **partially built** exports. Loading a name that is not in `modules` throws `Error(\"Cannot find module 'name'\")`; catch it at the top, append `\"error: <message>\"` and stop. Return the log.",
+  "starter": "interface ModuleDef {\n  deps: string[]\n  value: string\n}\n\ninterface Exports {\n  value?: string\n}\n\nfunction runLoader(modules: Record<string, ModuleDef>, entry: string): string[] {\n  const log: string[] = []\n  const cache = new Map<string, Exports>()\n\n  function load(name: string): Exports {\n    const cached = cache.get(name)\n    if (cached) return cached\n    const def = modules[name]\n    log.push(`run ${name}`)\n    const exports: Exports = {}\n    for (const dep of def.deps) {\n      const got = load(dep)\n      log.push(`${name} got ${dep}=${got.value ?? '?'}`)\n    }\n    exports.value = def.value\n    // TODO: caching here is too late for a cycle, and a missing module should be reported, not crash.\n    cache.set(name, exports)\n    return exports\n  }\n\n  load(entry)\n  return log\n}\n",
+  "hints": [
+    "The cycle only terminates if a module is in the cache from the moment its body starts. Create the empty exports object and `cache.set` it before running anything.",
+    "Use `got.value ?? '?'` so an unset value prints `?` but an empty string stays empty, check existence with `Object.hasOwn(modules, name)`, and wrap the top-level `load(entry)` in `try/catch` with an `instanceof Error` check."
+  ],
+  "solution": "interface ModuleDef {\n  deps: string[]\n  value: string\n}\n\ninterface Exports {\n  value?: string\n}\n\nfunction runLoader(modules: Record<string, ModuleDef>, entry: string): string[] {\n  const log: string[] = []\n  const cache = new Map<string, Exports>()\n\n  function load(name: string): Exports {\n    const cached = cache.get(name)\n    if (cached) return cached\n    if (!Object.hasOwn(modules, name)) throw new Error(`Cannot find module '${name}'`)\n    const def = modules[name]\n    const exports: Exports = {}\n    cache.set(name, exports)\n    log.push(`run ${name}`)\n    for (const dep of def.deps) {\n      const got = load(dep)\n      log.push(`${name} got ${dep}=${got.value ?? '?'}`)\n    }\n    exports.value = def.value\n    return exports\n  }\n\n  try {\n    load(entry)\n  } catch (error) {\n    log.push(`error: ${error instanceof Error ? error.message : String(error)}`)\n  }\n  return log\n}\n\nThe cache is filled with an empty exports object **before** the body runs, which is the whole trick: when a cycle leads back to a module that is still running, `cache.get` finds it and returns the half-built object instead of recursing forever, so the dependent sees `?` for its value, exactly like Node's partial `module.exports`. Every module therefore runs once, which also makes a diamond (two modules sharing one dependency) evaluate the shared module a single time. Missing names throw a real `Error`, and the top-level `try/catch` narrows the `unknown` catch variable before reading `message`. `Object.hasOwn` avoids treating inherited properties such as `toString` as modules, and `??` keeps an empty-string export distinct from an unset one. Each module is loaded once and each dependency edge is followed once, so time is O(V + E) and the cache is O(V).",
+  "checklist": [
+    "A module is registered in the cache before its body runs, so a cycle returns partial exports instead of overflowing the stack.",
+    "A shared dependency in a diamond runs once; a repeat load logs `got` lines but no second `run`.",
+    "An unset value prints `?`, while an empty-string value prints as empty (`??`, not `||`).",
+    "A missing module, including a missing entry, appends `error: Cannot find module '...'` and stops.",
+    "The catch variable is treated as `unknown` and narrowed with `instanceof Error`."
+  ],
+  "pitfalls": [
+    "Destructuring a CommonJS export (`const { count } = require(...)`) and expecting it to update when the module changes it; only ESM imports are live.",
+    "Writing `export default count` and expecting a live binding; the default export of an expression is a one-time value.",
+    "Replacing `module.exports` at the end of a module in a cycle, so the other side keeps the stale empty object forever.",
+    "Reading an imported `const` at the top level of a module in an import cycle, which throws a TDZ `ReferenceError`.",
+    "Forgetting to set `name` on an `Error` subclass, so logs and `String(e)` say `Error` instead of the class.",
+    "Returning from `finally`, which silently swallows the exception in flight.",
+    "Calling an async function inside `try` without `await` and believing the `catch` protects it.",
+    "Retrying 400s or non-idempotent operations, or stacking retries at several layers so one call becomes dozens."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Normalise anything thrown",
+      "prompt": "Write `toError(value: unknown): Error` and use it in `describeThrown(values)`, which throws each value, catches it and returns `\"name: message\"` per value. An `Error` is returned as is. A string becomes `new Error(value)`. An object with a string `message` becomes an `Error` with that message, and it also copies a string `name` if there is one. Anything else becomes `Error(\"Non-error thrown: <JSON>\")`, falling back to `String(value)` when `JSON.stringify` gives `undefined` or throws. Keep the original value as the `cause` of every new `Error`.",
+      "hints": [
+        "Narrow step by step: `instanceof Error`, then `typeof value === 'string'`, then `typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string'`.",
+        "`JSON.stringify(undefined)` returns `undefined` and `JSON.stringify` of a cyclic object throws, so wrap it in a small `safeString` with `try/catch` and `?? String(value)`."
+      ],
+      "solution": "function safeString(value: unknown): string {\n  try {\n    return JSON.stringify(value) ?? String(value)\n  } catch {\n    return String(value)\n  }\n}\n\nfunction toError(value: unknown): Error {\n  if (value instanceof Error) return value\n  if (typeof value === 'string') return new Error(value, { cause: value })\n  if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string') {\n    const error = new Error(value.message, { cause: value })\n    if ('name' in value && typeof value.name === 'string') error.name = value.name\n    return error\n  }\n  return new Error(`Non-error thrown: ${safeString(value)}`, { cause: value })\n}\n\nfunction describeThrown(values: unknown[]): string[] {\n  return values.map(value => {\n    try {\n      throw value\n    } catch (caught) {\n      const error = toError(caught)\n      return `${error.name}: ${error.message}`\n    }\n  })\n}",
+      "checklist": [
+        "The parameter is `unknown`, not `any`, so every branch narrows before reading properties.",
+        "`{ message: 5 }` is not treated as error-like: the message must be a string.",
+        "Every newly created `Error` carries the original thrown value as `cause`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "tryAsync and a Result union",
+      "prompt": "Declare `type Result<T, E = Error>` as a union discriminated on `ok` (`{ ok: true; value: T }` or `{ ok: false; error: E }`) and write `tryAsync<T>(fn: () => Promise<T>): Promise<Result<T>>`, which **never rejects**: it captures rejections **and** synchronous throws from `fn`, normalising the reason with `toError`. `runAll(specs)` (provided) starts every task through `tryAsync`, waits for all of them and returns `{ lines, failed }` with `ok value` or `fail message` per task in input order. Tasks may fulfil, reject with an `Error`, reject with a bare string, or throw before returning a promise.",
+      "hints": [
+        "Make `tryAsync` an `async` function and put `await fn()` inside its `try`: the call itself is then inside the `try`, so a synchronous throw is caught too.",
+        "In the `catch`, return `{ ok: false, error: toError(caught) }`; the caller can then narrow with `if (r.ok)` and TypeScript knows which field exists."
+      ],
+      "solution": "function safeString(value: unknown): string {\n  try {\n    return JSON.stringify(value) ?? String(value)\n  } catch {\n    return String(value)\n  }\n}\n\nfunction toError(value: unknown): Error {\n  if (value instanceof Error) return value\n  if (typeof value === 'string') return new Error(value, { cause: value })\n  if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string') {\n    const error = new Error(value.message, { cause: value })\n    if ('name' in value && typeof value.name === 'string') error.name = value.name\n    return error\n  }\n  return new Error(`Non-error thrown: ${safeString(value)}`, { cause: value })\n}\n\ninterface TaskSpec {\n  ms: number\n  outcome: 'ok' | 'error' | 'string' | 'sync'\n  value: string\n}\n\nfunction delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\n// Do not change: a task can fulfil, reject with an Error, reject with a bare string, or throw before returning a promise.\nfunction startTask(spec: TaskSpec): Promise<string> {\n  if (spec.outcome === 'sync') throw new Error(spec.value)\n  return delay(spec.ms).then(() => {\n    if (spec.outcome === 'error') throw new Error(spec.value)\n    if (spec.outcome === 'string') throw spec.value\n    return spec.value\n  })\n}\n\ntype Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E }\n\nasync function tryAsync<T>(fn: () => Promise<T>): Promise<Result<T>> {\n  try {\n    return { ok: true, value: await fn() }\n  } catch (caught) {\n    return { ok: false, error: toError(caught) }\n  }\n}\n\ninterface Summary {\n  lines: string[]\n  failed: number\n}\n\nasync function runAll(specs: TaskSpec[]): Promise<Summary> {\n  const results = await Promise.all(specs.map(spec => tryAsync(() => startTask(spec))))\n  const lines = results.map(r => (r.ok ? `ok ${r.value}` : `fail ${r.error.message}`))\n  return { lines, failed: results.filter(r => !r.ok).length }\n}",
+      "checklist": [
+        "`Result` is a discriminated union, so reading `value` without checking `ok` is a compile error.",
+        "A synchronous throw from `fn` becomes `{ ok: false }` instead of escaping `tryAsync`.",
+        "A bare string rejection is wrapped by `toError`, so `error.message` is always a string."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your service's config module is imported by 40 files. How many times does its top-level code run, and when would it run twice?",
+      "answer": "Once per resolved module: every importer gets the cached instance, which is why a module works as a singleton. It runs twice when the same code is reached through two different resolutions: two copies of a package in `node_modules`, the same file loaded once as CJS and once as ESM (the dual package hazard), different query strings in ESM URLs, or a test runner that resets the module registry between tests. Symptoms are two connection pools or `instanceof` failing across the two copies."
+    },
+    {
+      "question": "How would you break a circular import between `orders` and `customers`?",
+      "answer": "First ask why it exists: usually both need a shared type or helper, which belongs in a third module both depend on. Type-only cycles are harmless because `import type` is erased. If a runtime cycle must stay, make the access lazy (read the import inside a function, not at module top level) or inject the dependency at startup. Tools such as `madge` or ESLint's `import/no-cycle` catch cycles in CI."
+    },
+    {
+      "question": "When would you return a Result instead of throwing?",
+      "answer": "When the failure is an expected outcome the immediate caller must decide about: invalid input, a parse failure, a missing record, a declined payment. The union makes it visible in the type and the compiler forces the check. Throw for bugs and broken invariants, and for failures only a top-level handler can deal with. Mixing styles in one layer is the real problem, so convert at the boundary (wrap a throwing library once) and keep one style inside."
+    },
+    {
+      "question": "Why does `catch (e: Error)` not compile, and what do you do instead?",
+      "answer": "Anything can be thrown, so TypeScript allows only `unknown` or `any` on the catch variable; a specific type would be an unchecked lie. Narrow inside the block with `instanceof Error` or a subclass, use a normaliser like `toError(e)` when you need an `Error` regardless, and rethrow what you do not handle. For a typed error channel, return a Result instead of throwing."
+    }
+  ],
+  "takeaways": [
+    "CJS `require` runs at call time and copies values; ESM builds a static graph first and imports are live, read-only bindings.",
+    "A module body runs once per resolved path; ESM evaluates dependencies first, in post-order.",
+    "Cycles expose half-built modules: partial `module.exports` in CJS, TDZ `ReferenceError`s in ESM.",
+    "`import type` is erased, dynamic `import()` returns a promise of the namespace, and CJS/ESM interop has real traps.",
+    "Throw `Error` subclasses with a `name` and a `cause`; never `return` from `finally`.",
+    "`catch (e)` is `unknown`: narrow it or normalise it with `toError`, and await inside the `try`.",
+    "Use a Result union for expected failures, exceptions for bugs, and retry only transient, idempotent work at one layer."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsx-esm-cjs",
+        "type": "compare",
+        "title": "CommonJS versus ES modules",
+        "alt": "Two panels. On the left, CommonJS: main.js calls require at run time, which synchronously runs the a.js body; it assigns a plain module.exports object, and destructuring that object copies the values into local constants. On the right, ES modules: the engine parses static import specifiers into a module graph with linked bindings, evaluates dependencies first and once, and an imported name always reads the exporter's current value.",
+        "caption": "CommonJS is a run-time function call that hands back copies; ESM links a static graph first and imports stay live.",
+        "before": {
+          "label": "CommonJS: require() at run time",
+          "nodes": [
+            {
+              "id": "main",
+              "label": "main.js",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "require('./a')"
+            },
+            {
+              "id": "body",
+              "label": "a.js body",
+              "kind": "worker",
+              "col": 2,
+              "row": 0,
+              "sub": "runs on 1st call"
+            },
+            {
+              "id": "exp",
+              "label": "module.exports",
+              "kind": "state",
+              "col": 2,
+              "row": 2,
+              "sub": "plain object"
+            },
+            {
+              "id": "local",
+              "label": "const { n }",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "copy of value"
+            }
+          ],
+          "edges": [
+            {
+              "from": "main",
+              "to": "body",
+              "label": "sync call"
+            },
+            {
+              "from": "body",
+              "to": "exp",
+              "label": "assigns"
+            },
+            {
+              "from": "exp",
+              "to": "local",
+              "label": "destructure copies"
+            }
+          ]
+        },
+        "after": {
+          "label": "ES modules: static graph, live bindings",
+          "nodes": [
+            {
+              "id": "parse",
+              "label": "parse imports",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "before any code"
+            },
+            {
+              "id": "graph",
+              "label": "module graph",
+              "kind": "service",
+              "col": 2,
+              "row": 0,
+              "sub": "linked bindings"
+            },
+            {
+              "id": "eval",
+              "label": "evaluate",
+              "kind": "worker",
+              "col": 2,
+              "row": 2,
+              "sub": "deps first, once"
+            },
+            {
+              "id": "bind",
+              "label": "import { n }",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "live, read-only"
+            }
+          ],
+          "edges": [
+            {
+              "from": "parse",
+              "to": "graph",
+              "label": "static specifiers"
+            },
+            {
+              "from": "graph",
+              "to": "eval",
+              "label": "post-order"
+            },
+            {
+              "from": "eval",
+              "to": "bind",
+              "label": "reads current n"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsx-esm-phases",
+        "type": "timeline",
+        "title": "Loading an ES module graph: main imports a, a imports b",
+        "alt": "Timeline of five phases. First main.mjs, a.mjs and b.mjs are fetched and parsed by following static import specifiers. Then all bindings are linked while no code has run. Then b.mjs, the leaf, is evaluated, followed by a.mjs, and finally main.mjs; a later import of a.mjs reuses the cached instance.",
+        "caption": "ESM loads and links the whole graph before running anything, then evaluates leaves first; each module body runs exactly once.",
+        "events": [
+          {
+            "at": "1. load + parse",
+            "label": "Fetch main.mjs, read its static import specifiers, then fetch and parse a.mjs and b.mjs",
+            "kind": "trigger"
+          },
+          {
+            "at": "2. link",
+            "label": "Create every module's bindings and wire each import to its export; no code has run yet",
+            "kind": "detect"
+          },
+          {
+            "at": "3. evaluate b.mjs",
+            "label": "The leaf runs first (post-order depth-first); its top-level code runs exactly once",
+            "kind": "impact"
+          },
+          {
+            "at": "4. evaluate a.mjs",
+            "label": "a.mjs runs after its dependency b.mjs has finished",
+            "kind": "mitigate"
+          },
+          {
+            "at": "5. evaluate main.mjs",
+            "label": "The entry runs last; any later import of a.mjs or b.mjs reuses the cached instance",
+            "kind": "resolve"
+          }
+        ]
+      },
+      {
+        "id": "tsx-cycle",
+        "type": "sequence",
+        "title": "A CommonJS cycle hands out a half-built module",
+        "alt": "Sequence diagram with main, a.js, b.js and the module cache. main requires a; a is cached as an empty object and starts running; a requires b; b requires a again and the cache returns a's partial, still empty exports, so b sees undefined; b finishes and returns its complete exports to a; a finishes and returns to main.",
+        "caption": "The loader registers a module before running it, so a cycle gets the partial exports instead of looping forever.",
+        "actors": [
+          {
+            "id": "main",
+            "label": "main.js"
+          },
+          {
+            "id": "a",
+            "label": "a.js"
+          },
+          {
+            "id": "b",
+            "label": "b.js"
+          },
+          {
+            "id": "cache",
+            "label": "module cache"
+          }
+        ],
+        "messages": [
+          {
+            "from": "main",
+            "to": "a",
+            "label": "require('./a')"
+          },
+          {
+            "from": "a",
+            "to": "cache",
+            "label": "cache.a = {} (empty)",
+            "note": "Registered before a's body runs."
+          },
+          {
+            "from": "a",
+            "to": "b",
+            "label": "require('./b')"
+          },
+          {
+            "from": "b",
+            "to": "cache",
+            "label": "require('./a') again"
+          },
+          {
+            "from": "cache",
+            "to": "b",
+            "label": "partial a: {}",
+            "style": "reply",
+            "note": "a has not finished, so b reads undefined for a.x."
+          },
+          {
+            "from": "b",
+            "to": "a",
+            "label": "b's complete exports",
+            "style": "reply"
+          },
+          {
+            "from": "a",
+            "to": "main",
+            "label": "a.x set, full exports",
+            "style": "reply",
+            "note": "In ESM the order is the same, but reading a's let or const early throws a TDZ ReferenceError."
+          }
+        ]
+      },
+      {
+        "id": "tsx-catch",
+        "type": "flow",
+        "title": "Narrowing an unknown catch variable",
+        "alt": "Decision flow starting at catch (e) where e is unknown. If e is an instance of Error, use it as is. Otherwise, if it is a string, wrap it in new Error with cause set to e. Anything else is stringified safely and then wrapped the same way.",
+        "caption": "Narrow first; whatever is not an Error gets wrapped in one, with the original kept as cause.",
+        "nodes": [
+          {
+            "id": "c",
+            "label": "catch (e)",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "e: unknown"
+          },
+          {
+            "id": "isErr",
+            "label": "instanceof Error",
+            "kind": "decision",
+            "col": 2,
+            "row": 1
+          },
+          {
+            "id": "use",
+            "label": "use e as is",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "message, cause"
+          },
+          {
+            "id": "isStr",
+            "label": "typeof string?",
+            "kind": "decision",
+            "col": 2,
+            "row": 3
+          },
+          {
+            "id": "wrap",
+            "label": "new Error(...)",
+            "kind": "state",
+            "col": 4,
+            "row": 3,
+            "sub": "{ cause: e }"
+          },
+          {
+            "id": "other",
+            "label": "anything else",
+            "kind": "bad",
+            "col": 2,
+            "row": 5,
+            "sub": "stringify safely"
+          }
+        ],
+        "edges": [
+          {
+            "from": "c",
+            "to": "isErr",
+            "label": "narrow"
+          },
+          {
+            "from": "isErr",
+            "to": "use",
+            "label": "yes"
+          },
+          {
+            "from": "isErr",
+            "to": "isStr",
+            "label": "no"
+          },
+          {
+            "from": "isStr",
+            "to": "wrap",
+            "label": "yes: message = e"
+          },
+          {
+            "from": "isStr",
+            "to": "other",
+            "label": "no"
+          },
+          {
+            "from": "other",
+            "to": "wrap",
+            "label": "wrap + cause"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "The catch variable is `unknown` under `strict`: nothing can be read from it until it is narrowed."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "`instanceof Error` covers built-ins and your subclasses; use the error as it is."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "A thrown string is common in old code: wrap it so the rest of the program always sees an `Error`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Numbers, objects and `undefined` are stringified safely (`JSON.stringify` can throw or return `undefined`) and wrapped, keeping the original as `cause`."
+          }
+        ]
+      },
+      {
+        "id": "tsx-result",
+        "type": "compare",
+        "title": "Throwing versus returning a Result",
+        "alt": "Two panels. On the left, a caller calls parse(text), whose signature says it returns Config; on bad input it throws, which is not in the type, and if uncaught the error unwinds to a crash or a 500. On the right, parse(text) returns Result of Config: a valid input gives ok true with the value, an invalid input gives ok false with a ParseError, and the caller must check ok before using either.",
+        "caption": "A Result puts the expected failure into the type, so the compiler makes the caller handle it.",
+        "before": {
+          "label": "Exceptions: invisible in the type",
+          "nodes": [
+            {
+              "id": "call",
+              "label": "parse(text)",
+              "kind": "service",
+              "col": 0,
+              "row": 0,
+              "sub": "returns Config"
+            },
+            {
+              "id": "thr",
+              "label": "throws",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "not in signature"
+            },
+            {
+              "id": "caller",
+              "label": "caller",
+              "kind": "client",
+              "col": 0,
+              "row": 2,
+              "sub": "may forget catch"
+            },
+            {
+              "id": "top",
+              "label": "crash / 500",
+              "kind": "bad",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "caller",
+              "to": "call",
+              "label": "calls"
+            },
+            {
+              "from": "call",
+              "to": "thr",
+              "label": "bad input"
+            },
+            {
+              "from": "thr",
+              "to": "top",
+              "label": "if uncaught"
+            }
+          ]
+        },
+        "after": {
+          "label": "Result: failure is part of the type",
+          "nodes": [
+            {
+              "id": "call",
+              "label": "parse(text)",
+              "kind": "service",
+              "col": 0,
+              "row": 0,
+              "sub": "Result<Config>"
+            },
+            {
+              "id": "ok",
+              "label": "ok: true",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "value: Config"
+            },
+            {
+              "id": "err",
+              "label": "ok: false",
+              "kind": "state",
+              "col": 2,
+              "row": 2,
+              "sub": "error: ParseError"
+            },
+            {
+              "id": "caller",
+              "label": "caller",
+              "kind": "client",
+              "col": 0,
+              "row": 2,
+              "sub": "must check ok"
+            }
+          ],
+          "edges": [
+            {
+              "from": "caller",
+              "to": "call",
+              "label": "calls"
+            },
+            {
+              "from": "call",
+              "to": "ok",
+              "label": "valid"
+            },
+            {
+              "from": "call",
+              "to": "err",
+              "label": "invalid"
+            },
+            {
+              "from": "err",
+              "to": "caller",
+              "label": "handled in type"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsx-loader",
+        "type": "flow",
+        "title": "Inside a require() with a cache",
+        "alt": "Flow of a require call. require(name) asks whether the name is in the cache. If yes, it returns the cached exports, which may be partial. If not, it registers an empty exports object in the cache before the body runs, runs the body, which may call require again for its dependencies, then fills the exports and returns them.",
+        "caption": "Registering the empty exports before running the body is what makes repeat loads cheap and cycles terminate.",
+        "nodes": [
+          {
+            "id": "req",
+            "label": "require(name)",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "hit",
+            "label": "in cache?",
+            "kind": "decision",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "ret",
+            "label": "return exports",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "maybe partial"
+          },
+          {
+            "id": "make",
+            "label": "cache[name] = {}",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "before body runs"
+          },
+          {
+            "id": "body",
+            "label": "run body",
+            "kind": "worker",
+            "col": 2,
+            "row": 4,
+            "sub": "requires deps"
+          },
+          {
+            "id": "fill",
+            "label": "fill exports",
+            "kind": "state",
+            "col": 4,
+            "row": 4,
+            "sub": "exports.x = ..."
+          }
+        ],
+        "edges": [
+          {
+            "from": "req",
+            "to": "hit",
+            "label": "lookup"
+          },
+          {
+            "from": "hit",
+            "to": "ret",
+            "label": "yes"
+          },
+          {
+            "from": "hit",
+            "to": "make",
+            "label": "no"
+          },
+          {
+            "from": "make",
+            "to": "body",
+            "label": "then run"
+          },
+          {
+            "from": "body",
+            "to": "req",
+            "label": "nested require",
+            "style": "async"
+          },
+          {
+            "from": "body",
+            "to": "fill",
+            "label": "body finishes"
+          },
+          {
+            "from": "fill",
+            "to": "ret",
+            "label": "return"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`require(name)` first looks the name up in the cache."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "A hit returns the cached exports object immediately; the body never runs again."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "A miss registers an empty exports object first, then runs the module body."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "The body requires its dependencies; in a cycle one of them comes back here and hits the half-built entry."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "When the body finishes, the exports are filled in and returned; everyone holding that object now sees the values."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "runLoader",
+        "starter": "interface ModuleDef {\n  deps: string[]\n  value: string\n}\n\ninterface Exports {\n  value?: string\n}\n\nfunction runLoader(modules: Record<string, ModuleDef>, entry: string): string[] {\n  const log: string[] = []\n  const cache = new Map<string, Exports>()\n\n  function load(name: string): Exports {\n    const cached = cache.get(name)\n    if (cached) return cached\n    const def = modules[name]\n    log.push(`run ${name}`)\n    const exports: Exports = {}\n    for (const dep of def.deps) {\n      const got = load(dep)\n      log.push(`${name} got ${dep}=${got.value ?? '?'}`)\n    }\n    exports.value = def.value\n    // TODO: caching here is too late for a cycle, and a missing module should be reported, not crash.\n    cache.set(name, exports)\n    return exports\n  }\n\n  load(entry)\n  return log\n}\n",
+        "solution": "interface ModuleDef {\n  deps: string[]\n  value: string\n}\n\ninterface Exports {\n  value?: string\n}\n\nfunction runLoader(modules: Record<string, ModuleDef>, entry: string): string[] {\n  const log: string[] = []\n  const cache = new Map<string, Exports>()\n\n  function load(name: string): Exports {\n    const cached = cache.get(name)\n    if (cached) return cached\n    if (!Object.hasOwn(modules, name)) throw new Error(`Cannot find module '${name}'`)\n    const def = modules[name]\n    const exports: Exports = {}\n    cache.set(name, exports)\n    log.push(`run ${name}`)\n    for (const dep of def.deps) {\n      const got = load(dep)\n      log.push(`${name} got ${dep}=${got.value ?? '?'}`)\n    }\n    exports.value = def.value\n    return exports\n  }\n\n  try {\n    load(entry)\n  } catch (error) {\n    log.push(`error: ${error instanceof Error ? error.message : String(error)}`)\n  }\n  return log\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "main": {
+                  "deps": [
+                    "x",
+                    "y"
+                  ],
+                  "value": "M"
+                },
+                "x": {
+                  "deps": [
+                    "shared"
+                  ],
+                  "value": "X"
+                },
+                "y": {
+                  "deps": [
+                    "shared"
+                  ],
+                  "value": "Y"
+                },
+                "shared": {
+                  "deps": [],
+                  "value": "S"
+                }
+              },
+              "main"
+            ],
+            "expected": [
+              "run main",
+              "run x",
+              "run shared",
+              "x got shared=S",
+              "main got x=X",
+              "run y",
+              "y got shared=S",
+              "main got y=Y"
+            ]
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "deps": [
+                    "b"
+                  ],
+                  "value": "A"
+                },
+                "b": {
+                  "deps": [
+                    "a"
+                  ],
+                  "value": "B"
+                }
+              },
+              "a"
+            ],
+            "expected": [
+              "run a",
+              "run b",
+              "b got a=?",
+              "a got b=B"
+            ]
+          },
+          {
+            "args": [
+              {
+                "app": {
+                  "deps": [
+                    "db",
+                    "cfg"
+                  ],
+                  "value": "A"
+                },
+                "db": {
+                  "deps": [],
+                  "value": "D"
+                }
+              },
+              "app"
+            ],
+            "expected": [
+              "run app",
+              "run db",
+              "app got db=D",
+              "error: Cannot find module 'cfg'"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "solo": {
+                  "deps": [],
+                  "value": "1"
+                }
+              },
+              "solo"
+            ],
+            "expected": [
+              "run solo"
+            ]
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "deps": [
+                    "a"
+                  ],
+                  "value": "A"
+                }
+              },
+              "a"
+            ],
+            "expected": [
+              "run a",
+              "a got a=?"
+            ]
+          },
+          {
+            "args": [
+              {},
+              "ghost"
+            ],
+            "expected": [
+              "error: Cannot find module 'ghost'"
+            ]
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "deps": [
+                    "b"
+                  ],
+                  "value": "A"
+                },
+                "b": {
+                  "deps": [
+                    "c"
+                  ],
+                  "value": "B"
+                },
+                "c": {
+                  "deps": [
+                    "a"
+                  ],
+                  "value": "C"
+                }
+              },
+              "b"
+            ],
+            "expected": [
+              "run b",
+              "run c",
+              "run a",
+              "a got b=?",
+              "c got a=A",
+              "b got c=C"
+            ]
+          },
+          {
+            "args": [
+              {
+                "m": {
+                  "deps": [
+                    "u",
+                    "u"
+                  ],
+                  "value": "M"
+                },
+                "u": {
+                  "deps": [],
+                  "value": "U"
+                }
+              },
+              "m"
+            ],
+            "expected": [
+              "run m",
+              "run u",
+              "m got u=U",
+              "m got u=U"
+            ]
+          },
+          {
+            "args": [
+              {
+                "π": {
+                  "deps": [
+                    "é"
+                  ],
+                  "value": "3.14"
+                },
+                "é": {
+                  "deps": [],
+                  "value": "✓"
+                }
+              },
+              "π"
+            ],
+            "expected": [
+              "run π",
+              "run é",
+              "π got é=✓"
+            ]
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "deps": [
+                    "b"
+                  ],
+                  "value": "A"
+                },
+                "b": {
+                  "deps": [],
+                  "value": ""
+                }
+              },
+              "a"
+            ],
+            "expected": [
+              "run a",
+              "run b",
+              "a got b="
+            ]
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "deps": [
+                    "toString"
+                  ],
+                  "value": "A"
+                }
+              },
+              "a"
+            ],
+            "expected": [
+              "run a",
+              "error: Cannot find module 'toString'"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "describeThrown",
+        "starter": "// TODO: take `unknown`, keep Error instances, wrap strings and { message } objects, and stringify anything else.\nfunction toError(value: any): Error {\n  return value instanceof Error ? value : new Error(String(value))\n}\n\nfunction describeThrown(values: unknown[]): string[] {\n  return values.map(value => {\n    try {\n      throw value\n    } catch (caught) {\n      const error = toError(caught)\n      return `${error.name}: ${error.message}`\n    }\n  })\n}\n",
+        "solution": "function safeString(value: unknown): string {\n  try {\n    return JSON.stringify(value) ?? String(value)\n  } catch {\n    return String(value)\n  }\n}\n\nfunction toError(value: unknown): Error {\n  if (value instanceof Error) return value\n  if (typeof value === 'string') return new Error(value, { cause: value })\n  if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string') {\n    const error = new Error(value.message, { cause: value })\n    if ('name' in value && typeof value.name === 'string') error.name = value.name\n    return error\n  }\n  return new Error(`Non-error thrown: ${safeString(value)}`, { cause: value })\n}\n\nfunction describeThrown(values: unknown[]): string[] {\n  return values.map(value => {\n    try {\n      throw value\n    } catch (caught) {\n      const error = toError(caught)\n      return `${error.name}: ${error.message}`\n    }\n  })\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _1 = Expect<Equal<Parameters<typeof toError>[0], unknown>>\ntype _2 = Expect<Equal<ReturnType<typeof toError>, Error>>\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "boom",
+                42
+              ]
+            ],
+            "expected": [
+              "Error: boom",
+              "Error: Non-error thrown: 42"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "HttpError",
+                  "message": "Not found"
+                },
+                null
+              ]
+            ],
+            "expected": [
+              "HttpError: Not found",
+              "Error: Non-error thrown: null"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                ""
+              ]
+            ],
+            "expected": [
+              "Error: "
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "message": 5
+                }
+              ]
+            ],
+            "expected": [
+              "Error: Non-error thrown: {\"message\":5}"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  "a"
+                ],
+                true
+              ]
+            ],
+            "expected": [
+              "Error: Non-error thrown: [1,\"a\"]",
+              "Error: Non-error thrown: true"
+            ]
+          },
+          {
+            "args": [
+              [
+                "héllo ✓"
+              ]
+            ],
+            "expected": [
+              "Error: héllo ✓"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "message": "no name"
+                },
+                {
+                  "name": "OnlyName"
+                }
+              ]
+            ],
+            "expected": [
+              "Error: no name",
+              "Error: Non-error thrown: {\"name\":\"OnlyName\"}"
+            ]
+          },
+          {
+            "args": [
+              [
+                "dup",
+                "dup",
+                -1
+              ]
+            ],
+            "expected": [
+              "Error: dup",
+              "Error: dup",
+              "Error: Non-error thrown: -1"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "runAll",
+        "starter": "function safeString(value: unknown): string {\n  try {\n    return JSON.stringify(value) ?? String(value)\n  } catch {\n    return String(value)\n  }\n}\n\nfunction toError(value: unknown): Error {\n  if (value instanceof Error) return value\n  if (typeof value === 'string') return new Error(value, { cause: value })\n  if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string') {\n    const error = new Error(value.message, { cause: value })\n    if ('name' in value && typeof value.name === 'string') error.name = value.name\n    return error\n  }\n  return new Error(`Non-error thrown: ${safeString(value)}`, { cause: value })\n}\n\ninterface TaskSpec {\n  ms: number\n  outcome: 'ok' | 'error' | 'string' | 'sync'\n  value: string\n}\n\nfunction delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\n// Do not change: a task can fulfil, reject with an Error, reject with a bare string, or throw before returning a promise.\nfunction startTask(spec: TaskSpec): Promise<string> {\n  if (spec.outcome === 'sync') throw new Error(spec.value)\n  return delay(spec.ms).then(() => {\n    if (spec.outcome === 'error') throw new Error(spec.value)\n    if (spec.outcome === 'string') throw spec.value\n    return spec.value\n  })\n}\n\n// TODO: make Result a discriminated union on `ok`, and make tryAsync never reject.\ntype Result<T, E = Error> = any\n\nfunction tryAsync<T>(fn: () => Promise<T>): Promise<Result<T>> {\n  return fn().then(value => ({ ok: true, value }), error => ({ ok: false, error }))\n}\n\ninterface Summary {\n  lines: string[]\n  failed: number\n}\n\nasync function runAll(specs: TaskSpec[]): Promise<Summary> {\n  const results = await Promise.all(specs.map(spec => tryAsync(() => startTask(spec))))\n  const lines = results.map(r => (r.ok ? `ok ${r.value}` : `fail ${r.error.message}`))\n  return { lines, failed: results.filter(r => !r.ok).length }\n}\n",
+        "solution": "function safeString(value: unknown): string {\n  try {\n    return JSON.stringify(value) ?? String(value)\n  } catch {\n    return String(value)\n  }\n}\n\nfunction toError(value: unknown): Error {\n  if (value instanceof Error) return value\n  if (typeof value === 'string') return new Error(value, { cause: value })\n  if (typeof value === 'object' && value !== null && 'message' in value && typeof value.message === 'string') {\n    const error = new Error(value.message, { cause: value })\n    if ('name' in value && typeof value.name === 'string') error.name = value.name\n    return error\n  }\n  return new Error(`Non-error thrown: ${safeString(value)}`, { cause: value })\n}\n\ninterface TaskSpec {\n  ms: number\n  outcome: 'ok' | 'error' | 'string' | 'sync'\n  value: string\n}\n\nfunction delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\n// Do not change: a task can fulfil, reject with an Error, reject with a bare string, or throw before returning a promise.\nfunction startTask(spec: TaskSpec): Promise<string> {\n  if (spec.outcome === 'sync') throw new Error(spec.value)\n  return delay(spec.ms).then(() => {\n    if (spec.outcome === 'error') throw new Error(spec.value)\n    if (spec.outcome === 'string') throw spec.value\n    return spec.value\n  })\n}\n\ntype Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E }\n\nasync function tryAsync<T>(fn: () => Promise<T>): Promise<Result<T>> {\n  try {\n    return { ok: true, value: await fn() }\n  } catch (caught) {\n    return { ok: false, error: toError(caught) }\n  }\n}\n\ninterface Summary {\n  lines: string[]\n  failed: number\n}\n\nasync function runAll(specs: TaskSpec[]): Promise<Summary> {\n  const results = await Promise.all(specs.map(spec => tryAsync(() => startTask(spec))))\n  const lines = results.map(r => (r.ok ? `ok ${r.value}` : `fail ${r.error.message}`))\n  return { lines, failed: results.filter(r => !r.ok).length }\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _1 = Expect<Equal<Awaited<ReturnType<typeof tryAsync<number>>>, Result<number, Error>>>\ndeclare const r: Result<number>\n// @ts-expect-error check ok before reading value\nr.value\nif (r.ok) {\n  const n: number = r.value\n} else {\n  const e: Error = r.error\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "ms": 10,
+                  "outcome": "ok",
+                  "value": "a"
+                },
+                {
+                  "ms": 5,
+                  "outcome": "error",
+                  "value": "boom"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "ok a",
+                "fail boom"
+              ],
+              "failed": 1
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 5,
+                  "outcome": "string",
+                  "value": "raw"
+                },
+                {
+                  "ms": 0,
+                  "outcome": "sync",
+                  "value": "early"
+                },
+                {
+                  "ms": 1,
+                  "outcome": "ok",
+                  "value": "b"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "fail raw",
+                "fail early",
+                "ok b"
+              ],
+              "failed": 2
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "lines": [],
+              "failed": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 3,
+                  "outcome": "ok",
+                  "value": "only"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "ok only"
+              ],
+              "failed": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 0,
+                  "outcome": "sync",
+                  "value": "s1"
+                },
+                {
+                  "ms": 0,
+                  "outcome": "sync",
+                  "value": "s2"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "fail s1",
+                "fail s2"
+              ],
+              "failed": 2
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 20,
+                  "outcome": "ok",
+                  "value": "slow"
+                },
+                {
+                  "ms": 1,
+                  "outcome": "ok",
+                  "value": "fast"
+                },
+                {
+                  "ms": 10,
+                  "outcome": "error",
+                  "value": "mid"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "ok slow",
+                "ok fast",
+                "fail mid"
+              ],
+              "failed": 1
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 2,
+                  "outcome": "string",
+                  "value": ""
+                },
+                {
+                  "ms": 2,
+                  "outcome": "ok",
+                  "value": "ünï ✓"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "fail ",
+                "ok ünï ✓"
+              ],
+              "failed": 1
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "ms": 1,
+                  "outcome": "error",
+                  "value": "dup"
+                },
+                {
+                  "ms": 1,
+                  "outcome": "error",
+                  "value": "dup"
+                }
+              ]
+            ],
+            "expected": {
+              "lines": [
+                "fail dup",
+                "fail dup"
+              ],
+              "failed": 2
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "let count = 0\nfunction inc(): void { count++ }\n\nconst esmView = { get count() { return count } }  // like import { count }\nconst cjsView = { count, inc }                    // like module.exports = { count, inc }\n\ncjsView.inc()\nconsole.log(esmView.count, cjsView.count)",
+        "choices": [
+          "1 0",
+          "1 1",
+          "0 0"
+        ],
+        "answer": 0,
+        "explain": "The getter reads the variable every time, like an ESM live binding, so it sees 1. The plain property copied 0 when the object was built, like `module.exports = { count }`, and never changes."
+      },
+      {
+        "code": "const cache = new Map<string, { id: number }>()\nlet runs = 0\n\nfunction requireCounter(path: string): { id: number } {\n  const hit = cache.get(path)\n  if (hit) return hit\n  runs++                      // the module body\n  const mod = { id: runs }\n  cache.set(path, mod)\n  return mod\n}\n\nconst a = requireCounter('./counter')\nconst b = requireCounter('./counter')\nconsole.log(runs, a === b)",
+        "choices": [
+          "1 true",
+          "2 false",
+          "2 true"
+        ],
+        "answer": 0,
+        "explain": "The second call hits the cache: the body runs once and both callers get the very same exports object, which is why modules behave as singletons."
+      },
+      {
+        "code": "type Mod = { ready?: boolean }\nconst cache: Record<string, Mod> = {}\nconst out: string[] = []\n\nconst bodies: Record<string, (mod: Mod) => void> = {\n  a(mod) {\n    const b = load('b')\n    out.push('a sees b.ready=' + b.ready)\n    mod.ready = true\n  },\n  b(mod) {\n    const a = load('a')\n    out.push('b sees a.ready=' + a.ready)\n    mod.ready = true\n  },\n}\n\nfunction load(name: string): Mod {\n  if (cache[name]) return cache[name]\n  const mod: Mod = {}\n  cache[name] = mod\n  bodies[name](mod)\n  return mod\n}\n\nload('a')\nconsole.log(out.join(', '))",
+        "choices": [
+          "b sees a.ready=undefined, a sees b.ready=true",
+          "b sees a.ready=true, a sees b.ready=true",
+          "a sees b.ready=true, b sees a.ready=true"
+        ],
+        "answer": 0,
+        "explain": "`a` starts, is cached empty, and loads `b`. `b` loads `a` again and gets the half-built object, so it sees `undefined`; `b` then finishes before `a` reads it."
+      },
+      {
+        "code": "function pick(): string {\n  try {\n    throw new Error('boom')\n  } catch {\n    return 'from catch'\n  } finally {\n    return 'from finally'\n  }\n}\nconsole.log(pick())",
+        "choices": [
+          "from catch",
+          "from finally",
+          "boom"
+        ],
+        "answer": 1,
+        "explain": "A `return` inside `finally` replaces the pending completion, here the `return` from `catch`. It would equally swallow an exception, which is why returning from `finally` is a lint error in most configs."
+      },
+      {
+        "code": "class NotFoundError extends Error {\n  constructor(readonly resource: string) {\n    super(`${resource} not found`)\n  }\n}\nconst e = new NotFoundError('user')\nconsole.log(e.name, e instanceof NotFoundError, e.message)",
+        "choices": [
+          "Error true user not found",
+          "NotFoundError true user not found",
+          "NotFoundError false user not found"
+        ],
+        "answer": 0,
+        "explain": "`name` is inherited from `Error.prototype`, so it stays `'Error'` unless the subclass sets it. `instanceof` works because the output targets ES2022 (with an ES5 target it would have been `false`)."
+      },
+      {
+        "code": "function readPort(): number {\n  return config.port      // runs before `config` is initialised\n}\n\nlet result: string\ntry {\n  result = String(readPort())\n} catch (e) {\n  result = e instanceof ReferenceError ? 'ReferenceError' : 'other'\n}\nconst config = { port: 8080 }\nconsole.log(result)",
+        "choices": [
+          "ReferenceError",
+          "undefined",
+          "8080"
+        ],
+        "answer": 0,
+        "explain": "`const config` exists but is in the temporal dead zone until its line runs, so reading it throws. An ESM import cycle produces the same error when a module reads another's `const` export too early."
+      },
+      {
+        "code": "try {\n  try {\n    JSON.parse('{oops')\n  } catch (e) {\n    throw new Error('config unreadable', { cause: e })\n  }\n} catch (e) {\n  if (e instanceof Error && e.cause instanceof Error) console.log(e.message, '<-', e.cause.name)\n}",
+        "choices": [
+          "config unreadable <- SyntaxError",
+          "config unreadable <- Error",
+          "{oops <- SyntaxError"
+        ],
+        "answer": 0,
+        "explain": "`JSON.parse` throws a `SyntaxError`; wrapping it with `{ cause: e }` keeps it reachable as `e.cause`, so the outer handler gets both the high-level message and the root cause."
+      }
+    ],
+    "tip": "When asked about modules, draw the graph and say the three words **load, link, evaluate**, then explain that a module runs once and cycles see half-built exports. For error handling, state your policy before coding: which failures are expected (return a Result), which are bugs (throw), which are transient (retry at one layer, with backoff and a deadline). Interviewers are checking that you have a policy, not just `try/catch`.",
+    "links": {
+      "problems": [
+        "build-order",
+        "can-schedule"
+      ],
+      "guides": [
+        "retries-backoff",
+        "api-error-format",
+        "idempotency-keys"
+      ],
+      "lessons": [
+        "ts-promises-async",
+        "py-errors-exceptions",
+        "py-modules-testing"
+      ]
+    }
+  }
+}

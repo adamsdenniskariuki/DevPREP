@@ -1,0 +1,1304 @@
+{
+  "id": "ts-gotchas-idioms",
+  "track": "typescript",
+  "title": "Gotchas and interview idioms cheat sheet",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "A coding-round cheat sheet for TypeScript: the number, array, callback, string, date and JSON gotchas interviewers love, plus the short idioms that JavaScript forces on you — counting and grouping with `Map`, building grids safely, a pointer queue, a hand-rolled min-heap, multi-key comparators, `??=`, optional chaining and destructuring swaps.",
+  "prerequisites": [
+    "ts-arrays-maps-sets"
+  ],
+  "prerequisiteNotes": "ts-arrays-maps-sets: array methods, which ones mutate, `Map` versus objects and the default sort trap. This lesson assumes those and builds the interview toolkit on top; ts-equality-coercion covers `typeof`, `==` and floating point in depth.",
+  "objectives": [
+    "Predict the classic JavaScript traps on sight: `0.1 + 0.2`, unsafe integers, `typeof null`, `map(parseInt)`, `for...in` on arrays, holes, shared `fill` rows, `JSON.stringify` drops, 0-based months, UTF-16 length, negative `%` and `return` on its own line.",
+    "Write the counting, grouping, grid, queue and swap idioms from memory without reaching for missing built-ins.",
+    "Implement a small generic binary min-heap and use it for top-k in O(n log k).",
+    "Compose a stable multi-key comparator with explicit tie-breaks and no `NaN` or truthiness traps.",
+    "Say which newer built-ins exist in the target (ES2023: `toSorted`, `at`, `findLast`) and which do not (`Map.groupBy`, `Object.groupBy` are ES2024)."
+  ],
+  "concepts": [
+    {
+      "title": "Number gotchas: floats, safe integers, BigInt, % and truncation",
+      "body": "Every `number` is a 64-bit float, so `0.1 + 0.2 !== 0.3`; compare money in integer cents or with a tolerance. Integers are exact only up to `Number.MAX_SAFE_INTEGER` (2^53 − 1); products of two large ids or a factorial overflow silently, so use `bigint` (`10n`) and keep it away from `number` arithmetic (mixing throws). `%` is a **remainder** that takes the sign of the dividend: `-7 % 3` is `-1`, so circular indexes need `((i % n) + n) % n`. `Math.trunc` drops the fraction for any size; `x | 0` also truncates but first wraps to a signed 32-bit integer, so it breaks above 2^31. Use `Math.floor` for floor division of negatives (`Math.floor(-7 / 2)` is `-4`, `Math.trunc` gives `-3`). Numeric separators (`1_000_000`) are just readability. ts-equality-coercion covers `NaN` and `Number.isNaN` in depth.",
+      "code": "0.1 + 0.2;                        // 0.30000000000000004\nMath.abs(0.1 + 0.2 - 0.3) < Number.EPSILON;  // true: compare with a tolerance\n\nNumber.isSafeInteger(Math.pow(2, 53));        // false\nconst big = 9_007_199_254_740_993n * 2n;       // exact bigint\n// big + 1;                       // TypeError at runtime, compile error in TS\n\n-7 % 3;                           // -1 (remainder keeps the dividend's sign)\nconst wrap = (i: number, n: number) => ((i % n) + n) % n;\nwrap(-1, 5);                      // 4\n\nMath.trunc(-7 / 2);               // -3\nMath.floor(-7 / 2);               // -4\n3_000_000_000 | 0;                // -1294967296: |0 wraps to int32\nconst mid = lo + ((hi - lo) >> 1); // fine: indexes stay far below 2^31"
+    },
+    {
+      "title": "Building arrays and grids: holes and shared rows",
+      "body": "`new Array(3)` (or `Array(3)`) creates length 3 with **holes**, not `undefined` values: `map`, `forEach` and `filter` skip holes, so `Array(3).map((_, i) => i)` is still three holes. `Array.from({ length: n }, (_, i) => ...)` calls the mapper for every index and is the idiom for ranges and initialised arrays. The worse trap is `new Array(rows).fill(new Array(cols).fill(0))`: `fill` evaluates its argument **once** and stores the same row object in every slot, so writing `grid[0][0]` changes every row. Build grids with a factory per row: `Array.from({ length: rows }, () => new Array(cols).fill(0))`; filling a row with a primitive is fine because primitives are copied. The same applies to `fill([])` for adjacency lists and `fill(new Set())` for buckets.",
+      "code": "Array(3).map((_, i) => i);                     // [ <3 empty items> ]\nArray.from({ length: 3 }, (_, i) => i);        // [0, 1, 2]\n\nconst bad = new Array(2).fill(new Array(3).fill(0)) as number[][];\nbad[0][0] = 7;                                 // bad is [[7,0,0],[7,0,0]]\n\nconst grid = Array.from({ length: 2 }, () => new Array<number>(3).fill(0));\ngrid[0][0] = 7;                                // [[7,0,0],[0,0,0]]\n\nconst adj: number[][] = Array.from({ length: n }, () => []);\nconst seen = Array.from({ length: rows }, () => new Array<boolean>(cols).fill(false));\nconst dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;",
+      "diagram": "tsq-fill"
+    },
+    {
+      "title": "Callback and loop gotchas: map(parseInt), for...in, default sort",
+      "body": "`map`, `filter` and `forEach` pass **three** arguments: value, index, array. Passing a function that has an optional second parameter changes its meaning: `['1', '2', '3'].map(parseInt)` calls `parseInt('2', 1)` with radix 1 and returns `[1, NaN, NaN]`. Wrap it (`s => parseInt(s, 10)`) or use `map(Number)`, which ignores extra arguments. `for...in` walks **enumerable string keys**, including inherited ones, so on an array it yields `'0'`, `'1'` as strings and `i + 1` concatenates; use `for...of` for values, `for (const [i, v] of arr.entries())` for both, and `Object.entries` for objects. And remember `sort()` with no comparator sorts as strings (`[10, 9, 1]` becomes `[1, 10, 9]`) and mutates; ts-arrays-maps-sets covers it, here just always pass `(a, b) => a - b`.",
+      "code": "['1', '2', '3'].map(parseInt);           // [1, NaN, NaN]\n['1', '2', '3'].map(Number);             // [1, 2, 3]\n['10', '7'].map(s => parseInt(s, 10));   // [10, 7]\n\nconst xs = [10, 20];\nfor (const i in xs) console.log(i + 1);   // '01', '11': keys are strings\nfor (const x of xs) console.log(x + 1);   // 11, 21\nfor (const [i, x] of xs.entries()) console.log(i, x);\n\n[10, 9, 1].sort();                       // [1, 10, 9]\n[10, 9, 1].toSorted((a, b) => a - b);    // [1, 9, 10], input untouched",
+      "diagram": "tsq-parseint"
+    },
+    {
+      "title": "Strings, dates, JSON and semicolons",
+      "body": "`s.length` counts **UTF-16 code units**, so an emoji outside the Basic Multilingual Plane counts 2 and `s[i]` can return half of it; `[...s]` and `for...of` iterate code points (a skin-toned emoji is still two code points, and grapheme clusters need `Intl.Segmenter`). `typeof null` is `'object'`, so a null check must come first. In `Date`, months are **0-based** (`new Date(2024, 0, 31)` is 31 January) and setters roll over: setting month 1 on the 31st lands in March. `JSON.stringify` drops object properties whose value is `undefined`, a function or a symbol, writes them as `null` inside arrays, and turns `NaN` and `Infinity` into `null`; `Map` and `Set` become `{}`. Finally, automatic semicolon insertion ends a `return` at a line break, so `return` followed by the value on the next line returns `undefined`; keep the value or an opening bracket on the same line.",
+      "code": "const s = 'a👍';\ns.length;                    // 3: the emoji is two UTF-16 units\n[...s].length;               // 2 code points\nArray.from(s).reverse().join('');  // reverses by code point, not unit\n\nconst d = new Date(2024, 0, 31);   // 31 January (month 0)\nd.setMonth(1);                     // 31 February rolls over to 2 March\n\nJSON.stringify({ a: undefined, f() {}, n: NaN, xs: [undefined] });\n// '{\"n\":null,\"xs\":[null]}'\nJSON.stringify(new Map([[1, 2]]));  // '{}': convert with [...map] first\n\nfunction pair(a: number, b: number) {\n  return [   // the bracket on this line keeps ASI away\n    a, b,\n  ];\n}"
+    },
+    {
+      "title": "Idioms: count, group, default, swap",
+      "body": "Count with a `Map`: `m.set(k, (m.get(k) ?? 0) + 1)`. A plain object works for string keys, but `'constructor'` and `'__proto__'` collide with `Object.prototype`, and numeric keys come back as strings and reordered. Group with get-or-create: `(groups.get(k) ?? groups.set(k, []).get(k)!).push(x)`, or on an object `(acc[k] ??= []).push(x)`. `Map.groupBy` and `Object.groupBy` are **ES2024** and not in an ES2023 target, so say that and write the four-line loop or `reduce`. `a ??= b` assigns only when `a` is `null` or `undefined` (unlike `||=`, it keeps `0` and `''`). Optional chaining short-circuits the whole chain: `node?.left?.val` is `undefined` if either link is missing, and `fn?.()` calls only if `fn` exists. Destructuring swaps without a temporary (`[a[i], a[j]] = [a[j], a[i]]`), but a line that starts with `[` needs the previous statement to end in a semicolon.",
+      "code": "const freq = new Map<string, number>();\nfor (const w of words) freq.set(w, (freq.get(w) ?? 0) + 1);\n\nfunction groupBy<T, K>(items: readonly T[], key: (x: T) => K): Map<K, T[]> {\n  const groups = new Map<K, T[]>();\n  for (const x of items) {\n    const k = key(x);\n    const bucket = groups.get(k);\n    if (bucket) bucket.push(x);\n    else groups.set(k, [x]);\n  }\n  return groups;\n}\ngroupBy(['eat', 'tea', 'tan'], w => [...w].sort().join(''));\n\nconst byLen = words.reduce<Record<number, string[]>>((acc, w) => {\n  (acc[w.length] ??= []).push(w);\n  return acc;\n}, {});\n\nconst depth = root?.left?.val ?? -1;\nlet lo = 0, hi = 9;\n[lo, hi] = [hi, lo];"
+    },
+    {
+      "title": "Queues: a head pointer, not shift()",
+      "body": "JavaScript has no deque. `push` is amortised O(1), but `shift()` removes index 0 and, per the spec, moves every remaining element down one, so a BFS that calls `shift()` per node is O(n²) in the worst case. Engines sometimes optimise small arrays, which is why it often looks fine in a demo and then times out. The interview idiom is a **head index**: push to the end, read `queue[head++]`, and loop while `head < queue.length`. Memory is not reclaimed until the array is dropped, which is fine for one BFS. For a long-lived queue, compact when `head` passes half the array, or use a ring buffer. For BFS levels, process `const size = queue.length - head` items per round. Use `pop()` freely: removing from the end is O(1), which is why an array is already a good stack.",
+      "code": "function bfsOrder(adj: number[][], start: number): number[] {\n  const seen = new Array<boolean>(adj.length).fill(false);\n  const queue = [start];\n  seen[start] = true;\n  for (let head = 0; head < queue.length; head++) {\n    const node = queue[head];\n    for (const next of adj[node]) {\n      if (!seen[next]) {\n        seen[next] = true;   // mark when enqueued, not when dequeued\n        queue.push(next);\n      }\n    }\n  }\n  return queue;            // the queue doubles as the visit order\n}",
+      "diagram": "tsq-queue"
+    },
+    {
+      "title": "A min-heap you can write in five minutes",
+      "body": "There is no priority queue in the standard library, so top-k, Dijkstra, merging sorted streams and scheduling all need one. Store a complete binary tree in an array: the parent of `i` is `(i - 1) >> 1` and the children are `2i + 1` and `2i + 2`. `push` appends and **sifts up** while the new item beats its parent; `pop` saves the root, moves the last item to the root and **sifts down** to the better child. Both are O(log n), `peek` is O(1). Take a `less(a, b)` function instead of hard-coding numbers, so one class serves `[dist, node]` tuples, max-heaps (`(a, b) => a > b`) and tie-breaks. Sorting once is O(n log n) and fine when you need everything; the heap wins when you keep only k items or when items keep arriving.",
+      "code": "class MinHeap<T> {\n  private readonly items: T[] = [];\n\n  constructor(private readonly less: (a: T, b: T) => boolean) {}\n\n  get size(): number { return this.items.length; }\n\n  peek(): T | undefined { return this.items[0]; }\n\n  push(item: T): void {\n    const a = this.items;\n    a.push(item);\n    let i = a.length - 1;\n    while (i > 0) {\n      const parent = (i - 1) >> 1;\n      if (!this.less(a[i], a[parent])) break;\n      [a[i], a[parent]] = [a[parent], a[i]];\n      i = parent;\n    }\n  }\n\n  pop(): T | undefined {\n    const a = this.items;\n    if (a.length === 0) return undefined;\n    const top = a[0];\n    const last = a.pop()!;\n    if (a.length > 0) {\n      a[0] = last;\n      let i = 0;\n      for (;;) {\n        const left = 2 * i + 1, right = left + 1;\n        let best = i;\n        if (left < a.length && this.less(a[left], a[best])) best = left;\n        if (right < a.length && this.less(a[right], a[best])) best = right;\n        if (best === i) break;\n        [a[i], a[best]] = [a[best], a[i]];\n        i = best;\n      }\n    }\n    return top;\n  }\n}\n\nconst pq = new MinHeap<[dist: number, node: string]>((a, b) => a[0] < b[0]);\npq.push([4, 'c']);\npq.push([1, 'a']);\npq.pop();   // [1, 'a']",
+      "diagram": "tsq-heap"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Multi-key sorts: a comparator chain",
+      "body": "When the order has several keys, write one small comparator per key and try them in turn: the first non-zero result decides. Keep each comparator honest: return a negative number, zero or a positive number, never a boolean (`a < b` coerces to 0 or 1 and gives a broken order). Avoid `a.time - b.time` when either side can be `null` or `Infinity`: `Infinity - Infinity` is `NaN`, which the sort treats as 0 and the order becomes arbitrary. Compare strings with `<` and `>` for code-unit order or with `localeCompare` for human order, and say which. `Array.prototype.sort` is **stable** since ES2019, so equal items keep their input order, but relying on that silently is a bug magnet; add the final tie-break explicitly.",
+      "code": "type Comparator<T> = (a: T, b: T) => number;\n\nconst byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);\n\nfunction thenBy<T>(...comparators: Comparator<T>[]): Comparator<T> {\n  return (a, b) => {\n    for (const cmp of comparators) {\n      const d = cmp(a, b);\n      if (d !== 0) return d;\n    }\n    return 0;\n  };\n}\n\nconst people = [{ name: 'Bo', age: 30 }, { name: 'Al', age: 30 }];\npeople.toSorted(thenBy(\n  (a, b) => b.age - a.age,            // age descending\n  (a, b) => byText(a.name, b.name),   // then name ascending\n));",
+      "diagram": "tsq-sort"
+    },
+    {
+      "title": "Solve the core task: top-k words with a size-k heap",
+      "body": "Say the plan in one breath: \"count with a `Map`, keep a min-heap of the best k entries ordered by count then word, pop the weakest whenever the heap grows past k, then pop everything and reverse\". The subtle part is the heap order: the root must be the entry you would throw away first, so for equal counts the **later** word is weaker. Counting is O(n); each of the u distinct words costs O(log k), so the total is O(n + u log k) time and O(u) space for the counts. Edge cases to name: `k = 0` returns `[]`, `k` larger than the number of distinct words returns all of them, and words such as `'constructor'` are safe because a `Map` has no prototype keys. If the interviewer says \"just sort\", that is O(u log u) and perfectly acceptable for small u; the heap is the answer to \"what if the stream is huge and k is small?\"."
+    },
+    {
+      "title": "A 30-second gotcha sweep before you run",
+      "body": "Read your code once for the traps in this lesson. Arrays: did any `fill` receive an object? Any `Array(n).map`? Loops: any `for...in` over an array? Callbacks: any `map(parseInt)` or comparator returning a boolean? Numbers: any `%` on a possibly negative index, `| 0` on a large value, or a product that can exceed 2^53? Truthiness: any `x || fallback` where `x` can legitimately be `0` or `''` (use `??`)? Strings: did you assume one character per code unit? Then trace one tiny input aloud. Interviewers notice the sweep as much as the fix."
+    }
+  ],
+  "example": "// Grid BFS with the idioms from this lesson: safe grid, head-pointer queue, typed directions.\nfunction shortestSteps(grid: string[], start: [number, number], goal: [number, number]): number {\n  const rows = grid.length, cols = grid[0]?.length ?? 0;\n  const dist = Array.from({ length: rows }, () => new Array<number>(cols).fill(-1));\n  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;\n  const queue: [number, number][] = [start];\n  dist[start[0]][start[1]] = 0;\n  for (let head = 0; head < queue.length; head++) {\n    const [r, c] = queue[head];\n    if (r === goal[0] && c === goal[1]) return dist[r][c];\n    for (const [dr, dc] of dirs) {\n      const nr = r + dr, nc = c + dc;\n      if (grid[nr]?.[nc] === '.' && dist[nr][nc] === -1) {\n        dist[nr][nc] = dist[r][c] + 1;\n        queue.push([nr, nc]);\n      }\n    }\n  }\n  return -1;\n}\n\nconsole.log(shortestSteps(['..#', '...', '#..'], [0, 0], [2, 2]));  // 4",
+  "task": "Write `topKWords(words, k)`: return the `k` most frequent words, most frequent first, breaking ties by the word in ascending code-unit order (compare with `<`, so `'B'` comes before `'a'`). If there are fewer than `k` distinct words return them all; `k = 0` returns `[]`. JavaScript has no priority queue, so also write a generic class `MinHeap<T>` whose constructor takes `less(a, b): boolean` and which has `push(item)`, `pop(): T | undefined` and a `size` getter, and use it to keep **at most** `k` **entries** while you scan the counts, for O(n + u log k) time.",
+  "starter": "// TODO: write class MinHeap<T> (constructor takes less(a, b): boolean; push, pop, size)\n// and keep only k entries in it instead of sorting everything.\nfunction topKWords(words: string[], k: number): string[] {\n  const counts = new Map<string, number>();\n  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);\n  return [...counts]\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, k)\n    .map(([word]) => word);\n}\n",
+  "hints": [
+    "The heap root should be the entry you would discard first: the lowest count, and for equal counts the word that sorts later. Push each `[word, count]` and pop whenever `size > k`.",
+    "When the scan ends the heap holds the k best entries, weakest on top. Pop them all into an array and reverse it to get best first."
+  ],
+  "solution": "class MinHeap<T> {\n  private readonly items: T[] = [];\n\n  constructor(private readonly less: (a: T, b: T) => boolean) {}\n\n  get size(): number { return this.items.length; }\n\n  peek(): T | undefined { return this.items[0]; }\n\n  push(item: T): void {\n    const a = this.items;\n    a.push(item);\n    let i = a.length - 1;\n    while (i > 0) {\n      const parent = (i - 1) >> 1;\n      if (!this.less(a[i], a[parent])) break;\n      [a[i], a[parent]] = [a[parent], a[i]];\n      i = parent;\n    }\n  }\n\n  pop(): T | undefined {\n    const a = this.items;\n    if (a.length === 0) return undefined;\n    const top = a[0];\n    const last = a.pop()!;\n    if (a.length > 0) {\n      a[0] = last;\n      let i = 0;\n      for (;;) {\n        const left = 2 * i + 1, right = left + 1;\n        let best = i;\n        if (left < a.length && this.less(a[left], a[best])) best = left;\n        if (right < a.length && this.less(a[right], a[best])) best = right;\n        if (best === i) break;\n        [a[i], a[best]] = [a[best], a[i]];\n        i = best;\n      }\n    }\n    return top;\n  }\n}\n\ntype Entry = [word: string, count: number];\n\nfunction topKWords(words: string[], k: number): string[] {\n  const counts = new Map<string, number>();\n  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);\n  // The root is the weakest kept entry: lowest count, then the later word.\n  const weaker = (a: Entry, b: Entry): boolean => (a[1] !== b[1] ? a[1] < b[1] : a[0] > b[0]);\n  const heap = new MinHeap<Entry>(weaker);\n  for (const entry of counts) {\n    heap.push(entry);\n    if (heap.size > k) heap.pop();\n  }\n  const out: string[] = [];\n  for (let e = heap.pop(); e !== undefined; e = heap.pop()) out.push(e[0]);\n  return out.reverse();\n}\n\nCount once with a `Map` (no prototype collisions, keys stay strings in insertion order). The heap's `less` puts the weakest entry at the root: a lower count is weaker, and for equal counts the later word is weaker, because it is the one that loses the tie. Pushing every distinct entry and popping whenever the size exceeds k leaves exactly the k strongest. Popping yields weakest first, so the collected words are reversed at the end. The starter sorts by count only, so ties come out in first-seen order rather than alphabetical order, and it sorts all u entries. The heap version costs O(n) to count plus O(u log k) to select, and O(u + k) space. `k = 0` pushes and immediately pops each entry, which returns `[]`.",
+  "checklist": [
+    "Ties on count are broken by `<` on the word, so `'B'` precedes `'a'` and `'z'` precedes `'é'`.",
+    "The heap never holds more than k + 1 entries, and `k = 0` returns `[]`.",
+    "`MinHeap<T>` is generic with a `less` function, and `pop()` returns `undefined` when empty.",
+    "Counting uses a `Map`, so words like `'constructor'` are counted correctly."
+  ],
+  "pitfalls": [
+    "Building a grid with `new Array(rows).fill(new Array(cols).fill(0))`, so every row is the same array.",
+    "Calling `arr.map(parseInt)`, which passes the index as the radix.",
+    "Using `for...in` on an array and doing arithmetic with string keys.",
+    "Using `queue.shift()` in BFS on large inputs; it is O(n) per call in the worst case.",
+    "Returning `a < b` from a comparator, or subtracting values that may be `null` or `Infinity`, which yields `NaN`.",
+    "Writing `x || fallback` when `0` or `''` is a valid value; use `??`.",
+    "Calling `Map.groupBy` or `Object.groupBy`, which are ES2024 and missing from an ES2023 runtime.",
+    "Treating `-1 % n` as a valid index, or using `| 0` on values beyond 2^31."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A grid builder that does not alias rows",
+      "prompt": "Write a generic `makeGrid(rows, cols, init)` that returns a `T[][]` where cell `[r][c]` is `init(r, c)`, with a fresh array per row. Then write `paintCells(rows, cols, cells)` that starts from a grid of zeros and adds 1 to each listed `[r, c]` cell (cells may repeat). Ignore cells outside the grid, including negative coordinates. A zero or negative size gives an empty grid.",
+      "hints": [
+        "`Array.from({ length: rows }, (_, r) => ...)` calls the mapper once per row, so each row can be a new array.",
+        "Type the callback as `(r: number, c: number) => T` and return `T[][]`; inference then gives `number[][]` for `() => 0`."
+      ],
+      "solution": "function makeGrid<T>(rows: number, cols: number, init: (r: number, c: number) => T): T[][] {\n  return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => init(r, c)));\n}\n\nfunction paintCells(rows: number, cols: number, cells: [number, number][]): number[][] {\n  const grid = makeGrid(rows, cols, () => 0);\n  for (const [r, c] of cells) {\n    if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r][c]++;\n  }\n  return grid;\n}\n",
+      "checklist": [
+        "Painting one cell changes exactly one row.",
+        "Out-of-range and negative coordinates are ignored without throwing.",
+        "`makeGrid` infers `T` from the callback and contains no `any`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Stable multi-key ranking",
+      "prompt": "Write `rankRunners(runners)` for objects `{ name, time, bib }` where `time` is seconds or `null` for did-not-finish. Return names: finishers first by time ascending, equal times by bib ascending, then non-finishers by bib ascending. A time of `0` is a valid finish. Declare `type Comparator<T> = (a: T, b: T) => number` and a generic `thenBy(...comparators)` that returns the first non-zero result, and build the ranking from three small comparators. Do not mutate the input.",
+      "hints": [
+        "Split the order into three comparators: finished before not finished (`Number(a.time === null) - Number(b.time === null)`), then time, then bib.",
+        "The time comparator must return 0 when either time is `null`; `Infinity - Infinity` is `NaN`, and a `NaN` result makes the order unreliable. Use `toSorted` to leave the input alone."
+      ],
+      "solution": "type Comparator<T> = (a: T, b: T) => number;\n\nfunction thenBy<T>(...comparators: Comparator<T>[]): Comparator<T> {\n  return (a, b) => {\n    for (const cmp of comparators) {\n      const d = cmp(a, b);\n      if (d !== 0) return d;\n    }\n    return 0;\n  };\n}\n\ninterface Runner { name: string; time: number | null; bib: number }\n\nfunction rankRunners(runners: Runner[]): string[] {\n  const finishersFirst: Comparator<Runner> = (a, b) => Number(a.time === null) - Number(b.time === null);\n  const fasterFirst: Comparator<Runner> = (a, b) => (a.time === null || b.time === null ? 0 : a.time - b.time);\n  const lowerBibFirst: Comparator<Runner> = (a, b) => a.bib - b.bib;\n  return runners.toSorted(thenBy(finishersFirst, fasterFirst, lowerBibFirst)).map(r => r.name);\n}\n",
+      "checklist": [
+        "A time of `0` ranks as the fastest finisher, not as a non-finisher.",
+        "Non-finishers are ordered by bib, regardless of input order.",
+        "`thenBy` is typed `Comparator<T>[]` to `Comparator<T>`, and the input array is unchanged."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not use `Object.groupBy` or `Map.groupBy` in your answer?",
+      "answer": "They arrived in ES2024. With an ES2023 target and lib they are neither typed nor guaranteed at runtime, so I would mention them and write the loop: get the bucket, create it if missing, push. Same O(n), and it works everywhere. If the environment is known to be current, `Map.groupBy(items, keyFn)` is the one-liner."
+    },
+    {
+      "question": "Your BFS uses `queue.shift()` and passes small tests but times out on a large grid. Why, and what do you change?",
+      "answer": "`shift` removes the first element and moves all others down, O(n) per call, so the BFS becomes O(V²). Keep the array but read with a head index (`queue[head++]`) so dequeue is O(1). If memory matters for a long-running queue, compact periodically or use a fixed-size ring buffer."
+    },
+    {
+      "question": "When would you sort instead of using a heap for top-k?",
+      "answer": "When the number of distinct items u is small or you need the full order anyway: sorting is O(u log u), simple and hard to get wrong. A size-k heap is O(u log k) and O(k) extra memory, which matters when u is huge, k is small, or items arrive as a stream. Quickselect gives average O(u) but is not stable and is fiddlier to write."
+    },
+    {
+      "question": "How do you reverse a string containing emoji?",
+      "answer": "`s.split('').reverse()` reverses UTF-16 code units and breaks surrogate pairs. `[...s].reverse().join('')` reverses code points, which keeps single emoji intact. Combined sequences such as skin tones, flags or family emoji are several code points; reversing those correctly needs grapheme segmentation with `Intl.Segmenter`."
+    },
+    {
+      "question": "Your ids are 64-bit integers from an API. What can go wrong?",
+      "answer": "`JSON.parse` turns them into `number`, and anything above 2^53 − 1 is rounded, so two ids can become equal. Keep them as strings in the JSON, or parse them to `bigint` explicitly. Remember that `bigint` does not mix with `number` arithmetic and `JSON.stringify` throws on a `bigint` unless you convert it."
+    }
+  ],
+  "takeaways": [
+    "`fill` evaluates its argument once: build grids and bucket arrays with `Array.from({ length }, () => ...)`.",
+    "Callbacks receive (value, index, array); wrap functions such as `parseInt` that have optional parameters.",
+    "Use `for...of` for values; `for...in` yields string keys.",
+    "A head-index queue and a 40-line `MinHeap<T>` replace the missing deque and priority queue.",
+    "Comparators return numbers, chain explicit tie-breaks, and never subtract `null` or `Infinity`.",
+    "Know the number traps: float error, 2^53, remainder sign, `| 0` wrapping; reach for `bigint` or integer cents when exactness matters."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsq-fill",
+        "type": "compare",
+        "title": "fill(new Array()) versus Array.from per row",
+        "alt": "Comparison of two ways to build a three-row grid. On the left, new Array(3).fill(...) makes rows 0, 1 and 2 all point to one shared array, so a write through any row shows in all three. On the right, Array.from with a row factory gives each row index its own separate array.",
+        "caption": "`fill` evaluates its argument once and stores the same reference everywhere; a factory callback creates one array per row.",
+        "before": {
+          "label": "new Array(3).fill(row)",
+          "nodes": [
+            {
+              "id": "grid",
+              "label": "grid",
+              "kind": "client",
+              "col": 0,
+              "row": 1,
+              "sub": "3 slots"
+            },
+            {
+              "id": "r0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "r1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 1,
+              "row": 1
+            },
+            {
+              "id": "r2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 1,
+              "row": 2
+            },
+            {
+              "id": "row",
+              "label": "one shared row",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "1 write shows 3x"
+            }
+          ],
+          "edges": [
+            {
+              "from": "grid",
+              "to": "r0"
+            },
+            {
+              "from": "grid",
+              "to": "r1"
+            },
+            {
+              "from": "grid",
+              "to": "r2"
+            },
+            {
+              "from": "r0",
+              "to": "row"
+            },
+            {
+              "from": "r1",
+              "to": "row",
+              "label": "same ref"
+            },
+            {
+              "from": "r2",
+              "to": "row"
+            }
+          ]
+        },
+        "after": {
+          "label": "Array.from({length: 3}, () => row)",
+          "nodes": [
+            {
+              "id": "grid",
+              "label": "grid",
+              "kind": "client",
+              "col": 0,
+              "row": 1,
+              "sub": "3 slots"
+            },
+            {
+              "id": "r0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "r1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 1,
+              "row": 1
+            },
+            {
+              "id": "r2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 1,
+              "row": 2
+            },
+            {
+              "id": "a0",
+              "label": "row A",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "a1",
+              "label": "row B",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "own array"
+            },
+            {
+              "id": "a2",
+              "label": "row C",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "grid",
+              "to": "r0"
+            },
+            {
+              "from": "grid",
+              "to": "r1"
+            },
+            {
+              "from": "grid",
+              "to": "r2"
+            },
+            {
+              "from": "r0",
+              "to": "a0"
+            },
+            {
+              "from": "r1",
+              "to": "a1"
+            },
+            {
+              "from": "r2",
+              "to": "a2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsq-parseint",
+        "type": "sequence",
+        "title": "What ['1', '2', '3'].map(parseInt) really calls",
+        "alt": "Sequence diagram with your code, Array.prototype.map and parseInt. Map calls parseInt three times, passing each string together with its index as the radix: parseInt('1', 0) returns 1, parseInt('2', 1) returns NaN and parseInt('3', 2) returns NaN, so the result is [1, NaN, NaN].",
+        "caption": "map passes (value, index, array); any callback with an optional second parameter gets the index whether you meant it or not.",
+        "actors": [
+          {
+            "id": "code",
+            "label": "Your code"
+          },
+          {
+            "id": "map",
+            "label": "Array map"
+          },
+          {
+            "id": "pi",
+            "label": "parseInt"
+          }
+        ],
+        "messages": [
+          {
+            "from": "code",
+            "to": "map",
+            "label": "['1','2','3'].map(parseInt)"
+          },
+          {
+            "from": "map",
+            "to": "pi",
+            "label": "parseInt('1', 0, arr)",
+            "note": "The index 0 becomes the radix; 0 means \"use the default\", base 10."
+          },
+          {
+            "from": "pi",
+            "to": "map",
+            "label": "1",
+            "style": "reply"
+          },
+          {
+            "from": "map",
+            "to": "pi",
+            "label": "parseInt('2', 1, arr)",
+            "note": "Radix 1 is outside 2–36, so parseInt gives up."
+          },
+          {
+            "from": "pi",
+            "to": "map",
+            "label": "NaN",
+            "style": "reply"
+          },
+          {
+            "from": "map",
+            "to": "pi",
+            "label": "parseInt('3', 2, arr)",
+            "note": "'3' is not a binary digit, so nothing parses."
+          },
+          {
+            "from": "pi",
+            "to": "map",
+            "label": "NaN",
+            "style": "reply"
+          },
+          {
+            "from": "map",
+            "to": "code",
+            "label": "[1, NaN, NaN]",
+            "style": "reply",
+            "note": "Fix: map(Number) or map(s => parseInt(s, 10))."
+          }
+        ]
+      },
+      {
+        "id": "tsq-queue",
+        "type": "bars",
+        "title": "Dequeuing 10,000 items: shift() versus a head index",
+        "alt": "Bar chart of element moves needed to dequeue 10,000 items one at a time. Calling shift each time models about 50 million element moves (n squared over 2), while reading with a head index needs about 0.01 million steps (n).",
+        "caption": "Big-O model from the spec, not a benchmark: shift moves every remaining element; a head index moves none. Engines may optimise small arrays, so do not count on it.",
+        "unit": "M moves, n=10k dequeues",
+        "bars": [
+          {
+            "label": "shift(): n²/2",
+            "value": 50
+          },
+          {
+            "label": "queue[head++]: n",
+            "value": 0.01,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "tsq-heap",
+        "type": "flow",
+        "title": "push(1) into the min-heap [2, 5, 3, 9]",
+        "alt": "Flow diagram of a binary min-heap stored in an array, drawn as a tree: index 0 holds 2, index 1 holds 5, index 2 holds 3, index 3 holds 9. Pushing 1 appends it at index 4, a child of index 1. It swaps with 5 at index 1, then with 2 at index 0, and stops at the root. A note gives parent(i) = (i - 1) >> 1.",
+        "caption": "Append, then sift up while the new item beats its parent: at most one swap per level, O(log n).",
+        "nodes": [
+          {
+            "id": "i0",
+            "label": "[0] 2",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "root = minimum"
+          },
+          {
+            "id": "rule",
+            "label": "parent(i)",
+            "kind": "note",
+            "col": 4,
+            "row": 0,
+            "sub": "(i - 1) >> 1"
+          },
+          {
+            "id": "i1",
+            "label": "[1] 5",
+            "kind": "state",
+            "col": 1,
+            "row": 2
+          },
+          {
+            "id": "i2",
+            "label": "[2] 3",
+            "kind": "state",
+            "col": 3,
+            "row": 2
+          },
+          {
+            "id": "i3",
+            "label": "[3] 9",
+            "kind": "state",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "i4",
+            "label": "[4] 1",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "new item"
+          },
+          {
+            "id": "push",
+            "label": "push(1)",
+            "kind": "client",
+            "col": 4,
+            "row": 4,
+            "sub": "append at end"
+          }
+        ],
+        "edges": [
+          {
+            "from": "push",
+            "to": "i4",
+            "label": "append"
+          },
+          {
+            "from": "i4",
+            "to": "i1",
+            "label": "1 < 5: swap"
+          },
+          {
+            "from": "i1",
+            "to": "i0",
+            "label": "1 < 2: swap"
+          },
+          {
+            "from": "i0",
+            "to": "i2",
+            "label": "child 2i+2"
+          },
+          {
+            "from": "i1",
+            "to": "i3",
+            "label": "child 2i+1"
+          },
+          {
+            "from": "rule",
+            "to": "i0",
+            "label": "index maths"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              3,
+              4,
+              5
+            ],
+            "text": "The array [2, 5, 3, 9] is a tree: children of i are 2i+1 and 2i+2, the parent is (i - 1) >> 1. Every parent is ≤ its children."
+          },
+          {
+            "edges": [
+              0
+            ],
+            "text": "`push(1)` appends at index 4, the next free slot, so the tree stays complete."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "The parent of 4 is 1, holding 5. `less(1, 5)` is true, so they swap: [2, 1, 3, 9, 5]."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "The parent of 1 is 0, holding 2. Swap again: [1, 2, 3, 9, 5]. Index 0 is the root, so stop."
+          },
+          {
+            "edges": [
+              2,
+              1
+            ],
+            "text": "`pop` runs the other way: take the root, move the last item to index 0 and sift it down to the smaller child until both children are larger."
+          }
+        ]
+      },
+      {
+        "id": "tsq-sort",
+        "type": "flow",
+        "title": "A comparator chain for runners",
+        "alt": "Flow diagram of a three-step comparator. compare(a, b) first checks finished status: if exactly one runner has no time, the finisher sorts first. Otherwise it compares times; a non-zero difference decides. On a tie it compares bib numbers, which are unique and settle every remaining case.",
+        "caption": "Each comparator either decides (non-zero) or passes to the next; the last key makes the order total.",
+        "nodes": [
+          {
+            "id": "pair",
+            "label": "compare(a, b)",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "fin",
+            "label": "finished?",
+            "kind": "decision",
+            "col": 2,
+            "row": 0,
+            "sub": "time === null"
+          },
+          {
+            "id": "time",
+            "label": "a.time - b.time",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": "0 if either null"
+          },
+          {
+            "id": "bib",
+            "label": "a.bib - b.bib",
+            "kind": "decision",
+            "col": 2,
+            "row": 4,
+            "sub": "unique tie-break"
+          },
+          {
+            "id": "o1",
+            "label": "finisher first",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "returns -1 or 1"
+          },
+          {
+            "id": "o2",
+            "label": "faster first",
+            "kind": "good",
+            "col": 4,
+            "row": 2
+          },
+          {
+            "id": "o3",
+            "label": "lower bib first",
+            "kind": "good",
+            "col": 4,
+            "row": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "pair",
+            "to": "fin"
+          },
+          {
+            "from": "fin",
+            "to": "o1",
+            "label": "status differs"
+          },
+          {
+            "from": "fin",
+            "to": "time",
+            "label": "same status"
+          },
+          {
+            "from": "time",
+            "to": "o2",
+            "label": "non-zero"
+          },
+          {
+            "from": "time",
+            "to": "bib",
+            "label": "tie (0)"
+          },
+          {
+            "from": "bib",
+            "to": "o3",
+            "label": "decides"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "First key: `Number(a.time === null) - Number(b.time === null)`. If only one runner finished, it decides."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Second key: time. It returns 0 when either time is `null`, so it never produces `NaN`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Last key: bib numbers are unique, so every pair is now ordered and the result does not depend on input order."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "topKWords",
+        "starter": "// TODO: write class MinHeap<T> (constructor takes less(a, b): boolean; push, pop, size)\n// and keep only k entries in it instead of sorting everything.\nfunction topKWords(words: string[], k: number): string[] {\n  const counts = new Map<string, number>();\n  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);\n  return [...counts]\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, k)\n    .map(([word]) => word);\n}\n",
+        "solution": "class MinHeap<T> {\n  private readonly items: T[] = [];\n\n  constructor(private readonly less: (a: T, b: T) => boolean) {}\n\n  get size(): number { return this.items.length; }\n\n  peek(): T | undefined { return this.items[0]; }\n\n  push(item: T): void {\n    const a = this.items;\n    a.push(item);\n    let i = a.length - 1;\n    while (i > 0) {\n      const parent = (i - 1) >> 1;\n      if (!this.less(a[i], a[parent])) break;\n      [a[i], a[parent]] = [a[parent], a[i]];\n      i = parent;\n    }\n  }\n\n  pop(): T | undefined {\n    const a = this.items;\n    if (a.length === 0) return undefined;\n    const top = a[0];\n    const last = a.pop()!;\n    if (a.length > 0) {\n      a[0] = last;\n      let i = 0;\n      for (;;) {\n        const left = 2 * i + 1, right = left + 1;\n        let best = i;\n        if (left < a.length && this.less(a[left], a[best])) best = left;\n        if (right < a.length && this.less(a[right], a[best])) best = right;\n        if (best === i) break;\n        [a[i], a[best]] = [a[best], a[i]];\n        i = best;\n      }\n    }\n    return top;\n  }\n}\n\ntype Entry = [word: string, count: number];\n\nfunction topKWords(words: string[], k: number): string[] {\n  const counts = new Map<string, number>();\n  for (const w of words) counts.set(w, (counts.get(w) ?? 0) + 1);\n  // The root is the weakest kept entry: lowest count, then the later word.\n  const weaker = (a: Entry, b: Entry): boolean => (a[1] !== b[1] ? a[1] < b[1] : a[0] > b[0]);\n  const heap = new MinHeap<Entry>(weaker);\n  for (const entry of counts) {\n    heap.push(entry);\n    if (heap.size > k) heap.pop();\n  }\n  const out: string[] = [];\n  for (let e = heap.pop(); e !== undefined; e = heap.pop()) out.push(e[0]);\n  return out.reverse();\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst h = new MinHeap<number>((a, b) => a < b)\nh.push(3)\ntype _1 = Expect<Equal<ReturnType<typeof h.pop>, number | undefined>>\ntype _2 = Expect<Equal<typeof h.size, number>>\ntype _3 = Expect<Equal<ReturnType<typeof topKWords>, string[]>>\n// @ts-expect-error a heap of numbers rejects a string\nh.push('x')\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "b",
+                "a",
+                "b",
+                "a",
+                "c"
+              ],
+              2
+            ],
+            "expected": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "args": [
+              [
+                "z",
+                "y",
+                "x",
+                "y"
+              ],
+              2
+            ],
+            "expected": [
+              "y",
+              "x"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              3
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "solo"
+              ],
+              0
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "a",
+                "b"
+              ],
+              5
+            ],
+            "expected": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "args": [
+              [
+                "B",
+                "a",
+                "b",
+                "a"
+              ],
+              2
+            ],
+            "expected": [
+              "a",
+              "B"
+            ]
+          },
+          {
+            "args": [
+              [
+                "é",
+                "z",
+                "é",
+                "z",
+                "😀"
+              ],
+              3
+            ],
+            "expected": [
+              "z",
+              "é",
+              "😀"
+            ]
+          },
+          {
+            "args": [
+              [
+                "constructor",
+                "toString",
+                "constructor",
+                "__proto__"
+              ],
+              2
+            ],
+            "expected": [
+              "constructor",
+              "__proto__"
+            ]
+          },
+          {
+            "args": [
+              [
+                "apple",
+                "apple",
+                "apple",
+                "kiwi",
+                "kiwi",
+                "fig",
+                "fig",
+                "date"
+              ],
+              3
+            ],
+            "expected": [
+              "apple",
+              "fig",
+              "kiwi"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "paintCells",
+        "starter": "// TODO: make makeGrid generic and give every row its own array\nfunction makeGrid(rows: number, cols: number, init: (r: number, c: number) => any): any[][] {\n  return new Array(rows).fill(new Array(cols).fill(init(0, 0)));\n}\n\nfunction paintCells(rows: number, cols: number, cells: [number, number][]): number[][] {\n  const grid = makeGrid(rows, cols, () => 0);\n  for (const [r, c] of cells) {\n    if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r][c]++;\n  }\n  return grid;\n}\n",
+        "solution": "function makeGrid<T>(rows: number, cols: number, init: (r: number, c: number) => T): T[][] {\n  return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => init(r, c)));\n}\n\nfunction paintCells(rows: number, cols: number, cells: [number, number][]): number[][] {\n  const grid = makeGrid(rows, cols, () => 0);\n  for (const [r, c] of cells) {\n    if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r][c]++;\n  }\n  return grid;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst g1 = makeGrid(2, 3, () => 'x')\ntype _1 = Expect<Equal<typeof g1, string[][]>>\nconst g2 = makeGrid(1, 1, (r, c) => r * c)\ntype _2 = Expect<Equal<typeof g2, number[][]>>\n// @ts-expect-error the init callback receives numbers, not strings\nmakeGrid(1, 1, (r: string) => r)\n",
+        "tests": [
+          {
+            "args": [
+              2,
+              3,
+              [
+                [
+                  0,
+                  0
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  0,
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                2,
+                0,
+                0
+              ],
+              [
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              1,
+              2,
+              [
+                [
+                  0,
+                  1
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                1
+              ]
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              0,
+              3,
+              [
+                [
+                  0,
+                  0
+                ]
+              ]
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              2,
+              0,
+              []
+            ],
+            "expected": [
+              [],
+              []
+            ]
+          },
+          {
+            "args": [
+              1,
+              1,
+              []
+            ],
+            "expected": [
+              [
+                0
+              ]
+            ]
+          },
+          {
+            "args": [
+              2,
+              2,
+              [
+                [
+                  -1,
+                  0
+                ],
+                [
+                  0,
+                  -1
+                ],
+                [
+                  2,
+                  0
+                ],
+                [
+                  0,
+                  2
+                ],
+                [
+                  1,
+                  1
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                0
+              ],
+              [
+                0,
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              3,
+              3,
+              [
+                [
+                  0,
+                  0
+                ],
+                [
+                  1,
+                  1
+                ],
+                [
+                  2,
+                  2
+                ],
+                [
+                  1,
+                  1
+                ],
+                [
+                  1,
+                  1
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                0,
+                0
+              ],
+              [
+                0,
+                3,
+                0
+              ],
+              [
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              -2,
+              3,
+              []
+            ],
+            "expected": []
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "rankRunners",
+        "starter": "// TODO: declare Comparator<T> and a typed thenBy that tries each comparator in turn\ntype Comparator<T> = any;\nfunction thenBy(...comparators: any[]): any {\n  return comparators[0];\n}\n\ninterface Runner { name: string; time: number | null; bib: number }\n\nfunction rankRunners(runners: Runner[]): string[] {\n  return [...runners]\n    .sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity))\n    .map(r => r.name);\n}\n",
+        "solution": "type Comparator<T> = (a: T, b: T) => number;\n\nfunction thenBy<T>(...comparators: Comparator<T>[]): Comparator<T> {\n  return (a, b) => {\n    for (const cmp of comparators) {\n      const d = cmp(a, b);\n      if (d !== 0) return d;\n    }\n    return 0;\n  };\n}\n\ninterface Runner { name: string; time: number | null; bib: number }\n\nfunction rankRunners(runners: Runner[]): string[] {\n  const finishersFirst: Comparator<Runner> = (a, b) => Number(a.time === null) - Number(b.time === null);\n  const fasterFirst: Comparator<Runner> = (a, b) => (a.time === null || b.time === null ? 0 : a.time - b.time);\n  const lowerBibFirst: Comparator<Runner> = (a, b) => a.bib - b.bib;\n  return runners.toSorted(thenBy(finishersFirst, fasterFirst, lowerBibFirst)).map(r => r.name);\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _1 = Expect<Equal<Comparator<string>, (a: string, b: string) => number>>\nconst byLength = thenBy<string>((a, b) => a.length - b.length, (a, b) => (a < b ? -1 : a > b ? 1 : 0))\ntype _2 = Expect<Equal<typeof byLength, Comparator<string>>>\n// @ts-expect-error a comparator returns a number, not a boolean\nthenBy<string>((a, b) => a < b)\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "name": "Ana",
+                  "time": 61.5,
+                  "bib": 7
+                },
+                {
+                  "name": "Ben",
+                  "time": null,
+                  "bib": 2
+                },
+                {
+                  "name": "Cy",
+                  "time": 60,
+                  "bib": 9
+                },
+                {
+                  "name": "Di",
+                  "time": 61.5,
+                  "bib": 3
+                }
+              ]
+            ],
+            "expected": [
+              "Cy",
+              "Di",
+              "Ana",
+              "Ben"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Eve",
+                  "time": null,
+                  "bib": 5
+                },
+                {
+                  "name": "Flo",
+                  "time": null,
+                  "bib": 1
+                },
+                {
+                  "name": "Gus",
+                  "time": 70,
+                  "bib": 4
+                }
+              ]
+            ],
+            "expected": [
+              "Gus",
+              "Flo",
+              "Eve"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Solo",
+                  "time": null,
+                  "bib": 1
+                }
+              ]
+            ],
+            "expected": [
+              "Solo"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Slow",
+                  "time": 5,
+                  "bib": 1
+                },
+                {
+                  "name": "Zero",
+                  "time": 0,
+                  "bib": 2
+                }
+              ]
+            ],
+            "expected": [
+              "Zero",
+              "Slow"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Zoë",
+                  "time": 10.25,
+                  "bib": 8
+                },
+                {
+                  "name": "Ýr",
+                  "time": 10.25,
+                  "bib": 4
+                },
+                {
+                  "name": "Åsa",
+                  "time": 10.5,
+                  "bib": 1
+                }
+              ]
+            ],
+            "expected": [
+              "Ýr",
+              "Zoë",
+              "Åsa"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "A",
+                  "time": 30,
+                  "bib": 9
+                },
+                {
+                  "name": "A",
+                  "time": 30,
+                  "bib": 2
+                },
+                {
+                  "name": "B",
+                  "time": null,
+                  "bib": 3
+                },
+                {
+                  "name": "C",
+                  "time": null,
+                  "bib": 0
+                }
+              ]
+            ],
+            "expected": [
+              "A",
+              "A",
+              "C",
+              "B"
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "x",
+                  "time": 3,
+                  "bib": 3
+                },
+                {
+                  "name": "y",
+                  "time": 2,
+                  "bib": 2
+                },
+                {
+                  "name": "z",
+                  "time": 1,
+                  "bib": 1
+                },
+                {
+                  "name": "w",
+                  "time": null,
+                  "bib": -1
+                }
+              ]
+            ],
+            "expected": [
+              "z",
+              "y",
+              "x",
+              "w"
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "console.log(['1', '2', '3'].map(parseInt).join(','));",
+        "choices": [
+          "1,2,3",
+          "1,NaN,NaN",
+          "1,NaN,3",
+          "NaN,NaN,NaN"
+        ],
+        "answer": 1,
+        "explain": "`map` passes the index as `parseInt`'s radix: radix 0 means default (1), radix 1 is invalid (NaN), and '3' is not a binary digit (NaN). Use `map(Number)`."
+      },
+      {
+        "code": "const holes = Array(3).map((_, i) => i);\nconst made = Array.from({ length: 3 }, (_, i) => i);\nconst grid = new Array(2).fill([]) as number[][];\ngrid[0].push(1);\nconsole.log(holes.filter(() => true).length, made.join(','), JSON.stringify(grid));",
+        "choices": [
+          "3 0,1,2 [[1],[]]",
+          "0 0,1,2 [[1],[1]]",
+          "0 0,1,2 [[1],[]]",
+          "3 0,1,2 [[1],[1]]"
+        ],
+        "answer": 1,
+        "explain": "`Array(3)` has holes, which `map` and `filter` skip, so nothing survives. `Array.from` visits every index. `fill([])` stores one array in both slots, so the push shows twice."
+      },
+      {
+        "code": "const xs = [10, 20];\nconst keys: string[] = [];\nfor (const i in xs) keys.push(i + 1);\nconst vals: number[] = [];\nfor (const x of xs) vals.push(x + 1);\nconsole.log(keys.join(' '), vals.join(' '));",
+        "choices": [
+          "1 2 11 21",
+          "01 11 11 21",
+          "11 21 11 21",
+          "01 11 1 2"
+        ],
+        "answer": 1,
+        "explain": "`for...in` yields property keys, which are strings, so `'0' + 1` is `'01'`. `for...of` yields the values."
+      },
+      {
+        "code": "console.log(JSON.stringify({ a: undefined, f: () => 1, n: NaN, xs: [undefined, () => 1, 2] }));",
+        "choices": [
+          "{\"n\":null,\"xs\":[null,null,2]}",
+          "{\"a\":null,\"f\":null,\"n\":null,\"xs\":[null,null,2]}",
+          "{\"n\":NaN,\"xs\":[2]}",
+          "{\"n\":null,\"xs\":[2]}"
+        ],
+        "answer": 0,
+        "explain": "Object properties holding `undefined` or a function are omitted; inside an array they become `null` so indexes stay put. `NaN` serialises as `null`."
+      },
+      {
+        "code": "console.log(-7 % 3, Math.trunc(-3.5), Math.floor(-3.5), 3_000_000_000 | 0);",
+        "choices": [
+          "2 -4 -4 3000000000",
+          "-1 -3 -4 -1294967296",
+          "-1 -4 -4 -1294967296",
+          "2 -3 -4 3000000000"
+        ],
+        "answer": 1,
+        "explain": "`%` keeps the sign of the dividend. `Math.trunc` rounds toward zero, `Math.floor` toward minus infinity. `| 0` converts to a signed 32-bit integer, so 3e9 wraps around."
+      },
+      {
+        "code": "const s = 'hi👋';\nconst d = new Date(2024, 0, 31);\nd.setMonth(1);\nconsole.log(s.length, [...s].length, d.getMonth(), d.getDate());",
+        "choices": [
+          "3 3 1 29",
+          "4 3 2 2",
+          "4 3 1 29",
+          "3 3 2 2"
+        ],
+        "answer": 1,
+        "explain": "The emoji is one code point but two UTF-16 units, so `length` is 4 and spreading gives 3. Months are 0-based: month 1 is February, and 31 February 2024 rolls over to 2 March (month 2)."
+      },
+      {
+        "code": "function total(a: number, b: number): number | undefined {\n  return\n    a + b;\n}\nconsole.log(total(2, 3));",
+        "choices": [
+          "5",
+          "undefined",
+          "SyntaxError",
+          "NaN"
+        ],
+        "answer": 1,
+        "explain": "Automatic semicolon insertion ends `return` at the line break, so the function returns `undefined` and `a + b` is unreachable. Keep the value on the same line as `return`."
+      }
+    ],
+    "tip": "Name the missing built-in before you write it: \"JavaScript has no heap, so I'll write a 30-line `MinHeap` with a `less` function\" or \"no deque, so a head index\". Then, before running, do a visible gotcha sweep aloud (`fill` with an object? `map(parseInt)`? a comparator that can return `NaN`?). It shows you know the language, not just the algorithm.",
+    "links": {
+      "problems": [
+        "most-frequent-k",
+        "kth-largest-stream",
+        "merge-sorted-streams",
+        "running-median",
+        "nearest-k-points",
+        "group-by-letters",
+        "grid-shortest-path",
+        "count-regions",
+        "multi-source-spread",
+        "merge-overlaps",
+        "rooms-needed",
+        "worker-pool-makespan"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "pattern-recognition",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "ts-arrays-maps-sets",
+        "ts-equality-coercion",
+        "ts-generics",
+        "py-gotchas-idioms",
+        "heaps-top-k",
+        "queues-fifo-simulation",
+        "graph-bfs-shortest-hops",
+        "sorting-stable-merge",
+        "hash-map-complements",
+        "dp-grid-paths"
+      ]
+    }
+  }
+}
