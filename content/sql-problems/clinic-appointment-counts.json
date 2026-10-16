@@ -1,0 +1,169 @@
+{
+  "id": "clinic-appointment-counts",
+  "title": "Three kinds of count per clinic",
+  "topic": "Aggregation",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "A group of physio clinics logs every appointment. After a visit the patient may leave a rating; if they don't, rating is NULL.\n\nFor every clinic, report how many appointments it had, how many of those got a rating, and how many different patients it saw.\n\n- Columns: clinic (the clinic name), appointments, rated, unique_patients\n- One row per clinic, including clinics with no appointments (all three counts 0)\n- Any row order is fine",
+  "hints": [
+    "Start from clinics so that clinics without appointments still appear. Which join keeps them?",
+    "count(*) counts rows, count(col) counts non-NULL values, count(DISTINCT col) counts different non-NULL values. After a LEFT JOIN an empty clinic still has one row.",
+    "LEFT JOIN appointments a ON a.clinic_id = c.id, GROUP BY c.id, c.name, and use count(a.id), count(a.rating), count(DISTINCT a.patient_id)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE clinics (id int PRIMARY KEY, name text NOT NULL);\nCREATE TABLE appointments (id int PRIMARY KEY, clinic_id int NOT NULL REFERENCES clinics(id), patient_id int NOT NULL, rating int CHECK (rating BETWEEN 1 AND 5));",
+    "starter": "-- Appointment counts per clinic\nSELECT c.name AS clinic,\n       count(*) AS appointments,\n       count(*) AS rated,\n       count(*) AS unique_patients\nFROM clinics c\nLEFT JOIN appointments a ON a.clinic_id = c.id\nGROUP BY c.id, c.name;",
+    "solution": "SELECT c.name AS clinic,\n       count(a.id) AS appointments,\n       count(a.rating) AS rated,\n       count(DISTINCT a.patient_id) AS unique_patients\nFROM clinics c\nLEFT JOIN appointments a ON a.clinic_id = c.id\nGROUP BY c.id, c.name;",
+    "tests": [
+      {
+        "name": "two busy clinics",
+        "seed": "INSERT INTO clinics VALUES (1, 'Northside'), (2, 'Harbor');\nINSERT INTO appointments VALUES (1, 1, 100, 5), (2, 1, 100, NULL), (3, 1, 101, 4), (4, 2, 200, NULL);",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": [
+            [
+              "Northside",
+              3,
+              2,
+              2
+            ],
+            [
+              "Harbor",
+              1,
+              0,
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "clinic with no appointments",
+        "seed": "INSERT INTO clinics VALUES (1, 'Elm'), (2, 'Oak');\nINSERT INTO appointments VALUES (1, 1, 10, 3);",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": [
+            [
+              "Elm",
+              1,
+              1,
+              1
+            ],
+            [
+              "Oak",
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "no ratings at all",
+        "seed": "INSERT INTO clinics VALUES (1, 'Pine');\nINSERT INTO appointments VALUES (1, 1, 7, NULL), (2, 1, 8, NULL);",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": [
+            [
+              "Pine",
+              2,
+              0,
+              2
+            ]
+          ]
+        }
+      },
+      {
+        "name": "one patient many visits",
+        "seed": "INSERT INTO clinics VALUES (1, 'Ash'), (2, 'Yew');\nINSERT INTO appointments VALUES (1, 1, 5, 2), (2, 1, 5, 3), (3, 1, 5, 3), (4, 1, 5, NULL), (5, 2, 5, 1);",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": [
+            [
+              "Ash",
+              4,
+              3,
+              1
+            ],
+            [
+              "Yew",
+              1,
+              1,
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "clinics but no appointments",
+        "seed": "INSERT INTO clinics VALUES (1, 'Birch'), (2, 'Cedar');",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": [
+            [
+              "Birch",
+              0,
+              0,
+              0
+            ],
+            [
+              "Cedar",
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no clinics",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "clinic",
+            "appointments",
+            "rated",
+            "unique_patients"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "The LEFT JOIN keeps every clinic; a clinic with no appointments gets one row whose appointment columns are all NULL. count(*) counts that row and reports 1, which is the trap, while count(a.id) skips the NULL and reports 0. count(a.rating) counts only rated visits because aggregates ignore NULLs, and count(DISTINCT a.patient_id) collapses repeat visits. Grouping by c.id as well as the name keeps two clinics with the same name apart.",
+  "notes": "count(DISTINCT ...) usually forces a sort or hash per group, so it is the most expensive of the three on large data. An index on appointments(clinic_id) helps when you only need a few clinics. Grouping by the primary key c.id lets Postgres accept other clinics columns in SELECT without listing them.",
+  "followUps": [
+    "Add the average rating per clinic, rounded to 2 decimals, NULL when nobody rated.",
+    "What changes if two clinics share a name and you group only by name?"
+  ]
+}

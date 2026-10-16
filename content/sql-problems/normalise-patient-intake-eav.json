@@ -1,0 +1,66 @@
+{
+  "id": "normalise-patient-intake-eav",
+  "title": "Normalise key-value intake answers",
+  "topic": "Data changes & design",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-schema-design",
+  "paths": ["senior"],
+  "prompt": "A walk-in clinic's intake tablet saved every answer as a key-value row in patient_attrs. Now the clinic wants a proper patients table with typed columns.\n\nWrite one INSERT ... SELECT that fills the empty patients table from patient_attrs.\n\n- One row per patient_id that appears in patient_attrs, even if none of its keys are known\n- Keys are matched after trimming spaces and ignoring case: full_name, birth_date, blood_type; ignore every other key\n- Values are trimmed; a NULL or blank value is treated as missing\n- If a key has several non-missing values, the one with the highest id wins\n- birth_date is stored as a date (values are 'YYYY-MM-DD'); blood_type is stored upper-case\n- A key with no usable value gives NULL\n- The check runs SELECT id, full_name, birth_date, blood_type FROM patients (any order)",
+  "hints": [
+    "Clean first: in a CTE, normalise the key with lower(trim(attr)) and the value with NULLIF(trim(value), ''), and drop missing values.",
+    "Pick the latest value per (patient_id, key) with DISTINCT ON ... ORDER BY patient_id, key, id DESC, or row_number(). max(value) picks the alphabetically largest, not the latest.",
+    "Pivot with max(value) FILTER (WHERE key = 'full_name') etc. over the cleaned rows, grouped by patient_id, starting from the distinct patient_ids so patients with only unknown keys still get a row."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE patient_attrs (id int PRIMARY KEY, patient_id int NOT NULL, attr text NOT NULL, value text);\nCREATE TABLE patients (id int PRIMARY KEY, full_name text, birth_date date, blood_type text);",
+    "starter": "-- Fill patients from patient_attrs\nSELECT 1;",
+    "solution": "WITH clean AS (\n  SELECT id, patient_id, lower(trim(attr)) AS attr, NULLIF(trim(value), '') AS value\n  FROM patient_attrs\n),\nlatest AS (\n  SELECT DISTINCT ON (patient_id, attr) patient_id, attr, value\n  FROM clean\n  WHERE value IS NOT NULL\n  ORDER BY patient_id, attr, id DESC\n)\nINSERT INTO patients (id, full_name, birth_date, blood_type)\nSELECT p.patient_id,\n       max(l.value) FILTER (WHERE l.attr = 'full_name'),\n       (max(l.value) FILTER (WHERE l.attr = 'birth_date'))::date,\n       upper(max(l.value) FILTER (WHERE l.attr = 'blood_type'))\nFROM (SELECT DISTINCT patient_id FROM patient_attrs) p\nLEFT JOIN latest l ON l.patient_id = p.patient_id\nGROUP BY p.patient_id;",
+    "check": "SELECT id, full_name, birth_date, blood_type FROM patients;",
+    "tests": [
+      {
+        "name": "messy keys and a corrected name",
+        "seed": "INSERT INTO patient_attrs VALUES (1, 100, 'full_name', 'Ines Okafor-Lind'), (2, 100, 'birth_date', '1988-04-12'), (3, 100, 'blood_type', 'ab+'), (4, 101, 'Full_Name ', ' Tomas Reyes '), (5, 101, 'blood_type', 'O-'), (6, 100, 'full_name', 'Ines Lind'), (7, 101, 'allergy', 'pollen');",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[100, "Ines Lind", "1988-04-12", "AB+"], [101, "Tomas Reyes", null, "O-"]] }
+      },
+      {
+        "name": "patient with only unknown keys",
+        "seed": "INSERT INTO patient_attrs VALUES (1, 200, 'shoe_size', '42'), (2, 201, 'blood_type', 'b+');",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[200, null, null, null], [201, null, null, "B+"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "blank newer value does not erase",
+        "seed": "INSERT INTO patient_attrs VALUES (1, 300, 'full_name', 'Ada Moss'), (2, 300, 'full_name', '   '), (3, 300, 'birth_date', NULL);",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[300, "Ada Moss", null, null]] }
+      },
+      {
+        "name": "latest date is the earlier calendar date",
+        "seed": "INSERT INTO patient_attrs VALUES (1, 400, 'birth_date', '2001-01-31'), (2, 400, ' BIRTH_DATE', '1999-12-31');",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[400, null, "1999-12-31", null]] }
+      },
+      {
+        "name": "highest id wins regardless of insert order",
+        "seed": "INSERT INTO patient_attrs VALUES (9, 500, 'blood_type', 'a-'), (3, 500, 'blood_type', 'b-'), (5, 501, 'full_name', 'Zed Ames'), (8, 501, 'full_name', 'Abe Zorn');",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[500, null, null, "A-"], [501, "Abe Zorn", null, null]] }
+      },
+      {
+        "name": "only blank values",
+        "seed": "INSERT INTO patient_attrs VALUES (1, 600, 'full_name', ''), (2, 600, 'blood_type', NULL);",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [[600, null, null, null]] }
+      },
+      {
+        "name": "no intake rows",
+        "seed": "",
+        "expected": { "columns": ["id", "full_name", "birth_date", "blood_type"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "The clean CTE normalises keys and turns blank values into NULL, and filtering those out before ranking means a later blank answer cannot hide an earlier real one. DISTINCT ON (patient_id, attr) with ORDER BY id DESC keeps the newest usable value per key; after that each key has at most one row, so max() ... FILTER is only a pivot device. The common trap is pivoting the raw rows with max(value), which returns the alphabetically largest answer ('Ines Okafor-Lind' over 'Ines Lind'). Starting from the distinct patient_ids with a LEFT JOIN keeps patients whose answers are all unknown or blank; an inner join or WHERE on the key list would drop them.",
+  "notes": "The ::date cast runs after the pivot, so a single malformed date makes the whole INSERT fail; in a real migration you would validate first (for example with pg_input_is_valid(value, 'date') in Postgres 16+) and route bad rows to a reject table. DISTINCT ON needs a sort on (patient_id, attr, id), which is cheap here; on a large EAV table an index on (patient_id, id) or a single window pass helps. EAV is flexible for sparse, user-defined fields, but typed columns give constraints, real types and simpler queries, which is why migrations like this are common; jsonb is a middle ground.",
+  "followUps": [
+    "How would you make the migration re-runnable if patients already has some rows?",
+    "Which constraints would you add to patients after the backfill, and how would you add them on a large live table?"
+  ]
+}

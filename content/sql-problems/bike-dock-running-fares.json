@@ -1,0 +1,65 @@
+{
+  "id": "bike-dock-running-fares",
+  "title": "Running fare total per bike dock",
+  "topic": "Window functions",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-window-functions",
+  "prompt": "A bike share records every ride with the dock where it ended, the day it ended and the fare. Several rides often end at the same dock on the same day. Comped rides have a NULL fare.\n\nFor every ride, show the running total of fares at its dock: this ride plus every earlier ride at the same dock.\n\n- Columns: ride_id, dock, ended_on, fare, running_fare\n- \"Earlier\" means an earlier ended_on; rides on the same day are taken in ride_id order, so every ride gets its own total\n- A NULL fare adds nothing; running_fare is never NULL (0 if nothing has been paid yet)\n- Order rows by dock, then ended_on, then ride_id",
+  "hints": [
+    "A running total is sum() OVER (PARTITION BY ... ORDER BY ...). Look closely at what happens to rows that tie on the ORDER BY column.",
+    "With ORDER BY and no frame clause the default frame is RANGE ... CURRENT ROW, which includes all peers: every ride on the same day gets the same total. Make the order unique or use ROWS.",
+    "sum(fare) OVER (PARTITION BY dock ORDER BY ended_on, id) and wrap it in COALESCE(..., 0) for docks whose first rides were comped."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE rides (id int PRIMARY KEY, dock text NOT NULL, ended_on date NOT NULL, fare numeric(6,2));",
+    "starter": "-- Running fare per dock\nSELECT id AS ride_id, dock, ended_on, fare,\n       sum(fare) OVER (PARTITION BY dock ORDER BY ended_on) AS running_fare\nFROM rides\nORDER BY dock, ended_on, id;",
+    "solution": "SELECT id AS ride_id, dock, ended_on, fare,\n       COALESCE(sum(fare) OVER (PARTITION BY dock ORDER BY ended_on, id\n                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0) AS running_fare\nFROM rides\nORDER BY dock, ended_on, id;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "same-day rides at two docks",
+        "seed": "INSERT INTO rides VALUES (1, 'Pier', '2026-03-01', 3.00), (2, 'Pier', '2026-03-02', 2.50), (3, 'Pier', '2026-03-02', 4.00), (4, 'Pier', '2026-03-03', 1.25), (5, 'Mill', '2026-03-01', 6.00), (6, 'Mill', '2026-03-01', 2.00);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[5, "Mill", "2026-03-01", 6.0, 6.0], [6, "Mill", "2026-03-01", 2.0, 8.0], [1, "Pier", "2026-03-01", 3.0, 3.0], [2, "Pier", "2026-03-02", 2.5, 5.5], [3, "Pier", "2026-03-02", 4.0, 9.5], [4, "Pier", "2026-03-03", 1.25, 10.75]] }
+      },
+      {
+        "name": "one ride per day, inserted out of order",
+        "seed": "INSERT INTO rides VALUES (10, 'Gate', '2026-04-01', 1.00), (11, 'Gate', '2026-04-05', 2.00), (12, 'Gate', '2026-04-03', 3.00);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[10, "Gate", "2026-04-01", 1.0, 1.0], [12, "Gate", "2026-04-03", 3.0, 4.0], [11, "Gate", "2026-04-05", 2.0, 6.0]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "comped rides, including the first",
+        "seed": "INSERT INTO rides VALUES (20, 'Yard', '2026-05-01', NULL), (21, 'Yard', '2026-05-01', 2.00), (22, 'Yard', '2026-05-02', NULL);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[20, "Yard", "2026-05-01", null, 0], [21, "Yard", "2026-05-01", 2.0, 2.0], [22, "Yard", "2026-05-02", null, 2.0]] }
+      },
+      {
+        "name": "same-day ties ordered by ride_id not insert order",
+        "seed": "INSERT INTO rides VALUES (31, 'Quay', '2026-06-01', 1.00), (30, 'Quay', '2026-06-01', 2.00);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[30, "Quay", "2026-06-01", 2.0, 2.0], [31, "Quay", "2026-06-01", 1.0, 3.0]] }
+      },
+      {
+        "name": "three rides on one day",
+        "seed": "INSERT INTO rides VALUES (40, 'Park', '2026-07-04', 1.50), (41, 'Park', '2026-07-04', 1.50), (42, 'Park', '2026-07-04', 1.50);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[40, "Park", "2026-07-04", 1.5, 1.5], [41, "Park", "2026-07-04", 1.5, 3.0], [42, "Park", "2026-07-04", 1.5, 4.5]] }
+      },
+      {
+        "name": "only comped rides",
+        "seed": "INSERT INTO rides VALUES (50, 'Dam', '2026-08-01', NULL);",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [[50, "Dam", "2026-08-01", null, 0]] }
+      },
+      {
+        "name": "no rides",
+        "seed": "",
+        "expected": { "columns": ["ride_id", "dock", "ended_on", "fare", "running_fare"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "sum() with PARTITION BY dock and ORDER BY builds a cumulative total per dock. The trap is the default frame: with ORDER BY but no frame clause Postgres uses RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, and RANGE includes every peer row with the same ordering value, so all rides on the same day would show the end-of-day total. Adding id to the ORDER BY makes the order unique, and an explicit ROWS frame states the intent. sum() ignores NULL fares, but if every row so far is NULL the sum itself is NULL, so COALESCE(..., 0) is needed.",
+  "notes": "One sort on (dock, ended_on, id) feeds the WindowAgg, and the outer ORDER BY reuses it, so there is no second sort. An index on rides(dock, ended_on, id) can provide that order without sorting. ROWS frames are also slightly cheaper than RANGE because Postgres does not need to look ahead for peers.",
+  "followUps": [
+    "Return the end-of-day running total per dock instead, one row per dock and day.",
+    "How would you reset the running total at the start of each month?"
+  ]
+}

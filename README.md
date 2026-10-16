@@ -10,10 +10,11 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Tracks** (`#tracks`) | Your selected path, or all curriculum by track |
 | **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
+| **SQL problems** (`#sql`, `#sql/<problem-id>`) | Interview SQL problems on in-browser Postgres with visible and hidden tests |
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
 | **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
 | **Whiteboard** (`#board`) | A free diagram board saved on this device |
-| **Flashcards** (`#cards`) | 378 spaced-repetition concept cards across all tracks, plus a recall card per coding problem |
+| **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
 | **Study plan** (`#plan`) | Day-by-day plan up to your interview date |
@@ -80,6 +81,17 @@ Interview-focused **Python**, **TypeScript** and **SQL & Postgres** lessons, lis
 - A **placement check** per track marks lessons you already know; the plan skips them. Saved as `placements` in the backup.
 - Language mocks are a coding task plus up to 4 trivia questions. Each language has 5+ flashcards per lesson. Badges: "<Language> placed" and "<Language> trivia".
 
+### SQL interview problems
+
+**42 original problems** in 6 topics: filtering & joins, aggregation, subqueries & CTEs, window functions, gaps & islands, and data changes & design. Each topic mixes Easy, Medium and Hard, tagged SE or SSE, with SE core / SSE core path tags, and links to the SQL lesson that teaches the technique.
+
+- Each problem has a prompt, an example expected table, the schema and visible test data, progressive hints, a reference query with explanation, Postgres performance notes and follow-ups. Hidden tests cover NULLs, ties, duplicates, empty tables and boundaries.
+- Problems run in the same PGlite worker as the SQL lessons, with the same comparison rules. Data-change problems are checked with a query that reads the database afterwards.
+- Filter by topic (solved/total per topic), difficulty, level and path core. Drafts are saved per problem in `devprep.code.v1`.
+- Passing every test records a first-solve time (`sqlSolved` in the backup), worth 15 XP. Badges: First query, Query crafter (20), SQL marathon (all) and a "SQL <topic> cleared" badge per topic.
+- Each problem adds a recall card (`sql-p-<id>`) to the SQL deck. Once the SQL track is in your plan, every third day adds a problem (path core first, then the least-practised topic, easiest first). SQL mocks open with a problem at your level, then trivia.
+- `src/sql-problems.test.ts` runs every reference query against every visible and hidden test on PGlite, and checks that every starter fails a visible test.
+
 ## Flashcards, mocks, stories and plan
 
 - **Flashcards**: Leitner boxes with intervals of 0/1/3/7/14/30/60 days. Again resets to box 0 and re-queues the card once; Hard keeps it (minimum box 1); Good moves +1; Easy +2. Sessions show due cards first, then up to 10 new ones. Keys: Space/Enter reveals, 1–4 grades. A card counts as mastered from box 4.
@@ -91,7 +103,7 @@ Interview-focused **Python**, **TypeScript** and **SQL & Postgres** lessons, lis
 
 Derived entirely from saved activity and solves, so old backups get credit automatically.
 
-- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+), 15 per Field Guide entry (+5 for a perfect quiz). A level every 200 XP.
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 15 per solved SQL problem, 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+), 15 per Field Guide entry (+5 for a perfect quiz). A level every 200 XP.
 - **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
 - **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths, cards, mocks and the story bank). No lives, no leaderboards.
 
@@ -255,6 +267,8 @@ The optional root field `guides` maps a Field Guide entry ID to `{ "best": 0–1
 
 The optional root field `placements` maps a language track ID to `{ "percent": 0–100 integer, "at": ISO time, "known": [lesson IDs of that track] }`. Interview tracks, unknown lessons and lessons from another track are rejected.
 
+The optional root field `sqlSolved` maps a SQL problem ID to the ISO time every test first passed. Unknown IDs and malformed times are rejected; SQL problem IDs are append-only (`tests/fixtures/sql-problem-ids.json`).
+
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 
 `tests/fixtures/v1-progress.json` is a real export captured through the original MVP browser UI before the expansion: one completed hash-map lesson and an unfinished two-pointer reflection with draft, both hints revealed, solution visibility, and checked items. Tests load/import/resume/finish it and compare the previous record and review date. Separate fixed fingerprints protect all 12 original core contracts.
@@ -323,6 +337,9 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/runner/` | Test harness (`core.ts`), JS, Pyodide, TypeScript and PGlite (`sql-core.ts`, `sql.worker.ts`) workers, timeouts and pinned runtime versions |
 | `src/screens/CodeScreen.tsx`, `src/components/CodeEditor.tsx`, `src/code-drafts.ts` | Code runner UI, keyboard-friendly editor, local drafts |
 | `tests/code.spec.ts` | Browser solves in both languages, drafts, timeout recovery, errors and narrow layouts |
+| `content/sql-problems/` | One JSON file per SQL interview problem plus `index.json` (order); bundled to `src/generated/sql-problems.json` (lazy chunk) and `sql-problem-index.json` |
+| `src/sql-problems.ts`, `src/screens/SqlProblemsScreen.tsx` | SQL problem index, lazy loader, topic progress, list and workspace UI |
+| `src/sql-problems.test.ts`, `tests/fixtures/sql-problem-ids.json`, `tests/sql-problems.spec.ts` | Schema, append-only IDs, every solution and starter on PGlite, XP/badges/plan/mocks; browser solve, filters and layouts at 360/768/1440 |
 | `content/cases/` | One JSON file per system design case plus `index.json`; bundled to `src/generated/cases.json` (lazy chunk) and `case-index.json` |
 | `src/cases.ts`, `src/case-types.ts`, `src/design-framework.ts` | Case index, lazy loader, node kinds and the 8-step framework |
 | `src/cases.test.ts`, `tests/fixtures/case-ids.json` | Case schema, diagram and rubric checks, append-only IDs |
@@ -363,6 +380,10 @@ Lesson IDs are part of the backup format. Renaming or removing one requires an e
 ### Adding a coding problem
 
 Add `content/problems/<id>.json` (fields: `id`, `title`, `pattern` (one of `PROBLEM_PATTERNS` in `src/problem-types.ts`), `level`, `difficulty`, optional `lessonId`, optional `paths` (`swe`/`senior`: core on that role path), `prompt`, `function` and `starter`/`solution` for `js` and `py`, `tests`, `hiddenTests`, `hints`, `complexity`, `followUps`), append the ID to `content/problems/index.json` (grouped by pattern), `tests/fixtures/problem-ids.json` and its recall card `dsa-p-<id>` to `tests/fixtures/card-ids.json`, then run `npm test`. IDs are append-only: they are stored in backups. Arguments and expected values are JSON; results are compared by value, ignoring object key order. Write problems yourself; don't copy text from problem sites.
+
+### Adding a SQL problem
+
+Add `content/sql-problems/<id>.json` (fields: `id`, `title`, `topic` (one of `SQL_TOPICS` in `src/problem-types.ts`), `level`, `difficulty`, optional `lessonId` (a SQL lesson), optional `paths`, `prompt`, `hints` (3+), `exercise` (`schema`, `starter`, `solution`, optional `ordered` and `check`, at least 2 `tests` and 4 `hiddenTests`, each `{ name, seed, expected: { columns, rows } }`), `explanation`, `notes`, `followUps` (2+)). Append the ID to `content/sql-problems/index.json` (grouped by topic), `tests/fixtures/sql-problem-ids.json`, and its recall card `sql-p-<id>` to `tests/fixtures/card-ids.json`, then run `npm test`. IDs are append-only. Write problems yourself; don't copy text from problem sites.
 
 ### Adding a system design case
 

@@ -1,0 +1,190 @@
+{
+  "id": "reconcile-bank-and-books",
+  "title": "Reconcile the bank feed against the books",
+  "topic": "Filtering & joins",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-joins",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A co-op bakery reconciles its bank feed (bank_lines) with its own bookkeeping (book_lines) each month. Payments are matched by a reference string. One payment can be split over several lines on either side, so compare the total amount per ref, not single lines.\n\nReturn every ref that does not reconcile: it appears on only one side, or its totals differ.\n\n- Columns: ref, bank_total, book_total, status\n- status is 'bank_only', 'books_only' or 'mismatch'\n- The total for a side where the ref is absent is NULL\n- Ignore lines whose ref is NULL\n- A ref whose lines sum to 0 still counts as present on that side\n- Order rows by ref ascending",
+  "hints": [
+    "Joining raw lines on ref multiplies rows when a ref is split on both sides. What should you do before joining?",
+    "Aggregate each table by ref in its own CTE, then join the two summaries so that refs missing on either side survive.",
+    "FULL JOIN the two summaries ON ref, keep rows WHERE bank.total IS DISTINCT FROM book.total, and use COALESCE for ref and a CASE on which side's ref IS NULL for status."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE bank_lines (id int PRIMARY KEY, ref text, amount numeric(10,2) NOT NULL);\nCREATE TABLE book_lines (id int PRIMARY KEY, ref text, amount numeric(10,2) NOT NULL);",
+    "starter": "-- Refs that do not reconcile\nSELECT b.ref, b.amount AS bank_total, k.amount AS book_total, 'mismatch' AS status\nFROM bank_lines b\nJOIN book_lines k ON k.ref = b.ref\nWHERE b.amount <> k.amount\nORDER BY b.ref;",
+    "solution": "WITH bank AS (\n  SELECT ref, sum(amount) AS total FROM bank_lines WHERE ref IS NOT NULL GROUP BY ref\n), books AS (\n  SELECT ref, sum(amount) AS total FROM book_lines WHERE ref IS NOT NULL GROUP BY ref\n)\nSELECT coalesce(bank.ref, books.ref) AS ref,\n       bank.total AS bank_total,\n       books.total AS book_total,\n       CASE WHEN books.ref IS NULL THEN 'bank_only'\n            WHEN bank.ref IS NULL THEN 'books_only'\n            ELSE 'mismatch' END AS status\nFROM bank\nFULL JOIN books ON books.ref = bank.ref\nWHERE bank.total IS DISTINCT FROM books.total\nORDER BY 1;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "one of each problem",
+        "seed": "INSERT INTO bank_lines VALUES (1, 'R1', 100.00), (2, 'R2', 50.00), (3, 'R3', 75.00);\nINSERT INTO book_lines VALUES (1, 'R1', 100.00), (2, 'R2', 55.00), (3, 'R4', 20.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": [
+            [
+              "R2",
+              50,
+              55,
+              "mismatch"
+            ],
+            [
+              "R3",
+              75,
+              null,
+              "bank_only"
+            ],
+            [
+              "R4",
+              null,
+              20,
+              "books_only"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "split payments",
+        "seed": "INSERT INTO bank_lines VALUES (1, 'S1', 60.00), (2, 'S1', 40.00);\nINSERT INTO book_lines VALUES (1, 'S1', 100.00), (2, 'S2', 30.00), (3, 'S2', 30.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": [
+            [
+              "S2",
+              null,
+              60,
+              "books_only"
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "splits on both sides do not fan out",
+        "seed": "INSERT INTO bank_lines VALUES (1, 'R1', 30.00), (2, 'R1', 70.00), (3, 'R2', 10.00);\nINSERT INTO book_lines VALUES (1, 'R1', 100.00), (2, 'R2', 10.00), (3, 'R2', 10.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": [
+            [
+              "R2",
+              10,
+              20,
+              "mismatch"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "NULL refs are ignored",
+        "seed": "INSERT INTO bank_lines VALUES (1, NULL, 5.00), (2, 'A1', 10.00), (3, NULL, 7.00);\nINSERT INTO book_lines VALUES (1, NULL, 5.00), (2, 'A1', 10.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "zero total still present",
+        "seed": "INSERT INTO bank_lines VALUES (1, 'Z1', 10.00), (2, 'Z1', -10.00), (3, 'Z2', 0.00);\nINSERT INTO book_lines VALUES (1, 'Z2', 0.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": [
+            [
+              "Z1",
+              0,
+              null,
+              "bank_only"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "only the books have lines",
+        "seed": "INSERT INTO book_lines VALUES (1, 'B2', 4.00), (2, 'B1', 3.00);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": [
+            [
+              "B1",
+              null,
+              3,
+              "books_only"
+            ],
+            [
+              "B2",
+              null,
+              4,
+              "books_only"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "everything reconciles",
+        "seed": "INSERT INTO bank_lines VALUES (1, 'K1', 12.34), (2, 'K2', 1.00);\nINSERT INTO book_lines VALUES (1, 'K2', 1.00), (2, 'K1', 12.34);",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "both ledgers empty",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "ref",
+            "bank_total",
+            "book_total",
+            "status"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "Aggregating first is the key step: if R1 has two bank lines and two book lines, a raw join produces four rows and every sum doubles. After grouping, each side has one row per ref, and a FULL OUTER JOIN keeps refs present on only one side, filling the other side with NULL. IS DISTINCT FROM keeps one-sided refs (number vs NULL) and real mismatches while dropping equal totals; a plain <> would lose the one-sided rows. Status is decided by which side's ref is NULL, not by the total, because a legitimate total can be 0.",
+  "notes": "Postgres runs FULL JOIN only as a hash or merge join, and only with mergejoinable or hashjoinable equality conditions, so keep the ON clause a plain equality. Grouping each side first also shrinks the join input. An index on ref helps only if you filter to a period; for whole-table reconciliation sequential scans plus hash aggregates are the expected plan.",
+  "followUps": [
+    "How would you allow a small tolerance, say amounts within 0.01, to count as reconciled?",
+    "Lines also carry a posting date; how would you reconcile per month and flag refs booked in a different month from the bank?"
+  ]
+}

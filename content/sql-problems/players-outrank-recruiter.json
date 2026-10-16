@@ -1,0 +1,142 @@
+{
+  "id": "players-outrank-recruiter",
+  "title": "Players who outrank their recruiter",
+  "topic": "Filtering & joins",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-joins",
+  "prompt": "An online chess club rewards members who bring friends. Each player row stores the id of the player who recruited them (recruited_by), or NULL for founding members.\n\nList every player whose rating is strictly higher than their own recruiter's rating, with the size of the gap.\n\n- Columns: handle, recruiter_handle, rating_gap (player rating minus recruiter rating)\n- Any row order is fine\n- Equal ratings do not count\n- Skip pairs where either rating is NULL (unrated)\n- Compare only with the direct recruiter, not the recruiter's recruiter",
+  "hints": [
+    "Both the player and the recruiter live in the same table. How can you read it twice in one query?",
+    "Give the table two aliases, p for the player and r for the recruiter, and join r.id = p.recruited_by.",
+    "SELECT p.handle, r.handle AS recruiter_handle, p.rating - r.rating AS rating_gap FROM players p JOIN players r ON r.id = p.recruited_by WHERE p.rating > r.rating."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE players (id int PRIMARY KEY, handle text NOT NULL UNIQUE, rating int, recruited_by int REFERENCES players(id));",
+    "starter": "-- Players rated above their recruiter\nSELECT handle, handle AS recruiter_handle, 0 AS rating_gap\nFROM players\nWHERE recruited_by IS NOT NULL;",
+    "solution": "SELECT p.handle,\n       r.handle AS recruiter_handle,\n       p.rating - r.rating AS rating_gap\nFROM players p\nJOIN players r ON r.id = p.recruited_by\nWHERE p.rating > r.rating;",
+    "tests": [
+      {
+        "name": "small recruiting tree",
+        "seed": "INSERT INTO players VALUES (1, 'nova', 1500, NULL), (2, 'pike', 1620, 1), (3, 'quill', 1400, 1), (4, 'rook', 1700, 2);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": [
+            [
+              "pike",
+              "nova",
+              120
+            ],
+            [
+              "rook",
+              "pike",
+              80
+            ]
+          ]
+        }
+      },
+      {
+        "name": "recruits all weaker",
+        "seed": "INSERT INTO players VALUES (1, 'ash', 1000, NULL), (2, 'birch', 900, 1), (3, 'cedar', 950, 1);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": []
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "equal rating is not higher",
+        "seed": "INSERT INTO players VALUES (1, 'dune', 1200, NULL), (2, 'echo', 1200, 1), (3, 'fern', 1201, 1);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": [
+            [
+              "fern",
+              "dune",
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "unrated players are skipped",
+        "seed": "INSERT INTO players VALUES (1, 'gale', NULL, NULL), (2, 'hawk', 1300, 1), (3, 'iris', 1100, NULL), (4, 'jade', NULL, 3), (5, 'kite', 1150, 3);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": [
+            [
+              "kite",
+              "iris",
+              50
+            ]
+          ]
+        }
+      },
+      {
+        "name": "only direct recruiter matters",
+        "seed": "INSERT INTO players VALUES (1, 'lark', 2000, NULL), (2, 'moss', 1000, 1), (3, 'nell', 1500, 2);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": [
+            [
+              "nell",
+              "moss",
+              500
+            ]
+          ]
+        }
+      },
+      {
+        "name": "only founders",
+        "seed": "INSERT INTO players VALUES (1, 'opal', 1800, NULL), (2, 'pine', 1900, NULL);",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "no players",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "handle",
+            "recruiter_handle",
+            "rating_gap"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "A self join reads players twice: alias p is the recruit and alias r is the recruiter matched through r.id = p.recruited_by. An inner join is right here because founders have no recruiter to compare with. p.rating > r.rating is NULL when either rating is NULL, so WHERE drops unrated pairs without extra code, and the strict > excludes ties. The trap is comparing against the wrong row, for example the root of the tree, or forgetting to alias and getting ambiguous columns.",
+  "notes": "The primary key on players(id) gives the recruiter lookup an index, so Postgres can use a hash join or a nested loop with index scans. If you often query \"who did X recruit\", index recruited_by too; Postgres does not index foreign key columns automatically. Walking the whole chain (recruiter's recruiter and so on) needs a recursive CTE.",
+  "followUps": [
+    "Also show players whose recruiter left the club (recruited_by points to a deleted row) if the foreign key were dropped.",
+    "How would you find players who outrank everyone above them in the recruiting chain?"
+  ]
+}

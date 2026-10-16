@@ -1,0 +1,65 @@
+{
+  "id": "members-who-borrowed-every-classic",
+  "title": "Members who borrowed every classic",
+  "topic": "Subqueries & CTEs",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-subqueries-ctes",
+  "paths": ["senior"],
+  "prompt": "A community library flags some books as classics. The reading club wants to reward members who have borrowed every classic at least once.\n\nReturn each member who has at least one loan of every book where is_classic is true.\n\n- Columns: id, name\n- Any row order is fine\n- Borrowing the same classic twice counts once\n- Loans of non-classic books do not matter\n- If the library has no classics at all, return no rows",
+  "hints": [
+    "This is relational division: members whose set of borrowed classics equals the full set of classics.",
+    "Count how many distinct classics each member borrowed and compare with how many classics exist.",
+    "Join loans to books filtered on is_classic, GROUP BY member, and use HAVING count(DISTINCT b.id) = (SELECT count(*) FROM books WHERE is_classic)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE members (id int PRIMARY KEY, name text NOT NULL);\nCREATE TABLE books (id int PRIMARY KEY, title text NOT NULL, is_classic boolean NOT NULL);\nCREATE TABLE loans (id int PRIMARY KEY, member_id int NOT NULL REFERENCES members(id), book_id int NOT NULL REFERENCES books(id));",
+    "starter": "-- Members who borrowed every classic\nSELECT DISTINCT m.id, m.name\nFROM members m\nJOIN loans l ON l.member_id = m.id\nJOIN books b ON b.id = l.book_id AND b.is_classic;",
+    "solution": "SELECT m.id, m.name\nFROM members m\nJOIN loans l ON l.member_id = m.id\nJOIN books b ON b.id = l.book_id AND b.is_classic\nGROUP BY m.id, m.name\nHAVING count(DISTINCT b.id) = (SELECT count(*) FROM books WHERE is_classic);",
+    "tests": [
+      {
+        "name": "one member completes the set",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo'), (3, 'Cy');\nINSERT INTO books VALUES (1, 'Moby-Dick', true), (2, 'Emma', true), (3, 'Beowulf', true), (4, 'Night Recipes', false);\nINSERT INTO loans VALUES (1, 1, 1), (2, 1, 2), (3, 1, 3), (4, 2, 1), (5, 2, 2), (6, 2, 4), (7, 3, 3);",
+        "expected": { "columns": ["id", "name"], "rows": [[1, "Ana"]] }
+      },
+      {
+        "name": "two members complete the set",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo');\nINSERT INTO books VALUES (1, 'Moby-Dick', true), (2, 'Emma', true), (3, 'Garden Pests', false);\nINSERT INTO loans VALUES (1, 1, 1), (2, 1, 2), (3, 2, 2), (4, 2, 1), (5, 2, 3);",
+        "expected": { "columns": ["id", "name"], "rows": [[1, "Ana"], [2, "Bo"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "repeat loans count once",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo');\nINSERT INTO books VALUES (1, 'Moby-Dick', true), (2, 'Emma', true), (3, 'Beowulf', true);\nINSERT INTO loans VALUES (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 1), (5, 2, 2), (6, 2, 3);",
+        "expected": { "columns": ["id", "name"], "rows": [[2, "Bo"]] }
+      },
+      {
+        "name": "no classics means no winners",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo');\nINSERT INTO books VALUES (1, 'Garden Pests', false), (2, 'Night Recipes', false);\nINSERT INTO loans VALUES (1, 1, 1), (2, 1, 2);",
+        "expected": { "columns": ["id", "name"], "rows": [] }
+      },
+      {
+        "name": "extra non-classic loans are fine",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo');\nINSERT INTO books VALUES (1, 'Moby-Dick', true), (2, 'Emma', true), (3, 'Garden Pests', false), (4, 'Night Recipes', false), (5, 'Tide Tables', false);\nINSERT INTO loans VALUES (1, 1, 1), (2, 1, 2), (3, 1, 3), (4, 1, 4), (5, 1, 5), (6, 2, 3), (7, 2, 4), (8, 2, 1);",
+        "expected": { "columns": ["id", "name"], "rows": [[1, "Ana"]] }
+      },
+      {
+        "name": "single classic and a member with no loans",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Bo');\nINSERT INTO books VALUES (1, 'Emma', true);\nINSERT INTO loans VALUES (1, 1, 1);",
+        "expected": { "columns": ["id", "name"], "rows": [[1, "Ana"]] }
+      },
+      {
+        "name": "empty library",
+        "seed": "",
+        "expected": { "columns": ["id", "name"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "Filtering the join to classics and counting distinct classic ids per member gives the size of each member's borrowed set; a member qualifies when it equals the number of classics. count(DISTINCT b.id) matters because a member who borrowed one classic twice would otherwise look like they borrowed two. When there are no classics, the join produces no groups, so no rows come back, as the prompt requires. The double NOT EXISTS form (no classic that this member has not borrowed) is the other classic answer, but it is vacuously true for every member when the set is empty, so it needs an extra guard here.",
+  "notes": "The counting form is usually one hash join plus a hash aggregate, and the scalar subquery runs once. Indexes on loans(member_id, book_id) help the double NOT EXISTS form, which Postgres plans as nested anti joins. If the required set comes from user input, pass it as an array or VALUES list and compare counts the same way.",
+  "followUps": [
+    "Rewrite it with double NOT EXISTS and add the guard for an empty set of classics.",
+    "Return members who borrowed every classic within the same calendar year."
+  ]
+}

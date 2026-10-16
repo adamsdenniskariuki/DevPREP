@@ -1,0 +1,137 @@
+{
+  "id": "deck-assignment-mismatches",
+  "title": "Ferry bookings that did not get their deck",
+  "topic": "Filtering & joins",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-select-basics",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "A ferry operator records the deck each passenger asked for and the deck the crew actually assigned. Either column can be NULL: a NULL requested_deck means \"no preference\", a NULL assigned_deck means \"not assigned yet\".\n\nThe purser wants every booking where the assignment differs from the request. Two NULLs count as the same; a NULL on one side and a deck on the other counts as different.\n\n- Columns: id, passenger, requested_deck, assigned_deck\n- Any row order is fine\n- Deck names compare exactly (case-sensitive)",
+  "hints": [
+    "What does requested_deck <> assigned_deck return when one side is NULL? Does WHERE keep that row?",
+    "Postgres has a comparison operator that treats NULL as an ordinary value.",
+    "WHERE requested_deck IS DISTINCT FROM assigned_deck is true for 'a' vs NULL and false for NULL vs NULL."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE bookings (id int PRIMARY KEY, passenger text NOT NULL, requested_deck text, assigned_deck text);",
+    "starter": "-- Bookings whose assigned deck differs from the request\nSELECT id, passenger, requested_deck, assigned_deck\nFROM bookings\nWHERE requested_deck <> assigned_deck;",
+    "solution": "SELECT id, passenger, requested_deck, assigned_deck\nFROM bookings\nWHERE requested_deck IS DISTINCT FROM assigned_deck;",
+    "tests": [
+      {
+        "name": "mixed bookings",
+        "seed": "INSERT INTO bookings VALUES (1, 'Ines', 'upper', 'upper'), (2, 'Joe', 'upper', 'lower'), (3, 'Kai', NULL, 'lower'), (4, 'Lea', NULL, NULL);",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": [
+            [
+              2,
+              "Joe",
+              "upper",
+              "lower"
+            ],
+            [
+              3,
+              "Kai",
+              null,
+              "lower"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "every request honoured",
+        "seed": "INSERT INTO bookings VALUES (1, 'Ana', 'car', 'car'), (2, 'Bo', 'lower', 'lower');",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": []
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "request made but not yet assigned",
+        "seed": "INSERT INTO bookings VALUES (1, 'Cy', 'upper', NULL), (2, 'Di', 'lower', 'lower');",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": [
+            [
+              1,
+              "Cy",
+              "upper",
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "both sides NULL only",
+        "seed": "INSERT INTO bookings VALUES (1, 'Ed', NULL, NULL), (2, 'Flo', NULL, NULL);",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "case differs",
+        "seed": "INSERT INTO bookings VALUES (1, 'Gus', 'Upper', 'upper'), (2, 'Hal', 'car', 'car');",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": [
+            [
+              1,
+              "Gus",
+              "Upper",
+              "upper"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no bookings",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "id",
+            "passenger",
+            "requested_deck",
+            "assigned_deck"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "Plain <> follows SQL's three-valued logic: if either side is NULL the result is NULL, and WHERE drops NULL just like false. That silently hides every unassigned booking and every passenger with no preference who got a deck. IS DISTINCT FROM treats NULL as a comparable value, so NULL vs 'lower' is true and NULL vs NULL is false, which is exactly the rule in the prompt. Writing (a <> b OR (a IS NULL) <> (b IS NULL)) also works but is easy to get wrong.",
+  "notes": "IS DISTINCT FROM is not indexable as a join or filter condition in the way = is, so on a big table this is a sequential scan; that is fine for a column-vs-column check on the same row. COALESCE(requested_deck, '') <> COALESCE(assigned_deck, '') looks similar but breaks if '' is a real value. IS NOT DISTINCT FROM is the NULL-safe equality you would use in a join.",
+  "followUps": [
+    "How would you join two tables on a nullable column so NULL matches NULL?",
+    "Why is COALESCE(a, '') = COALESCE(b, '') a risky substitute?"
+  ]
+}

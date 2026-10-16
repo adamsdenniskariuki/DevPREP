@@ -6,10 +6,11 @@ import type { Activity, Progress } from './progress'
 import { caseIndex } from './cases'
 import { patternProgress, problemIndex } from './problems'
 import { guideIndex } from './guides'
+import { sqlProblemIndex, sqlTopicProgress } from './sql-problems'
 import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -28,6 +29,11 @@ export function solveXp(progress: Pick<Progress, 'solved'>): number {
     const count = Object.keys(langs).length
     return sum + (count ? XP_RULES.solve + (count - 1) * XP_RULES.secondLanguage : 0)
   }, 0)
+}
+
+/** XP from SQL interview problems: each first pass earns a solve. */
+export function sqlSolveXp(progress: Pick<Progress, 'sqlSolved'>): number {
+  return Object.keys(progress.sqlSolved ?? {}).length * XP_RULES.sqlSolve
 }
 
 /** XP from scored case studies: each scored case earns XP once, plus a bonus once its best reaches 80%. */
@@ -122,16 +128,17 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
+  const sqlSolves = Object.values(progress.sqlSolved ?? {})
   const designs = Object.entries(progress.designs ?? {})
   const designDays = designs.map(([, score]) => localDay(new Date(score.at)))
   const cards = Object.values(progress.cards ?? {})
   const mocks = progress.mocks ?? []
   const guides = Object.entries(progress.guides ?? {})
   const guideDays = guides.map(([, score]) => localDay(new Date(score.at)))
-  const practiceDays = [...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
+  const practiceDays = [...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
@@ -152,6 +159,10 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'all-patterns', title: 'Full toolkit', description: 'Solve at least one problem in every pattern.', earned: patterns.every(row => row.solved > 0) },
     { id: 'all-problems', title: 'Every problem', description: `Solve all ${problemIndex.length} coding problems.`, earned: patterns.every(row => row.solved === row.total) },
     ...patterns.map(row => ({ id: `pattern-${patternSlug(row.pattern)}`, title: `${row.pattern} cleared`, description: `Solve all ${row.total} ${row.pattern} problems.`, earned: row.solved === row.total })),
+    { id: 'first-sql-solve', title: 'First query', description: 'Pass every test on a SQL interview problem.', earned: sqlSolves.length >= 1 },
+    { id: 'sql-solves-20', title: 'Query crafter', description: 'Solve 20 SQL interview problems.', earned: sqlSolves.length >= 20 },
+    { id: 'all-sql-problems', title: 'SQL marathon', description: `Solve all ${sqlProblemIndex.length} SQL interview problems.`, earned: sqlProblemIndex.length > 0 && sqlSolves.length >= sqlProblemIndex.length },
+    ...sqlTopicProgress(progress).map(row => ({ id: `sql-topic-${patternSlug(row.topic)}`, title: `SQL ${row.topic.toLowerCase()} cleared`, description: `Solve all ${row.total} SQL ${row.topic.toLowerCase()} problems.`, earned: row.solved === row.total })),
     { id: 'first-design', title: 'Architect', description: 'Score your first system design case.', earned: designs.length >= 1 },
     { id: 'designs-10', title: 'Blueprint pro', description: 'Score 10 system design cases.', earned: designs.length >= 10 },
     { id: 'senior-design', title: 'Staff-ready', description: `Score ${STRONG_DESIGN}% or more on an SSE case.`, earned: designs.some(([id, score]) => score.best >= STRONG_DESIGN && caseIndex.find(item => item.id === id)?.level === 'sse') },

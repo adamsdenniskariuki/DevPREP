@@ -1,0 +1,195 @@
+{
+  "id": "merge-guesthouse-room-bookings",
+  "title": "Merge overlapping guesthouse bookings",
+  "topic": "Gaps & islands",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "sql-window-functions",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A guesthouse stores each booking as a room plus the first and last night stayed (both inclusive). Bookings for the same room can overlap after double-booking mistakes, and some sit back to back.\n\nThe cleaning rota needs continuous occupied blocks per room. Merge a room's bookings when they overlap or when one starts the night right after another block ends (first_night = block end + 1 day).\n\n- Columns: room, block_start, block_end, bookings\n- Any row order is fine\n- bookings is how many booking rows were merged into the block\n- A single free night between bookings keeps them in separate blocks",
+  "hints": [
+    "Sort each room's bookings by first_night. A booking starts a new block when it begins after everything before it has ended (plus one night).",
+    "Comparing with only the previous booking's last_night fails when an earlier long booking covers later short ones. Use the running maximum of last_night over all earlier rows.",
+    "max(last_night) OVER (PARTITION BY room ORDER BY first_night, last_night, id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) gives prev_end. Flag first_night > prev_end + 1 (or NULL prev_end) as 1, running-sum the flags into a block id, then group."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE room_bookings (\n  id int PRIMARY KEY,\n  room text NOT NULL,\n  first_night date NOT NULL,\n  last_night date NOT NULL CHECK (last_night >= first_night)\n);",
+    "starter": "-- Occupied blocks per room\n-- (each booking is its own block for now)\nSELECT room,\n       first_night AS block_start,\n       last_night AS block_end,\n       1 AS bookings\nFROM room_bookings;",
+    "solution": "WITH o AS (\n  SELECT id, room, first_night, last_night,\n         max(last_night) OVER (\n           PARTITION BY room ORDER BY first_night, last_night, id\n           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING\n         ) AS prev_end\n  FROM room_bookings\n), f AS (\n  SELECT *,\n         CASE WHEN prev_end IS NULL OR first_night > prev_end + 1 THEN 1 ELSE 0 END AS is_new\n  FROM o\n), g AS (\n  SELECT *,\n         sum(is_new) OVER (PARTITION BY room ORDER BY first_night, last_night, id) AS block_id\n  FROM f\n)\nSELECT room,\n       min(first_night) AS block_start,\n       max(last_night) AS block_end,\n       count(*) AS bookings\nFROM g\nGROUP BY room, block_id;",
+    "tests": [
+      {
+        "name": "overlap merges, gap separates",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Garden', '2026-06-01', '2026-06-03'), (2, 'Garden', '2026-06-02', '2026-06-05'), (3, 'Garden', '2026-06-10', '2026-06-12');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Garden",
+              "2026-06-01",
+              "2026-06-05",
+              2
+            ],
+            [
+              "Garden",
+              "2026-06-10",
+              "2026-06-12",
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "back to back merges per room",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Attic', '2026-07-01', '2026-07-02'), (2, 'Attic', '2026-07-03', '2026-07-04'), (3, 'Cellar', '2026-07-03', '2026-07-03');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Attic",
+              "2026-07-01",
+              "2026-07-04",
+              2
+            ],
+            [
+              "Cellar",
+              "2026-07-03",
+              "2026-07-03",
+              1
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "long booking contains later short ones",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Tower', '2026-08-01', '2026-08-20'), (2, 'Tower', '2026-08-03', '2026-08-05'), (3, 'Tower', '2026-08-10', '2026-08-12'), (4, 'Tower', '2026-08-22', '2026-08-23');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Tower",
+              "2026-08-01",
+              "2026-08-20",
+              3
+            ],
+            [
+              "Tower",
+              "2026-08-22",
+              "2026-08-23",
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "one free night keeps blocks apart",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Loft', '2026-09-01', '2026-09-02'), (2, 'Loft', '2026-09-04', '2026-09-05');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Loft",
+              "2026-09-01",
+              "2026-09-02",
+              1
+            ],
+            [
+              "Loft",
+              "2026-09-04",
+              "2026-09-05",
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "identical duplicate bookings",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Annex', '2026-10-01', '2026-10-03'), (2, 'Annex', '2026-10-01', '2026-10-03');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Annex",
+              "2026-10-01",
+              "2026-10-03",
+              2
+            ]
+          ]
+        }
+      },
+      {
+        "name": "month boundary and same nights in other rooms",
+        "seed": "INSERT INTO room_bookings VALUES (1, 'Garden', '2026-01-30', '2026-01-31'), (2, 'Garden', '2026-02-01', '2026-02-02'), (3, 'Attic', '2026-01-31', '2026-02-01');",
+        "expected": {
+          "columns": [
+            "room",
+            "block_start",
+            "block_end",
+            "bookings"
+          ],
+          "rows": [
+            [
+              "Garden",
+              "2026-01-30",
+              "2026-02-02",
+              2
+            ],
+            [
+              "Attic",
+              "2026-01-31",
+              "2026-02-01",
+              1
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "Sorted by first_night, a booking belongs to the current block exactly when it starts no later than one night after the furthest last_night seen so far in that room. The running max over earlier rows (excluding the current one) captures that furthest end; a running sum of 'starts a new block' flags then numbers the blocks, and grouping by it collapses each block. The trap is lag(last_night): a long booking that swallows several short ones is forgotten after one row, so the 10th–12th booking would wrongly start a new block. The + 1 handles back-to-back stays, and adding id to the ORDER BY makes the frame deterministic when bookings start on the same night.",
+  "notes": "Both windows share the same PARTITION BY and ORDER BY, so Postgres sorts once and evaluates them in sequence; an index on (room, first_night) can remove that sort. Postgres also offers range types and the range_agg aggregate, which merges overlapping ranges directly, e.g. range_agg(daterange(first_night, last_night, '[]')) per room; daterange canonicalises to [) so adjacent stays merge too, but you lose the per-block booking count. An exclusion constraint (EXCLUDE USING gist with btree_gist) would prevent the double bookings in the first place.",
+  "followUps": [
+    "Solve it with range_agg and unnest. What does the result look like, and what do you lose?",
+    "How would you prevent overlapping bookings for the same room at write time?"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "id": "podcast-episode-share-of-show",
+  "title": "Each episode's share of its show",
+  "topic": "Window functions",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-window-functions",
+  "paths": ["swe"],
+  "prompt": "A podcast network stores one row per episode with its total listens. Producers want to see how much of each show's audience every episode brings in.\n\nFor every episode, return its listens and its percentage of the total listens of its own show.\n\n- Columns: episode_id, show, listens, pct_of_show\n- pct_of_show = 100 × listens ÷ the show's total listens, rounded to 1 decimal place (do not truncate)\n- If a show's total listens is 0, pct_of_show is NULL for its episodes\n- One row per episode; any row order is fine",
+  "hints": [
+    "You need a per-show total next to every episode row, without collapsing the rows. Which feature keeps the detail rows?",
+    "sum(listens) OVER (PARTITION BY show) gives each row its show's total.",
+    "round(100.0 * listens / NULLIF(sum(listens) OVER (PARTITION BY show), 0), 1). The 100.0 avoids integer division and NULLIF turns a zero total into NULL instead of an error."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE episodes (id int PRIMARY KEY, show text NOT NULL, title text NOT NULL, listens int NOT NULL);",
+    "starter": "-- Share of listens per episode\nSELECT id AS episode_id, show, listens,\n       round(100.0 * listens / (SELECT sum(listens) FROM episodes), 1) AS pct_of_show\nFROM episodes;",
+    "solution": "SELECT id AS episode_id, show, listens,\n       round(100.0 * listens / NULLIF(sum(listens) OVER (PARTITION BY show), 0), 1) AS pct_of_show\nFROM episodes;",
+    "tests": [
+      {
+        "name": "two shows",
+        "seed": "INSERT INTO episodes VALUES (1, 'Tide Talk', 'Spring tides', 300), (2, 'Tide Talk', 'Rip currents', 100), (3, 'Night Owls', 'Barn owls', 50), (4, 'Night Owls', 'Moths', 150), (5, 'Night Owls', 'Bats', 50);",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [[1, "Tide Talk", 300, 75.0], [2, "Tide Talk", 100, 25.0], [3, "Night Owls", 50, 20.0], [4, "Night Owls", 150, 60.0], [5, "Night Owls", 50, 20.0]] }
+      },
+      {
+        "name": "three equal episodes",
+        "seed": "INSERT INTO episodes VALUES (1, 'Kiln Notes', 'Glazes', 1), (2, 'Kiln Notes', 'Clay bodies', 1), (3, 'Kiln Notes', 'Firing', 1);",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [[1, "Kiln Notes", 1, 33.3], [2, "Kiln Notes", 1, 33.3], [3, "Kiln Notes", 1, 33.3]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "show with zero total listens",
+        "seed": "INSERT INTO episodes VALUES (6, 'Quiet Hour', 'Pilot', 0), (7, 'Quiet Hour', 'Episode two', 0), (8, 'Tide Talk', 'Neap tides', 10);",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [[6, "Quiet Hour", 0, null], [7, "Quiet Hour", 0, null], [8, "Tide Talk", 10, 100.0]] }
+      },
+      {
+        "name": "rounding instead of integer truncation",
+        "seed": "INSERT INTO episodes VALUES (1, 'Map Room', 'Atlases', 2), (2, 'Map Room', 'Globes', 1);",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [[1, "Map Room", 2, 66.7], [2, "Map Room", 1, 33.3]] }
+      },
+      {
+        "name": "single episode",
+        "seed": "INSERT INTO episodes VALUES (9, 'Solo Show', 'Only one', 42);",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [[9, "Solo Show", 42, 100.0]] }
+      },
+      {
+        "name": "no episodes",
+        "seed": "",
+        "expected": { "columns": ["episode_id", "show", "listens", "pct_of_show"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "A window aggregate, sum(listens) OVER (PARTITION BY show), attaches each show's total to every episode row without grouping the rows away. Dividing by it gives the share. Two traps: listens is an int, so 100 * listens / total would use integer division and truncate, which is why the solution multiplies by 100.0; and a show with zero total would raise a division-by-zero error, so NULLIF(total, 0) turns that case into NULL. Dividing by the total of the whole table (no PARTITION BY) is the other common mistake.",
+  "notes": "Postgres sorts or hashes by show once and computes the partition sum in a single WindowAgg pass, which is cheaper than joining back to a GROUP BY subquery. An index on (show) can feed the sort for large tables. A GROUP BY + JOIN version gives the same result and may be preferred when you also need show-level rows.",
+  "followUps": [
+    "Show only episodes that make up at least 40% of their show's listens.",
+    "How would you add each show's share of the whole network in the same query?"
+  ]
+}

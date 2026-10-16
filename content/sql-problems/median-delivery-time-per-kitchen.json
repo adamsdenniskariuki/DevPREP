@@ -1,0 +1,171 @@
+{
+  "id": "median-delivery-time-per-kitchen",
+  "title": "Median and p90 delivery time per kitchen",
+  "topic": "Aggregation",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A dark-kitchen delivery service stores when each order was placed and when it was delivered. delivered_at is NULL for orders that never arrived.\n\nAverages are skewed by a few disastrous deliveries, so ops wants the median and the 90th percentile of delivery time per kitchen, in minutes.\n\n- Columns: kitchen, delivered, median_minutes, p90_minutes\n- delivered is the number of delivered orders; undelivered orders are ignored everywhere\n- Percentiles are continuous (interpolated between values), rounded to 1 decimal place\n- Only kitchens with at least 3 delivered orders\n- Order by median_minutes ascending, then kitchen ascending",
+  "hints": [
+    "Delivery time in minutes is extract(epoch FROM delivered_at - ordered_at) / 60. What happens to it when delivered_at is NULL?",
+    "percentile_cont(0.5) WITHIN GROUP (ORDER BY ...) is an ordered-set aggregate that interpolates and skips NULLs. The 3-order rule must count delivered rows, not all rows.",
+    "round(percentile_cont(0.9) WITHIN GROUP (ORDER BY mins)::numeric, 1), with GROUP BY kitchen HAVING count(delivered_at) >= 3 ORDER BY median_minutes, kitchen."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE deliveries (id int PRIMARY KEY, kitchen text NOT NULL, ordered_at timestamp NOT NULL, delivered_at timestamp);",
+    "starter": "-- Delivery time percentiles per kitchen\nSELECT kitchen,\n       count(*) AS delivered,\n       round(avg(extract(epoch FROM delivered_at - ordered_at) / 60), 1) AS median_minutes,\n       round(max(extract(epoch FROM delivered_at - ordered_at) / 60), 1) AS p90_minutes\nFROM deliveries\nGROUP BY kitchen\nHAVING count(*) >= 3\nORDER BY median_minutes, kitchen;",
+    "solution": "WITH timed AS (\n  SELECT kitchen, extract(epoch FROM delivered_at - ordered_at) / 60 AS mins\n  FROM deliveries\n  WHERE delivered_at IS NOT NULL\n)\nSELECT kitchen,\n       count(*) AS delivered,\n       round(percentile_cont(0.5) WITHIN GROUP (ORDER BY mins)::numeric, 1) AS median_minutes,\n       round(percentile_cont(0.9) WITHIN GROUP (ORDER BY mins)::numeric, 1) AS p90_minutes\nFROM timed\nGROUP BY kitchen\nHAVING count(*) >= 3\nORDER BY median_minutes, kitchen;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "one slow outlier",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Basil', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '600 seconds'), (2, 'Basil', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1200 seconds'), (3, 'Basil', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1800 seconds'), (4, 'Basil', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '6000 seconds'), (5, 'Clove', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '900 seconds'), (6, 'Clove', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '900 seconds'), (7, 'Clove', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '960 seconds');",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": [
+            [
+              "Clove",
+              3,
+              15.0,
+              15.8
+            ],
+            [
+              "Basil",
+              4,
+              25.0,
+              79.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "undelivered orders do not count",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Dill', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '480 seconds'), (2, 'Dill', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '540 seconds'), (3, 'Dill', '2026-04-01 12:00:00', NULL), (4, 'Fennel', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '720 seconds'), (5, 'Fennel', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1080 seconds'), (6, 'Fennel', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '2400 seconds'), (7, 'Fennel', '2026-04-01 12:00:00', NULL);",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": [
+            [
+              "Fennel",
+              3,
+              18.0,
+              35.6
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "no deliveries",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "all undelivered",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Ginger', '2026-04-01 12:00:00', NULL), (2, 'Ginger', '2026-04-01 12:00:00', NULL), (3, 'Ginger', '2026-04-01 12:00:00', NULL);",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "equal medians sorted by kitchen, fractional minutes",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Sage', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '90 seconds'), (2, 'Sage', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '120 seconds'), (3, 'Sage', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '150 seconds'), (4, 'Mint', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '60 seconds'), (5, 'Mint', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '120 seconds'), (6, 'Mint', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '120 seconds'), (7, 'Mint', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1800 seconds');",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": [
+            [
+              "Mint",
+              4,
+              2.0,
+              21.6
+            ],
+            [
+              "Sage",
+              3,
+              2.0,
+              2.4
+            ]
+          ]
+        }
+      },
+      {
+        "name": "exactly three delivered among many rows",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Thyme', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1200 seconds'), (2, 'Thyme', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '1320 seconds'), (3, 'Thyme', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '3600 seconds'), (4, 'Thyme', '2026-04-01 12:00:00', NULL), (5, 'Thyme', '2026-04-01 12:00:00', NULL), (6, 'Rue', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '300 seconds'), (7, 'Rue', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '360 seconds');",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": [
+            [
+              "Thyme",
+              3,
+              22.0,
+              52.4
+            ]
+          ]
+        }
+      },
+      {
+        "name": "odd count with duplicates",
+        "seed": "INSERT INTO deliveries VALUES (1, 'Anise', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '420 seconds'), (2, 'Anise', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '420 seconds'), (3, 'Anise', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '420 seconds'), (4, 'Anise', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '420 seconds'), (5, 'Anise', '2026-04-01 12:00:00', '2026-04-01 12:00:00'::timestamp + interval '3000 seconds');",
+        "expected": {
+          "columns": [
+            "kitchen",
+            "delivered",
+            "median_minutes",
+            "p90_minutes"
+          ],
+          "rows": [
+            [
+              "Anise",
+              5,
+              7.0,
+              32.8
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "percentile_cont sorts each group's values and interpolates: with n values the p-th percentile sits at position p × (n − 1) counting from 0, so the median of 10, 20, 30, 100 is 25 and the p90 is 30 + 0.7 × 70 = 79. Filtering out undelivered orders first makes both the percentiles and the at-least-3 rule use delivered orders only; HAVING count(*) on the raw table is the trap that lets a kitchen with two deliveries and one lost order through. avg is not a median and is pulled up by outliers, and percentile_disc would return an actual value instead of interpolating. percentile_cont returns double precision, so cast to numeric before round(x, 1).",
+  "notes": "Ordered-set aggregates sort each group, so cost is O(n log n) per kitchen and they cannot use hash aggregation; for huge tables an approximate sketch (t-digest, or pre-bucketed histograms) is common. You can ask for several percentiles in one sort with percentile_cont(ARRAY[0.5, 0.9]) WITHIN GROUP (ORDER BY mins), which returns an array. Percentiles cannot be added across groups, so a daily median cannot be rolled up into a monthly one without the raw rows.",
+  "followUps": [
+    "Return both percentiles from a single percentile_cont call using an array argument.",
+    "How would you compute a per-kitchen median over the last 7 days for every day (a rolling median)?"
+  ]
+}

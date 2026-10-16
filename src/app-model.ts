@@ -6,7 +6,7 @@ import type { CodeLanguage } from './problem-types'
 import type { Activity, MockResult, Mode, Profile, Progress, Story } from './progress'
 import type { Grade } from './flashcards'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -40,6 +40,8 @@ export interface AppModel {
   changeProfile: (patch: Partial<Profile>) => void
   /** Records a passing run and returns the XP it earned (0 if already solved in that language). */
   solveProblem: (problemId: string, lang: CodeLanguage) => number
+  /** Records a passing SQL problem and returns the XP gained (0 if already solved). */
+  solveSqlProblem: (problemId: string) => number
   /** Saves a self-scored case study and returns the XP it added (0 if the best score did not improve the total). */
   scoreDesign: (caseId: string, percent: number) => number
   /** Records a Field Guide quiz score (best kept) and returns the XP gained. */

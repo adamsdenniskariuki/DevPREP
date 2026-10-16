@@ -1,0 +1,65 @@
+{
+  "id": "library-top-three-per-genre",
+  "title": "Most borrowed books in each genre",
+  "topic": "Window functions",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-window-functions",
+  "paths": ["swe", "senior"],
+  "prompt": "A town library logs every loan. The front desk wants a shelf of the three most borrowed books per genre, and it wants ties handled the way sports tables do.\n\nA book's loan_rank in its genre is 1 + the number of books in the same genre with strictly more loans. Return every book with loan_rank ≤ 3.\n\n- Columns: genre, title, loan_count, loan_rank\n- Books with no loans are not ranked and never appear\n- Tied books share a rank, and the next rank is skipped (5, 3, 3, 2 loans → ranks 1, 2, 2, 4)\n- Any row order is fine",
+  "hints": [
+    "First count loans per book, then rank books inside each genre.",
+    "ROW_NUMBER breaks ties arbitrarily and DENSE_RANK does not skip numbers after a tie. Which ranking function matches the rule?",
+    "Count with an inner JOIN and GROUP BY b.id, then rank() OVER (PARTITION BY genre ORDER BY loan_count DESC) in a CTE, and filter loan_rank <= 3 in the outer query."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE books (id int PRIMARY KEY, title text NOT NULL, genre text NOT NULL);\nCREATE TABLE loans (id serial PRIMARY KEY, book_id int NOT NULL REFERENCES books(id), loaned_on date NOT NULL);",
+    "starter": "-- Top three per genre\nWITH counts AS (\n  SELECT b.genre, b.title, count(*) AS loan_count\n  FROM books b JOIN loans l ON l.book_id = b.id\n  GROUP BY b.id, b.genre, b.title\n), ranked AS (\n  SELECT *, row_number() OVER (PARTITION BY genre ORDER BY loan_count DESC) AS loan_rank\n  FROM counts\n)\nSELECT genre, title, loan_count, loan_rank FROM ranked WHERE loan_rank <= 3;",
+    "solution": "WITH counts AS (\n  SELECT b.genre, b.title, count(*) AS loan_count\n  FROM books b JOIN loans l ON l.book_id = b.id\n  GROUP BY b.id, b.genre, b.title\n), ranked AS (\n  SELECT *, rank() OVER (PARTITION BY genre ORDER BY loan_count DESC) AS loan_rank\n  FROM counts\n)\nSELECT genre, title, loan_count, loan_rank FROM ranked WHERE loan_rank <= 3;",
+    "tests": [
+      {
+        "name": "tie for second place",
+        "seed": "INSERT INTO books VALUES (1, 'Fog Harbor', 'Mystery'), (2, 'Quiet Key', 'Mystery'), (3, 'Ash Lane', 'Mystery'), (4, 'Red Ferry', 'Mystery'), (5, 'Orbit Nine', 'Sci-Fi'), (6, 'Dust Moon', 'Sci-Fi');\nINSERT INTO loans (book_id, loaned_on) SELECT 1, DATE '2026-01-01' + g FROM generate_series(1, 5) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 2, DATE '2026-01-01' + g FROM generate_series(1, 3) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 3, DATE '2026-01-01' + g FROM generate_series(1, 3) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 4, DATE '2026-01-01' + g FROM generate_series(1, 2) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 5, DATE '2026-01-01' + g FROM generate_series(1, 4) g;\nINSERT INTO loans (book_id, loaned_on) VALUES (6, '2026-02-01');",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["Mystery", "Fog Harbor", 5, 1], ["Mystery", "Quiet Key", 3, 2], ["Mystery", "Ash Lane", 3, 2], ["Sci-Fi", "Orbit Nine", 4, 1], ["Sci-Fi", "Dust Moon", 1, 2]] }
+      },
+      {
+        "name": "no ties",
+        "seed": "INSERT INTO books VALUES (1, 'Salt Hymns', 'Poetry'), (2, 'Low Tide', 'Poetry'), (3, 'Paper Kites', 'Poetry'), (4, 'Field Notes', 'Poetry');\nINSERT INTO loans (book_id, loaned_on) SELECT 1, DATE '2026-03-01' + g FROM generate_series(1, 6) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 2, DATE '2026-03-01' + g FROM generate_series(1, 4) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 3, DATE '2026-03-01' + g FROM generate_series(1, 2) g;\nINSERT INTO loans (book_id, loaned_on) VALUES (4, '2026-03-09');",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["Poetry", "Salt Hymns", 6, 1], ["Poetry", "Low Tide", 4, 2], ["Poetry", "Paper Kites", 2, 3]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "dense rank would wrongly keep a fourth book",
+        "seed": "INSERT INTO books VALUES (1, 'Iron Bay', 'History'), (2, 'Old Mills', 'History'), (3, 'Canal Age', 'History'), (4, 'Toll Roads', 'History');\nINSERT INTO loans (book_id, loaned_on) SELECT 1, DATE '2026-04-01' + g FROM generate_series(1, 5) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 2, DATE '2026-04-01' + g FROM generate_series(1, 5) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 3, DATE '2026-04-01' + g FROM generate_series(1, 3) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 4, DATE '2026-04-01' + g FROM generate_series(1, 2) g;",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["History", "Iron Bay", 5, 1], ["History", "Old Mills", 5, 1], ["History", "Canal Age", 3, 3]] }
+      },
+      {
+        "name": "tie at third place keeps both",
+        "seed": "INSERT INTO books VALUES (1, 'Seed Bank', 'Garden'), (2, 'Hedges', 'Garden'), (3, 'Moss', 'Garden'), (4, 'Ferns', 'Garden'), (5, 'Compost', 'Garden');\nINSERT INTO loans (book_id, loaned_on) SELECT 1, DATE '2026-05-01' + g FROM generate_series(1, 5) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 2, DATE '2026-05-01' + g FROM generate_series(1, 4) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 3, DATE '2026-05-01' + g FROM generate_series(1, 2) g;\nINSERT INTO loans (book_id, loaned_on) SELECT 4, DATE '2026-05-01' + g FROM generate_series(1, 2) g;\nINSERT INTO loans (book_id, loaned_on) VALUES (5, '2026-05-20');",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["Garden", "Seed Bank", 5, 1], ["Garden", "Hedges", 4, 2], ["Garden", "Moss", 2, 3], ["Garden", "Ferns", 2, 3]] }
+      },
+      {
+        "name": "unloaned books are not ranked",
+        "seed": "INSERT INTO books VALUES (1, 'Long Road', 'Travel'), (2, 'Night Train', 'Travel');\nINSERT INTO loans (book_id, loaned_on) VALUES (1, '2026-06-01'), (1, '2026-06-02');",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["Travel", "Long Road", 2, 1]] }
+      },
+      {
+        "name": "everyone tied",
+        "seed": "INSERT INTO books VALUES (1, 'Knots', 'Crafts'), (2, 'Looms', 'Crafts'), (3, 'Dyes', 'Crafts'), (4, 'Felt', 'Crafts');\nINSERT INTO loans (book_id, loaned_on) SELECT b, DATE '2026-07-01' + g FROM generate_series(1, 4) b, generate_series(1, 2) g;",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [["Crafts", "Knots", 2, 1], ["Crafts", "Looms", 2, 1], ["Crafts", "Dyes", 2, 1], ["Crafts", "Felt", 2, 1]] }
+      },
+      {
+        "name": "no loans at all",
+        "seed": "INSERT INTO books VALUES (1, 'Unread', 'Drama');",
+        "expected": { "columns": ["genre", "title", "loan_count", "loan_rank"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "The CTE counts loans per book with an inner join, so books without loans drop out. rank() then numbers books inside each genre by loan_count descending, giving tied books the same rank and skipping the following numbers, which is exactly 1 + the count of books with strictly more loans. The filter has to live in an outer query because window functions are evaluated after WHERE. The traps: row_number() keeps an arbitrary one of two tied books, and dense_rank() does not skip after a tie, so with 5, 5, 3, 2 loans it would keep the fourth book. Grouping by b.id rather than title also keeps two different books with the same title apart.",
+  "notes": "The plan is a hash aggregate over loans, then a sort by (genre, loan_count DESC) for the WindowAgg. Since Postgres 15 a filter like rank() <= 3 in the outer query lets the WindowAgg stop early per partition (a run condition), which helps with many books per genre. An index on loans(book_id) speeds up the count when you restrict loans by date first.",
+  "followUps": [
+    "Only count loans from the last 90 days. Where does that filter go?",
+    "How would you return exactly three books per genre, breaking ties by the most recent loan?"
+  ]
+}

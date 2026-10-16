@@ -5,10 +5,11 @@ import type { SqlExercise, SqlLabTest } from '../curriculum-types'
 import type { RunPhase, SqlReport } from '../runner/runner'
 import { runSqlCode } from '../runner/runner'
 import { formatCell, SQL_TIMEOUT_MS, type SqlCaseOutcome } from '../runner/sql-core'
+import '../lab.css'
 
 const SHOWN_ROWS = 12
 
-function ResultTable({ caption, columns, rows }: { caption: string; columns: string[]; rows: unknown[][] }) {
+export function ResultTable({ caption, columns, rows }: { caption: string; columns: string[]; rows: unknown[][] }) {
   return <div className="sql-table-wrap" tabIndex={0} role="region" aria-label={caption}>
     <table className="sql-table">
       <caption>{caption}</caption>
@@ -62,7 +63,8 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
   exercise: SqlExercise
   value: string
   onChange: (value: string) => void
-  onPass?: () => void
+  /** Called when every test passes; may return XP gained to show in the summary. */
+  onPass?: () => number | void
   label: string
 }) {
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
@@ -79,8 +81,8 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
     if (!live.current) return
     setPhase('idle')
     const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass)
-    setResult({ report, message: passed ? `All ${report.outcomes.length} tests passed.` : undefined })
-    if (passed) onPass?.()
+    const gained = passed ? onPass?.() : undefined
+    setResult({ report, message: passed ? `All ${report.outcomes.length} tests passed${gained ? ` · +${gained} XP` : ''}.` : undefined })
   }
   function reset() {
     if (value !== exercise.starter && !window.confirm('Replace your SQL with the starter? Your current SQL will be lost.')) return

@@ -1,0 +1,123 @@
+{
+  "id": "missing-ferry-ticket-numbers",
+  "title": "Missing ferry ticket numbers",
+  "topic": "Gaps & islands",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-subqueries-ctes",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "A ferry company prints numbered paper tickets. At the end of the season the auditor compares the stubs that came back with the number range that was printed, and wants every number that is unaccounted for.\n\nReturn every whole number between the smallest and the largest ticket_no in ferry_tickets (inclusive) that does not appear in the table.\n\n- Columns: missing_no\n- Order by missing_no ascending\n- Numbers below the smallest or above the largest stub are not missing\n- An empty table or a single stub has nothing missing",
+  "hints": [
+    "You need rows for numbers that are not in the table. Where can numbers that do not exist come from?",
+    "generate_series(min, max) produces every number in the range. Compare it with the table.",
+    "SELECT g FROM generate_series((SELECT min(ticket_no) FROM ferry_tickets), (SELECT max(ticket_no) FROM ferry_tickets)) g WHERE NOT EXISTS (SELECT 1 FROM ferry_tickets t WHERE t.ticket_no = g). A NULL bound (empty table) makes generate_series return no rows."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE ferry_tickets (ticket_no int PRIMARY KEY, sold_on date NOT NULL);",
+    "starter": "-- Ticket numbers that are missing\n-- (this only looks one number ahead of each stub)\nSELECT t.ticket_no + 1 AS missing_no\nFROM ferry_tickets t\nWHERE NOT EXISTS (\n  SELECT 1 FROM ferry_tickets u WHERE u.ticket_no = t.ticket_no + 1\n)\nORDER BY missing_no;",
+    "solution": "SELECT g AS missing_no\nFROM generate_series(\n  (SELECT min(ticket_no) FROM ferry_tickets),\n  (SELECT max(ticket_no) FROM ferry_tickets)\n) AS g\nWHERE NOT EXISTS (\n  SELECT 1 FROM ferry_tickets t WHERE t.ticket_no = g\n)\nORDER BY missing_no;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "three numbers missing",
+        "seed": "INSERT INTO ferry_tickets VALUES (101, '2026-05-01'), (102, '2026-05-01'), (104, '2026-05-02'), (107, '2026-05-03');",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": [
+            [
+              103
+            ],
+            [
+              105
+            ],
+            [
+              106
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no gaps",
+        "seed": "INSERT INTO ferry_tickets VALUES (5, '2026-06-01'), (6, '2026-06-01'), (7, '2026-06-02');",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": []
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "single stub",
+        "seed": "INSERT INTO ferry_tickets VALUES (42, '2026-07-01');",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "range does not start at 1",
+        "seed": "INSERT INTO ferry_tickets VALUES (1000, '2026-07-01'), (1003, '2026-07-02');",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": [
+            [
+              1001
+            ],
+            [
+              1002
+            ]
+          ]
+        }
+      },
+      {
+        "name": "wide gap inserted out of order",
+        "seed": "INSERT INTO ferry_tickets VALUES (16, '2026-08-02'), (10, '2026-08-01'), (11, '2026-08-01');",
+        "expected": {
+          "columns": [
+            "missing_no"
+          ],
+          "rows": [
+            [
+              12
+            ],
+            [
+              13
+            ],
+            [
+              14
+            ],
+            [
+              15
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "Missing values are not rows, so you have to generate the full range first and then remove what exists. generate_series between the minimum and maximum stub gives every candidate, and NOT EXISTS keeps the ones with no stub. The trap is the self-join trick that checks ticket_no + 1: it reports only the first number of each gap (105 but not 106) and also reports one past the largest stub. With an empty table min and max are NULL and generate_series returns no rows, so the edge case needs no special code.",
+  "notes": "generate_series is a set-returning function, so the plan is a function scan anti-joined to the table, using the primary key index when it is cheaper than a hash. For very wide ranges with few stubs, listing gaps as ranges (lead(ticket_no) - ticket_no > 1) is far smaller than listing each number.",
+  "followUps": [
+    "Return each gap as a range (gap_start, gap_end) instead of one row per number.",
+    "The printer started at 1 and printed up to 5000. How does the query change?"
+  ]
+}

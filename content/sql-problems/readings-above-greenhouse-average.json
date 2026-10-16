@@ -1,0 +1,60 @@
+{
+  "id": "readings-above-greenhouse-average",
+  "title": "Humidity readings above their greenhouse average",
+  "topic": "Subqueries & CTEs",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-subqueries-ctes",
+  "paths": ["swe"],
+  "prompt": "A plant nursery logs humidity readings from sensors in several greenhouses. A failed sensor writes a NULL humidity.\n\nReturn every reading whose humidity is strictly greater than the average humidity of its own greenhouse. Compare each reading with its greenhouse, not with all greenhouses together.\n\n- Columns: id, greenhouse, humidity\n- Any row order is fine\n- The average ignores NULL readings, and NULL readings are never returned\n- A reading equal to the average is not returned",
+  "hints": [
+    "The comparison value changes per row: it depends on the row's greenhouse.",
+    "A correlated subquery can refer to the outer row: (SELECT avg(...) FROM readings r2 WHERE r2.greenhouse = r.greenhouse).",
+    "WHERE r.humidity > (SELECT avg(r2.humidity) FROM readings r2 WHERE r2.greenhouse = r.greenhouse). avg() already skips NULLs, and NULL > x is never true."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE readings (id int PRIMARY KEY, greenhouse text NOT NULL, humidity numeric(5,1));",
+    "starter": "-- Readings above their greenhouse's average\nSELECT id, greenhouse, humidity\nFROM readings\nWHERE humidity > (SELECT avg(humidity) FROM readings);",
+    "solution": "SELECT r.id, r.greenhouse, r.humidity\nFROM readings r\nWHERE r.humidity > (\n  SELECT avg(r2.humidity)\n  FROM readings r2\n  WHERE r2.greenhouse = r.greenhouse\n);",
+    "tests": [
+      {
+        "name": "two greenhouses with different levels",
+        "seed": "INSERT INTO readings VALUES (1, 'north', 60.0), (2, 'north', 70.0), (3, 'north', 80.0), (4, 'south', 40.0), (5, 'south', 50.0);",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [[3, "north", 80], [5, "south", 50]] }
+      },
+      {
+        "name": "single greenhouse",
+        "seed": "INSERT INTO readings VALUES (1, 'fern', 50.0), (2, 'fern', 50.0), (3, 'fern', 70.0);",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [[3, "fern", 70]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "reading equal to the average is excluded",
+        "seed": "INSERT INTO readings VALUES (1, 'north', 40.0), (2, 'north', 60.0), (3, 'north', 50.0);",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [[2, "north", 60]] }
+      },
+      {
+        "name": "NULL readings do not drag the average down",
+        "seed": "INSERT INTO readings VALUES (1, 'north', 10.0), (2, 'north', 12.0), (3, 'north', 20.0), (4, 'north', NULL);",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [[3, "north", 20]] }
+      },
+      {
+        "name": "all-NULL and single-reading greenhouses",
+        "seed": "INSERT INTO readings VALUES (1, 'cactus', NULL), (2, 'cactus', NULL), (3, 'orchid', 88.0), (4, 'palm', 30.0), (5, 'palm', 31.5);",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [[5, "palm", 31.5]] }
+      },
+      {
+        "name": "no readings",
+        "seed": "",
+        "expected": { "columns": ["id", "greenhouse", "humidity"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "The subquery is correlated: it refers to r.greenhouse from the outer row, so each reading is compared with the average of its own greenhouse. avg() skips NULLs, so a failed sensor does not lower the average, and a NULL humidity is never greater than anything, so it is never returned. Strict > keeps readings that equal the average out. The trap is an uncorrelated subquery that compares every reading with one global average, or computing sum/count(*) by hand, which counts NULL rows.",
+  "notes": "Postgres may run a correlated subquery once per outer row; an index on readings(greenhouse, humidity) makes each lookup cheap. A usually faster form computes all averages once, either with a CTE grouped by greenhouse and joined back, or with avg(humidity) OVER (PARTITION BY greenhouse) in a derived table. All three return the same rows.",
+  "followUps": [
+    "Rewrite this with a window function and compare the plans.",
+    "Return readings more than one standard deviation above their greenhouse average."
+  ]
+}

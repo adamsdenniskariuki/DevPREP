@@ -1,0 +1,65 @@
+{
+  "id": "latest-lab-before-clinic-visit",
+  "title": "Latest lab result before each clinic visit",
+  "topic": "Subqueries & CTEs",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "sql-subqueries-ctes",
+  "paths": ["senior"],
+  "prompt": "A clinic wants each visit summary to show the patient's most recent glucose lab taken on or before the visit date.\n\nFor every visit, return the latest lab of the same patient with taken_on <= visit_date. A lab taken on the visit day counts.\n\n- Columns: visit_id, lab_id, glucose\n- One row per visit; any row order is fine\n- Several labs on the same latest date: pick the highest lab id\n- No qualifying lab: keep the visit with NULL lab_id and glucose\n- A spoiled sample has NULL glucose; it is still a lab and can be the latest",
+  "hints": [
+    "For each visit you want a top-1 row from another table, chosen by a rule that depends on the visit.",
+    "LATERAL lets a subquery in FROM refer to the current visit row, so it can ORDER BY ... LIMIT 1 per visit.",
+    "LEFT JOIN LATERAL (SELECT id, glucose FROM labs WHERE patient_id = v.patient_id AND taken_on <= v.visit_date ORDER BY taken_on DESC, id DESC LIMIT 1) l ON true."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE visits (id int PRIMARY KEY, patient_id int NOT NULL, visit_date date NOT NULL);\nCREATE TABLE labs (id int PRIMARY KEY, patient_id int NOT NULL, taken_on date NOT NULL, glucose int);",
+    "starter": "-- Latest lab on or before each visit\nSELECT v.id AS visit_id, l.id AS lab_id, l.glucose\nFROM visits v\nJOIN labs l ON l.patient_id = v.patient_id AND l.taken_on <= v.visit_date;",
+    "solution": "SELECT v.id AS visit_id, l.id AS lab_id, l.glucose\nFROM visits v\nLEFT JOIN LATERAL (\n  SELECT id, glucose\n  FROM labs\n  WHERE patient_id = v.patient_id\n    AND taken_on <= v.visit_date\n  ORDER BY taken_on DESC, id DESC\n  LIMIT 1\n) l ON true;",
+    "tests": [
+      {
+        "name": "picks the latest earlier lab",
+        "seed": "INSERT INTO labs VALUES (1, 1, '2026-01-05', 100), (2, 1, '2026-01-20', 110), (3, 2, '2026-01-01', 90);\nINSERT INTO visits VALUES (10, 1, '2026-01-10'), (11, 1, '2026-01-25'), (12, 2, '2026-02-01');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[10, 1, 100], [11, 2, 110], [12, 3, 90]] }
+      },
+      {
+        "name": "visits with no earlier lab",
+        "seed": "INSERT INTO labs VALUES (1, 1, '2026-03-10', 95);\nINSERT INTO visits VALUES (20, 1, '2026-03-01'), (21, 2, '2026-03-05');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[20, null, null], [21, null, null]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "lab on the visit day counts",
+        "seed": "INSERT INTO labs VALUES (1, 1, '2026-04-01', 101), (2, 1, '2026-04-15', 99), (3, 1, '2026-04-16', 140);\nINSERT INTO visits VALUES (30, 1, '2026-04-15');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[30, 2, 99]] }
+      },
+      {
+        "name": "same-day labs break ties by highest id",
+        "seed": "INSERT INTO labs VALUES (5, 1, '2026-05-02', 120), (7, 1, '2026-05-02', 130), (6, 1, '2026-05-02', 125), (8, 1, '2026-05-01', 200);\nINSERT INTO visits VALUES (40, 1, '2026-05-03');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[40, 7, 130]] }
+      },
+      {
+        "name": "another patient's closer lab is ignored",
+        "seed": "INSERT INTO labs VALUES (1, 1, '2026-06-01', 88), (2, 2, '2026-06-09', 150);\nINSERT INTO visits VALUES (50, 1, '2026-06-10'), (51, 2, '2026-06-10');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[50, 1, 88], [51, 2, 150]] }
+      },
+      {
+        "name": "spoiled sample is still the latest",
+        "seed": "INSERT INTO labs VALUES (1, 3, '2026-07-01', 105), (2, 3, '2026-07-08', NULL);\nINSERT INTO visits VALUES (60, 3, '2026-07-09'), (61, 3, '2026-07-05');",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [[60, 2, null], [61, 1, 105]] }
+      },
+      {
+        "name": "labs but no visits",
+        "seed": "INSERT INTO labs VALUES (1, 1, '2026-01-01', 90);",
+        "expected": { "columns": ["visit_id", "lab_id", "glucose"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "LEFT JOIN LATERAL runs the subquery once per visit, and the subquery can use v.patient_id and v.visit_date. ORDER BY taken_on DESC, id DESC LIMIT 1 picks exactly one lab with a deterministic tie-break, and LEFT ... ON true keeps visits that found none. A plain join returns every earlier lab, and joining on max(taken_on) returns duplicates on tied dates. Two scalar subqueries in the SELECT list also work, but each needs the same ORDER BY and repeats the lookup; filtering glucose IS NOT NULL would wrongly skip a spoiled sample.",
+  "notes": "With an index on labs(patient_id, taken_on DESC, id DESC) each lateral lookup is a short index scan that stops after one row, which beats ranking all labs with ROW_NUMBER when visits are few and labs are many. When most labs are needed anyway, a window function over the joined rows can win, so compare plans. DISTINCT ON (v.id) over the join with ORDER BY v.id, taken_on DESC, l.id DESC is another Postgres-specific answer.",
+  "followUps": [
+    "Return the two most recent labs per visit as an array.",
+    "How does the plan change if the index on labs is missing, and when would ROW_NUMBER beat LATERAL?"
+  ]
+}

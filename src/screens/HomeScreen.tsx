@@ -18,7 +18,7 @@ function countdown(days: number | undefined) {
 export default function HomeScreen({ app }: { app: AppModel }) {
   const { progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday, activeLesson, percent, outsidePath, clock, navigate, start, browseAll, heading, setRoadmapScope, game, weak, daysLeft, tourOpen } = app
   const cardsDue = dueCount(progress, app.today)
-  const extras = planStudy(progress, app.today).days[0].items.filter(item => item.kind === 'problem' || item.kind === 'case' || item.kind === 'mock')
+  const extras = planStudy(progress, app.today).days[0].items.filter(item => item.kind === 'problem' || item.kind === 'sql' || item.kind === 'case' || item.kind === 'mock')
   const focus = weak.filter(area => area.completed < area.total || area.needsPractice > 0).slice(0, 2)
   return <>
 <div className="page-heading home-heading"><div><div className="eyebrow">{clock.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div><h1 ref={heading} tabIndex={-1}>{countdown(daysLeft)}</h1><p>{selectedPath ? `${selectedPath.title} path` : 'All tracks'} · {game.streak.current ? `${game.streak.current}-day streak` : 'Start a streak today'} · Level {game.level}</p></div>

@@ -1,0 +1,61 @@
+{
+  "id": "soft-delete-unique-handles",
+  "title": "Unique handles that survive soft deletes",
+  "topic": "Data changes & design",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "sql-indexes",
+  "paths": ["senior"],
+  "prompt": "A book-swap club never deletes accounts; closing one sets deleted_at. Handles must be unique among live accounts, ignoring case, so 'Nova' and 'nova' cannot both be live. A closed account must not block its handle, and old data already holds several closed accounts with the same handle.\n\nAdd the database rule with DDL. Do not change or delete any rows.\n\n- A live account has deleted_at IS NULL\n- Live handles must be unique case-insensitively; closed rows are never checked\n- Violations must raise a unique-violation error (use a unique index or constraint)\n- The check probes your rule with inserts and updates inside a DO block, then returns columns probe, outcome\n- Live handles in the existing data are already unique",
+  "hints": [
+    "A plain UNIQUE (handle) is both too weak (case) and too strong (closed rows). You need uniqueness on an expression, for some rows only.",
+    "Postgres unique indexes can be built on expressions like lower(handle) and can have a WHERE clause (a partial index).",
+    "CREATE UNIQUE INDEX accounts_live_handle_uq ON accounts (lower(handle)) WHERE deleted_at IS NULL;"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE accounts (id int PRIMARY KEY, handle text NOT NULL, deleted_at date);",
+    "starter": "-- Enforce unique live handles here\nSELECT 1;",
+    "solution": "CREATE UNIQUE INDEX accounts_live_handle_uq\n  ON accounts (lower(handle))\n  WHERE deleted_at IS NULL;",
+    "check": "CREATE TEMP TABLE probe_log (probe text, outcome text);\nDO $$\nDECLARE target int;\nBEGIN\n  SELECT a.id INTO target FROM accounts a\n  WHERE a.id < 900 AND a.deleted_at IS NOT NULL\n    AND EXISTS (SELECT 1 FROM accounts b WHERE b.id < 900 AND b.deleted_at IS NULL AND lower(b.handle) = lower(a.handle))\n  ORDER BY a.id LIMIT 1;\n  IF target IS NULL THEN\n    INSERT INTO probe_log VALUES ('restore taken handle', 'no candidate');\n  ELSE\n    BEGIN\n      UPDATE accounts SET deleted_at = NULL WHERE id = target;\n      INSERT INTO probe_log VALUES ('restore taken handle', 'allowed');\n    EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n      INSERT INTO probe_log VALUES ('restore taken handle', 'rejected');\n    END;\n  END IF;\n  BEGIN\n    INSERT INTO accounts VALUES (901, 'ProbeX', NULL), (902, 'probex', NULL);\n    INSERT INTO probe_log VALUES ('live clash, other case', 'allowed');\n  EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n    INSERT INTO probe_log VALUES ('live clash, other case', 'rejected');\n  END;\n  BEGIN\n    INSERT INTO accounts VALUES (903, 'ProbeW', NULL), (904, 'ProbeW', NULL);\n    INSERT INTO probe_log VALUES ('live clash, same case', 'allowed');\n  EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n    INSERT INTO probe_log VALUES ('live clash, same case', 'rejected');\n  END;\n  BEGIN\n    INSERT INTO accounts VALUES (905, 'ProbeY', NULL), (906, 'PROBEY', '2026-01-01');\n    INSERT INTO probe_log VALUES ('closed copy of live handle', 'allowed');\n  EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n    INSERT INTO probe_log VALUES ('closed copy of live handle', 'rejected');\n  END;\n  BEGIN\n    INSERT INTO accounts VALUES (907, 'ProbeZ', '2026-01-01'), (908, 'probez', '2026-02-01');\n    INSERT INTO probe_log VALUES ('two closed copies', 'allowed');\n  EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n    INSERT INTO probe_log VALUES ('two closed copies', 'rejected');\n  END;\n  BEGIN\n    INSERT INTO accounts VALUES (909, 'ProbeV', NULL), (910, 'ProbeU', NULL);\n    INSERT INTO probe_log VALUES ('different live handles', 'allowed');\n  EXCEPTION WHEN unique_violation OR exclusion_violation THEN\n    INSERT INTO probe_log VALUES ('different live handles', 'rejected');\n  END;\nEND $$;\nSELECT probe, outcome FROM probe_log\nUNION ALL\nSELECT 'existing rows kept', count(*)::text FROM accounts WHERE id < 900;",
+    "tests": [
+      {
+        "name": "live and closed novas",
+        "seed": "INSERT INTO accounts VALUES (1, 'nova', NULL), (2, 'Rook', NULL), (3, 'nova', '2026-01-04'), (4, 'NOVA', '2026-02-11');",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "rejected"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "4"]] }
+      },
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "no candidate"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "0"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "only live accounts",
+        "seed": "INSERT INTO accounts VALUES (1, 'quill', NULL), (2, 'Fern', NULL), (3, 'moss', NULL);",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "no candidate"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "3"]] }
+      },
+      {
+        "name": "closed duplicates with no live owner",
+        "seed": "INSERT INTO accounts VALUES (1, 'ember', '2025-11-01'), (2, 'Ember', '2025-12-01'), (3, 'EMBER', '2026-01-01'), (4, 'lark', NULL);",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "no candidate"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "4"]] }
+      },
+      {
+        "name": "closed row differs only in case from a live one",
+        "seed": "INSERT INTO accounts VALUES (1, 'Sable', NULL), (2, 'sABLE', '2026-03-03');",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "rejected"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "2"]] }
+      },
+      {
+        "name": "single closed account",
+        "seed": "INSERT INTO accounts VALUES (7, 'wren', '2026-04-04');",
+        "expected": { "columns": ["probe", "outcome"], "rows": [["restore taken handle", "no candidate"], ["live clash, other case", "rejected"], ["live clash, same case", "rejected"], ["closed copy of live handle", "allowed"], ["two closed copies", "allowed"], ["different live handles", "allowed"], ["existing rows kept", "1"]] }
+      }
+    ]
+  },
+  "explanation": "A partial unique index on lower(handle) WHERE deleted_at IS NULL only contains live rows, so closed rows never collide with anything, and the lower() expression makes 'Nova' and 'nova' the same key. UNIQUE (handle) is the first trap: it lets 'Nova' and 'nova' both be live and it fails to build on the existing closed duplicates. A non-partial unique index on lower(handle) fails for the same reason, and even on clean data it would block reusing a closed handle. Restoring a closed account is also checked, because the index applies to UPDATEs that bring a row into the live set.",
+  "notes": "Partial unique indexes cannot back a UNIQUE or PRIMARY KEY constraint, so ON CONFLICT must name the expression and predicate (ON CONFLICT (lower(handle)) WHERE deleted_at IS NULL) to infer the index. Queries only use the index when their WHERE implies the predicate and they compare lower(handle), so lookups should be written that way. On a large live table, use CREATE UNIQUE INDEX CONCURRENTLY to avoid blocking writes, and note it cannot run inside a transaction block. A citext column is an alternative to lower(), but needs an extension.",
+  "followUps": [
+    "How would you write an upsert that targets this partial index?",
+    "Why is a soft-delete flag plus a partial index often preferred over moving closed rows to an archive table, and when is it not?"
+  ]
+}

@@ -1,0 +1,196 @@
+{
+  "id": "library-study-room-free-slots",
+  "title": "Free slots in library study rooms",
+  "topic": "Gaps & islands",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-window-functions",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A library's study rooms open 09:00–18:00. All bookings are for the same day and are stored as start and end times. Some bookings overlap (the old system allowed it), and some start before opening or end after closing.\n\nList every free slot of at least 30 minutes inside opening hours for every room in rooms. A slot ends where a booking starts, and starts where all earlier bookings have ended.\n\n- Columns: room, free_from, free_until, free_minutes\n- free_from and free_until are text 'HH24:MI'; free_minutes is an integer\n- Order by room, then free_from\n- A room with no bookings is free 09:00–18:00 (540 minutes)\n- Only the part of a booking inside 09:00–18:00 matters; a booking ending at 09:00 blocks nothing",
+  "hints": [
+    "Free time is the gap between merged busy intervals, plus the edges at opening and closing. Clip bookings to 09:00–18:00 first.",
+    "Add two zero-length sentinel rows per room, at 09:00 and at 18:00. Then a free slot runs from the furthest end seen so far to the next start.",
+    "Use max(e) OVER (PARTITION BY room ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) as prev_end and keep rows where s - prev_end >= interval '30 minutes'. Format with to_char(date '2000-01-01' + t, 'HH24:MI')."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE rooms (room text PRIMARY KEY);\nCREATE TABLE bookings (\n  id int PRIMARY KEY,\n  room text NOT NULL REFERENCES rooms(room),\n  starts_at time NOT NULL,\n  ends_at time NOT NULL CHECK (ends_at > starts_at)\n);",
+    "starter": "-- Free slots between consecutive bookings\nWITH b AS (\n  SELECT room, starts_at,\n         lag(ends_at) OVER (PARTITION BY room ORDER BY starts_at) AS prev_end\n  FROM bookings\n)\nSELECT room,\n       to_char(date '2000-01-01' + prev_end, 'HH24:MI') AS free_from,\n       to_char(date '2000-01-01' + starts_at, 'HH24:MI') AS free_until,\n       (extract(epoch FROM starts_at - prev_end) / 60)::int AS free_minutes\nFROM b\nWHERE starts_at - prev_end >= interval '30 minutes'\nORDER BY room, free_from;",
+    "solution": "WITH b AS (\n  SELECT room,\n         greatest(starts_at, time '09:00') AS s,\n         least(ends_at, time '18:00') AS e\n  FROM bookings\n  WHERE ends_at > time '09:00' AND starts_at < time '18:00'\n  UNION ALL\n  SELECT room, time '09:00', time '09:00' FROM rooms\n  UNION ALL\n  SELECT room, time '18:00', time '18:00' FROM rooms\n), w AS (\n  SELECT room, s,\n         max(e) OVER (\n           PARTITION BY room ORDER BY s, e\n           ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING\n         ) AS prev_end\n  FROM b\n)\nSELECT room,\n       to_char(date '2000-01-01' + prev_end, 'HH24:MI') AS free_from,\n       to_char(date '2000-01-01' + s, 'HH24:MI') AS free_until,\n       (extract(epoch FROM s - prev_end) / 60)::int AS free_minutes\nFROM w\nWHERE s - prev_end >= interval '30 minutes'\nORDER BY room, prev_end;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "short gap skipped, empty room fully free",
+        "seed": "INSERT INTO rooms VALUES ('Quiet A'), ('Quiet B');\nINSERT INTO bookings VALUES (1, 'Quiet A', '09:00', '10:00'), (2, 'Quiet A', '10:15', '11:00'), (3, 'Quiet A', '13:00', '14:30');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": [
+            [
+              "Quiet A",
+              "11:00",
+              "13:00",
+              120
+            ],
+            [
+              "Quiet A",
+              "14:30",
+              "18:00",
+              210
+            ],
+            [
+              "Quiet B",
+              "09:00",
+              "18:00",
+              540
+            ]
+          ]
+        }
+      },
+      {
+        "name": "overlapping and contained bookings",
+        "seed": "INSERT INTO rooms VALUES ('Loft');\nINSERT INTO bookings VALUES (1, 'Loft', '09:30', '12:00'), (2, 'Loft', '10:00', '11:00'), (3, 'Loft', '11:30', '12:30'), (4, 'Loft', '13:00', '17:31');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": [
+            [
+              "Loft",
+              "09:00",
+              "09:30",
+              30
+            ],
+            [
+              "Loft",
+              "12:30",
+              "13:00",
+              30
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "no rooms",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "bookings spill past opening hours",
+        "seed": "INSERT INTO rooms VALUES ('Map Room');\nINSERT INTO bookings VALUES (1, 'Map Room', '07:00', '09:45'), (2, 'Map Room', '17:00', '20:00');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": [
+            [
+              "Map Room",
+              "09:45",
+              "17:00",
+              435
+            ]
+          ]
+        }
+      },
+      {
+        "name": "bookings entirely outside hours",
+        "seed": "INSERT INTO rooms VALUES ('Nook');\nINSERT INTO bookings VALUES (1, 'Nook', '06:00', '08:00'), (2, 'Nook', '08:00', '09:00'), (3, 'Nook', '18:00', '21:00');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": [
+            [
+              "Nook",
+              "09:00",
+              "18:00",
+              540
+            ]
+          ]
+        }
+      },
+      {
+        "name": "fully booked room",
+        "seed": "INSERT INTO rooms VALUES ('Pod'), ('Den');\nINSERT INTO bookings VALUES (1, 'Pod', '08:00', '18:30'), (2, 'Den', '09:00', '12:00'), (3, 'Den', '12:00', '18:00');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "identical duplicate bookings",
+        "seed": "INSERT INTO rooms VALUES ('Bay');\nINSERT INTO bookings VALUES (1, 'Bay', '10:00', '12:00'), (2, 'Bay', '10:00', '12:00');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": [
+            [
+              "Bay",
+              "09:00",
+              "10:00",
+              60
+            ],
+            [
+              "Bay",
+              "12:00",
+              "18:00",
+              360
+            ]
+          ]
+        }
+      },
+      {
+        "name": "29 minutes is too short",
+        "seed": "INSERT INTO rooms VALUES ('Carrel');\nINSERT INTO bookings VALUES (1, 'Carrel', '09:29', '17:00'), (2, 'Carrel', '17:29', '18:00');",
+        "expected": {
+          "columns": [
+            "room",
+            "free_from",
+            "free_until",
+            "free_minutes"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "Free time is the complement of the union of bookings, so the query must look at the furthest end reached so far, not just the previous booking's end. Clipping bookings to opening hours and adding zero-length sentinels at 09:00 and 18:00 turns the edges of the day into ordinary gaps, and a room with no bookings gets one 09:00–18:00 slot for free. The running max of e over earlier rows, compared with each row's start, yields exactly the gaps between merged busy blocks. Traps: lag(ends_at) reports fake gaps inside a long booking that contains shorter ones, ignoring rooms with no bookings, and forgetting that a slot of exactly 30 minutes qualifies (>=) while 29 does not.",
+  "notes": "time - time yields an interval, and date + time yields a timestamp, which is how to_char formats it since Postgres has no to_char(time). With real multi-day data you would use tsrange or tstzrange: range_agg merges the bookings and multirange subtraction (tsmultirange(opening) - range_agg(...)) returns free slots directly. An index on bookings(room, starts_at) supports the window sort per room.",
+  "followUps": [
+    "Return only the single longest free slot per room, earliest first on ties.",
+    "Rewrite it with multiranges: subtract the merged bookings from the opening-hours range."
+  ]
+}

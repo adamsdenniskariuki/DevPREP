@@ -1,0 +1,71 @@
+{
+  "id": "merge-greenhouse-sensor-feed",
+  "title": "Sync greenhouse sensors from a supplier feed",
+  "topic": "Data changes & design",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-upserts",
+  "paths": ["senior"],
+  "prompt": "A greenhouse keeps its sensor registry in sensors. Each night the hardware supplier sends the full list of installed sensors as sensor_feed, and the registry must be brought in line with it. Every real change bumps version so downstream caches know to refresh.\n\nWrite SQL that applies the feed:\n\n- Code in both, and zone or max_temp differ, or the sensor is inactive: copy zone and max_temp, set active true, add 1 to version\n- Code in both and nothing differs and it is active: leave the row untouched\n- Code only in the feed: insert it with active true and version 1\n- Code only in sensors and active: set active false and add 1 to version; if already inactive, leave it\n- max_temp may be NULL; NULL to NULL is no change, NULL to a value (or back) is a change\n- Never delete rows\n- The check runs SELECT code, zone, max_temp, active, version FROM sensors (any order)",
+  "hints": [
+    "There are three cases: matched, only in the feed, only in sensors. One statement in Postgres 17+ handles all three.",
+    "MERGE supports WHEN MATCHED AND <condition>, WHEN NOT MATCHED [BY TARGET] and WHEN NOT MATCHED BY SOURCE. Compare columns with IS DISTINCT FROM so NULLs count as values.",
+    "MERGE INTO sensors s USING sensor_feed f ON s.code = f.code WHEN MATCHED AND (s.zone IS DISTINCT FROM f.zone OR s.max_temp IS DISTINCT FROM f.max_temp OR NOT s.active) THEN UPDATE ... WHEN NOT MATCHED THEN INSERT ... WHEN NOT MATCHED BY SOURCE AND s.active THEN UPDATE SET active = false, version = s.version + 1;"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE sensors (code text PRIMARY KEY, zone text NOT NULL, max_temp numeric(4,1), active boolean NOT NULL, version int NOT NULL);\nCREATE TABLE sensor_feed (code text PRIMARY KEY, zone text NOT NULL, max_temp numeric(4,1));",
+    "starter": "-- Apply sensor_feed to sensors\nSELECT 1;",
+    "solution": "MERGE INTO sensors s\nUSING sensor_feed f ON s.code = f.code\nWHEN MATCHED AND (s.zone IS DISTINCT FROM f.zone\n               OR s.max_temp IS DISTINCT FROM f.max_temp\n               OR NOT s.active) THEN\n  UPDATE SET zone = f.zone, max_temp = f.max_temp, active = true, version = s.version + 1\nWHEN NOT MATCHED BY TARGET THEN\n  INSERT (code, zone, max_temp, active, version) VALUES (f.code, f.zone, f.max_temp, true, 1)\nWHEN NOT MATCHED BY SOURCE AND s.active THEN\n  UPDATE SET active = false, version = s.version + 1;",
+    "check": "SELECT code, zone, max_temp, active, version FROM sensors;",
+    "tests": [
+      {
+        "name": "every kind of change",
+        "seed": "INSERT INTO sensors VALUES ('GH-01', 'north', 30.0, true, 3), ('GH-02', 'north', 28.5, true, 1), ('GH-03', 'south', NULL, true, 2), ('GH-04', 'south', 25.0, false, 4), ('GH-05', 'east', 27.0, true, 1);\nINSERT INTO sensor_feed VALUES ('GH-01', 'north', 30.0), ('GH-02', 'west', 28.5), ('GH-03', 'south', NULL), ('GH-04', 'south', 25.0), ('GH-06', 'east', 31.0);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["GH-01", "north", 30.0, true, 3], ["GH-02", "west", 28.5, true, 2], ["GH-03", "south", null, true, 2], ["GH-04", "south", 25.0, true, 5], ["GH-05", "east", 27.0, false, 2], ["GH-06", "east", 31.0, true, 1]] }
+      },
+      {
+        "name": "empty feed retires active sensors",
+        "seed": "INSERT INTO sensors VALUES ('A1', 'north', 22.0, true, 1), ('A2', 'north', 23.0, false, 6);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["A1", "north", 22.0, false, 2], ["A2", "north", 23.0, false, 6]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "NULL to value and value to NULL",
+        "seed": "INSERT INTO sensors VALUES ('A', 'x', NULL, true, 1), ('B', 'x', 20.0, true, 1);\nINSERT INTO sensor_feed VALUES ('A', 'x', 22.0), ('B', 'x', NULL);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["A", "x", 22.0, true, 2], ["B", "x", null, true, 2]] }
+      },
+      {
+        "name": "identical feed is a no-op",
+        "seed": "INSERT INTO sensors VALUES ('A', 'x', 10.5, true, 4), ('B', 'y', NULL, true, 9);\nINSERT INTO sensor_feed VALUES ('A', 'x', 10.5), ('B', 'y', NULL);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["A", "x", 10.5, true, 4], ["B", "y", null, true, 9]] }
+      },
+      {
+        "name": "empty registry takes the whole feed",
+        "seed": "INSERT INTO sensor_feed VALUES ('N1', 'east', 19.0), ('N2', 'west', NULL);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["N1", "east", 19.0, true, 1], ["N2", "west", null, true, 1]] }
+      },
+      {
+        "name": "inactive sensor missing from feed stays put",
+        "seed": "INSERT INTO sensors VALUES ('Z', 'y', 10.0, false, 7), ('Y', 'y', 11.0, true, 2);\nINSERT INTO sensor_feed VALUES ('Y', 'y', 11.0);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["Z", "y", 10.0, false, 7], ["Y", "y", 11.0, true, 2]] }
+      },
+      {
+        "name": "reactivated sensor with a new zone bumps once",
+        "seed": "INSERT INTO sensors VALUES ('R', 'old', 15.0, false, 3);\nINSERT INTO sensor_feed VALUES ('R', 'new', 15.0);",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [["R", "new", 15.0, true, 4]] }
+      },
+      {
+        "name": "both tables empty",
+        "seed": "",
+        "expected": { "columns": ["code", "zone", "max_temp", "active", "version"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "MERGE joins sensors and sensor_feed once and runs the first WHEN clause whose condition holds for each row, which covers update, insert and retire in a single statement. The change test must use IS DISTINCT FROM: with <>, NULL <> 22.0 is NULL, so a sensor that gains a max_temp would never be updated. Putting the condition on WHEN MATCHED keeps unchanged rows untouched, so their version does not creep up on every run. WHEN NOT MATCHED BY SOURCE AND s.active retires only sensors that are still active, so re-running the sync is idempotent.",
+  "notes": "WHEN NOT MATCHED BY SOURCE needs Postgres 17 or later; on older versions you would run an UPDATE ... WHERE NOT EXISTS for the retire step plus INSERT ... ON CONFLICT for the rest, in one transaction. Unlike INSERT ... ON CONFLICT, MERGE does not use speculative insertion, so a concurrent insert of the same code can make it fail with a unique violation; run the sync from a single job or retry. A MERGE that lists WHEN NOT MATCHED BY SOURCE must scan the whole target, which is fine for a registry but costly on a huge table.",
+  "followUps": [
+    "How would you add a RETURNING clause that reports what MERGE did to each row?",
+    "The feed might accidentally arrive empty. How would you guard against retiring every sensor?"
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "id": "podcast-downloads-with-gap-days",
+  "title": "Daily podcast downloads with gap days filled",
+  "topic": "Subqueries & CTEs",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-subqueries-ctes",
+  "prompt": "A podcast network stores one row per episode per day that had listens. Days with no listens at all have no rows, so the chart skips them.\n\nReturn one row for every calendar day from the earliest day in the table to the latest day, inclusive, with the total listens across all episodes. Days with no rows show 0.\n\n- Columns: day, downloads\n- Order by day ascending\n- If the table is empty, return no rows",
+  "hints": [
+    "You need rows for days that do not exist in the table. Generate them first, then join the data onto them.",
+    "A recursive CTE can start at min(day) and add one day until it reaches max(day). generate_series is another way.",
+    "LEFT JOIN the generated days to listens, GROUP BY the day and use coalesce(sum(l.listens), 0). Guard against the NULL anchor row when the table is empty."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE listens (id int PRIMARY KEY, episode_id int NOT NULL, day date NOT NULL, listens int NOT NULL);",
+    "starter": "-- Daily totals, including empty days\nSELECT day, sum(listens) AS downloads\nFROM listens\nGROUP BY day\nORDER BY day;",
+    "solution": "WITH RECURSIVE days AS (\n  SELECT min(day) AS day, max(day) AS last_day FROM listens\n  UNION ALL\n  SELECT day + 1, last_day FROM days WHERE day < last_day\n)\nSELECT d.day, coalesce(sum(l.listens), 0) AS downloads\nFROM days d\nLEFT JOIN listens l ON l.day = d.day\nWHERE d.day IS NOT NULL\nGROUP BY d.day\nORDER BY d.day;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "one missing day in the middle",
+        "seed": "INSERT INTO listens VALUES (1, 7, '2026-03-01', 5), (2, 8, '2026-03-01', 3), (3, 7, '2026-03-03', 4);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2026-03-01", 8], ["2026-03-02", 0], ["2026-03-03", 4]] }
+      },
+      {
+        "name": "no gaps",
+        "seed": "INSERT INTO listens VALUES (1, 7, '2026-03-11', 7), (2, 7, '2026-03-10', 2);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2026-03-10", 2], ["2026-03-11", 7]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "leap day gap",
+        "seed": "INSERT INTO listens VALUES (1, 1, '2028-02-28', 1), (2, 2, '2028-03-01', 2);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2028-02-28", 1], ["2028-02-29", 0], ["2028-03-01", 2]] }
+      },
+      {
+        "name": "single day",
+        "seed": "INSERT INTO listens VALUES (1, 1, '2026-06-30', 4), (2, 2, '2026-06-30', 6);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2026-06-30", 10]] }
+      },
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": { "columns": ["day", "downloads"], "rows": [] }
+      },
+      {
+        "name": "gap across year end",
+        "seed": "INSERT INTO listens VALUES (1, 3, '2026-01-02', 3), (2, 3, '2025-12-30', 1);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2025-12-30", 1], ["2025-12-31", 0], ["2026-01-01", 0], ["2026-01-02", 3]] }
+      },
+      {
+        "name": "rows with zero listens",
+        "seed": "INSERT INTO listens VALUES (1, 1, '2026-04-01', 0), (2, 2, '2026-04-03', 0), (3, 1, '2026-04-03', 9);",
+        "expected": { "columns": ["day", "downloads"], "rows": [["2026-04-01", 0], ["2026-04-02", 0], ["2026-04-03", 9]] }
+      }
+    ]
+  },
+  "explanation": "The recursive CTE builds a calendar: the anchor row holds min(day) and max(day), and each step adds one day until it reaches the last day. LEFT JOIN keeps calendar days with no listens, and coalesce turns their NULL sum into 0. Adding an integer to a date gives the next date, so month ends, leap days and year ends need no special code. The trap with an empty table is that min() still returns one row of NULL; the recursion stops at once because NULL < NULL is not true, and WHERE d.day IS NOT NULL removes that row.",
+  "notes": "generate_series(min, max, interval '1 day')::date is the shorter Postgres-specific way to build the same calendar; the recursive CTE works across most databases. Both are cheap for date ranges of a few years. For dashboards that run often, a permanent calendar table with an index is simpler and lets the planner estimate row counts.",
+  "followUps": [
+    "Fill gaps per episode, from each episode's own first to last day.",
+    "Add a 7-day rolling total that treats the filled days as zero."
+  ]
+}

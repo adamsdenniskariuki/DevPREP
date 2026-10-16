@@ -1,0 +1,161 @@
+{
+  "id": "bike-station-ride-share",
+  "title": "Each station's share of rides",
+  "topic": "Aggregation",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "prompt": "A city bike-share scheme wants to know which docking stations carry the most load. Every ride starts at one station.\n\nFor each start station, return its number of rides and its share of all rides as a percentage.\n\n- Columns: station, rides, share_pct\n- share_pct = 100 × station rides / all rides, rounded to 1 decimal place (e.g. 1 of 3 rides is 33.3)\n- Order by share_pct descending, then station ascending\n- Stations with no rides do not appear",
+  "hints": [
+    "First count rides per station. Then you need the grand total next to each group.",
+    "A window over the grouped rows, sum(count(*)) OVER (), gives the total without a second query. Watch out: bigint / bigint truncates.",
+    "round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS share_pct, GROUP BY start_station, ORDER BY share_pct DESC, station."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE rides (id int PRIMARY KEY, start_station text NOT NULL, minutes int);",
+    "starter": "-- Share of rides per start station\nSELECT start_station AS station,\n       count(*) AS rides,\n       round(100 * count(*) / (SELECT count(*) FROM rides), 1) AS share_pct\nFROM rides\nGROUP BY start_station\nORDER BY share_pct DESC, station;",
+    "solution": "SELECT start_station AS station,\n       count(*) AS rides,\n       round(100.0 * count(*) / sum(count(*)) OVER (), 1) AS share_pct\nFROM rides\nGROUP BY start_station\nORDER BY share_pct DESC, station;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "two thirds and one third",
+        "seed": "INSERT INTO rides VALUES (1, 'Pier', 12), (2, 'Pier', 7), (3, 'Mill', 20);",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": [
+            [
+              "Pier",
+              2,
+              66.7
+            ],
+            [
+              "Mill",
+              1,
+              33.3
+            ]
+          ]
+        }
+      },
+      {
+        "name": "tied shares sorted by name",
+        "seed": "INSERT INTO rides VALUES (1, 'Pier', 5), (2, 'Pier', 6), (3, 'Pier', 7), (4, 'Mill', 8), (5, 'Mill', 9), (6, 'Mill', 10), (7, 'Dock', 11), (8, 'Dock', 12);",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": [
+            [
+              "Mill",
+              3,
+              37.5
+            ],
+            [
+              "Pier",
+              3,
+              37.5
+            ],
+            [
+              "Dock",
+              2,
+              25.0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "single station gets 100",
+        "seed": "INSERT INTO rides VALUES (1, 'Quay', 3), (2, 'Quay', NULL);",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": [
+            [
+              "Quay",
+              2,
+              100.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no rides",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "sixths round correctly",
+        "seed": "INSERT INTO rides VALUES (1, 'Arch', 1), (2, 'Arch', 2), (3, 'Arch', 3), (4, 'Arch', 4), (5, 'Arch', 5), (6, 'Bell', 6);",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": [
+            [
+              "Arch",
+              5,
+              83.3
+            ],
+            [
+              "Bell",
+              1,
+              16.7
+            ]
+          ]
+        }
+      },
+      {
+        "name": "sevenths and NULL minutes still count",
+        "seed": "INSERT INTO rides VALUES (1, 'Cog', NULL), (2, 'Cog', NULL), (3, 'Elm', 4), (4, 'Elm', 4), (5, 'Elm', 4), (6, 'Elm', 4), (7, 'Elm', NULL);",
+        "expected": {
+          "columns": [
+            "station",
+            "rides",
+            "share_pct"
+          ],
+          "rows": [
+            [
+              "Elm",
+              5,
+              71.4
+            ],
+            [
+              "Cog",
+              2,
+              28.6
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "count(*) per group gives each station's rides, and sum(count(*)) OVER () adds those counts across all groups, because window functions run after GROUP BY. Multiplying by 100.0 makes the arithmetic numeric; with 100 * count(*) / total every operand is bigint and Postgres truncates, so 1 of 3 becomes 33 instead of 33.3. round(numeric, 1) then gives one decimal place. Sorting by share and then by name gives a total order when shares tie.",
+  "notes": "The window version reads the table once; a scalar subquery for the total is also fine because Postgres runs an uncorrelated subquery once as an InitPlan. sum() of bigint returns numeric, so the division is exact before rounding. Rounded shares do not always add up to exactly 100; if a report needs that, use a largest-remainder adjustment.",
+  "followUps": [
+    "Show each station's share within its own city district instead of the whole scheme.",
+    "The rounded shares add up to 99.9. How would you explain or fix that for a report?"
+  ]
+}

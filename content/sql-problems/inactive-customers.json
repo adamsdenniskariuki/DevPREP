@@ -1,0 +1,60 @@
+{
+  "id": "inactive-customers",
+  "title": "Customers who never ordered",
+  "topic": "Filtering & joins",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-joins",
+  "paths": ["swe"],
+  "prompt": "A shop keeps customers and their orders in two tables. Marketing wants to email everyone who signed up but has never placed an order.\n\nReturn the id and email of every customer with no rows in orders, one row per customer.\n\n- Columns: id, email\n- Any row order is fine\n- Some orders have a NULL customer_id (guest checkouts); they belong to nobody",
+  "hints": [
+    "You want rows from customers that have no match in orders. What join keeps unmatched left rows?",
+    "A LEFT JOIN fills the orders columns with NULL when nothing matches. Filter on that.",
+    "Use NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id). Avoid NOT IN here: one NULL customer_id in orders makes NOT IN return no rows at all."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE customers (id int PRIMARY KEY, email text NOT NULL);\nCREATE TABLE orders (id int PRIMARY KEY, customer_id int REFERENCES customers(id), total numeric(10,2) NOT NULL);",
+    "starter": "-- Customers with no orders\nSELECT id, email\nFROM customers;",
+    "solution": "SELECT c.id, c.email\nFROM customers c\nWHERE NOT EXISTS (\n  SELECT 1 FROM orders o WHERE o.customer_id = c.id\n);",
+    "tests": [
+      {
+        "name": "two of four never ordered",
+        "seed": "INSERT INTO customers VALUES (1, 'ana@example.com'), (2, 'ben@example.com'), (3, 'cy@example.com'), (4, 'dee@example.com');\nINSERT INTO orders VALUES (10, 1, 25.00), (11, 1, 9.50), (12, 3, 40.00);",
+        "expected": { "columns": ["id", "email"], "rows": [[2, "ben@example.com"], [4, "dee@example.com"]] }
+      },
+      {
+        "name": "everyone has ordered",
+        "seed": "INSERT INTO customers VALUES (1, 'ana@example.com'), (2, 'ben@example.com');\nINSERT INTO orders VALUES (10, 2, 5.00), (11, 1, 7.00);",
+        "expected": { "columns": ["id", "email"], "rows": [] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "guest orders with NULL customer_id",
+        "seed": "INSERT INTO customers VALUES (1, 'ana@example.com'), (2, 'ben@example.com');\nINSERT INTO orders VALUES (10, NULL, 5.00), (11, 1, 7.00);",
+        "expected": { "columns": ["id", "email"], "rows": [[2, "ben@example.com"]] }
+      },
+      {
+        "name": "no orders at all",
+        "seed": "INSERT INTO customers VALUES (5, 'eve@example.com'), (6, 'fay@example.com');",
+        "expected": { "columns": ["id", "email"], "rows": [[5, "eve@example.com"], [6, "fay@example.com"]] }
+      },
+      {
+        "name": "many orders for one customer do not duplicate others",
+        "seed": "INSERT INTO customers VALUES (1, 'ana@example.com'), (2, 'ben@example.com'), (3, 'cy@example.com');\nINSERT INTO orders VALUES (10, 1, 1.00), (11, 1, 2.00), (12, 1, 3.00), (13, 1, 4.00);",
+        "expected": { "columns": ["id", "email"], "rows": [[2, "ben@example.com"], [3, "cy@example.com"]] }
+      },
+      {
+        "name": "no customers",
+        "seed": "",
+        "expected": { "columns": ["id", "email"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "This is an anti join: keep a customer only when no order points at it. NOT EXISTS stops at the first matching order and ignores NULL customer_id values, because NULL = c.id is never true. A LEFT JOIN with WHERE o.id IS NULL gives the same rows. NOT IN (SELECT customer_id FROM orders) is the trap: if any customer_id is NULL, x NOT IN (..., NULL) is never true, so it returns nothing.",
+  "notes": "Postgres plans NOT EXISTS as a hash or merge anti join, so each table is read once. An index on orders(customer_id) helps when customers is small relative to orders. Foreign key columns are not indexed automatically in Postgres.",
+  "followUps": [
+    "Also include customers whose only orders were cancelled, given a status column.",
+    "How would you write this as a LEFT JOIN, and why must the IS NULL test use a NOT NULL column from orders?"
+  ]
+}

@@ -1,0 +1,190 @@
+{
+  "id": "match-abandon-rate-by-region",
+  "title": "Match abandon rate per region",
+  "topic": "Aggregation",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "An online game runs servers in several regions. Each match on a server ends up finished, abandoned, or is still in progress.\n\nFor every region, report how many matches have completed (finished or abandoned), how many were abandoned, and the abandon rate.\n\n- Columns: region, completed, abandoned, abandon_rate_pct\n- abandon_rate_pct = 100 × abandoned / completed, rounded to 1 decimal place\n- In-progress matches are ignored entirely\n- Include every region, even with no servers or no completed matches; then completed and abandoned are 0 and abandon_rate_pct is NULL\n- Order by region ascending",
+  "hints": [
+    "Start from regions and LEFT JOIN through servers to matches, so empty regions survive.",
+    "Count with FILTER so in-progress matches are not in the denominator, and protect the division with NULLIF(..., 0).",
+    "round(100.0 * count(m.id) FILTER (WHERE m.status = 'abandoned') / NULLIF(count(m.id) FILTER (WHERE m.status IN ('finished', 'abandoned')), 0), 1)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE regions (code text PRIMARY KEY);\nCREATE TABLE servers (id int PRIMARY KEY, region_code text NOT NULL REFERENCES regions(code));\nCREATE TABLE matches (id int PRIMARY KEY, server_id int NOT NULL REFERENCES servers(id), status text NOT NULL CHECK (status IN ('finished', 'abandoned', 'in_progress')));",
+    "starter": "-- Abandon rate per region\nSELECT s.region_code AS region,\n       count(*) AS completed,\n       count(*) FILTER (WHERE m.status = 'abandoned') AS abandoned,\n       round(100 * count(*) FILTER (WHERE m.status = 'abandoned') / count(*), 1) AS abandon_rate_pct\nFROM servers s\nJOIN matches m ON m.server_id = s.id\nGROUP BY s.region_code\nORDER BY region;",
+    "solution": "SELECT r.code AS region,\n       count(m.id) FILTER (WHERE m.status IN ('finished', 'abandoned')) AS completed,\n       count(m.id) FILTER (WHERE m.status = 'abandoned') AS abandoned,\n       round(100.0 * count(m.id) FILTER (WHERE m.status = 'abandoned')\n             / NULLIF(count(m.id) FILTER (WHERE m.status IN ('finished', 'abandoned')), 0), 1) AS abandon_rate_pct\nFROM regions r\nLEFT JOIN servers s ON s.region_code = r.code\nLEFT JOIN matches m ON m.server_id = s.id\nGROUP BY r.code\nORDER BY r.code;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "in-progress match is ignored",
+        "seed": "INSERT INTO regions VALUES ('eu'), ('us');\nINSERT INTO servers VALUES (1, 'eu'), (2, 'eu'), (3, 'us');\nINSERT INTO matches VALUES (1, 1, 'finished'), (2, 1, 'abandoned'), (3, 2, 'finished'), (4, 3, 'finished'), (5, 3, 'in_progress');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "eu",
+              3,
+              1,
+              33.3
+            ],
+            [
+              "us",
+              1,
+              0,
+              0.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "region with no servers",
+        "seed": "INSERT INTO regions VALUES ('ap'), ('eu');\nINSERT INTO servers VALUES (1, 'eu');\nINSERT INTO matches VALUES (1, 1, 'abandoned'), (2, 1, 'abandoned');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "ap",
+              0,
+              0,
+              null
+            ],
+            [
+              "eu",
+              2,
+              2,
+              100.0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "only in-progress matches",
+        "seed": "INSERT INTO regions VALUES ('sa');\nINSERT INTO servers VALUES (1, 'sa');\nINSERT INTO matches VALUES (1, 1, 'in_progress'), (2, 1, 'in_progress');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "sa",
+              0,
+              0,
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "server with no matches next to busy one",
+        "seed": "INSERT INTO regions VALUES ('eu'), ('me');\nINSERT INTO servers VALUES (1, 'eu'), (2, 'eu'), (3, 'me');\nINSERT INTO matches VALUES (1, 1, 'abandoned'), (2, 1, 'finished'), (3, 1, 'finished'), (4, 1, 'finished'), (5, 1, 'finished'), (6, 1, 'finished'), (7, 1, 'finished');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "eu",
+              7,
+              1,
+              14.3
+            ],
+            [
+              "me",
+              0,
+              0,
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "rounding two thirds",
+        "seed": "INSERT INTO regions VALUES ('oc');\nINSERT INTO servers VALUES (1, 'oc'), (2, 'oc');\nINSERT INTO matches VALUES (1, 1, 'abandoned'), (2, 2, 'abandoned'), (3, 2, 'finished'), (4, 2, 'in_progress');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "oc",
+              3,
+              2,
+              66.7
+            ]
+          ]
+        }
+      },
+      {
+        "name": "regions but nothing else",
+        "seed": "INSERT INTO regions VALUES ('af'), ('na');",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": [
+            [
+              "af",
+              0,
+              0,
+              null
+            ],
+            [
+              "na",
+              0,
+              0,
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no regions",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "region",
+            "completed",
+            "abandoned",
+            "abandon_rate_pct"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "Starting from regions with two LEFT JOINs keeps regions that have no servers or no matches; an inner join drops them. The FILTER clauses keep in-progress matches out of both counts, so they do not dilute the rate. NULLIF turns a zero denominator into NULL, so the division gives NULL instead of a division-by-zero error. Using 100.0 keeps the arithmetic numeric; 100 * bigint / bigint truncates 33.3 to 33. Counting m.id, not *, stops an empty region's single NULL-padded row from being counted.",
+  "notes": "With many matches, an index on matches(server_id) supports the join, and a partial index WHERE status <> 'in_progress' can shrink it further. If you aggregate matches per server first in a subquery and then join, the join fan-out is smaller, which helps when regions have many servers. Reporting NULL rather than 0 for no data matters: a 0% rate claims nothing was abandoned, which is a different statement from having no completed matches.",
+  "followUps": [
+    "Only show regions whose abandon rate is above the global abandon rate.",
+    "How would you add a confidence interval or minimum sample size so tiny regions are not ranked worst?"
+  ]
+}

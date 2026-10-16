@@ -1,0 +1,64 @@
+{
+  "id": "bike-assembly-raw-cost",
+  "title": "Raw material cost of bike assemblies",
+  "topic": "Subqueries & CTEs",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-subqueries-ctes",
+  "prompt": "A bike workshop stores a bill of materials. components says how many units of child_id go into one parent_id. Raw parts have no components; assemblies have components and may be nested to any depth. The same sub-assembly can be used by several parents.\n\nFor every top-level assembly (a part that has components but is never a child), return the cost of the raw parts needed to build one unit.\n\n- Columns: part_id, raw_cost\n- Any row order is fine\n- Multiply quantities down every level (2 wheels × 32 spokes = 64 spokes)\n- Count a shared sub-assembly every time it is used\n- Ignore unit_cost on assemblies; only raw parts' unit_cost counts",
+  "hints": [
+    "First expand each top-level assembly into every part it contains, at every level, with how many of that part one unit needs.",
+    "A recursive CTE can carry (top_id, part_id, qty): the anchor reads the top-level assembly's direct children, the recursive step multiplies qty by the child's qty.",
+    "Keep only expanded rows whose part has no components, join parts for unit_cost, and sum(qty * unit_cost) grouped by top_id."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE parts (id int PRIMARY KEY, name text NOT NULL, unit_cost numeric(8,2));\nCREATE TABLE components (parent_id int NOT NULL REFERENCES parts(id), child_id int NOT NULL REFERENCES parts(id), qty int NOT NULL CHECK (qty > 0), PRIMARY KEY (parent_id, child_id));",
+    "starter": "-- Raw cost per top-level assembly (only looks one level down)\nSELECT c.parent_id AS part_id, sum(c.qty * p.unit_cost) AS raw_cost\nFROM components c\nJOIN parts p ON p.id = c.child_id\nGROUP BY c.parent_id;",
+    "solution": "WITH RECURSIVE tops AS (\n  SELECT DISTINCT c.parent_id AS id\n  FROM components c\n  WHERE NOT EXISTS (SELECT 1 FROM components x WHERE x.child_id = c.parent_id)\n), expanded AS (\n  SELECT t.id AS top_id, c.child_id AS part_id, c.qty::bigint AS qty\n  FROM tops t\n  JOIN components c ON c.parent_id = t.id\n  UNION ALL\n  SELECT e.top_id, c.child_id, e.qty * c.qty\n  FROM expanded e\n  JOIN components c ON c.parent_id = e.part_id\n)\nSELECT e.top_id AS part_id, sum(e.qty * p.unit_cost) AS raw_cost\nFROM expanded e\nJOIN parts p ON p.id = e.part_id\nWHERE NOT EXISTS (SELECT 1 FROM components c WHERE c.parent_id = e.part_id)\nGROUP BY e.top_id;",
+    "tests": [
+      {
+        "name": "bike with nested wheels",
+        "seed": "INSERT INTO parts VALUES (1, 'Bike', NULL), (2, 'Wheel', 99.00), (3, 'Frame', 120.00), (4, 'Spoke', 0.50), (5, 'Rim', 15.00), (6, 'Tyre', 20.00);\nINSERT INTO components VALUES (1, 2, 2), (1, 3, 1), (2, 4, 32), (2, 5, 1), (2, 6, 1);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[1, 222]] }
+      },
+      {
+        "name": "two flat assemblies",
+        "seed": "INSERT INTO parts VALUES (10, 'Lamp', NULL), (11, 'Bulb', 3.25), (12, 'Cord', 4.00), (20, 'Rack', NULL), (21, 'Strut', 12.00), (22, 'Plate', 80.00);\nINSERT INTO components VALUES (10, 11, 2), (10, 12, 1), (20, 21, 4), (20, 22, 1);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[10, 10.5], [20, 128]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "shared sub-assembly counted each time",
+        "seed": "INSERT INTO parts VALUES (1, 'Cart', NULL), (2, 'Wheelset', NULL), (3, 'Axle kit', NULL), (4, 'Pin', 1.00), (5, 'Wheel', 10.00);\nINSERT INTO components VALUES (1, 2, 2), (1, 3, 1), (3, 2, 1), (3, 4, 2), (2, 5, 2);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[1, 62]] }
+      },
+      {
+        "name": "quantities multiply through a deep chain",
+        "seed": "INSERT INTO parts VALUES (1, 'Crate', NULL), (2, 'Box', NULL), (3, 'Pack', NULL), (4, 'Bolt', 0.25);\nINSERT INTO components VALUES (1, 2, 3), (2, 3, 4), (3, 4, 5);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[1, 15]] }
+      },
+      {
+        "name": "empty workshop",
+        "seed": "",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [] }
+      },
+      {
+        "name": "loose raw parts are not assemblies",
+        "seed": "INSERT INTO parts VALUES (1, 'Bell', NULL), (2, 'Clapper', 1.50), (3, 'Dome', 4.00), (9, 'Loose screw', 0.10);\nINSERT INTO components VALUES (1, 2, 1), (1, 3, 1);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[1, 5.5]] }
+      },
+      {
+        "name": "priced sub-assembly cost is ignored",
+        "seed": "INSERT INTO parts VALUES (1, 'Trailer', 500.00), (2, 'Hitch', 40.00), (3, 'Clamp', 2.00), (4, 'Bar', 6.00), (5, 'Bed', 30.00);\nINSERT INTO components VALUES (1, 2, 1), (1, 5, 1), (2, 3, 2), (2, 4, 1);",
+        "expected": { "columns": ["part_id", "raw_cost"], "rows": [[1, 40]] }
+      }
+    ]
+  },
+  "explanation": "The tops CTE finds assemblies that are never a child. The recursive CTE then expands each one: the anchor holds its direct children with their quantity, and each step joins the next level and multiplies quantities, so a part reached by two paths appears twice with each path's own multiplier. Only raw parts (those with no components) are priced, which is why the costs stored on assemblies are ignored. The traps are summing only direct children, adding quantities instead of multiplying, and using DISTINCT or UNION (instead of UNION ALL), which would merge two identical uses of a shared sub-assembly into one.",
+  "notes": "An index on components(parent_id) serves each recursive join, and the primary key already covers parent_id first. Expansion grows with the number of paths, not parts, so a heavily shared DAG can blow up; aggregating per (top_id, part_id) level by level, or memoising sub-assembly costs bottom-up, keeps it small. A real BOM table should also guard against cycles, for example with the CYCLE clause or a depth limit.",
+  "followUps": [
+    "Return the full shopping list of raw parts and total quantities for one assembly.",
+    "How would you compute every assembly's cost (not just top-level ones) in one pass, bottom-up?"
+  ]
+}

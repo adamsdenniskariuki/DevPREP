@@ -1,0 +1,66 @@
+{
+  "id": "dedupe-mailing-list-signups",
+  "title": "Remove duplicate mailing list signups",
+  "topic": "Data changes & design",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-joins",
+  "paths": ["swe"],
+  "prompt": "A community radio station collects newsletter signups from a web form. The form never checked for repeats, so the same person often signed up to the same list several times, sometimes with different capital letters or stray spaces.\n\nWrite a statement that deletes the duplicate rows from signups. Two rows are duplicates when they have the same list and the same email after trimming spaces and ignoring case. In each group of duplicates keep only the row with the lowest id.\n\n- The check runs SELECT id, email, list FROM signups after your SQL\n- Kept rows must stay exactly as they were (do not rewrite the email)\n- The same email on two different lists is not a duplicate\n- Any row order is fine",
+  "hints": [
+    "For each row, ask: is there another row in the same group with a smaller id? If so, this row should go.",
+    "Postgres lets DELETE join another table with USING. Join signups to itself.",
+    "DELETE FROM signups s USING signups k WHERE k.list = s.list AND lower(trim(k.email)) = lower(trim(s.email)) AND k.id < s.id;"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE signups (id int PRIMARY KEY, email text NOT NULL, list text NOT NULL);",
+    "starter": "-- Delete the duplicate signups, keeping the lowest id in each group\nSELECT 1;",
+    "solution": "DELETE FROM signups s\nUSING signups k\nWHERE k.list = s.list\n  AND lower(trim(k.email)) = lower(trim(s.email))\n  AND k.id < s.id;",
+    "check": "SELECT id, email, list FROM signups;",
+    "tests": [
+      {
+        "name": "case and spaces create duplicates",
+        "seed": "INSERT INTO signups VALUES (1, 'ana@mail.test', 'weekly'), (2, 'Ana@Mail.test', 'weekly'), (3, 'ben@mail.test', 'weekly'), (4, ' ana@mail.test ', 'weekly'), (5, 'ana@mail.test', 'offers');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[1, "ana@mail.test", "weekly"], [3, "ben@mail.test", "weekly"], [5, "ana@mail.test", "offers"]] }
+      },
+      {
+        "name": "nothing to remove",
+        "seed": "INSERT INTO signups VALUES (1, 'cy@mail.test', 'weekly'), (2, 'dee@mail.test', 'weekly');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[1, "cy@mail.test", "weekly"], [2, "dee@mail.test", "weekly"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "lowest id was not inserted first",
+        "seed": "INSERT INTO signups VALUES (9, 'Eve@mail.test', 'news'), (4, 'eve@mail.test', 'news'), (7, 'EVE@MAIL.TEST', 'news');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[4, "eve@mail.test", "news"]] }
+      },
+      {
+        "name": "groups on two lists",
+        "seed": "INSERT INTO signups VALUES (1, 'a@mail.test', 'l1'), (2, 'a@mail.test', 'l2'), (3, 'A@mail.test', 'l1'), (4, 'a@mail.test ', 'l2'), (5, 'b@mail.test', 'l2');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[1, "a@mail.test", "l1"], [2, "a@mail.test", "l2"], [5, "b@mail.test", "l2"]] }
+      },
+      {
+        "name": "similar but different emails",
+        "seed": "INSERT INTO signups VALUES (1, 'ana@mail.test', 'weekly'), (2, 'anna@mail.test', 'weekly'), (3, 'ana@mail.tst', 'weekly');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[1, "ana@mail.test", "weekly"], [2, "anna@mail.test", "weekly"], [3, "ana@mail.tst", "weekly"]] }
+      },
+      {
+        "name": "single row",
+        "seed": "INSERT INTO signups VALUES (42, 'solo@mail.test', 'weekly');",
+        "expected": { "columns": ["id", "email", "list"], "rows": [[42, "solo@mail.test", "weekly"]] }
+      },
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": { "columns": ["id", "email", "list"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "A row is a duplicate exactly when another row in its group has a smaller id, so a self-join with k.id < s.id finds every row to delete and never matches the group's lowest row. The grouping key must be normalised on both sides with lower(trim(email)), and list must be part of it. A common slip is to compare raw emails, which misses 'Ana@Mail.test'. Another is to keep max(id) or use a window with the wrong ORDER BY, which keeps the wrong survivor.",
+  "notes": "DELETE ... USING is a Postgres extension; the portable form is WHERE EXISTS (SELECT 1 FROM signups k WHERE ... AND k.id < s.id), which plans the same semi join. On a big table, an expression index on (list, lower(trim(email))) speeds the join, and making it UNIQUE afterwards stops new duplicates. Alternatively rank rows with row_number() OVER (PARTITION BY list, lower(trim(email)) ORDER BY id) and delete where the rank is above 1.",
+  "followUps": [
+    "How would you stop duplicates from coming back after the cleanup?",
+    "Other tables reference signups.id. How would you repoint those references to the kept row before deleting?"
+  ]
+}

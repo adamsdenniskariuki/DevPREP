@@ -1,5 +1,5 @@
 import type { LabLanguage, Track } from './curriculum-types'
-import { PROBLEM_PATTERNS } from './problem-types'
+import { PROBLEM_PATTERNS, SQL_TOPICS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
@@ -143,6 +143,36 @@ export function validateProblem(value: unknown, where = 'problem'): string[] {
   else {
     check.keys(value.complexity, 'complexity', ['time', 'space', 'notes'])
     for (const key of ['time', 'space', 'notes']) check.text(value.complexity[key], `complexity.${key}`)
+  }
+  return check.errors
+}
+
+/** Validates one content/sql-problems/<id>.json SQL interview problem. */
+export function validateSqlProblem(value: unknown, where = 'sql problem'): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', ['id', 'title', 'topic', 'level', 'difficulty', 'prompt', 'hints', 'exercise', 'explanation', 'notes', 'followUps'], ['lessonId', 'paths'])
+  if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
+  for (const key of ['title', 'prompt', 'explanation', 'notes']) check.text(value[key], key)
+  if (!(SQL_TOPICS as readonly unknown[]).includes(value.topic)) check.fail('topic', 'expected a known SQL topic')
+  if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+  if (!['warm-up', 'core', 'stretch'].includes(value.difficulty as string)) check.fail('difficulty', 'expected warm-up, core or stretch')
+  if ('lessonId' in value && (typeof value.lessonId !== 'string' || !value.lessonId.startsWith('sql-'))) check.fail('lessonId', 'expected a SQL lesson id')
+  if ('paths' in value) {
+    const paths = value.paths
+    if (!Array.isArray(paths) || !paths.length || paths.some(path => path !== 'swe' && path !== 'senior') || new Set(paths).size !== paths.length) check.fail('paths', 'expected a non-empty list of swe/senior')
+  }
+  check.texts(value.hints, 'hints', 3)
+  check.texts(value.followUps, 'followUps', 2)
+  if (!isRec(value.exercise)) check.fail('exercise', 'expected object')
+  else {
+    const item = value.exercise
+    check.keys(item, 'exercise', ['schema', 'starter', 'solution', 'tests', 'hiddenTests'], ['ordered', 'check'])
+    for (const key of ['schema', 'starter', 'solution']) check.text(item[key], `exercise.${key}`)
+    if ('ordered' in item && typeof item.ordered !== 'boolean') check.fail('exercise.ordered', 'expected boolean')
+    if ('check' in item) check.text(item.check, 'exercise.check')
+    sqlTests(check, item.tests, 'exercise.tests', 2)
+    sqlTests(check, item.hiddenTests, 'exercise.hiddenTests', 4)
   }
   return check.errors
 }

@@ -1,0 +1,127 @@
+{
+  "id": "duplicate-member-emails",
+  "title": "Duplicate member emails",
+  "topic": "Aggregation",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "A climbing gym's sign-up form never checked for existing accounts, so some people registered more than once. The same address was often typed with different capitals or stray spaces.\n\nTreat two emails as the same when they match after trimming spaces and lower-casing. Return every such email that belongs to more than one member.\n\n- Columns: email (trimmed and lower-cased), copies (number of members with it), first_joined (earliest joined_on among them)\n- Any row order is fine\n- Members with a NULL email are ignored",
+  "hints": [
+    "Group members by a normalised version of the email, then keep only the groups that are too big.",
+    "Group by lower(trim(email)). A filter on count(*) has to go in HAVING, because WHERE runs before rows are grouped.",
+    "SELECT lower(trim(email)) AS email, count(*) AS copies, min(joined_on) AS first_joined FROM members WHERE email IS NOT NULL GROUP BY 1 HAVING count(*) > 1;"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE members (id int PRIMARY KEY, email text, joined_on date NOT NULL);",
+    "starter": "-- Emails used by more than one member\nSELECT email, count(*) AS copies, min(joined_on) AS first_joined\nFROM members\nGROUP BY email;",
+    "solution": "SELECT lower(trim(email)) AS email,\n       count(*) AS copies,\n       min(joined_on) AS first_joined\nFROM members\nWHERE email IS NOT NULL\nGROUP BY lower(trim(email))\nHAVING count(*) > 1;",
+    "tests": [
+      {
+        "name": "one exact duplicate",
+        "seed": "INSERT INTO members VALUES (1, 'ana@example.com', '2026-01-05'), (2, 'ben@example.com', '2026-01-06'), (3, 'ana@example.com', '2026-02-01'), (4, 'cy@example.com', '2026-02-03');",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": [
+            [
+              "ana@example.com",
+              2,
+              "2026-01-05"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "case and spaces differ",
+        "seed": "INSERT INTO members VALUES (1, 'Dee@Example.org', '2026-03-01'), (2, ' dee@example.org ', '2026-02-20'), (3, 'eli@example.org', '2026-03-02'), (4, 'ELI@example.org', '2026-03-04'), (5, 'fay@example.org', '2026-03-05');",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": [
+            [
+              "dee@example.org",
+              2,
+              "2026-02-20"
+            ],
+            [
+              "eli@example.org",
+              2,
+              "2026-03-02"
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "NULL emails are not duplicates",
+        "seed": "INSERT INTO members VALUES (1, NULL, '2026-01-01'), (2, NULL, '2026-01-02'), (3, 'gus@example.com', '2026-01-03');",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "no duplicates",
+        "seed": "INSERT INTO members VALUES (1, 'a@example.com', '2026-01-01'), (2, 'b@example.com', '2026-01-02');",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "three copies with NULL mixed in",
+        "seed": "INSERT INTO members VALUES (1, 'HAL@example.com', '2026-04-09'), (2, 'hal@example.com', '2026-04-02'), (3, ' hal@EXAMPLE.com', '2026-04-30'), (4, NULL, '2026-01-01');",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": [
+            [
+              "hal@example.com",
+              3,
+              "2026-04-02"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no members",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "email",
+            "copies",
+            "first_joined"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "Normalising inside GROUP BY makes 'Dee@Example.org' and ' dee@example.org ' land in the same group. The condition count(*) > 1 is about groups, so it belongs in HAVING; WHERE cannot see aggregates because it filters rows before grouping. NULL emails would otherwise form their own group, and two NULLs would be reported as a duplicate, so they are filtered out first. The trap is grouping by the raw column, which treats case and space variants as different people.",
+  "notes": "For a large table, a unique expression index on lower(trim(email)) prevents new duplicates at write time, and it can also serve this GROUP BY. The citext type is another option for case-insensitive emails, but it does not trim spaces. To list the member ids in each group, add array_agg(id ORDER BY id).",
+  "followUps": [
+    "Return every duplicate member row except the earliest one, so they can be merged.",
+    "How would you stop new duplicates from being inserted at all?"
+  ]
+}
