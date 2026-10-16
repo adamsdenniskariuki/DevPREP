@@ -1,0 +1,1652 @@
+{
+  "id": "sql-transactions-mvcc",
+  "track": "sql",
+  "title": "Transactions, isolation and MVCC",
+  "minutes": 60,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "Make multi-statement changes all-or-nothing with BEGIN, COMMIT, ROLLBACK and savepoints; know exactly which anomalies each Postgres isolation level allows (and which it turns into 40001 retries); and explain MVCC: row versions, xmin/xmax, snapshots, dead tuples, VACUUM and why one long transaction bloats every table.",
+  "prerequisites": [
+    "sql-schema-design"
+  ],
+  "prerequisiteNotes": "sql-schema-design: CHECK, UNIQUE and foreign key constraints are what make a bad step fail loudly inside a transaction, and this lesson uses them to roll back an overdraft and to build an idempotency ledger. You should also be comfortable with UPDATE ... FROM and INSERT ... ON CONFLICT.",
+  "objectives": [
+    "Explain ACID in concrete terms and say what Postgres guarantees once COMMIT returns.",
+    "Use BEGIN, COMMIT, ROLLBACK and SAVEPOINT, and describe what happens to a transaction after an error.",
+    "Name the four Postgres isolation levels, how each takes its snapshot, and which anomalies each allows in Postgres (not just in the SQL standard).",
+    "Draw a lost update and a write skew as two-session timelines and give two fixes for each.",
+    "Explain MVCC with xmin, xmax and snapshots: why readers never block writers and why every UPDATE leaves a dead version behind.",
+    "Diagnose bloat: dead tuples, VACUUM, long-running or idle-in-transaction sessions, and transaction ID wraparound."
+  ],
+  "concepts": [
+    {
+      "title": "ACID in practical terms",
+      "body": "**Atomicity**: every statement in a transaction takes effect, or none does. If the server crashes between the debit and the credit, recovery leaves neither. **Consistency**: constraints (PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK) hold at every commit; rules the schema cannot express are your code's job. **Isolation**: concurrent transactions do not see each other's uncommitted work, and the isolation level decides how much of each other's committed work they can see mid-flight. **Durability**: when COMMIT returns, the change is in the write-ahead log on disk and survives a crash. With `synchronous_commit = off`, COMMIT returns before that flush: a crash can lose the last few hundred milliseconds of commits, but never corrupts data. Each statement on its own is also atomic: an UPDATE of 1,000 rows that fails on row 999 changes nothing.",
+      "code": "BEGIN;\nUPDATE accounts SET balance = balance - 30 WHERE account_id = 1;\nUPDATE accounts SET balance = balance + 30 WHERE account_id = 2;\nINSERT INTO ledger (from_id, to_id, amount) VALUES (1, 2, 30);\nCOMMIT;   -- all three changes become visible together, or none do\n\n-- One statement is atomic too: if any row would go negative, no row changes\nUPDATE accounts SET balance = balance - 20;\n-- ERROR: new row for relation \"accounts\" violates check constraint \"accounts_balance_check\""
+    },
+    {
+      "title": "BEGIN, COMMIT, ROLLBACK, autocommit and the aborted state",
+      "body": "Without BEGIN, Postgres runs each statement in its own transaction (**autocommit**). Drivers differ: JDBC starts in autocommit mode, while psycopg opens a transaction on the first statement and waits for you to commit, so a script that never commits loses its work. Inside a block, your own uncommitted changes are visible to your later statements and invisible to everyone else. After **any** error the transaction is **aborted**: each further statement fails with `current transaction is aborted, commands ignored until end of transaction block` (SQLSTATE 25P02) until you roll back. COMMIT on an aborted transaction does not commit: it rolls back and returns the tag `ROLLBACK`. Catching the exception in application code and carrying on with the same connection therefore achieves nothing: roll back (or to a savepoint) first.",
+      "code": "BEGIN;\nINSERT INTO orders (order_id, total) VALUES (1, 20.00);\nSELECT count(*) FROM orders;        -- 1: you see your own uncommitted row\nINSERT INTO orders (order_id, total) VALUES (1, 35.00);\n-- ERROR: duplicate key value violates unique constraint \"orders_pkey\"\nSELECT count(*) FROM orders;\n-- ERROR: current transaction is aborted, commands ignored until end of transaction block\nCOMMIT;                             -- reports ROLLBACK: order 1 is gone too",
+      "diagram": "sqt-abort"
+    },
+    {
+      "title": "Savepoints: undo part of a transaction",
+      "body": "`SAVEPOINT name` marks a point inside a transaction; `ROLLBACK TO SAVEPOINT name` undoes everything after it, clears the aborted state and keeps the savepoint so you can try again; `RELEASE SAVEPOINT name` forgets it (its work stays, pending the outer COMMIT). Nothing is durable until the outer COMMIT, and rolling back the outer transaction discards work done under released savepoints too. Use them to try a risky step inside a larger unit: one bad row in an import, one failed transfer in a batch. In PL/pgSQL there is no SAVEPOINT statement: a `BEGIN ... EXCEPTION ... END` block is the savepoint, and when the handler runs, the block's changes are already undone. Each savepoint is a **subtransaction** with a cost: a transaction that uses more than 64 subtransaction ids overflows a per-session cache, which can slow snapshot checks for everyone, notably on replicas. ORMs that wrap every statement in a savepoint, or a loop with an EXCEPTION block per row over a huge batch, can hit this.",
+      "code": "BEGIN;\nINSERT INTO import_log (msg) VALUES ('batch 42 started');\nSAVEPOINT row_17;\nINSERT INTO customers (customer_id, email) VALUES (17, 'dup@shop.io');\n-- ERROR: duplicate key value violates unique constraint \"customers_email_key\"\nROLLBACK TO SAVEPOINT row_17;   -- only the failed insert is undone\nINSERT INTO import_log (msg) VALUES ('row 17 skipped: duplicate email');\nCOMMIT;                         -- both log rows are kept\n\n-- The same idea in PL/pgSQL:\nDO $$ BEGIN\n  BEGIN\n    INSERT INTO customers (customer_id, email) VALUES (17, 'dup@shop.io');\n  EXCEPTION WHEN unique_violation THEN\n    INSERT INTO import_log (msg) VALUES ('row 17 skipped');\n  END;\nEND $$;"
+    },
+    {
+      "title": "MVCC: row versions, xmin, xmax and snapshots",
+      "body": "Postgres never updates a row in place. An UPDATE writes a **new version** of the row and marks the old one as deleted; a DELETE only marks. Every version carries hidden system columns: `xmin`, the id of the transaction that created it, and `xmax`, the id of the transaction that deleted or locked it (0 if none); `ctid` is its physical address. A **snapshot** records which transactions had committed when it was taken, and a version is visible to it if its `xmin` committed before the snapshot and its `xmax` did not. This is why **readers never block writers and writers never block readers**: each reader picks the version its snapshot allows. Two writers on the **same row** do conflict: the second waits on the first's row lock until it commits or aborts. The price is write amplification: even `SET qty = qty` writes a whole new version and, unless the update is **HOT** (heap-only: no indexed column changed and the page has free space), new entries in every index.",
+      "code": "CREATE TABLE products (sku text PRIMARY KEY, price numeric(10,2));\nINSERT INTO products VALUES ('MUG-1', 10.00);\nSELECT ctid::text, xmin::text, xmax::text, price FROM products;\n-- (0,1) | 812 | 0 | 10.00\n\nUPDATE products SET price = 12.00 WHERE sku = 'MUG-1';  -- a later transaction\nSELECT ctid::text, xmin::text, xmax::text, price FROM products;\n-- (0,2) | 813 | 0 | 12.00   new version, new address, new xmin\n-- (transaction ids are illustrative; compare them, never hard-code them)",
+      "diagram": "sqt-versions"
+    },
+    {
+      "title": "Isolation levels as Postgres implements them",
+      "body": "**READ COMMITTED** (the default) takes a new snapshot for **each statement**, so two SELECTs in one transaction can see different committed data. When its UPDATE or DELETE meets a row that a concurrent transaction changed, it waits for that transaction, then re-checks the WHERE clause against the newest version and applies the change to it. That is why `UPDATE ... SET stock = stock - 1 WHERE stock > 0` is safe at this level. **REPEATABLE READ** takes one snapshot at the **first statement** of the transaction (not at BEGIN) and keeps it: this is snapshot isolation. If it tries to change a row that someone else changed after that snapshot, it fails with `could not serialize access due to concurrent update` (SQLSTATE 40001). **SERIALIZABLE** is snapshot isolation plus SSI (serializable snapshot isolation), which aborts transactions with 40001 when the combined result could not have come from running them one at a time. **READ UNCOMMITTED** is accepted but behaves exactly like READ COMMITTED. Choose the level with `BEGIN ISOLATION LEVEL ...`, or with `SET TRANSACTION` before the first query.",
+      "code": "BEGIN ISOLATION LEVEL REPEATABLE READ;\nSELECT sum(balance) FROM accounts;   -- the snapshot is taken here\n-- ...other sessions commit transfers...\nSELECT sum(balance) FROM accounts;   -- same answer: same snapshot\nCOMMIT;\n\nBEGIN;\nSELECT 1;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\n-- ERROR: SET TRANSACTION ISOLATION LEVEL must be called before any query\nROLLBACK;\n\nSHOW default_transaction_isolation;  -- read committed",
+      "diagram": "sqt-nonrepeat"
+    },
+    {
+      "title": "Anomalies, and which levels prevent which in Postgres",
+      "body": "A **dirty read** sees another transaction's uncommitted change: impossible in Postgres at every level. A **non-repeatable read** re-reads a row and finds it changed; a **phantom** re-runs a range query and finds new or missing rows. Both happen under READ COMMITTED and neither under REPEATABLE READ (the SQL standard would allow phantoms there; Postgres's snapshot prevents them). A **lost update** is two read-modify-write cycles where the second overwrites the first: it happens under READ COMMITTED when the new value is computed in the application, and becomes a 40001 error under REPEATABLE READ and SERIALIZABLE. **Write skew** is two transactions that each read an overlapping set of rows, decide, and write **different** rows, breaking a rule neither broke alone: it happens under READ COMMITTED and REPEATABLE READ, and only SERIALIZABLE prevents it. In interviews, say which database you mean: the answers for MySQL InnoDB or SQL Server differ.",
+      "diagram": "sqt-matrix"
+    },
+    {
+      "title": "Lost updates and the four fixes",
+      "body": "The bug: read a value into the application, compute, write it back. Two requests interleave and one change disappears. Fixes, best first. (1) **Atomic update**: let the database compute, `SET balance = balance + 50`, optionally with a guard in the WHERE (`AND balance >= 30`) and `RETURNING`; zero rows back means the guard failed. (2) **Pessimistic lock**: `SELECT ... FOR UPDATE` in the same transaction, so the second reader waits until the first commits; keep the transaction short, and lock rows in a consistent order or risk deadlocks (40P01). (3) **Optimistic concurrency**: keep a `version` column and write with `WHERE id = $1 AND version = $2`; zero rows updated means someone else won, so reload and retry. This suits user edits that span HTTP requests, where you cannot hold a lock. (4) **REPEATABLE READ or SERIALIZABLE** plus a retry loop on 40001.",
+      "code": "-- (1) atomic, with a guard\nUPDATE accounts SET balance = balance - 30\nWHERE account_id = 1 AND balance >= 30\nRETURNING balance;                 -- no row back = insufficient funds\n\n-- (2) pessimistic\nBEGIN;\nSELECT balance FROM accounts WHERE account_id = 1 FOR UPDATE;\nUPDATE accounts SET balance = 70 WHERE account_id = 1;\nCOMMIT;\n\n-- (3) optimistic\nUPDATE documents SET body = 'v2 text', version = version + 1\nWHERE doc_id = 9 AND version = 4;  -- UPDATE 0 = lost the race",
+      "diagram": "sqt-lost-update"
+    },
+    {
+      "title": "Write skew and SERIALIZABLE",
+      "body": "Write skew breaks rules that span rows: \"at least one doctor on call\", \"no overlapping bookings for a room\", \"total withdrawals within a limit\". Each transaction reads the same rows, sees the rule satisfied, and writes a different row, so no row-level conflict ever fires. Fixes: (1) **SERIALIZABLE**: SSI tracks what each transaction read with predicate locks (`SIReadLock`, which never block) and aborts one with 40001 if a dangerous cycle of read/write dependencies appears. It can report false positives, more so when queries scan whole tables instead of using indexes, so every SERIALIZABLE transaction needs a retry loop. (2) **Materialise the conflict**: lock a shared parent row (`SELECT ... FROM shifts WHERE shift_id = 7 FOR UPDATE`) before checking, so the two transactions queue. (3) **A constraint**: an exclusion constraint such as `EXCLUDE USING gist (room WITH =, during WITH &&)` makes overlapping bookings impossible (an equality on a plain column inside a GiST exclusion needs the `btree_gist` extension).",
+      "code": "-- Fix 1: SERIALIZABLE, and retry the whole transaction on 40001\nBEGIN ISOLATION LEVEL SERIALIZABLE;\nSELECT count(*) FROM on_call WHERE shift_id = 7 AND active;\nUPDATE on_call SET active = false WHERE shift_id = 7 AND doctor = 'ada';\nCOMMIT;   -- may fail: could not serialize access due to read/write dependencies among transactions\n\n-- Fix 2: make both transactions touch one row\nBEGIN;\nSELECT 1 FROM shifts WHERE shift_id = 7 FOR UPDATE;   -- the second session waits here\nUPDATE on_call SET active = false\nWHERE shift_id = 7 AND doctor = 'ada'\n  AND (SELECT count(*) FROM on_call WHERE shift_id = 7 AND active) > 1;\nCOMMIT;",
+      "diagram": "sqt-write-skew"
+    },
+    {
+      "title": "VACUUM, bloat and transaction ID wraparound",
+      "body": "Dead versions stay in the table and its indexes until **VACUUM** removes them; autovacuum runs it when a table's dead tuples pass a threshold (by default 50 rows plus 20% of the table). VACUUM makes the space reusable for new versions but rarely shrinks the file; `VACUUM FULL` rewrites the table under an ACCESS EXCLUSIVE lock, and the `pg_repack` extension does it online. The catch: VACUUM can only remove versions that **no running snapshot can still see**. A long report, a session left `idle in transaction`, a stale replication slot, a forgotten prepared transaction or a standby with `hot_standby_feedback` holding an old query all pin that horizon, so dead tuples pile up in **every** table and update-heavy tables bloat. Watch `pg_stat_user_tables.n_dead_tup` and `last_autovacuum`, `pg_stat_activity.xact_start` and `backend_xmin`, and set `idle_in_transaction_session_timeout`. **Wraparound**: transaction ids are 32-bit and compared modulo 2^32, so about two billion transactions ahead looks like the past. VACUUM **freezes** old rows so they stay visible forever; if freezing falls too far behind, Postgres warns and finally refuses to assign new transaction ids until a VACUUM catches up. Monitor `age(datfrozenxid)` per database.",
+      "code": "-- Who is holding the cleanup horizon back?\nSELECT pid, state, now() - xact_start AS open_for, backend_xmin\nFROM pg_stat_activity\nWHERE xact_start IS NOT NULL\nORDER BY xact_start\nLIMIT 5;\n\n-- Which tables carry the most dead versions?\nSELECT relname, n_live_tup, n_dead_tup, last_autovacuum\nFROM pg_stat_user_tables\nORDER BY n_dead_tup DESC\nLIMIT 5;\n\n-- How close is each database to wraparound?\nSELECT datname, age(datfrozenxid) FROM pg_database ORDER BY 2 DESC;",
+      "diagram": "sqt-bloat"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Processing a transfer batch, one savepoint per transfer",
+      "body": "State the unit of atomicity first: one transfer, not the whole batch. A failed transfer must leave no trace, and the others must still commit. Then list the ways a transfer fails. Two of them raise errors on their own: the CHECK on `balance` rejects an overdraft. Two do not: an UPDATE that matches no row (an unknown account id) succeeds with zero rows, so a debit can commit while its credit silently goes nowhere. Turn those into errors yourself with `IF NOT FOUND THEN RAISE EXCEPTION`. Validate the amount and reject self-transfers before touching anything. Wrap each transfer in a savepoint (in PL/pgSQL, a `BEGIN ... EXCEPTION` block) so the handler runs after its debit is undone, then record the outcome. Process in `transfer_id` order because later transfers may spend money that earlier ones delivered. In production you would also lock both accounts in id order (`SELECT ... FOR UPDATE ORDER BY account_id`) to avoid deadlocks between concurrent batches.",
+      "code": "FOR t IN SELECT * FROM transfers WHERE status = 'pending' ORDER BY transfer_id LOOP\n  BEGIN                                    -- savepoint\n    UPDATE accounts SET balance = balance - t.amount WHERE account_id = t.from_id;\n    IF NOT FOUND THEN RAISE EXCEPTION 'no source'; END IF;   -- 0 rows is not an error\n    UPDATE accounts SET balance = balance + t.amount WHERE account_id = t.to_id;\n    IF NOT FOUND THEN RAISE EXCEPTION 'no target'; END IF;\n    UPDATE transfers SET status = 'done' WHERE transfer_id = t.transfer_id;\n  EXCEPTION WHEN check_violation OR raise_exception THEN   -- rolled back to the savepoint\n    UPDATE transfers SET status = 'failed' WHERE transfer_id = t.transfer_id;\n  END;\nEND LOOP;"
+    },
+    {
+      "title": "An incident: one idle transaction bloats a queue table",
+      "body": "Interviewers like this story because it links MVCC to operations. A worker opens a transaction, reads one row, then waits on a slow external call while still inside the transaction. Its snapshot is now the oldest in the cluster, so VACUUM may not remove any version that became dead after it started, in any table. A jobs table that is updated constantly turns every update into a dead version that stays: the table and its indexes grow, polls read more pages, and latency climbs although nothing is \"locked\". The fix order is: find the session (`pg_stat_activity` where `state = 'idle in transaction'`, oldest `xact_start`), end it, let autovacuum catch up, then prevent it: never hold a transaction across network calls, set `idle_in_transaction_session_timeout` and a `statement_timeout` for the app role, and alert on the age of the oldest transaction. Mention the cousins: abandoned replication slots and prepared transactions hold the horizon the same way.",
+      "diagram": "sqt-long-tx"
+    },
+    {
+      "title": "Retrying serialization failures correctly",
+      "body": "With REPEATABLE READ or SERIALIZABLE, a 40001 is normal, not a bug: retry it. Three rules. Retry the **whole transaction** from BEGIN, rereading everything, because the values you read are what made it fail; repeating only the last statement inside the aborted transaction just returns 25P02. Retry only the transient codes: 40001 (`serialization_failure`) and 40P01 (`deadlock_detected`), with a small capped, jittered backoff and a limit on attempts. And make the transaction safe to run twice: no emails or HTTP calls inside it (write an outbox row instead) and an idempotency key for anything a client might also resend. Keep SERIALIZABLE transactions short and indexed so SSI tracks fewer rows. For long read-only reports, `BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE` waits for a safe snapshot and then can never fail with 40001.",
+      "code": "-- Pseudocode around the SQL a client sends:\n-- for attempt in 1..5:\n--   try:\n--     BEGIN ISOLATION LEVEL SERIALIZABLE;\n--     ...read, decide, write...\n--     COMMIT;          -- 40001 can also come from COMMIT itself\n--     break\n--   except SQLSTATE in ('40001', '40P01'):\n--     ROLLBACK; sleep(random(0, 2^attempt * 10ms))\n\nBEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE;\nSELECT region, sum(total) FROM orders GROUP BY region;   -- never a 40001\nCOMMIT;"
+    }
+  ],
+  "example": "CREATE TABLE accounts (\n  account_id int PRIMARY KEY,\n  balance    numeric(10,2) NOT NULL CHECK (balance >= 0)\n);\nINSERT INTO accounts VALUES (1, 100.00), (2, 20.00);\n\n-- A transfer is two writes that must succeed or fail together\nBEGIN;\nUPDATE accounts SET balance = balance - 30 WHERE account_id = 1;\nUPDATE accounts SET balance = balance + 30 WHERE account_id = 2;\nCOMMIT;                                   -- 70.00 and 50.00\n\n-- Partial undo: keep the first transfer, drop the second\nBEGIN;\nUPDATE accounts SET balance = balance - 10 WHERE account_id = 2;\nSAVEPOINT second;\nUPDATE accounts SET balance = balance - 500 WHERE account_id = 1;\n-- ERROR: new row for relation \"accounts\" violates check constraint \"accounts_balance_check\"\nROLLBACK TO SAVEPOINT second;             -- the transaction is usable again\nUPDATE accounts SET balance = balance + 10 WHERE account_id = 1;\nCOMMIT;\n\nSELECT account_id, balance FROM accounts ORDER BY account_id;\n-- 1 | 80.00\n-- 2 | 40.00",
+  "task": "Two tables: `accounts (account_id, owner, balance)` with `CHECK (balance >= 0)`, and `transfers (transfer_id, from_id, to_id, amount, status)`. Process every transfer whose status is `'pending'`, in `transfer_id` order (later transfers may spend money delivered by earlier ones). Each transfer is all-or-nothing: subtract `amount` from the `from_id` account, add it to the `to_id` account and set its status to `'done'`. A transfer **fails** if its amount is zero or negative, if `from_id` equals `to_id`, if either account does not exist, or if the source balance is too small at that moment. A failed transfer changes no balance and gets status `'failed'`, and the batch carries on with the next one. Transfers that are not pending are left untouched. Make sure your work is committed. There is no query to write: the check lists every account as `('account <id>', balance as text)` and every transfer as `('transfer <id>', status)` in columns `item`, `state`.",
+  "starter": "-- Apply every pending transfer in transfer_id order.\n-- A transfer that cannot be applied must leave no trace and be marked 'failed'.\nDO $$\nDECLARE t record;\nBEGIN\n  FOR t IN SELECT * FROM transfers WHERE status = 'pending' ORDER BY transfer_id LOOP\n    UPDATE accounts SET balance = balance - t.amount WHERE account_id = t.from_id;\n    UPDATE accounts SET balance = balance + t.amount WHERE account_id = t.to_id;\n    UPDATE transfers SET status = 'done' WHERE transfer_id = t.transfer_id;\n  END LOOP;\nEND $$;",
+  "hints": [
+    "Wrap each transfer in its own savepoint. In a `DO` block that is an inner `BEGIN ... EXCEPTION WHEN check_violation OR raise_exception THEN ... END;`: when the handler runs, the debit has already been undone, so it only needs to mark the transfer as failed.",
+    "An UPDATE that matches no account is not an error, so money could vanish. After each UPDATE, `IF NOT FOUND THEN RAISE EXCEPTION '...'; END IF;`. Check the amount and `from_id = to_id` the same way before touching any balance."
+  ],
+  "solution": "DO $$\nDECLARE t record;\nBEGIN\n  FOR t IN SELECT * FROM transfers WHERE status = 'pending' ORDER BY transfer_id LOOP\n    BEGIN  -- an EXCEPTION block is a savepoint around this transfer\n      IF t.amount <= 0 OR t.from_id = t.to_id THEN\n        RAISE EXCEPTION 'invalid transfer %', t.transfer_id;\n      END IF;\n      UPDATE accounts SET balance = balance - t.amount WHERE account_id = t.from_id;\n      IF NOT FOUND THEN RAISE EXCEPTION 'no source account %', t.from_id; END IF;\n      UPDATE accounts SET balance = balance + t.amount WHERE account_id = t.to_id;\n      IF NOT FOUND THEN RAISE EXCEPTION 'no target account %', t.to_id; END IF;\n      UPDATE transfers SET status = 'done' WHERE transfer_id = t.transfer_id;\n    EXCEPTION WHEN check_violation OR raise_exception THEN\n      -- everything since the block's BEGIN is already rolled back here\n      UPDATE transfers SET status = 'failed' WHERE transfer_id = t.transfer_id;\n    END;\n  END LOOP;\nEND $$;\n\nThe unit of atomicity is one transfer, so each gets its own savepoint: the inner `BEGIN ... EXCEPTION` block. An overdraft makes the debit violate `CHECK (balance >= 0)`; the handler then runs with that transfer's changes already rolled back and only records `'failed'`. The other failures do not raise anything by themselves. An UPDATE on a missing account id matches zero rows and succeeds, so without `IF NOT FOUND THEN RAISE EXCEPTION` the debit would commit and the money would disappear. A zero or negative amount, or a self-transfer, would also pass the CHECK, so they are rejected up front. Catching only `check_violation` and `raise_exception` (instead of `OTHERS`) lets real bugs, such as a typo in a column name, still fail the whole batch loudly. The loop reads pending transfers in `transfer_id` order, so a transfer can spend money delivered earlier in the batch. The DO block runs as one transaction that commits when it finishes, so either the whole batch result is saved or (on an unexpected error) nothing is.",
+  "checklist": [
+    "Each transfer is its own savepoint: a failure undoes only that transfer's writes.",
+    "A missing account is turned into an error with `IF NOT FOUND`, because an UPDATE of zero rows succeeds silently.",
+    "Zero, negative and self transfers are rejected before any balance changes.",
+    "Pending transfers are processed in `transfer_id` order, and done or failed ones are not touched.",
+    "Only the expected error conditions are caught; anything else still aborts the batch.",
+    "The work is committed: no BEGIN left open at the end of the script."
+  ],
+  "pitfalls": [
+    "Computing a new balance in the application and writing it back under READ COMMITTED: a concurrent change is silently lost. Use `SET balance = balance - x` or a lock.",
+    "Assuming REPEATABLE READ prevents write skew. It only detects two writers on the same row; rules spanning rows need SERIALIZABLE, a shared lock row or a constraint.",
+    "Catching a database error in application code and continuing to use the same transaction: every later statement fails with 25P02 and COMMIT rolls back.",
+    "Treating an UPDATE that affected zero rows as success. Check the row count (or `RETURNING`) when the row must exist.",
+    "Retrying only the failed statement after a 40001 instead of the whole transaction from BEGIN.",
+    "Holding a transaction open across HTTP calls, user think time or a long report: its snapshot stops VACUUM from cleaning every table.",
+    "Believing a no-op `UPDATE ... SET x = x` is free: it writes a new row version (and index entries unless HOT) every time.",
+    "Saying \"READ UNCOMMITTED allows dirty reads\" about Postgres: it is accepted but behaves like READ COMMITTED."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Apply stock counts without rewriting unchanged rows",
+      "prompt": "`inventory (sku, qty)` holds stock levels; `qty` is NULL for items never counted. `stock_counts (sku, qty)` holds today's counts (one row per sku, `qty` never NULL). Update `inventory.qty` from the matching count, but only for rows whose quantity actually changes: an UPDATE that writes the same value still creates a new row version, which costs WAL, index entries and VACUUM work. A count for a sku that is not in inventory is ignored, and sku matching is exact (case-sensitive). Before your SQL runs, each test saves every inventory row's `xmin` in `versions_before (sku, xmin_before)`; the check returns `sku`, `qty` and `rewritten` (whether the row's `xmin` changed) for every inventory row.",
+      "hints": [
+        "Rows that get the same value must be excluded in the WHERE clause, not just \"updated to themselves\": any matched row gets a new version and a new `xmin`.",
+        "`i.qty <> c.qty` is NULL, not true, when `i.qty` is NULL, so a never-counted item would be skipped. Use `i.qty IS DISTINCT FROM c.qty`."
+      ],
+      "solution": "UPDATE inventory AS i\nSET qty = c.qty\nFROM stock_counts AS c\nWHERE c.sku = i.sku\n  AND i.qty IS DISTINCT FROM c.qty;\n\n`UPDATE ... FROM` joins each inventory row to its count. The extra predicate keeps only rows whose value really differs; `IS DISTINCT FROM` treats NULL as a comparable value, so a first count for a never-counted item (NULL to 9) is applied, while `<>` would return NULL and skip it. Rows that are not matched or not different are not touched, so they keep their old version and their old `xmin`. On a large table this also matters for performance: fewer new versions means less WAL, fewer index insertions and less work for VACUUM.",
+      "checklist": [
+        "Only rows whose quantity changes get a new version.",
+        "A NULL quantity counts as different from any number.",
+        "Counts for unknown skus do nothing."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Apply each event exactly once with an idempotency ledger",
+      "prompt": "A message bus delivers wallet top-up events **at least once**: `inbox (delivery_id, event_id, wallet_id, amount)` may hold the same `event_id` several times (with an identical payload), and some events were applied in an earlier run, so their ids are already in `processed_events (event_id)`. Write one statement (or a short script) that applies every event **exactly once**: add its `amount` (which may be negative) to the wallet's `balance` and insert its `event_id` into `processed_events`, in the same transaction so the ledger and the balances can never disagree. An event for a wallet that does not exist is skipped and **not** recorded, so it can be retried later. Leave `inbox` as it is. The check lists every wallet as `('wallet <id>', balance as text)` and every recorded event as `('event <id>', 'processed')`, in columns `item`, `state`.",
+      "hints": [
+        "Build the set of new events first: one row per `event_id` (`DISTINCT ON`), joined to `wallets`, and not in `processed_events`. Then insert those ids into the ledger with `ON CONFLICT (event_id) DO NOTHING RETURNING event_id`, and apply only the events that came back.",
+        "`UPDATE ... FROM` updates each wallet at most once even if several source rows match it, so two events for one wallet would only add one amount. Sum the amounts per wallet in a subquery first."
+      ],
+      "solution": "WITH fresh AS (            -- one row per new event for a known wallet\n  SELECT DISTINCT ON (i.event_id) i.event_id, i.wallet_id, i.amount\n  FROM inbox AS i\n  JOIN wallets AS w ON w.wallet_id = i.wallet_id\n  WHERE NOT EXISTS (SELECT 1 FROM processed_events AS p WHERE p.event_id = i.event_id)\n  ORDER BY i.event_id, i.delivery_id\n), claimed AS (            -- the ledger insert decides who applies the event\n  INSERT INTO processed_events (event_id)\n  SELECT event_id FROM fresh\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id\n)\nUPDATE wallets AS w\nSET balance = w.balance + s.total\nFROM (SELECT f.wallet_id, sum(f.amount) AS total\n      FROM fresh AS f\n      JOIN claimed AS c USING (event_id)\n      GROUP BY f.wallet_id) AS s\nWHERE w.wallet_id = s.wallet_id;\n\n`fresh` deduplicates redeliveries (one row per `event_id`), drops events for unknown wallets and drops events already in the ledger. `claimed` inserts their ids into `processed_events`; with `ON CONFLICT DO NOTHING ... RETURNING`, only ids that this statement actually inserted come back. That is what makes the pattern safe under concurrency too: if two workers process the same event, the unique index makes one of them wait and then skip it, so only one applies the amount. The UPDATE then adds the per-wallet sum of the claimed events, because `UPDATE ... FROM` would apply only one of several matching rows per wallet. All three steps are one statement and so one transaction: a crash cannot record an event without its money, or the reverse.",
+      "checklist": [
+        "Each event_id changes a balance at most once, across deliveries and across runs.",
+        "The ledger insert and the balance change commit together.",
+        "Several events for one wallet are summed before the UPDATE.",
+        "Events for unknown wallets are neither applied nor recorded."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your payment service starts returning errors with SQLSTATE 40001 after you switched to SERIALIZABLE. Is that a bug, and what do you change?",
+      "answer": "It is the contract: SSI aborts one of a set of transactions that could not be serialized, and sometimes aborts when it only might have been needed (false positives). Wrap each transaction in a retry loop that restarts from BEGIN on 40001 and 40P01, with jittered backoff and a cap, and make the body safe to replay (no external side effects inside; idempotency keys). Then reduce the rate: keep transactions short, make the queries use indexes so predicate locks cover rows or pages rather than whole relations, and mark read-only work `READ ONLY` (or `READ ONLY DEFERRABLE` for long reports). Monitor the retry rate; if it is high on one hot row, a targeted `FOR UPDATE` at READ COMMITTED may be cheaper."
+    },
+    {
+      "question": "How do you implement \"reserve one seat if any are left\" so two concurrent buyers cannot both get the last seat?",
+      "answer": "A single atomic statement: `UPDATE shows SET seats_left = seats_left - 1 WHERE show_id = $1 AND seats_left > 0 RETURNING seats_left`. Under READ COMMITTED the second buyer's UPDATE waits on the first's row lock, then re-evaluates `seats_left > 0` on the committed new version; if it is now 0, zero rows come back and the app says sold out. No SELECT first, no extra isolation. If the decision needs more logic, lock with `SELECT ... FOR UPDATE` in a short transaction. For individual seats (each seat a row), let the database decide with a unique constraint on `(show_id, seat)`, and use `FOR UPDATE SKIP LOCKED` if workers hand out seats from a pool."
+    },
+    {
+      "question": "A 40 GB table holds about 4 GB of live data. How did that happen, and how do you fix it without downtime?",
+      "answer": "Dead versions that were never reclaimed, or were reclaimed only after the file had grown: heavy updates or deletes combined with autovacuum that is too slow (default thresholds are relative to table size, so big tables wait long) or a horizon pinned by long transactions, idle-in-transaction sessions, abandoned replication slots or standby feedback. First remove the cause: find the old `backend_xmin`, fix the slot, tune per-table `autovacuum_vacuum_scale_factor` and cost limits. Plain VACUUM then makes space reusable but will not return 36 GB to the OS. To shrink online, use `pg_repack` (an extension; brief locks only at the start and end) rather than `VACUUM FULL`, which holds an ACCESS EXCLUSIVE lock for the whole rewrite. To avoid a repeat, lower `fillfactor` on update-heavy tables so updates can stay HOT, and avoid indexing frequently updated columns."
+    },
+    {
+      "question": "What is transaction ID wraparound, and how would you see it coming?",
+      "answer": "Transaction ids are 32-bit and compared in a circle, so a row about two billion transactions older than the current one would suddenly look as if it were in the future, and so invisible. VACUUM prevents that by freezing old rows (marking them visible to everyone). Autovacuum starts aggressive anti-wraparound vacuums when a table's age passes `autovacuum_freeze_max_age` (200 million by default), and those cannot be skipped. If freezing still falls behind (a long transaction, a huge table, autovacuum throttled or cancelled), Postgres warns, and close to the limit it refuses to start new write transactions until a VACUUM completes. Monitor `age(datfrozenxid)` per database and `age(relfrozenxid)` for the largest tables, alert well before the threshold, and investigate anything holding the horizon."
+    },
+    {
+      "question": "Analysts want to run a 2-hour report. Why might running it on the primary hurt OLTP, and is a replica automatically the answer?",
+      "answer": "On the primary, the report's snapshot pins the cleanup horizon for two hours, so dead versions accumulate across every busy table and their indexes. On a streaming replica, the primary keeps cleaning up and replays that cleanup on the standby, which conflicts with the report's snapshot: either replay waits (up to `max_standby_streaming_delay`) and the replica lags, or the query is cancelled with `canceling statement due to conflict with recovery`. Turning on `hot_standby_feedback` avoids the cancellations by sending the replica's horizon to the primary, which brings the bloat back. Good options: a dedicated replica with a long delay setting and no feedback, logical replication or CDC into an analytics store, or breaking the report into short transactions over key ranges."
+    }
+  ],
+  "takeaways": [
+    "A transaction is all-or-nothing; after any error it is aborted until you ROLLBACK, either fully or to a SAVEPOINT. COMMIT on an aborted transaction rolls back.",
+    "Postgres levels: READ COMMITTED = snapshot per statement (default; READ UNCOMMITTED is the same), REPEATABLE READ = one snapshot per transaction, SERIALIZABLE = SSI with 40001 retries.",
+    "No dirty reads anywhere and no phantoms under REPEATABLE READ in Postgres; write skew needs SERIALIZABLE, a lock on a shared row, or a constraint.",
+    "Fix lost updates with an atomic `SET x = x + 1` (with a WHERE guard), `FOR UPDATE`, or a version column; retry whole transactions on 40001 and 40P01.",
+    "MVCC: every UPDATE writes a new version (xmin) and expires the old one (xmax); snapshots choose versions, so readers and writers don't block each other.",
+    "Dead versions need VACUUM, and VACUUM cannot pass the oldest running snapshot: keep transactions short and watch dead tuples, idle sessions and freeze age."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqt-abort",
+        "type": "flow",
+        "title": "Transaction states: active, aborted, finished",
+        "alt": "State diagram. From no transaction, BEGIN enters an active transaction. COMMIT from active ends in committed. Any error moves the transaction to aborted. From aborted, every further command fails as ignored, ROLLBACK or COMMIT ends in rolled back, and ROLLBACK TO a savepoint returns to the active state.",
+        "caption": "After an error the transaction is unusable until you roll back, either all of it or to a savepoint; COMMIT on an aborted transaction rolls back.",
+        "nodes": [
+          {
+            "id": "idle",
+            "label": "no transaction",
+            "kind": "state",
+            "col": 0,
+            "row": 0,
+            "sub": "autocommit"
+          },
+          {
+            "id": "active",
+            "label": "active",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "after BEGIN"
+          },
+          {
+            "id": "done",
+            "label": "committed",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "visible to others"
+          },
+          {
+            "id": "aborted",
+            "label": "aborted",
+            "kind": "bad",
+            "col": 1,
+            "row": 2,
+            "sub": "after any error"
+          },
+          {
+            "id": "sp",
+            "label": "at savepoint",
+            "kind": "state",
+            "col": 3,
+            "row": 2,
+            "sub": "later work undone"
+          },
+          {
+            "id": "ignored",
+            "label": "commands ignored",
+            "kind": "bad",
+            "col": 0,
+            "row": 4,
+            "sub": "25P02 every time"
+          },
+          {
+            "id": "rb",
+            "label": "rolled back",
+            "kind": "note",
+            "col": 2,
+            "row": 4,
+            "sub": "nothing kept"
+          }
+        ],
+        "edges": [
+          {
+            "from": "idle",
+            "to": "active",
+            "label": "BEGIN"
+          },
+          {
+            "from": "active",
+            "to": "done",
+            "label": "COMMIT"
+          },
+          {
+            "from": "active",
+            "to": "aborted",
+            "label": "error",
+            "style": "fail"
+          },
+          {
+            "from": "aborted",
+            "to": "ignored",
+            "label": "any statement",
+            "style": "fail"
+          },
+          {
+            "from": "aborted",
+            "to": "rb",
+            "label": "ROLLBACK or COMMIT"
+          },
+          {
+            "from": "aborted",
+            "to": "sp",
+            "label": "ROLLBACK TO sp"
+          },
+          {
+            "from": "sp",
+            "to": "active",
+            "label": "usable again"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Happy path: BEGIN opens a transaction block, and COMMIT makes all of its changes visible at once."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "Any error inside the block (a constraint, a typo, a division by zero) puts the whole transaction in the aborted state."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "In that state every statement fails with `current transaction is aborted, commands ignored until end of transaction block` (SQLSTATE 25P02)."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "ROLLBACK ends it. So does COMMIT, which answers `ROLLBACK`: drivers check that tag, but a careless script may believe it committed."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "If you set a SAVEPOINT before the risky step, `ROLLBACK TO SAVEPOINT` undoes only the work after it and the transaction is usable again."
+          }
+        ]
+      },
+      {
+        "id": "sqt-versions",
+        "type": "flow",
+        "title": "MVCC: an UPDATE writes a new row version",
+        "alt": "Flow diagram. Transaction 205 updates a product price from 10 to 12. It sets xmax to 205 on version 1 and writes version 2 with xmin 205. A snapshot taken before 205 committed still sees version 1; a snapshot taken after sees version 2. VACUUM removes version 1 once no snapshot can see it.",
+        "caption": "Readers pick a version with their snapshot, so they never wait for writers; the cost is dead versions that VACUUM must clean up.",
+        "nodes": [
+          {
+            "id": "upd",
+            "label": "UPDATE (tx 205)",
+            "kind": "client",
+            "col": 2,
+            "row": 0,
+            "sub": "SET price = 12"
+          },
+          {
+            "id": "v1",
+            "label": "v1: price 10",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "xmin 100, xmax 205"
+          },
+          {
+            "id": "v2",
+            "label": "v2: price 12",
+            "kind": "state",
+            "col": 4,
+            "row": 2,
+            "sub": "xmin 205, xmax 0"
+          },
+          {
+            "id": "old",
+            "label": "older snapshot",
+            "kind": "client",
+            "col": 0,
+            "row": 4,
+            "sub": "taken before 205"
+          },
+          {
+            "id": "vac",
+            "label": "VACUUM",
+            "kind": "worker",
+            "col": 2,
+            "row": 4,
+            "sub": "once v1 is unseen"
+          },
+          {
+            "id": "new",
+            "label": "newer snapshot",
+            "kind": "client",
+            "col": 4,
+            "row": 4,
+            "sub": "after 205 commits"
+          }
+        ],
+        "edges": [
+          {
+            "from": "upd",
+            "to": "v1",
+            "label": "set xmax = 205"
+          },
+          {
+            "from": "upd",
+            "to": "v2",
+            "label": "insert new version"
+          },
+          {
+            "from": "old",
+            "to": "v1",
+            "label": "sees v1"
+          },
+          {
+            "from": "new",
+            "to": "v2",
+            "label": "sees v2"
+          },
+          {
+            "from": "vac",
+            "to": "v1",
+            "label": "removes dead v1",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "The old version is not overwritten. Transaction 205 stamps its own id into the old version's `xmax`, which also acts as the row lock for other writers."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "It writes a complete new version with `xmin = 205`, usually at a new `ctid`. Every index on the table gets an entry for it too, unless the update qualifies as HOT (no indexed column changed and the page has room)."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "A snapshot taken before 205 committed treats 205 as invisible: it ignores v2 and still sees v1. It neither blocks the update nor waits for it."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "A snapshot taken after the commit sees v2 and treats v1 as deleted."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Once no running snapshot can see v1, it is dead. VACUUM (or page pruning) reclaims the space for future versions."
+          }
+        ]
+      },
+      {
+        "id": "sqt-nonrepeat",
+        "type": "sequence",
+        "title": "Non-repeatable read under READ COMMITTED",
+        "alt": "Sequence diagram with session A, session B and Postgres. Session A, in READ COMMITTED, reads balance 100. Session B updates the balance to 70 and commits. Session A runs the same SELECT again and now reads 70, because each statement takes a new snapshot.",
+        "caption": "READ COMMITTED takes a fresh snapshot per statement; REPEATABLE READ keeps the first one for the whole transaction.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Session A"
+          },
+          {
+            "id": "b",
+            "label": "Session B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "BEGIN (READ COMMITTED)"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "SELECT balance WHERE id = 1"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "100",
+            "style": "reply",
+            "note": "The statement's snapshot sees the last committed version."
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE balance = 70; COMMIT"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "ok",
+            "style": "reply"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "SELECT balance WHERE id = 1"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "70",
+            "style": "fail",
+            "note": "Same query, same transaction, different answer: a non-repeatable read. Under REPEATABLE READ this SELECT would still return 100."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          }
+        ]
+      },
+      {
+        "id": "sqt-matrix",
+        "type": "flow",
+        "title": "What each isolation level prevents in Postgres",
+        "alt": "Three isolation levels with what each allows and prevents in PostgreSQL. READ COMMITTED, the default and also what READ UNCOMMITTED gives you, prevents dirty reads but allows non-repeatable reads, phantoms, lost updates and write skew. REPEATABLE READ prevents non-repeatable reads and phantoms and turns lost updates into 40001 errors, but allows write skew. SERIALIZABLE prevents write skew as well, at the cost of 40001 errors the application must retry.",
+        "caption": "Postgres is stricter than the SQL standard's minimum: no dirty reads at any level and no phantoms under REPEATABLE READ. Only SERIALIZABLE stops write skew.",
+        "nodes": [
+          {
+            "id": "rc",
+            "label": "READ COMMITTED",
+            "kind": "state",
+            "col": 0,
+            "row": 0,
+            "sub": "default (= RU)"
+          },
+          {
+            "id": "rcp",
+            "label": "no dirty reads",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "never in Postgres"
+          },
+          {
+            "id": "rca",
+            "label": "lost upd, skew",
+            "kind": "bad",
+            "col": 2,
+            "row": 1,
+            "sub": "nonrepeat, phantom"
+          },
+          {
+            "id": "rr",
+            "label": "REPEATABLE READ",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "snapshot isolation"
+          },
+          {
+            "id": "rrp",
+            "label": "stable re-reads",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "lost upd -> 40001"
+          },
+          {
+            "id": "rra",
+            "label": "write skew",
+            "kind": "bad",
+            "col": 2,
+            "row": 3,
+            "sub": "disjoint rows"
+          },
+          {
+            "id": "ser",
+            "label": "SERIALIZABLE",
+            "kind": "state",
+            "col": 0,
+            "row": 4,
+            "sub": "SSI"
+          },
+          {
+            "id": "serp",
+            "label": "write skew too",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "as if serial"
+          },
+          {
+            "id": "serc",
+            "label": "retry on 40001",
+            "kind": "note",
+            "col": 2,
+            "row": 5,
+            "sub": "whole transaction"
+          }
+        ],
+        "edges": [
+          {
+            "from": "rc",
+            "to": "rcp",
+            "label": "prevents"
+          },
+          {
+            "from": "rc",
+            "to": "rca",
+            "label": "allows",
+            "style": "fail"
+          },
+          {
+            "from": "rr",
+            "to": "rrp",
+            "label": "prevents"
+          },
+          {
+            "from": "rr",
+            "to": "rra",
+            "label": "allows",
+            "style": "fail"
+          },
+          {
+            "from": "ser",
+            "to": "serp",
+            "label": "prevents"
+          },
+          {
+            "from": "ser",
+            "to": "serc",
+            "label": "costs",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "READ COMMITTED (the default): each statement sees data committed before it started. Two reads in one transaction can differ, and an application read-then-write can overwrite someone else's change."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "REPEATABLE READ: one snapshot for the whole transaction, so re-reads and range queries are stable. Updating a row someone else changed since your snapshot fails with 40001. Two transactions that each write different rows based on what they read can still both commit."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "SERIALIZABLE: Postgres tracks read/write dependencies and aborts one transaction (40001) if the result could not have come from some serial order. Your code must retry the whole transaction."
+          }
+        ]
+      },
+      {
+        "id": "sqt-lost-update",
+        "type": "sequence",
+        "title": "Lost update: read-modify-write in the application",
+        "alt": "Sequence diagram. Session A and session B both read balance 100. A computes 150 and writes it, then commits. B computes 70 from its stale read and writes it, then commits. The final balance is 70 and A's deposit of 50 is lost.",
+        "caption": "Computing the new value in the application races. Let the database do it (`SET balance = balance + 50`), lock the row, or check a version.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Session A"
+          },
+          {
+            "id": "b",
+            "label": "Session B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "SELECT balance (id 1)"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "100",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "SELECT balance (id 1)"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "100",
+            "style": "reply",
+            "note": "Both sessions now hold the same value in application memory."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "UPDATE SET balance = 150"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE SET balance = 70"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "UPDATE 1",
+            "style": "fail",
+            "note": "Under READ COMMITTED this succeeds and the deposit of 50 is gone: final 70, not 120. Under REPEATABLE READ it fails with 40001 because the row changed after B's snapshot."
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "COMMIT"
+          }
+        ]
+      },
+      {
+        "id": "sqt-write-skew",
+        "type": "sequence",
+        "title": "Write skew: both doctors leave the shift",
+        "alt": "Sequence diagram. Two doctors on call for shift 7 each run a REPEATABLE READ transaction. Each counts the on-call doctors and sees 2, so each takes only themselves off call and commits. They updated different rows, so there is no conflict, and shift 7 ends with nobody on call. Under SERIALIZABLE one of them would fail with 40001.",
+        "caption": "Snapshot isolation only catches two writers on the same row. A rule spanning several rows needs SERIALIZABLE, a lock on a shared row, or a constraint.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Dr Ada (RR)"
+          },
+          {
+            "id": "b",
+            "label": "Dr Bo (RR)"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "count on call, shift 7"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "2",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "count on call, shift 7"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "2",
+            "style": "reply",
+            "note": "Both checks pass: someone else will still be on call."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "UPDATE ada SET on_call = false"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE bo SET on_call = false"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "ok",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "ok: shift 7 has 0 on call",
+            "style": "fail",
+            "note": "Different rows, so no write conflict. Under SERIALIZABLE, Postgres sees that each read what the other wrote and fails one of them with 40001; its retry then counts 1 and refuses."
+          }
+        ]
+      },
+      {
+        "id": "sqt-bloat",
+        "type": "bars",
+        "title": "Row versions written by full-table UPDATEs",
+        "alt": "Bar chart for a table of 1,000 rows. After the insert there are 1,000 row versions. Each full-table UPDATE writes 1,000 more: 2,000 after one, 3,000 after two, 4,000 after three. Only 1,000 of them are live at the end.",
+        "caption": "Exact counts of versions written for 1,000 rows. Every version beyond the 1,000 live ones is dead space until pruning or VACUUM reclaims it; VACUUM makes it reusable but rarely shrinks the file.",
+        "unit": "row versions",
+        "bars": [
+          {
+            "label": "after INSERT",
+            "value": 1000
+          },
+          {
+            "label": "1 full UPDATE",
+            "value": 2000
+          },
+          {
+            "label": "2 full UPDATEs",
+            "value": 3000
+          },
+          {
+            "label": "3 full UPDATEs",
+            "value": 4000
+          },
+          {
+            "label": "live at the end",
+            "value": 1000,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "sqt-long-tx",
+        "type": "timeline",
+        "title": "One idle transaction, one bloated queue table",
+        "alt": "Timeline of an incident. A worker opens a transaction and hangs while idle in transaction. Its snapshot holds back cleanup, so a frequently updated jobs table and its indexes grow and queries slow down. The team spots the idle session in pg_stat_activity, terminates it, autovacuum catches up, and they add a timeout.",
+        "caption": "Cleanup can only remove versions older than the oldest running snapshot, so one forgotten transaction blocks VACUUM for every table.",
+        "events": [
+          {
+            "at": "09:00",
+            "label": "A worker runs BEGIN, reads a row, then blocks on a slow HTTP call: idle in transaction.",
+            "kind": "trigger"
+          },
+          {
+            "at": "09:00-12:30",
+            "label": "Its snapshot pins the cleanup horizon. Autovacuum runs on `jobs` but removes nothing.",
+            "kind": "impact"
+          },
+          {
+            "at": "11:45",
+            "label": "`jobs` and its indexes keep growing; queue polls read pages of dead versions.",
+            "kind": "impact"
+          },
+          {
+            "at": "12:20",
+            "label": "Alert on n_dead_tup; pg_stat_activity shows 'idle in transaction' since 09:00.",
+            "kind": "detect"
+          },
+          {
+            "at": "12:30",
+            "label": "pg_terminate_backend(pid) ends the session and its transaction rolls back.",
+            "kind": "mitigate"
+          },
+          {
+            "at": "12:50",
+            "label": "Autovacuum reclaims the dead versions; latency returns to normal.",
+            "kind": "resolve"
+          },
+          {
+            "at": "Next day",
+            "label": "Set idle_in_transaction_session_timeout and alert on the oldest xact_start.",
+            "kind": "resolve"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE accounts (\n  account_id int PRIMARY KEY,\n  owner      text NOT NULL,\n  balance    numeric(10,2) NOT NULL CHECK (balance >= 0)\n);\nCREATE TABLE transfers (\n  transfer_id int PRIMARY KEY,\n  from_id     int NOT NULL,\n  to_id       int NOT NULL,\n  amount      numeric(10,2) NOT NULL,\n  status      text NOT NULL DEFAULT 'pending'\n);",
+        "starter": "-- Apply every pending transfer in transfer_id order.\n-- A transfer that cannot be applied must leave no trace and be marked 'failed'.\nDO $$\nDECLARE t record;\nBEGIN\n  FOR t IN SELECT * FROM transfers WHERE status = 'pending' ORDER BY transfer_id LOOP\n    UPDATE accounts SET balance = balance - t.amount WHERE account_id = t.from_id;\n    UPDATE accounts SET balance = balance + t.amount WHERE account_id = t.to_id;\n    UPDATE transfers SET status = 'done' WHERE transfer_id = t.transfer_id;\n  END LOOP;\nEND $$;",
+        "solution": "DO $$\nDECLARE t record;\nBEGIN\n  FOR t IN SELECT * FROM transfers WHERE status = 'pending' ORDER BY transfer_id LOOP\n    BEGIN  -- an EXCEPTION block is a savepoint around this transfer\n      IF t.amount <= 0 OR t.from_id = t.to_id THEN\n        RAISE EXCEPTION 'invalid transfer %', t.transfer_id;\n      END IF;\n      UPDATE accounts SET balance = balance - t.amount WHERE account_id = t.from_id;\n      IF NOT FOUND THEN RAISE EXCEPTION 'no source account %', t.from_id; END IF;\n      UPDATE accounts SET balance = balance + t.amount WHERE account_id = t.to_id;\n      IF NOT FOUND THEN RAISE EXCEPTION 'no target account %', t.to_id; END IF;\n      UPDATE transfers SET status = 'done' WHERE transfer_id = t.transfer_id;\n    EXCEPTION WHEN check_violation OR raise_exception THEN\n      -- everything since the block's BEGIN is already rolled back here\n      UPDATE transfers SET status = 'failed' WHERE transfer_id = t.transfer_id;\n    END;\n  END LOOP;\nEND $$;",
+        "check": "SELECT 'account ' || account_id AS item, balance::text AS state FROM accounts\nUNION ALL\nSELECT 'transfer ' || transfer_id, status FROM transfers",
+        "tests": [
+          {
+            "name": "a batch where one transfer would overdraw",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 100.00), (2, 'Ben', 20.00), (3, 'Caro', 0.00);\nINSERT INTO transfers VALUES (1, 1, 2, 30.00, 'pending'), (2, 2, 3, 60.00, 'pending'), (3, 2, 3, 50.00, 'pending'), (4, 3, 1, 10.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "80.00"
+                ],
+                [
+                  "account 2",
+                  "0.00"
+                ],
+                [
+                  "account 3",
+                  "40.00"
+                ],
+                [
+                  "transfer 1",
+                  "done"
+                ],
+                [
+                  "transfer 2",
+                  "failed"
+                ],
+                [
+                  "transfer 3",
+                  "done"
+                ],
+                [
+                  "transfer 4",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a transfer to an account that does not exist",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 100.00), (2, 'Ben', 0.00);\nINSERT INTO transfers VALUES (1, 1, 9, 40.00, 'pending'), (2, 1, 2, 25.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "75.00"
+                ],
+                [
+                  "account 2",
+                  "25.00"
+                ],
+                [
+                  "transfer 1",
+                  "failed"
+                ],
+                [
+                  "transfer 2",
+                  "done"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "money received earlier in the batch can be spent later",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 50.00), (2, 'Ben', 0.00), (3, 'Caro', 0.00);\nINSERT INTO transfers VALUES (1, 1, 2, 50.00, 'pending'), (2, 2, 3, 50.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "0.00"
+                ],
+                [
+                  "account 2",
+                  "0.00"
+                ],
+                [
+                  "account 3",
+                  "50.00"
+                ],
+                [
+                  "transfer 1",
+                  "done"
+                ],
+                [
+                  "transfer 2",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "transfers run in transfer_id order, not insertion order",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 0.00), (2, 'Ben', 100.00), (3, 'Caro', 0.00);\nINSERT INTO transfers VALUES (2, 1, 3, 50.00, 'pending'), (1, 2, 1, 50.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "0.00"
+                ],
+                [
+                  "account 2",
+                  "50.00"
+                ],
+                [
+                  "account 3",
+                  "50.00"
+                ],
+                [
+                  "transfer 1",
+                  "done"
+                ],
+                [
+                  "transfer 2",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an unknown source account fails without crediting anyone",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 10.00), (2, 'Ben', 10.00);\nINSERT INTO transfers VALUES (1, 7, 1, 5.00, 'pending'), (2, 2, 1, 10.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "20.00"
+                ],
+                [
+                  "account 2",
+                  "0.00"
+                ],
+                [
+                  "transfer 1",
+                  "failed"
+                ],
+                [
+                  "transfer 2",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "zero, negative and self transfers fail",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 40.00), (2, 'Ben', 40.00);\nINSERT INTO transfers VALUES (1, 1, 2, 0.00, 'pending'), (2, 1, 2, -15.00, 'pending'), (3, 2, 2, 10.00, 'pending'), (4, 2, 1, 40.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "80.00"
+                ],
+                [
+                  "account 2",
+                  "0.00"
+                ],
+                [
+                  "transfer 1",
+                  "failed"
+                ],
+                [
+                  "transfer 2",
+                  "failed"
+                ],
+                [
+                  "transfer 3",
+                  "failed"
+                ],
+                [
+                  "transfer 4",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "transfers that are already done or failed are left alone",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 30.00), (2, 'Ben', 0.00);\nINSERT INTO transfers VALUES (1, 1, 2, 30.00, 'done'), (2, 1, 2, 500.00, 'failed'), (3, 1, 2, 12.50, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "17.50"
+                ],
+                [
+                  "account 2",
+                  "12.50"
+                ],
+                [
+                  "transfer 1",
+                  "done"
+                ],
+                [
+                  "transfer 2",
+                  "failed"
+                ],
+                [
+                  "transfer 3",
+                  "done"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "sending the exact balance leaves zero",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 40.00), (2, 'Ben', 0.00);\nINSERT INTO transfers VALUES (1, 1, 2, 40.00, 'pending'), (2, 1, 2, 0.01, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "0.00"
+                ],
+                [
+                  "account 2",
+                  "40.00"
+                ],
+                [
+                  "transfer 1",
+                  "done"
+                ],
+                [
+                  "transfer 2",
+                  "failed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a pending transfer with every check failing at once keeps all balances",
+            "seed": "INSERT INTO accounts VALUES (1, 'Ana', 5.00);\nINSERT INTO transfers VALUES (1, 1, 8, 9.00, 'pending'), (2, 9, 1, 1.00, 'pending');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "account 1",
+                  "5.00"
+                ],
+                [
+                  "transfer 1",
+                  "failed"
+                ],
+                [
+                  "transfer 2",
+                  "failed"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE inventory (\n  sku text PRIMARY KEY,\n  qty int            -- NULL = never counted\n);\nCREATE TABLE stock_counts (\n  sku text PRIMARY KEY,\n  qty int NOT NULL\n);\n-- Each test also saves every inventory row's xmin in versions_before(sku, xmin_before).",
+        "starter": "-- Apply the counts, but only rewrite rows whose quantity really changes.\nUPDATE inventory AS i\nSET qty = c.qty\nFROM stock_counts AS c\nWHERE c.sku = i.sku;",
+        "solution": "UPDATE inventory AS i\nSET qty = c.qty\nFROM stock_counts AS c\nWHERE c.sku = i.sku\n  AND i.qty IS DISTINCT FROM c.qty;",
+        "check": "SELECT i.sku, i.qty, i.xmin::text <> v.xmin_before AS rewritten\nFROM inventory AS i\nJOIN versions_before AS v USING (sku)",
+        "tests": [
+          {
+            "name": "one count changes, one matches the stored quantity",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 12), ('TEE-2', 5), ('CAP-3', 7);\nINSERT INTO stock_counts VALUES ('MUG-1', 10), ('TEE-2', 5);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  10,
+                  true
+                ],
+                [
+                  "TEE-2",
+                  5,
+                  false
+                ],
+                [
+                  "CAP-3",
+                  7,
+                  false
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a count for an unknown sku is ignored",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 3), ('TEE-2', 8);\nINSERT INTO stock_counts VALUES ('MUG-1', 3), ('BAG-9', 4), ('TEE-2', 6);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  3,
+                  false
+                ],
+                [
+                  "TEE-2",
+                  6,
+                  true
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "a never-counted item gets its first count",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', NULL), ('TEE-2', 4);\nINSERT INTO stock_counts VALUES ('MUG-1', 9), ('TEE-2', 4);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  9,
+                  true
+                ],
+                [
+                  "TEE-2",
+                  4,
+                  false
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every count matches, so nothing is rewritten",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 1), ('TEE-2', 2), ('CAP-3', 3);\nINSERT INTO stock_counts VALUES ('MUG-1', 1), ('TEE-2', 2), ('CAP-3', 3);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  1,
+                  false
+                ],
+                [
+                  "TEE-2",
+                  2,
+                  false
+                ],
+                [
+                  "CAP-3",
+                  3,
+                  false
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a count of zero is a real change",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 6), ('TEE-2', 0);\nINSERT INTO stock_counts VALUES ('MUG-1', 0), ('TEE-2', 0);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  0,
+                  true
+                ],
+                [
+                  "TEE-2",
+                  0,
+                  false
+                ]
+              ]
+            }
+          },
+          {
+            "name": "sku matching is case-sensitive",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 2), ('TEE-2', 2);\nINSERT INTO stock_counts VALUES ('mug-1', 5), ('TEE-2', 3);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  2,
+                  false
+                ],
+                [
+                  "TEE-2",
+                  3,
+                  true
+                ]
+              ]
+            }
+          },
+          {
+            "name": "no counts were taken",
+            "seed": "INSERT INTO inventory VALUES ('MUG-1', 2), ('TEE-2', NULL);\nCREATE TABLE versions_before AS SELECT sku, xmin::text AS xmin_before FROM inventory;",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty",
+                "rewritten"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  2,
+                  false
+                ],
+                [
+                  "TEE-2",
+                  null,
+                  false
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE wallets (\n  wallet_id int PRIMARY KEY,\n  balance   numeric(10,2) NOT NULL\n);\nCREATE TABLE inbox (                -- at-least-once deliveries from the bus\n  delivery_id int PRIMARY KEY,\n  event_id    text NOT NULL,        -- the idempotency key\n  wallet_id   int NOT NULL,\n  amount      numeric(10,2) NOT NULL\n);\nCREATE TABLE processed_events (     -- the ledger of applied events\n  event_id text PRIMARY KEY\n);",
+        "starter": "-- Apply every top-up event exactly once and record it in processed_events.\nUPDATE wallets AS w\nSET balance = w.balance + i.amount\nFROM inbox AS i\nWHERE i.wallet_id = w.wallet_id;\n\nINSERT INTO processed_events (event_id)\nSELECT DISTINCT event_id FROM inbox;",
+        "solution": "WITH fresh AS (            -- one row per new event for a known wallet\n  SELECT DISTINCT ON (i.event_id) i.event_id, i.wallet_id, i.amount\n  FROM inbox AS i\n  JOIN wallets AS w ON w.wallet_id = i.wallet_id\n  WHERE NOT EXISTS (SELECT 1 FROM processed_events AS p WHERE p.event_id = i.event_id)\n  ORDER BY i.event_id, i.delivery_id\n), claimed AS (            -- the ledger insert decides who applies the event\n  INSERT INTO processed_events (event_id)\n  SELECT event_id FROM fresh\n  ON CONFLICT (event_id) DO NOTHING\n  RETURNING event_id\n)\nUPDATE wallets AS w\nSET balance = w.balance + s.total\nFROM (SELECT f.wallet_id, sum(f.amount) AS total\n      FROM fresh AS f\n      JOIN claimed AS c USING (event_id)\n      GROUP BY f.wallet_id) AS s\nWHERE w.wallet_id = s.wallet_id;",
+        "check": "SELECT 'wallet ' || wallet_id AS item, balance::text AS state FROM wallets\nUNION ALL\nSELECT 'event ' || event_id, 'processed' FROM processed_events",
+        "tests": [
+          {
+            "name": "a redelivered event is applied once",
+            "seed": "INSERT INTO wallets VALUES (1, 10.00);\nINSERT INTO inbox VALUES (1, 'evt-a', 1, 5.00), (2, 'evt-a', 1, 5.00);",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "15.00"
+                ],
+                [
+                  "event evt-a",
+                  "processed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an event applied in an earlier run is skipped",
+            "seed": "INSERT INTO wallets VALUES (1, 0.00), (2, 0.00);\nINSERT INTO inbox VALUES (1, 'evt-old', 1, 50.00), (2, 'evt-new', 2, 7.50);\nINSERT INTO processed_events VALUES ('evt-old');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "0.00"
+                ],
+                [
+                  "wallet 2",
+                  "7.50"
+                ],
+                [
+                  "event evt-old",
+                  "processed"
+                ],
+                [
+                  "event evt-new",
+                  "processed"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "two different events for one wallet both count",
+            "seed": "INSERT INTO wallets VALUES (1, 1.00);\nINSERT INTO inbox VALUES (1, 'evt-1', 1, 3.00), (2, 'evt-2', 1, 4.00);",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "8.00"
+                ],
+                [
+                  "event evt-1",
+                  "processed"
+                ],
+                [
+                  "event evt-2",
+                  "processed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an event for an unknown wallet is not recorded",
+            "seed": "INSERT INTO wallets VALUES (1, 0.00);\nINSERT INTO inbox VALUES (1, 'evt-x', 9, 20.00), (2, 'evt-y', 1, 2.00);",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "2.00"
+                ],
+                [
+                  "event evt-y",
+                  "processed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "everything in the inbox was already processed",
+            "seed": "INSERT INTO wallets VALUES (1, 40.00), (2, 5.00);\nINSERT INTO inbox VALUES (1, 'evt-1', 1, 10.00), (2, 'evt-2', 2, 10.00), (3, 'evt-1', 1, 10.00);\nINSERT INTO processed_events VALUES ('evt-1'), ('evt-2');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "40.00"
+                ],
+                [
+                  "wallet 2",
+                  "5.00"
+                ],
+                [
+                  "event evt-1",
+                  "processed"
+                ],
+                [
+                  "event evt-2",
+                  "processed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "duplicates, old events and several wallets together",
+            "seed": "INSERT INTO wallets VALUES (1, 0.00), (2, 100.00), (3, 0.00);\nINSERT INTO inbox VALUES (1, 'evt-a', 1, 10.00), (2, 'evt-b', 2, -25.50), (3, 'evt-a', 1, 10.00), (4, 'evt-c', 1, 1.25), (5, 'evt-old', 3, 99.00), (6, 'evt-b', 2, -25.50), (7, 'evt-d', 3, 0.75);\nINSERT INTO processed_events VALUES ('evt-old');",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "11.25"
+                ],
+                [
+                  "wallet 2",
+                  "74.50"
+                ],
+                [
+                  "wallet 3",
+                  "0.75"
+                ],
+                [
+                  "event evt-old",
+                  "processed"
+                ],
+                [
+                  "event evt-a",
+                  "processed"
+                ],
+                [
+                  "event evt-b",
+                  "processed"
+                ],
+                [
+                  "event evt-c",
+                  "processed"
+                ],
+                [
+                  "event evt-d",
+                  "processed"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a negative adjustment is applied like any other event",
+            "seed": "INSERT INTO wallets VALUES (1, 20.00);\nINSERT INTO inbox VALUES (1, 'evt-refund', 1, -20.00);",
+            "expected": {
+              "columns": [
+                "item",
+                "state"
+              ],
+              "rows": [
+                [
+                  "wallet 1",
+                  "0.00"
+                ],
+                [
+                  "event evt-refund",
+                  "processed"
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "CREATE TEMP TABLE t (x int);\nBEGIN;\nINSERT INTO t VALUES (1);\nSAVEPOINT s;\nINSERT INTO t VALUES (2);\nROLLBACK TO SAVEPOINT s;\nINSERT INTO t VALUES (3);\nCOMMIT;\nSELECT string_agg(x::text, ',' ORDER BY x) FROM t;",
+        "choices": [
+          "1,2,3",
+          "1,3",
+          "3",
+          "1"
+        ],
+        "answer": 1,
+        "explain": "`ROLLBACK TO SAVEPOINT` undoes only the work after the savepoint (the 2). The transaction stays open and usable, so the 3 is inserted and COMMIT keeps 1 and 3."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (x int);\nDO $$ BEGIN\n  INSERT INTO t VALUES (1);\n  BEGIN\n    INSERT INTO t VALUES (2);\n    PERFORM 1 / 0;\n  EXCEPTION WHEN division_by_zero THEN\n    NULL;\n  END;\n  INSERT INTO t VALUES (3);\nEND $$;\nSELECT string_agg(x::text, ',' ORDER BY x) FROM t;",
+        "choices": [
+          "1,2,3",
+          "1,3",
+          "ERROR: division by zero",
+          "(no rows)"
+        ],
+        "answer": 1,
+        "explain": "A PL/pgSQL block with an EXCEPTION clause is a savepoint. When the handler runs, everything done inside the block (the 2) has been rolled back; work outside it (1 and 3) is kept."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (x int);\nBEGIN;\nINSERT INTO t VALUES (1), (2);\nSELECT count(*) FROM t;",
+        "choices": [
+          "0",
+          "2",
+          "ERROR: current transaction is aborted, commands ignored until end of transaction block"
+        ],
+        "answer": 1,
+        "explain": "A transaction always sees its own uncommitted changes. Other sessions would count 0 until COMMIT (no dirty reads in Postgres)."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (x int);\nBEGIN;\nINSERT INTO t VALUES (1);\nSELECT 1 / 0;\nINSERT INTO t VALUES (2);\nCOMMIT;\nSELECT count(*) FROM t;",
+        "choices": [
+          "1",
+          "0",
+          "ERROR: division by zero",
+          "ERROR: current transaction is aborted, commands ignored until end of transaction block"
+        ],
+        "answer": 2,
+        "explain": "The first error is what you see: a script stops there. Typed line by line in psql, the second INSERT would fail with \"current transaction is aborted\", COMMIT would answer ROLLBACK, and the final count would be 0."
+      },
+      {
+        "code": "BEGIN ISOLATION LEVEL READ UNCOMMITTED;\nSHOW transaction_isolation;",
+        "choices": [
+          "read uncommitted",
+          "read committed",
+          "ERROR: READ UNCOMMITTED is not supported"
+        ],
+        "answer": 0,
+        "explain": "Postgres accepts and reports the level you asked for, but READ UNCOMMITTED behaves exactly like READ COMMITTED: there are no dirty reads at any level."
+      },
+      {
+        "code": "BEGIN;\nSELECT 1;\nSET TRANSACTION ISOLATION LEVEL SERIALIZABLE;",
+        "choices": [
+          "(no rows)",
+          "ERROR: SET TRANSACTION ISOLATION LEVEL must be called before any query",
+          "serializable"
+        ],
+        "answer": 1,
+        "explain": "The snapshot rules are fixed by the first query, so the level must be set at BEGIN or before any query. Use `BEGIN ISOLATION LEVEL SERIALIZABLE`."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (id int, v int);\nINSERT INTO t VALUES (1, 10);\nCREATE TEMP TABLE before AS SELECT ctid::text AS c FROM t;\nUPDATE t SET v = v;\nSELECT before.c, t.ctid::text FROM before, t;",
+        "choices": [
+          "(0,1) | (0,1)",
+          "(0,1) | (0,2)",
+          "(0,2) | (0,1)"
+        ],
+        "answer": 1,
+        "explain": "Even an UPDATE that changes nothing writes a new row version at a new physical address (`ctid`); the old one at (0,1) is now dead and waits for cleanup."
+      },
+      {
+        "code": "CREATE TEMP TABLE t (id int, v int);\nINSERT INTO t VALUES (1, 10);\nUPDATE t SET v = 11;\nSELECT v, xmin::text = pg_current_xact_id()::text AS mine, xmax::text FROM t;",
+        "choices": [
+          "11 | true | 0",
+          "11 | false | 0",
+          "10 | true | 0",
+          "11 | true | 1"
+        ],
+        "answer": 0,
+        "explain": "The visible version is the new one: its `xmin` is the current transaction's id and its `xmax` is 0 because nothing has deleted or locked it. The old version (v = 10) now has `xmax` set and is invisible."
+      }
+    ],
+    "tip": "Before you answer any concurrency question, draw two sessions as two columns with time running down, and say which isolation level and which database you assume. Walk the interleaving that breaks the naive version, then name the fix and its cost: \"atomic UPDATE with a guard; if the rule spans rows, SERIALIZABLE with a retry loop or a lock on a shared row\".",
+    "links": {
+      "guides": [
+        "transactions-isolation",
+        "consistency-choices",
+        "idempotency-keys",
+        "retries-backoff",
+        "database-indexes",
+        "queues-async-work"
+      ],
+      "lessons": [
+        "sql-schema-design",
+        "design-consistency",
+        "design-databases-indexes",
+        "design-api-data-model"
+      ],
+      "problems": [
+        "lock-order-deadlock"
+      ]
+    }
+  }
+}

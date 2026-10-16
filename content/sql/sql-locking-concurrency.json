@@ -1,0 +1,1713 @@
+{
+  "id": "sql-locking-concurrency",
+  "track": "sql",
+  "title": "Locking, deadlocks and concurrency patterns",
+  "minutes": 55,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "How Postgres serialises writers: row locks (`FOR UPDATE` and its weaker cousins), why readers never wait, `NOWAIT`, `lock_timeout` and `SKIP LOCKED` job queues, deadlocks and lock ordering, pessimistic versus optimistic concurrency, atomic in-place updates that cannot lose a write, advisory locks, and the table locks that make a careless migration take the site down.",
+  "prerequisites": [
+    "sql-transactions-mvcc"
+  ],
+  "prerequisiteNotes": "sql-transactions-mvcc: what a transaction is, how MVCC gives each statement a snapshot, and what READ COMMITTED, REPEATABLE READ and SERIALIZABLE guarantee. This lesson is about the locks that sit on top of MVCC: who waits for whom when two transactions touch the same rows or tables.",
+  "objectives": [
+    "Say which statements take row locks, which lock mode each takes, and why a writer blocks another writer but never a plain reader.",
+    "Replace read-modify-write code with a single conditional `UPDATE ... RETURNING` that cannot lose an update or oversell stock.",
+    "Build a concurrent job queue with `FOR UPDATE SKIP LOCKED`, and use `NOWAIT` and `lock_timeout` to fail fast instead of queueing.",
+    "Explain how a deadlock forms, what Postgres does about it (40P01), and prevent it with a consistent lock order.",
+    "Choose between pessimistic locking and optimistic version checks, and implement the optimistic `UPDATE ... WHERE version = $2`.",
+    "Run DDL safely: know which statements take ACCESS EXCLUSIVE, why a waiting ALTER blocks reads, and use `lock_timeout` and `CREATE INDEX CONCURRENTLY`."
+  ],
+  "concepts": [
+    {
+      "title": "Row locks: who waits for whom",
+      "body": "Postgres locks individual rows only for writers. `UPDATE` and `DELETE` lock every row they change, implicitly, until the transaction ends; `SELECT ... FOR UPDATE` takes the same kind of lock without changing anything, so you can read a row and be sure nobody changes it before you write. There are four strengths. **FOR UPDATE** (taken by `DELETE`, and by an `UPDATE` that changes a unique key column a foreign key could reference) conflicts with everything. **FOR NO KEY UPDATE** (taken by every other `UPDATE`) is slightly weaker, so inserting a child row whose foreign key check takes **FOR KEY SHARE** on the parent does not wait for an update of the parent's non-key columns. **FOR SHARE** stops others from changing the row but lets them share-lock it too. A plain `SELECT` takes no row lock at all: thanks to MVCC it reads the last committed version, so **readers never wait for writers and writers never wait for readers**. Two writers on the same row do queue: the second waits until the first commits or rolls back. In READ COMMITTED it then re-reads the new version and re-checks its `WHERE`; in REPEATABLE READ or SERIALIZABLE, if the first one committed a change, it fails with `40001` instead. Row locks live in the row header on disk, not in a shared-memory table, so locking a million rows is possible, but it dirties a million rows.",
+      "code": "BEGIN;\n-- Lock the row: nobody else can UPDATE, DELETE or FOR UPDATE it until we finish\nSELECT balance FROM accounts WHERE id = 1 FOR UPDATE;\nUPDATE accounts SET balance = balance - 30 WHERE id = 1;\nCOMMIT;   -- row lock released here (never earlier)\n\n-- Strongest to weakest:\n--   FOR UPDATE          DELETE, UPDATE of a key column\n--   FOR NO KEY UPDATE   any other UPDATE\n--   FOR SHARE           others may read-lock, not change\n--   FOR KEY SHARE       taken on the parent by FK checks\n-- A plain SELECT takes no row lock and never waits.",
+      "diagram": "sqk-mvcc-block"
+    },
+    {
+      "title": "Lost updates and atomic in-place updates",
+      "body": "The most common concurrency bug in application code is **read-modify-write**: `SELECT qty`, compute `qty - 1` in the app, `UPDATE ... SET qty = 4`. Two requests that read 5 at the same time both write 4, and one sale disappears; with a stock check in the app (`if qty > 0`) they can also both sell the last unit. In READ COMMITTED, the default, Postgres does nothing to stop this, because each statement is fine on its own. The fix is to let the database do the arithmetic and the check in **one statement**: `UPDATE stock SET qty = qty - 1 WHERE id = 1 AND qty > 0 RETURNING qty`. The second writer waits for the first's row lock, then re-evaluates `qty > 0` against the committed value, so it either decrements the new value or matches zero rows. `RETURNING` hands back the new value without a second query, and \"zero rows\" is your out-of-stock signal. Add `CHECK (qty >= 0)` as a backstop. This works for counters, balances, quotas and seat maps: anything where the new value is a function of the old one. It does not remove contention: a very hot row (one global counter) still serialises every writer.",
+      "code": "-- Racy: two sessions can both read 1 and both sell it\nSELECT qty FROM stock WHERE id = 1;            -- app sees 1\nUPDATE stock SET qty = 0 WHERE id = 1;          -- app wrote 1 - 1\n\n-- Atomic: check and change in one statement\nUPDATE stock\nSET qty = qty - 1\nWHERE id = 1 AND qty > 0\nRETURNING qty;          -- no row back = sold out\n\nALTER TABLE stock ADD CONSTRAINT stock_qty_check CHECK (qty >= 0);  -- backstop",
+      "diagram": "sqk-lost-update"
+    },
+    {
+      "title": "Pessimistic versus optimistic concurrency",
+      "body": "When the new value cannot be computed in one `UPDATE` (the app must call a pricing service, or a user edits a document for ten minutes), choose a strategy. **Pessimistic**: `BEGIN; SELECT ... FOR UPDATE; ...; UPDATE; COMMIT`. Others wait, so it suits short, high-contention critical sections inside one request, and it is simple to reason about. Never hold it across user think time or a slow network call: every waiter piles up behind you and holds a connection. **Optimistic**: read without locking, remember a `version` (an integer bumped on every write, or an `updated_at`), and make the write conditional: `UPDATE docs SET body = $3, version = version + 1 WHERE id = $1 AND version = $2`. One row affected means you won; zero means someone else wrote first, so re-read and retry, or return **409 Conflict** (or **412** when the client sent `If-Match` with an ETag). Optimistic needs no lock between read and write, so it works across HTTP requests and scales when collisions are rare; when they are common, retries waste work and pessimistic wins. Postgres's hidden `xmin` column changes on every update and is sometimes used as a free version, but it is an internal transaction id, so an explicit column is clearer and portable.",
+      "code": "-- Optimistic: the WHERE is the check\nUPDATE docs\nSET body = 'v4 text', version = version + 1\nWHERE id = 42 AND version = 3      -- the version this client read\nRETURNING version;                  -- no row back = conflict (or missing)\n\n-- Pessimistic: hold the row for the length of the transaction\nBEGIN;\nSELECT body, version FROM docs WHERE id = 42 FOR UPDATE;\n-- ... compute the new body in the app, quickly ...\nUPDATE docs SET body = 'v4 text', version = version + 1 WHERE id = 42;\nCOMMIT;",
+      "diagram": "sqk-pess-opt"
+    },
+    {
+      "title": "Not waiting forever: NOWAIT, lock_timeout, SKIP LOCKED",
+      "body": "By default a lock request waits indefinitely. Three tools change that. `FOR UPDATE NOWAIT` fails at once with `55P03` (`could not obtain lock on row in relation ...`) if any target row is locked; use it for \"someone else is editing this, try later\" UX. `SET lock_timeout = '2s'` (or `SET LOCAL` inside a transaction) caps every lock wait in the session, including table locks for DDL, and fails with `55P03` `canceling statement due to lock timeout`; it is the single most important setting for migrations. It differs from `statement_timeout`, which caps total run time (`57014`). `FOR UPDATE SKIP LOCKED` does not wait or fail: it silently leaves out rows that are locked and returns the rest. That makes it wrong for anything that must see every row (a report, a balance check), and exactly right for **work queues**, where any unclaimed job will do. All three only affect row-locking clauses and lock waits; a plain `SELECT` never waits anyway. `FOR UPDATE` cannot be combined with aggregates, `DISTINCT`, `GROUP BY` or `UNION`, because Postgres needs to know which physical row each output row came from.",
+      "code": "-- Fail fast if someone holds the row\nSELECT * FROM tickets WHERE id = 7 FOR UPDATE NOWAIT;\n-- ERROR: could not obtain lock on row in relation \"tickets\"   (55P03)\n\n-- Cap every lock wait in this transaction\nBEGIN;\nSET LOCAL lock_timeout = '2s';\nUPDATE tickets SET status = 'closed' WHERE id = 7;\nCOMMIT;\n\n-- Queue: take whatever is free, skip what is locked\nSELECT id FROM jobs\nWHERE status = 'queued'\nORDER BY created_at, id\nLIMIT 10\nFOR UPDATE SKIP LOCKED;"
+    },
+    {
+      "title": "Deadlocks and lock ordering",
+      "body": "A **deadlock** is a cycle of waits. Transfer A locks account 1 then wants account 2; transfer B locks account 2 then wants account 1; each waits for the other forever. Postgres does not prevent this up front. When a backend has waited on a lock for `deadlock_timeout` (1s by default) it inspects the wait-for graph, and if it finds a cycle it aborts one transaction with `ERROR: deadlock detected` (SQLSTATE **40P01**). The other one proceeds. Which one is aborted is not guaranteed, and the whole transaction is rolled back, so the client must **retry from BEGIN**. Prevention is about order: if every transaction locks rows in the same global order (for example ascending id), no cycle can form. `UPDATE ... WHERE id IN (1, 2)` does not promise an order, so lock first with `SELECT ... ORDER BY id FOR UPDATE`. Also keep transactions short, touch fewer rows, and watch for hidden locks: foreign key checks share-lock parent rows, and a trigger may update other tables. Monitor `pg_stat_database.deadlocks` and turn on `log_lock_waits` to log any wait longer than `deadlock_timeout`.",
+      "code": "-- Transfer 30 from account 2 to account 1, deadlock-free:\nBEGIN;\nSELECT id FROM accounts\nWHERE id IN (1, 2)\nORDER BY id              -- always lock the lower id first\nFOR UPDATE;\nUPDATE accounts SET balance = balance - 30 WHERE id = 2;\nUPDATE accounts SET balance = balance + 30 WHERE id = 1;\nCOMMIT;\n-- On 40P01 (or 40001 under SERIALIZABLE): ROLLBACK and retry the whole thing",
+      "diagram": "sqk-deadlock"
+    },
+    {
+      "title": "Advisory locks: locks on ideas, not rows",
+      "body": "Sometimes the thing to protect is not a row: \"only one instance runs the nightly billing job\", \"one rebuild per tenant at a time\". **Advisory locks** are application-defined locks on a `bigint` key (or a pair of `int`s) that Postgres stores and arbitrates but attaches no meaning to. `pg_advisory_xact_lock(key)` waits and releases automatically at commit or rollback; `pg_try_advisory_xact_lock(key)` returns `true` or `false` immediately, which is ideal for \"skip if another worker has it\". The session-level forms (`pg_advisory_lock`, `pg_advisory_unlock`) outlive transactions and **stack**: locking the same key twice in one session needs two unlocks. They are risky behind a transaction-mode connection pooler such as PgBouncer, because the next transaction may run on a different server connection, so prefer the `_xact_` forms. Keys share one namespace across the database, so derive them carefully (a constant per job, or the tenant id in the two-int form with a job-type constant). Advisory locks are cheap and visible in `pg_locks` with `locktype = 'advisory'`.",
+      "code": "-- Run the nightly billing job on at most one worker\nBEGIN;\nSELECT pg_try_advisory_xact_lock(424242) AS got_it;\n-- got_it = false: another worker is running it; COMMIT and exit\n-- got_it = true:  do the work; the lock is released at COMMIT\nCOMMIT;\n\n-- Per-tenant: two-int form (job type, tenant id)\nSELECT pg_advisory_xact_lock(7, 1001);"
+    },
+    {
+      "title": "Table locks, DDL and the lock queue",
+      "body": "Every statement also takes a **table-level** lock. Reads take ACCESS SHARE and writes take ROW EXCLUSIVE; they do not conflict, so normal traffic never blocks at table level. DDL is different. Most `ALTER TABLE` forms, `DROP`, `TRUNCATE` and `VACUUM FULL` take **ACCESS EXCLUSIVE**, which conflicts with everything, including a plain `SELECT`. Plain `CREATE INDEX` takes SHARE, which blocks writes for the whole build. `CREATE INDEX CONCURRENTLY` takes SHARE UPDATE EXCLUSIVE, so writes continue; it scans twice, waits for older transactions, **cannot run inside a transaction block**, and if it fails leaves an INVALID index you must drop. The trap is the **lock queue**: lock requests are granted roughly in arrival order, so an `ALTER TABLE` waiting behind one long-running transaction makes every later `SELECT` on the table wait behind the ALTER. A change that takes milliseconds can then stall the application for as long as the oldest transaction runs. Safe migrations set `lock_timeout` (a few seconds) and retry, keep each DDL transaction tiny, and cap long transactions with `idle_in_transaction_session_timeout` and `statement_timeout`.",
+      "code": "-- Migration session: give up quickly rather than block the app\nSET lock_timeout = '3s';\nALTER TABLE orders ADD COLUMN gift_note text;   -- metadata only, but ACCESS EXCLUSIVE\n-- on 55P03: wait a bit and retry\n\n-- Build an index without blocking writes (not inside BEGIN ... COMMIT)\nCREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id);\n\n-- Who is waiting on whom?\nSELECT pid, wait_event_type, pg_blocking_pids(pid) AS blocked_by, left(query, 60)\nFROM pg_stat_activity\nWHERE wait_event_type = 'Lock';",
+      "diagram": "sqk-lock-conflicts"
+    }
+  ],
+  "example": "-- Ticket booking: one seat, many buyers, no overselling and no deadlocks\nCREATE TABLE seats (\n  event_id int,\n  seat     text,\n  holder   text,\n  version  int NOT NULL DEFAULT 0,\n  PRIMARY KEY (event_id, seat)\n);\nCREATE TABLE inventory (event_id int PRIMARY KEY, left_to_sell int NOT NULL CHECK (left_to_sell >= 0));\nINSERT INTO seats (event_id, seat) VALUES (1, 'A1'), (1, 'A2');\nINSERT INTO inventory VALUES (1, 2);\n\n-- 1. Atomic counter: check and decrement together\nUPDATE inventory SET left_to_sell = left_to_sell - 1\nWHERE event_id = 1 AND left_to_sell > 0\nRETURNING left_to_sell;                         -- 1\n\n-- 2. Claim a specific seat only if it is still free (the WHERE is the lock check)\nUPDATE seats SET holder = 'ana', version = version + 1\nWHERE event_id = 1 AND seat = 'A1' AND holder IS NULL\nRETURNING seat, version;                        -- A1 | 1\n\n-- 3. A second buyer trying the same seat matches zero rows: report \"taken\"\nUPDATE seats SET holder = 'ben', version = version + 1\nWHERE event_id = 1 AND seat = 'A1' AND holder IS NULL\nRETURNING seat;                                 -- (no rows)\n\n-- 4. Move ana from A1 to A2: lock both seats in a fixed order first\nBEGIN;\nSELECT seat FROM seats WHERE event_id = 1 AND seat IN ('A2', 'A1')\nORDER BY seat FOR UPDATE;                       -- A1 then A2, always\nUPDATE seats SET holder = 'ana', version = version + 1\nWHERE event_id = 1 AND seat = 'A2' AND holder IS NULL;\nUPDATE seats SET holder = NULL, version = version + 1\nWHERE event_id = 1 AND seat = 'A1';\nCOMMIT;",
+  "task": "The table `jobs (id, kind, status, created_at, claimed_by, attempts)` is a work queue shared by many workers; `status` is one of `'queued'`, `'running'`, `'done'`, `'failed'`. Write the single statement that worker `'worker-7'` runs to claim its next batch: the **3** oldest jobs whose status is `'queued'` (oldest `created_at` first, ties broken by the lower `id`; fewer than 3 if fewer are queued). For each claimed job set `status` to `'running'`, `claimed_by` to `'worker-7'` and add 1 to `attempts`. Rows of any other status must not change. Make it safe for concurrent workers: select the batch with `FOR UPDATE SKIP LOCKED` inside the `UPDATE`, so two workers never claim the same job and never wait for each other. Return `id`, `kind`, `attempts` of the claimed jobs with `RETURNING`. The tests check the whole table afterwards: `id`, `status`, `claimed_by`, `attempts`.",
+  "starter": "-- Claim the next 3 queued jobs for worker-7 (oldest first, ties by id).\n-- Mark them running, record the worker, count the attempt, return id, kind, attempts.\nUPDATE jobs\nSET status = 'running', claimed_by = 'worker-7'\nWHERE status = 'queued'\nRETURNING id, kind, attempts;\n",
+  "hints": [
+    "Pick the batch in a subquery: `SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT 3 FOR UPDATE SKIP LOCKED`, then `UPDATE jobs ... WHERE id IN (that subquery)`.",
+    "`attempts = attempts + 1` reads the row's current value, so a re-queued job that already had 2 attempts ends with 3. `claimed_by` is simply overwritten."
+  ],
+  "solution": "UPDATE jobs\nSET status     = 'running',\n    claimed_by = 'worker-7',\n    attempts   = attempts + 1\nWHERE id IN (\n  SELECT id\n  FROM jobs\n  WHERE status = 'queued'\n  ORDER BY created_at, id\n  LIMIT 3\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING id, kind, attempts;\n\nThe subquery decides the batch and locks it; the outer UPDATE changes exactly those rows and returns them, all in one statement and one implicit transaction. `ORDER BY created_at, id` makes the order total, so ties are deterministic; `LIMIT 3` caps the batch. `FOR UPDATE SKIP LOCKED` is what makes it concurrent: if another worker is in the middle of claiming jobs 1 to 3, this worker does not wait for them, it skips them and locks the next three, so two workers never get the same job. Once the statement commits, the status is `'running'`, and later claims filter those rows out by `status = 'queued'` even though the lock is gone. Two details for the interview. First, if a worker crashes after committing the claim, the job stays `'running'` forever, so production queues also store a `claimed_at` (or a lease expiry) and a reaper re-queues stale jobs; the `attempts` counter then lets you move a job to `'failed'` after N tries. Second, index the hot path with a partial index such as `CREATE INDEX ON jobs (created_at, id) WHERE status = 'queued'`, so claiming stays fast while millions of done rows pile up, and vacuum keeps up with the churn.",
+  "checklist": [
+    "The batch is chosen with `ORDER BY created_at, id`, a total order, and capped with `LIMIT 3`.",
+    "Only `'queued'` rows can be claimed; rows in any other status are untouched.",
+    "The row lock comes from `FOR UPDATE SKIP LOCKED` in the same statement as the UPDATE, so no other worker can claim the same job.",
+    "`attempts` is incremented from its current value, not set to 1.",
+    "I can explain what happens when a worker dies after claiming, and how a lease or reaper recovers it."
+  ],
+  "pitfalls": [
+    "Reading a value, computing in the app and writing it back (read-modify-write): concurrent requests overwrite each other. Put the arithmetic and the condition in one `UPDATE`.",
+    "Selecting the next job without a lock, then updating it: two workers pick the same row. Lock it in the same statement with `FOR UPDATE SKIP LOCKED`.",
+    "Using `FOR UPDATE` without `SKIP LOCKED` in a queue: every worker queues behind the first, so the pool works one job at a time.",
+    "Using `SKIP LOCKED` where every row matters (balances, reports): it silently drops locked rows from the result.",
+    "Locking rows in an order that depends on input (`WHERE id IN (2, 1)`): two transfers in opposite directions deadlock. Lock with `ORDER BY id FOR UPDATE` first.",
+    "Treating 40P01 or 40001 as a fatal error instead of retrying the whole transaction with backoff.",
+    "Holding a `FOR UPDATE` lock across a user's think time or a slow HTTP call; use optimistic version checks across requests.",
+    "Running `ALTER TABLE` on a busy table without `lock_timeout`: it waits behind a long transaction and every query queues behind it.",
+    "Wrapping `CREATE INDEX CONCURRENTLY` in a migration framework's transaction: it errors with `cannot run inside a transaction block`.",
+    "Forgetting that session-level advisory locks stack and survive the transaction; prefer `pg_advisory_xact_lock`."
+  ],
+  "walkthrough": [
+    {
+      "title": "Building a job queue on Postgres with SKIP LOCKED",
+      "body": "Interviewers love \"we have a jobs table and ten workers; how do they pick work without double-processing?\". Walk it in steps. The naive version, `SELECT id ... LIMIT 1` then `UPDATE ... WHERE id = $1`, lets two workers read the same id. Adding `FOR UPDATE` fixes duplicates but serialises workers: all ten wait on the first row. `FOR UPDATE SKIP LOCKED` lets each worker take the first rows nobody holds. Then decide the transaction shape. **Claim-and-commit** (this lesson's exercise) marks rows `'running'` in a short transaction, does the work outside it, then marks them `'done'`; locks are held for milliseconds, but a crashed worker leaves rows `'running'`, so add `claimed_at` and a reaper. **Lock-while-working** keeps the transaction open for the whole job, so a crash releases the lock automatically, but it holds a connection and a snapshot (which blocks vacuum cleanup) for the job's duration. Either way the delivery is **at least once**: make handlers idempotent. Mention when to stop: at very high throughput, the dead tuples left by status updates and the polling load make a dedicated broker a better fit.",
+      "code": "-- Claim-and-commit worker loop (one round)\nUPDATE jobs\nSET status = 'running', claimed_by = 'worker-7', claimed_at = now(), attempts = attempts + 1\nWHERE id IN (\n  SELECT id FROM jobs\n  WHERE status = 'queued'\n  ORDER BY created_at, id\n  LIMIT 10\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING id, kind, payload;\n-- ... do the work outside any transaction ...\nUPDATE jobs SET status = 'done' WHERE id = ANY($1);\n\n-- Reaper: re-queue claims older than 5 minutes\nUPDATE jobs SET status = 'queued', claimed_by = NULL\nWHERE status = 'running' AND claimed_at < now() - interval '5 minutes';\n\nCREATE INDEX jobs_ready_idx ON jobs (created_at, id) WHERE status = 'queued';",
+      "diagram": "sqk-skip-locked"
+    },
+    {
+      "title": "Post-mortem: the migration that blocked every read",
+      "body": "A favourite senior question: \"a migration that adds a nullable column took the site down; the ALTER is instant, so what happened?\". Tell the lock-queue story. A reporting query (or a transaction left idle by a buggy client) holds ACCESS SHARE on `orders`. The migration's `ALTER TABLE` needs ACCESS EXCLUSIVE, which conflicts, so it waits. Every new `SELECT` on `orders` needs ACCESS SHARE, which conflicts with the **waiting** ACCESS EXCLUSIVE request, so it queues behind the ALTER. Connections pile up, the pool empties, requests time out. Then the fix, in layers: run DDL with `SET lock_timeout = '3s'` and retry in a loop, so a blocked migration gives up instead of becoming the blocker; keep each migration's transaction to the DDL alone; cap long work with `statement_timeout` and `idle_in_transaction_session_timeout`; use the non-blocking variants (`CREATE INDEX CONCURRENTLY`, `ADD CONSTRAINT ... NOT VALID` then `VALIDATE CONSTRAINT`); and alert on sessions waiting for locks in `pg_stat_activity`.",
+      "code": "-- Find what the ALTER is waiting for\nSELECT a.pid, a.state, now() - a.xact_start AS xact_age, left(a.query, 50) AS query\nFROM pg_stat_activity a\nWHERE a.pid = ANY (pg_blocking_pids(12345));   -- 12345 = the ALTER's pid\n\n-- Safer migration step\nSET lock_timeout = '3s';\nALTER TABLE orders ADD COLUMN gift_note text;\n-- 55P03 canceling statement due to lock timeout -> sleep, retry",
+      "diagram": "sqk-lock-queue"
+    },
+    {
+      "title": "Optimistic concurrency end to end",
+      "body": "Show that you can carry the version from the database to the client and back. The GET returns the row and its `version` (often as an `ETag` header). The client edits for as long as it likes, holding no lock. The PUT sends the version it started from (`If-Match`), and the server runs one conditional UPDATE. Then interpret the row count: one row means saved, so return the new version; zero rows means either the document is gone or the version moved on, so re-read to tell **404** from **409/412**, and let the client merge or reload. For batch imports, the same idea works set-wise: one data-modifying CTE applies every edit whose version matches and records the rest as conflicts, which is the stretch exercise. One subtlety: inside a single statement every part sees the same snapshot, so a `SELECT` from `docs` in the same statement sees the versions as they were **before** the CTE's UPDATE, which is exactly the current version of the rows that were not updated.",
+      "code": "-- PUT /docs/42  If-Match: \"3\"\nUPDATE docs\nSET body = $2, version = version + 1, updated_by = $3\nWHERE id = 42 AND version = 3\nRETURNING version;                       -- 4 => 200 OK, ETag \"4\"\n\n-- zero rows: which case?\nSELECT version FROM docs WHERE id = 42;  -- no row => 404, row => 409 or 412"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Reserve a cart without overselling",
+      "prompt": "Tables `stock (sku, qty)` and `cart (sku, want)`; each sku appears at most once in each. Reserve the whole cart in **one** `UPDATE` statement: for every cart line whose sku exists in `stock` with `qty >= want`, subtract `want` from `qty`. Lines that cannot be met in full are left alone (no partial reservations), and stock must never go below zero, even with concurrent callers. Return `sku` and `qty` (the quantity left after the reservation) for each line that was reserved, using `RETURNING`.",
+      "hints": [
+        "`UPDATE stock s SET qty = s.qty - c.want FROM cart c WHERE c.sku = s.sku ...` joins the cart into the update; the condition that keeps stock non-negative belongs in the same `WHERE`.",
+        "Because the check is in the UPDATE's `WHERE`, a concurrent caller that changed the row first makes Postgres re-check `s.qty >= c.want` against the new value before writing."
+      ],
+      "checklist": [
+        "Short lines are skipped entirely, never partially filled or driven negative.",
+        "Taking exactly the remaining quantity is allowed and leaves 0.",
+        "Products not in the cart, and cart skus not in stock, produce no rows."
+      ],
+      "solution": "UPDATE stock s\nSET qty = s.qty - c.want\nFROM cart c\nWHERE c.sku = s.sku\n  AND s.qty >= c.want\nRETURNING s.sku, s.qty;\n"
+    },
+    {
+      "id": "stretch",
+      "title": "Apply a batch of edits with optimistic concurrency",
+      "prompt": "`docs (id, body, version, updated_by)` holds documents; `edits (doc_id, base_version, new_body, editor)` is a batch of edits, at most one per document, each made from the version the editor read. Apply the batch: an edit is **saved** only when the document exists and its `version` equals the edit's `base_version`; then set `body` to `new_body`, `updated_by` to `editor` and add 1 to `version`. Every other edit is a **conflict**: insert `(doc_id, base_version, current_version)` into the empty table `conflicts`, where `current_version` is the document's version (NULL if the document does not exist). Documents without an edit, and documents whose edit conflicts, must not change. The check lists every document (`'doc'`, id, `body / updated_by`, version) and every conflict (`'conflict'`, doc_id, `base <n>`, current_version).",
+      "hints": [
+        "Order matters if you use two statements: after the UPDATE, a saved document's version is `base_version + 1`, so a later \"version differs\" test would wrongly flag it. Record conflicts first, or do both in one statement.",
+        "One statement: `WITH saved AS (UPDATE docs d ... FROM edits e WHERE e.doc_id = d.id AND d.version = e.base_version RETURNING d.id) INSERT INTO conflicts SELECT ... FROM edits e LEFT JOIN docs d ON d.id = e.doc_id WHERE NOT EXISTS (SELECT 1 FROM saved s WHERE s.id = e.doc_id)`."
+      ],
+      "checklist": [
+        "A matching version saves the edit and bumps the version by exactly 1, even if the text is unchanged.",
+        "A stale or future `base_version` leaves the document untouched and records the document's real version.",
+        "An edit for a missing document is a conflict with a NULL current version (a LEFT JOIN, not an inner join).",
+        "Documents without an edit are untouched."
+      ],
+      "solution": "WITH saved AS (\n  UPDATE docs d\n  SET body       = e.new_body,\n      updated_by = e.editor,\n      version    = d.version + 1\n  FROM edits e\n  WHERE e.doc_id = d.id\n    AND d.version = e.base_version      -- the optimistic check\n  RETURNING d.id\n)\nINSERT INTO conflicts (doc_id, base_version, current_version)\nSELECT e.doc_id, e.base_version, d.version   -- d is read from the statement's snapshot\nFROM edits e\nLEFT JOIN docs d ON d.id = e.doc_id\nWHERE NOT EXISTS (SELECT 1 FROM saved s WHERE s.id = e.doc_id);\n"
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your SKIP LOCKED queue table has 50 million done rows and claims are getting slow. What do you look at?",
+      "answer": "The claim query should hit a partial index such as `(created_at, id) WHERE status = 'queued'`, so its cost depends on the number of queued rows, not the table size. Then dead tuples: every claim and completion is an UPDATE that leaves a dead row version, so autovacuum must keep up (tune it per table, check `n_dead_tup` in `pg_stat_user_tables`), and long-running transactions anywhere hold back cleanup. Move finished jobs out (delete in batches, or partition by time and drop old partitions). Watch claim latency and queue depth. If throughput keeps growing, a dedicated broker is cheaper than fighting churn in a table."
+    },
+    {
+      "question": "How do you find out what is blocking what in production, and what do you alert on?",
+      "answer": "`pg_stat_activity` with `wait_event_type = 'Lock'` lists waiting sessions; `pg_blocking_pids(pid)` gives the blockers, and `pg_locks` shows the modes. Alert on lock waits longer than a few seconds, on the age of the oldest transaction (`now() - xact_start`), and on sessions `idle in transaction`. Turn on `log_lock_waits` so waits longer than `deadlock_timeout` are logged with the blocking pids, and graph `pg_stat_database.deadlocks`. The root cause is usually one long transaction, so `idle_in_transaction_session_timeout` and `statement_timeout` are the preventive controls."
+    },
+    {
+      "question": "When would you use SERIALIZABLE instead of explicit locks?",
+      "answer": "When the invariant spans rows you cannot easily name up front, such as \"at most one on-call doctor per shift\" (write skew), where `FOR UPDATE` would have to lock rows that may not exist yet. SERIALIZABLE (SSI in Postgres) detects dangerous patterns and aborts one transaction with `40001`, so every transaction needs a retry loop, and under heavy contention retries can dominate. Explicit locks (row locks, an advisory lock per shift, or a constraint such as a unique or exclusion constraint) make the conflict a wait instead of an abort and are easier to reason about for a single hot path. A constraint is best when the rule can be declared."
+    },
+    {
+      "question": "One row (a global counter, a popular product's stock) gets thousands of updates per second. What happens and what do you do?",
+      "answer": "Every writer queues on that row's lock, so throughput is bounded by one-at-a-time commits, and each update writes a new row version. Options: shard the counter into N rows (`counter_id, shard`) and update a random shard, summing on read; append to a ledger table and aggregate periodically; batch increments in the application or a queue; or, for stock, pre-allocate units into rows that are claimed with `SKIP LOCKED`. Keep the transactions that touch the hot row as short as possible: do no other work after the update and before commit."
+    },
+    {
+      "question": "How do you add an index and a foreign key to a 200 GB table that serves live traffic?",
+      "answer": "`CREATE INDEX CONCURRENTLY` (outside a transaction block, with `lock_timeout` set; check for and drop an INVALID index if it fails). For the foreign key, `ADD CONSTRAINT ... FOREIGN KEY ... NOT VALID` takes a short lock and enforces the rule for new rows only; then `VALIDATE CONSTRAINT` scans existing rows under a weaker SHARE UPDATE EXCLUSIVE lock that allows reads and writes. Index the referencing column too, or deletes on the parent will scan the child. Run each step with a lock timeout and a retry loop, at a quiet time, while watching replication lag."
+    }
+  ],
+  "takeaways": [
+    "Writers lock rows until commit; plain readers never wait because MVCC gives them the last committed version.",
+    "Never read-modify-write in the app: put the arithmetic and the guard in one `UPDATE ... WHERE ... RETURNING`, and treat zero rows as the answer.",
+    "`FOR UPDATE SKIP LOCKED` turns a table into a work queue; `NOWAIT` and `lock_timeout` turn waits into fast, retryable errors.",
+    "Deadlocks (40P01) come from inconsistent lock order: lock in a fixed order, keep transactions short, and retry the whole transaction.",
+    "Pessimistic locks suit short, contended sections; optimistic version checks suit long edits and HTTP round trips.",
+    "Most DDL takes ACCESS EXCLUSIVE and queues every query behind it: always set `lock_timeout` for migrations and use the CONCURRENTLY / NOT VALID variants."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqk-mvcc-block",
+        "type": "sequence",
+        "title": "A writer blocks a writer, never a reader",
+        "alt": "Sequence diagram with Session A, Session B and Postgres. A updates account 1 and holds the row lock without committing. B reads account 1 and immediately gets the old committed balance of 100. B then tries to update the same row and waits. When A commits, B's update proceeds on the new version, taking the balance from 90 to 85.",
+        "caption": "Row locks only queue writers (and FOR UPDATE/SHARE readers); plain SELECTs read a snapshot and never wait.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Session A"
+          },
+          {
+            "id": "b",
+            "label": "Session B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "UPDATE acct 1: bal 100 -> 90"
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "UPDATE 1 (row lock held)",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "SELECT bal FROM acct 1"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "100, at once",
+            "style": "reply",
+            "note": "Plain readers never wait: MVCC hands B the last committed version, not A's uncommitted 90."
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE acct 1: bal - 5",
+            "style": "async",
+            "note": "B needs the same row lock, so it waits until A commits or rolls back."
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "UPDATE 1 (90 -> 85)",
+            "style": "reply",
+            "note": "In READ COMMITTED, B re-reads the newly committed row, re-checks its WHERE and applies bal - 5 to 90."
+          }
+        ]
+      },
+      {
+        "id": "sqk-lost-update",
+        "type": "compare",
+        "title": "Read-modify-write loses a sale; an atomic UPDATE does not",
+        "alt": "Comparison. On the left, two app sessions both read qty 5, both compute 4 in the application and both write 4, so the stock ends at 4 and one sale is lost. On the right, both sessions send UPDATE qty = qty - 1; the second waits for the first's row lock and then subtracts from the new value, so the stock ends at 3.",
+        "caption": "Do the arithmetic in the UPDATE: the row lock then serialises the two writers and both changes count.",
+        "before": {
+          "label": "Read in the app, write back",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "A reads qty 5",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "B reads qty 5",
+              "kind": "client",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "aw",
+              "label": "A writes 4",
+              "kind": "service",
+              "col": 0,
+              "row": 2,
+              "sub": "SET qty = 4"
+            },
+            {
+              "id": "bw",
+              "label": "B writes 4",
+              "kind": "service",
+              "col": 2,
+              "row": 2,
+              "sub": "SET qty = 4"
+            },
+            {
+              "id": "res",
+              "label": "qty = 4",
+              "kind": "bad",
+              "col": 1,
+              "row": 4,
+              "sub": "one sale lost"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "aw",
+              "label": "5 - 1 in app"
+            },
+            {
+              "from": "b",
+              "to": "bw",
+              "label": "5 - 1 in app"
+            },
+            {
+              "from": "aw",
+              "to": "res"
+            },
+            {
+              "from": "bw",
+              "to": "res",
+              "label": "overwrites"
+            }
+          ]
+        },
+        "after": {
+          "label": "Atomic UPDATE in the database",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "A: qty - 1",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "B: qty - 1",
+              "kind": "client",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "row",
+              "label": "row lock",
+              "kind": "state",
+              "col": 1,
+              "row": 2,
+              "sub": "B waits for A"
+            },
+            {
+              "id": "res",
+              "label": "qty = 3",
+              "kind": "good",
+              "col": 1,
+              "row": 4,
+              "sub": "both sales count"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "row",
+              "label": "first"
+            },
+            {
+              "from": "b",
+              "to": "row",
+              "label": "waits"
+            },
+            {
+              "from": "row",
+              "to": "res",
+              "label": "5 -> 4 -> 3"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqk-pess-opt",
+        "type": "compare",
+        "title": "Pessimistic locking versus optimistic version checks",
+        "alt": "Comparison. Pessimistic, on the left: SELECT FOR UPDATE locks the row, a second writer is blocked while the first holds the lock, then the first updates and commits, releasing it. Optimistic, on the right: a client reads version 3 with no lock, later sends UPDATE where version is 3 setting version 4; one row updated means saved, zero rows means a conflict that is re-read and retried or reported as 409.",
+        "caption": "Pessimistic makes others wait; optimistic lets everyone proceed and makes the loser retry. Pick by how often writers collide.",
+        "before": {
+          "label": "Pessimistic: lock, then write",
+          "nodes": [
+            {
+              "id": "r",
+              "label": "SELECT FOR UPD",
+              "kind": "service",
+              "col": 0,
+              "row": 0,
+              "sub": "inside BEGIN"
+            },
+            {
+              "id": "l",
+              "label": "row locked",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "others wait"
+            },
+            {
+              "id": "b",
+              "label": "2nd writer",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "blocked meanwhile"
+            },
+            {
+              "id": "w",
+              "label": "UPDATE, COMMIT",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "lock released"
+            }
+          ],
+          "edges": [
+            {
+              "from": "r",
+              "to": "l",
+              "label": "lock"
+            },
+            {
+              "from": "b",
+              "to": "l",
+              "label": "waits",
+              "style": "async"
+            },
+            {
+              "from": "l",
+              "to": "w",
+              "label": "write"
+            }
+          ]
+        },
+        "after": {
+          "label": "Optimistic: check the version",
+          "nodes": [
+            {
+              "id": "r",
+              "label": "read version 3",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "no lock held"
+            },
+            {
+              "id": "u",
+              "label": "UPDATE v = 3",
+              "kind": "service",
+              "col": 2,
+              "row": 0,
+              "sub": "SET v = 4"
+            },
+            {
+              "id": "c",
+              "label": "0 rows: conflict",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "re-read, retry/409"
+            },
+            {
+              "id": "ok",
+              "label": "1 row: saved",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "r",
+              "to": "u",
+              "label": "write later"
+            },
+            {
+              "from": "u",
+              "to": "ok",
+              "label": "version matched"
+            },
+            {
+              "from": "u",
+              "to": "c",
+              "label": "stale",
+              "style": "fail"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqk-deadlock",
+        "type": "sequence",
+        "title": "Two transfers lock rows in opposite order",
+        "alt": "Sequence diagram. Session A updates account 1 and Session B updates account 2, each taking a row lock. A then tries to update account 2 and waits for B; B tries to update account 1 and waits for A. After deadlock_timeout Postgres detects the cycle and aborts B with error 40P01; A's update is granted and A commits; B rolls back and retries.",
+        "caption": "A deadlock is a cycle of waits. Postgres breaks it by aborting one transaction; you prevent it by locking in a consistent order.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Session A"
+          },
+          {
+            "id": "b",
+            "label": "Session B"
+          },
+          {
+            "id": "db",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "db",
+            "label": "UPDATE acct 1 (locks row 1)"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE acct 2 (locks row 2)"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "UPDATE acct 2: waits for B",
+            "style": "async"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "UPDATE acct 1: waits for A",
+            "style": "async",
+            "note": "A cycle: each session waits for a lock the other holds, so neither can ever finish."
+          },
+          {
+            "from": "db",
+            "to": "b",
+            "label": "ERROR 40P01 deadlock detected",
+            "style": "fail",
+            "note": "After deadlock_timeout (1s by default) a waiting backend checks the wait-for graph and aborts one transaction. Which one is not guaranteed."
+          },
+          {
+            "from": "db",
+            "to": "a",
+            "label": "UPDATE 1 (lock granted)",
+            "style": "reply"
+          },
+          {
+            "from": "a",
+            "to": "db",
+            "label": "COMMIT"
+          },
+          {
+            "from": "b",
+            "to": "db",
+            "label": "ROLLBACK; retry from BEGIN",
+            "note": "The whole transaction is gone, not just the statement. Retry it from the start, with backoff."
+          }
+        ]
+      },
+      {
+        "id": "sqk-lock-conflicts",
+        "type": "flow",
+        "title": "Which table lock each statement takes, and what it blocks",
+        "alt": "Five rows, each a statement on the left with an arrow to the table lock mode it takes on the right. SELECT takes ACCESS SHARE, which conflicts only with ACCESS EXCLUSIVE. UPDATE and DELETE take ROW EXCLUSIVE, which blocks CREATE INDEX. CREATE INDEX takes SHARE, which blocks all writes. CREATE INDEX CONCURRENTLY takes SHARE UPDATE EXCLUSIVE, so writes continue. ALTER TABLE takes ACCESS EXCLUSIVE, which blocks everything, including SELECT.",
+        "caption": "Most DDL needs ACCESS EXCLUSIVE, the one mode that even a plain SELECT conflicts with.",
+        "nodes": [
+          {
+            "id": "s1",
+            "label": "SELECT",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "m1",
+            "label": "ACCESS SHARE",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "blocks: ALTER only"
+          },
+          {
+            "id": "s2",
+            "label": "UPDATE / DELETE",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "also INSERT"
+          },
+          {
+            "id": "m2",
+            "label": "ROW EXCLUSIVE",
+            "kind": "state",
+            "col": 2,
+            "row": 1,
+            "sub": "blocks CREATE IDX"
+          },
+          {
+            "id": "s3",
+            "label": "CREATE INDEX",
+            "kind": "client",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "m3",
+            "label": "SHARE",
+            "kind": "bad",
+            "col": 2,
+            "row": 2,
+            "sub": "blocks all writes"
+          },
+          {
+            "id": "s4",
+            "label": "CREATE IDX CONC",
+            "kind": "client",
+            "col": 0,
+            "row": 3,
+            "sub": "CONCURRENTLY"
+          },
+          {
+            "id": "m4",
+            "label": "SHARE UPD EXCL",
+            "kind": "good",
+            "col": 2,
+            "row": 3,
+            "sub": "writes continue"
+          },
+          {
+            "id": "s5",
+            "label": "ALTER TABLE",
+            "kind": "client",
+            "col": 0,
+            "row": 4,
+            "sub": "most forms, DROP"
+          },
+          {
+            "id": "m5",
+            "label": "ACCESS EXCL",
+            "kind": "bad",
+            "col": 2,
+            "row": 4,
+            "sub": "blocks everything"
+          }
+        ],
+        "edges": [
+          {
+            "from": "s1",
+            "to": "m1"
+          },
+          {
+            "from": "s2",
+            "to": "m2"
+          },
+          {
+            "from": "s3",
+            "to": "m3"
+          },
+          {
+            "from": "s4",
+            "to": "m4"
+          },
+          {
+            "from": "s5",
+            "to": "m5"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Reads take ACCESS SHARE and writes take ROW EXCLUSIVE. These two do not conflict with each other, or with themselves, so normal traffic never blocks at table level; row locks do the fine-grained work."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "A plain `CREATE INDEX` takes SHARE: reads continue but every INSERT, UPDATE and DELETE waits until the build finishes."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "`CREATE INDEX CONCURRENTLY` takes SHARE UPDATE EXCLUSIVE, which does not conflict with ROW EXCLUSIVE, so writes keep flowing. It is slower and cannot run inside a transaction block."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Most `ALTER TABLE` forms, `DROP`, `TRUNCATE` and `VACUUM FULL` take ACCESS EXCLUSIVE, which conflicts with every mode, including a plain SELECT's ACCESS SHARE."
+          }
+        ]
+      },
+      {
+        "id": "sqk-skip-locked",
+        "type": "flow",
+        "title": "Two workers claim different jobs with SKIP LOCKED",
+        "alt": "Flow. Worker A selects the two oldest queued jobs with FOR UPDATE SKIP LOCKED and locks jobs 1 and 2. Worker B runs the same query while A's transaction is open; jobs 1 and 2 are locked, so B skips them and locks jobs 3 and 4 instead. Each worker processes and marks its own jobs done. Job 5 waits for the next poll.",
+        "caption": "SKIP LOCKED turns a table into a queue: concurrent workers never wait on each other and never get the same job.",
+        "nodes": [
+          {
+            "id": "wa",
+            "label": "worker A",
+            "kind": "worker",
+            "col": 0,
+            "row": 0,
+            "sub": "LIMIT 2"
+          },
+          {
+            "id": "j1",
+            "label": "job 1",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "oldest: A locks"
+          },
+          {
+            "id": "j2",
+            "label": "job 2",
+            "kind": "state",
+            "col": 2,
+            "row": 1,
+            "sub": "A locks"
+          },
+          {
+            "id": "skip",
+            "label": "jobs 1-2 locked",
+            "kind": "note",
+            "col": 1,
+            "row": 2,
+            "sub": "B skips them"
+          },
+          {
+            "id": "wb",
+            "label": "worker B",
+            "kind": "worker",
+            "col": 0,
+            "row": 3,
+            "sub": "LIMIT 2"
+          },
+          {
+            "id": "j3",
+            "label": "job 3",
+            "kind": "state",
+            "col": 2,
+            "row": 3,
+            "sub": "B locks"
+          },
+          {
+            "id": "j4",
+            "label": "job 4",
+            "kind": "state",
+            "col": 2,
+            "row": 4,
+            "sub": "B locks"
+          },
+          {
+            "id": "j5",
+            "label": "job 5",
+            "kind": "state",
+            "col": 2,
+            "row": 5,
+            "sub": "still queued"
+          },
+          {
+            "id": "da",
+            "label": "A: done",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "commit releases"
+          },
+          {
+            "id": "dbn",
+            "label": "B: done",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "commit releases"
+          }
+        ],
+        "edges": [
+          {
+            "from": "wa",
+            "to": "j1",
+            "label": "FOR UPDATE"
+          },
+          {
+            "from": "wa",
+            "to": "j2"
+          },
+          {
+            "from": "wb",
+            "to": "skip",
+            "label": "locked rows",
+            "style": "fail"
+          },
+          {
+            "from": "wb",
+            "to": "j3",
+            "label": "SKIP LOCKED"
+          },
+          {
+            "from": "wb",
+            "to": "j4"
+          },
+          {
+            "from": "j1",
+            "to": "da"
+          },
+          {
+            "from": "j2",
+            "to": "da"
+          },
+          {
+            "from": "j3",
+            "to": "dbn"
+          },
+          {
+            "from": "j4",
+            "to": "dbn"
+          },
+          {
+            "from": "wb",
+            "to": "j5",
+            "label": "next poll",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Worker A runs the claim query: the two oldest queued rows, `FOR UPDATE SKIP LOCKED`. It locks jobs 1 and 2 and marks them running."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "Worker B runs the same query while A's transaction is still open. Jobs 1 and 2 are locked, so instead of waiting B silently skips them."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "B locks the next two rows, jobs 3 and 4. No two workers ever hold the same job, and no worker waits."
+          },
+          {
+            "edges": [
+              5,
+              6,
+              7,
+              8
+            ],
+            "text": "Each worker does its work, sets the status to done and commits, which releases the row locks."
+          },
+          {
+            "edges": [
+              9
+            ],
+            "text": "Job 5 stays queued for whichever worker polls next. If a worker crashes mid-transaction, its locks vanish with the rollback and its jobs become claimable again."
+          }
+        ]
+      },
+      {
+        "id": "sqk-lock-queue",
+        "type": "timeline",
+        "title": "A one-line migration that blocked every read",
+        "alt": "Timeline. At T+0 a reporting job opens a transaction that reads orders and stays open. At 30 seconds a migration runs ALTER TABLE orders and waits for ACCESS EXCLUSIVE. From 31 seconds every new SELECT on orders queues behind the waiting ALTER. By one minute the connection pool is exhausted and checkout times out. At two minutes pg_stat_activity shows the lock waits; the migration is cancelled and reads resume; it is re-run with a lock_timeout and retries.",
+        "caption": "The ALTER itself was instant; waiting for its lock in the queue was the outage. Always set lock_timeout for DDL.",
+        "events": [
+          {
+            "at": "T+0",
+            "label": "Report opens a transaction, reads orders, stays open: ACCESS SHARE held for 10 min",
+            "kind": "trigger"
+          },
+          {
+            "at": "T+30s",
+            "label": "Migration runs ALTER TABLE orders ADD COLUMN ...; it waits for ACCESS EXCLUSIVE",
+            "kind": "trigger"
+          },
+          {
+            "at": "T+31s",
+            "label": "Every new SELECT on orders queues behind the waiting ALTER, not just behind the report",
+            "kind": "impact"
+          },
+          {
+            "at": "T+60s",
+            "label": "App connection pool is exhausted; checkout requests time out",
+            "kind": "impact"
+          },
+          {
+            "at": "T+2m",
+            "label": "pg_stat_activity shows dozens of Lock waits; pg_blocking_pids names the ALTER",
+            "kind": "detect"
+          },
+          {
+            "at": "T+3m",
+            "label": "Migration cancelled with pg_cancel_backend; queued reads run at once",
+            "kind": "mitigate"
+          },
+          {
+            "at": "Next deploy",
+            "label": "Re-run with SET lock_timeout = '3s' and retries; the report gets a statement_timeout",
+            "kind": "resolve"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE jobs (\n  id         int PRIMARY KEY,\n  kind       text NOT NULL,\n  status     text NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed')),\n  created_at timestamptz NOT NULL,\n  claimed_by text,\n  attempts   int NOT NULL DEFAULT 0\n);",
+        "starter": "-- Claim the next 3 queued jobs for worker-7 (oldest first, ties by id).\n-- Mark them running, record the worker, count the attempt, return id, kind, attempts.\nUPDATE jobs\nSET status = 'running', claimed_by = 'worker-7'\nWHERE status = 'queued'\nRETURNING id, kind, attempts;\n",
+        "solution": "UPDATE jobs\nSET status     = 'running',\n    claimed_by = 'worker-7',\n    attempts   = attempts + 1\nWHERE id IN (\n  SELECT id\n  FROM jobs\n  WHERE status = 'queued'\n  ORDER BY created_at, id\n  LIMIT 3\n  FOR UPDATE SKIP LOCKED\n)\nRETURNING id, kind, attempts;\n",
+        "check": "SELECT id, status, claimed_by, attempts FROM jobs",
+        "tests": [
+          {
+            "name": "six jobs: the three oldest queued ones are claimed, the finished one is not",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email',  'done',   '2024-05-01 08:00+00', 'worker-2', 1),\n(2, 'email',  'queued', '2024-05-01 09:00+00', NULL, 0),\n(3, 'resize', 'queued', '2024-05-01 09:05+00', NULL, 0),\n(4, 'email',  'queued', '2024-05-01 09:01+00', NULL, 0),\n(5, 'report', 'queued', '2024-05-01 09:10+00', NULL, 0),\n(6, 'resize', 'queued', '2024-05-01 08:59+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "done",
+                  "worker-2",
+                  1
+                ],
+                [
+                  2,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  3,
+                  "queued",
+                  null,
+                  0
+                ],
+                [
+                  4,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  5,
+                  "queued",
+                  null,
+                  0
+                ],
+                [
+                  6,
+                  "running",
+                  "worker-7",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "equal created_at: lower ids go first and a running job is left alone",
+            "seed": "INSERT INTO jobs VALUES\n(10, 'email', 'running', '2024-05-01 07:00+00', 'worker-3', 1),\n(14, 'email', 'queued',  '2024-05-01 10:00+00', NULL, 0),\n(12, 'email', 'queued',  '2024-05-01 10:00+00', NULL, 0),\n(13, 'email', 'queued',  '2024-05-01 10:00+00', NULL, 0),\n(11, 'email', 'queued',  '2024-05-01 10:00+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  10,
+                  "running",
+                  "worker-3",
+                  1
+                ],
+                [
+                  11,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  12,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  13,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  14,
+                  "queued",
+                  null,
+                  0
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "only two queued jobs: both are claimed and the failed one stays failed",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email',  'queued', '2024-06-01 12:00+00', NULL, 0),\n(2, 'report', 'failed', '2024-06-01 11:00+00', 'worker-1', 3),\n(3, 'resize', 'queued', '2024-06-01 12:30+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  2,
+                  "failed",
+                  "worker-1",
+                  3
+                ],
+                [
+                  3,
+                  "running",
+                  "worker-7",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "nothing is queued: no row changes",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email',  'done',    '2024-06-01 09:00+00', 'worker-1', 1),\n(2, 'email',  'running', '2024-06-01 09:30+00', 'worker-2', 1),\n(3, 'resize', 'failed',  '2024-06-01 09:45+00', 'worker-2', 5);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "done",
+                  "worker-1",
+                  1
+                ],
+                [
+                  2,
+                  "running",
+                  "worker-2",
+                  1
+                ],
+                [
+                  3,
+                  "failed",
+                  "worker-2",
+                  5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a re-queued job keeps counting attempts and gets the new worker",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email', 'queued', '2024-06-02 08:00+00', 'worker-4', 2),\n(2, 'email', 'queued', '2024-06-02 08:10+00', NULL, 0),\n(3, 'email', 'queued', '2024-06-02 08:20+00', NULL, 0),\n(4, 'email', 'queued', '2024-06-02 08:30+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "running",
+                  "worker-7",
+                  3
+                ],
+                [
+                  2,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  3,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  4,
+                  "queued",
+                  null,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "times written in other zones are compared as instants",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email', 'queued', '2024-06-03 10:30+02', NULL, 0),\n(2, 'email', 'queued', '2024-06-03 09:00+00', NULL, 0),\n(3, 'email', 'queued', '2024-06-03 08:45+00', NULL, 0),\n(4, 'email', 'queued', '2024-06-03 11:00+03', NULL, 0),\n(5, 'email', 'queued', '2024-06-03 08:50+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  2,
+                  "queued",
+                  null,
+                  0
+                ],
+                [
+                  3,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  4,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  5,
+                  "queued",
+                  null,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a tie at the cut-off: the lowest id among the tied jobs is third",
+            "seed": "INSERT INTO jobs VALUES\n(30, 'email',  'queued', '2024-06-04 10:00+00', NULL, 0),\n(7,  'resize', 'queued', '2024-06-04 10:05+00', NULL, 0),\n(21, 'report', 'queued', '2024-06-04 10:05+00', NULL, 0),\n(9,  'email',  'queued', '2024-06-04 10:05+00', NULL, 0),\n(2,  'email',  'queued', '2024-06-04 10:06+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  30,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  7,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  21,
+                  "queued",
+                  null,
+                  0
+                ],
+                [
+                  9,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  2,
+                  "queued",
+                  null,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "old finished jobs never count towards the three",
+            "seed": "INSERT INTO jobs VALUES\n(1, 'email',  'done',   '2024-06-05 07:00+00', 'worker-1', 1),\n(2, 'email',  'done',   '2024-06-05 07:01+00', 'worker-1', 1),\n(3, 'email',  'failed', '2024-06-05 07:02+00', 'worker-2', 4),\n(4, 'resize', 'queued', '2024-06-05 08:00+00', NULL, 0),\n(5, 'resize', 'queued', '2024-06-05 08:01+00', NULL, 0),\n(6, 'resize', 'queued', '2024-06-05 08:02+00', NULL, 0);",
+            "expected": {
+              "columns": [
+                "id",
+                "status",
+                "claimed_by",
+                "attempts"
+              ],
+              "rows": [
+                [
+                  1,
+                  "done",
+                  "worker-1",
+                  1
+                ],
+                [
+                  2,
+                  "done",
+                  "worker-1",
+                  1
+                ],
+                [
+                  3,
+                  "failed",
+                  "worker-2",
+                  4
+                ],
+                [
+                  4,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  5,
+                  "running",
+                  "worker-7",
+                  1
+                ],
+                [
+                  6,
+                  "running",
+                  "worker-7",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE stock (\n  sku text PRIMARY KEY,\n  qty int  NOT NULL\n);\nCREATE TABLE cart (\n  sku  text PRIMARY KEY,\n  want int  NOT NULL CHECK (want > 0)\n);",
+        "starter": "-- Reserve every cart line in one statement, never letting stock go below zero.\n-- Return sku and the qty left, for the lines that were reserved.\nUPDATE stock s\nSET qty = s.qty - c.want\nFROM cart c\nWHERE c.sku = s.sku\nRETURNING s.sku, s.qty;\n",
+        "solution": "UPDATE stock s\nSET qty = s.qty - c.want\nFROM cart c\nWHERE c.sku = s.sku\n  AND s.qty >= c.want\nRETURNING s.sku, s.qty;\n",
+        "tests": [
+          {
+            "name": "two lines fit and one is short",
+            "seed": "INSERT INTO stock VALUES ('MUG-1', 10), ('TEE-2', 1), ('CAP-3', 4), ('BAG-9', 7);\nINSERT INTO cart VALUES ('MUG-1', 3), ('TEE-2', 2), ('CAP-3', 4);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  7
+                ],
+                [
+                  "CAP-3",
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "one line with plenty of stock",
+            "seed": "INSERT INTO stock VALUES ('PEN-4', 100), ('MUG-1', 2);\nINSERT INTO cart VALUES ('PEN-4', 25);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "PEN-4",
+                  75
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "taking exactly what is left leaves zero; an empty shelf is skipped",
+            "seed": "INSERT INTO stock VALUES ('A-1', 5), ('B-2', 0);\nINSERT INTO cart VALUES ('A-1', 5), ('B-2', 1);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "A-1",
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a cart line for an unknown sku is ignored",
+            "seed": "INSERT INTO stock VALUES ('MUG-1', 3);\nINSERT INTO cart VALUES ('MUG-1', 1), ('GHOST-0', 2);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "MUG-1",
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every line is short: nothing is reserved",
+            "seed": "INSERT INTO stock VALUES ('MUG-1', 1), ('TEE-2', 0);\nINSERT INTO cart VALUES ('MUG-1', 2), ('TEE-2', 1);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "products not in the cart are not returned",
+            "seed": "INSERT INTO stock VALUES ('A-1', 9), ('B-2', 9), ('C-3', 9), ('D-4', 9);\nINSERT INTO cart VALUES ('B-2', 1), ('D-4', 9);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "B-2",
+                  8
+                ],
+                [
+                  "D-4",
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "short by a single unit is still short",
+            "seed": "INSERT INTO stock VALUES ('X-1', 2), ('Y-2', 3);\nINSERT INTO cart VALUES ('X-1', 3), ('Y-2', 3);",
+            "expected": {
+              "columns": [
+                "sku",
+                "qty"
+              ],
+              "rows": [
+                [
+                  "Y-2",
+                  0
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE docs (\n  id         int  PRIMARY KEY,\n  body       text NOT NULL,\n  version    int  NOT NULL,\n  updated_by text\n);\nCREATE TABLE edits (\n  doc_id       int  PRIMARY KEY,\n  base_version int  NOT NULL,\n  new_body     text NOT NULL,\n  editor       text NOT NULL\n);\nCREATE TABLE conflicts (\n  doc_id          int NOT NULL,\n  base_version    int NOT NULL,\n  current_version int\n);",
+        "starter": "-- Apply the batch of edits with optimistic concurrency.\n-- TODO: this is last-write-wins: it ignores base_version and records no conflicts.\nUPDATE docs d\nSET body = e.new_body, updated_by = e.editor, version = d.version + 1\nFROM edits e\nWHERE e.doc_id = d.id;\n",
+        "solution": "WITH saved AS (\n  UPDATE docs d\n  SET body       = e.new_body,\n      updated_by = e.editor,\n      version    = d.version + 1\n  FROM edits e\n  WHERE e.doc_id = d.id\n    AND d.version = e.base_version      -- the optimistic check\n  RETURNING d.id\n)\nINSERT INTO conflicts (doc_id, base_version, current_version)\nSELECT e.doc_id, e.base_version, d.version   -- d is read from the statement's snapshot\nFROM edits e\nLEFT JOIN docs d ON d.id = e.doc_id\nWHERE NOT EXISTS (SELECT 1 FROM saved s WHERE s.id = e.doc_id);\n",
+        "check": "SELECT 'doc' AS kind, id AS doc_id, body || ' / ' || coalesce(updated_by, '-') AS detail, version\nFROM docs\nUNION ALL\nSELECT 'conflict', doc_id, 'base ' || base_version, current_version\nFROM conflicts",
+        "tests": [
+          {
+            "name": "a fresh edit is saved and a stale edit becomes a conflict",
+            "seed": "INSERT INTO docs VALUES (1, 'Intro v3', 3, 'ana'), (2, 'Pricing v5', 5, 'ben'), (3, 'FAQ v1', 1, NULL);\nINSERT INTO edits VALUES (1, 3, 'Intro v4', 'cara'), (2, 4, 'Pricing from v4', 'dev');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  1,
+                  "Intro v4 / cara",
+                  4
+                ],
+                [
+                  "doc",
+                  2,
+                  "Pricing v5 / ben",
+                  5
+                ],
+                [
+                  "doc",
+                  3,
+                  "FAQ v1 / -",
+                  1
+                ],
+                [
+                  "conflict",
+                  2,
+                  "base 4",
+                  5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "two fresh edits and no conflicts",
+            "seed": "INSERT INTO docs VALUES (10, 'Terms', 1, 'ana'), (11, 'Privacy', 2, 'ana');\nINSERT INTO edits VALUES (10, 1, 'Terms rev', 'ben'), (11, 2, 'Privacy rev', 'cara');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  10,
+                  "Terms rev / ben",
+                  2
+                ],
+                [
+                  "doc",
+                  11,
+                  "Privacy rev / cara",
+                  3
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "an edit for a missing document is a conflict with no current version",
+            "seed": "INSERT INTO docs VALUES (1, 'Alpha', 1, 'xan');\nINSERT INTO edits VALUES (1, 1, 'Alpha 2', 'yui'), (99, 1, 'Ghost', 'zed');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  1,
+                  "Alpha 2 / yui",
+                  2
+                ],
+                [
+                  "conflict",
+                  99,
+                  "base 1",
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "a base version ahead of the document is also a conflict",
+            "seed": "INSERT INTO docs VALUES (5, 'Plan', 2, 'ana');\nINSERT INTO edits VALUES (5, 3, 'Plan from the future', 'ben');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  5,
+                  "Plan / ana",
+                  2
+                ],
+                [
+                  "conflict",
+                  5,
+                  "base 3",
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "an empty batch changes nothing",
+            "seed": "INSERT INTO docs VALUES (1, 'Alpha', 7, 'ana'), (2, 'Beta', 1, NULL);",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  1,
+                  "Alpha / ana",
+                  7
+                ],
+                [
+                  "doc",
+                  2,
+                  "Beta / -",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "saving identical text still bumps the version",
+            "seed": "INSERT INTO docs VALUES (4, 'Same', 9, 'ana');\nINSERT INTO edits VALUES (4, 9, 'Same', 'ana');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  4,
+                  "Same / ana",
+                  10
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every edit is stale: documents keep their text and versions",
+            "seed": "INSERT INTO docs VALUES (1, 'A', 2, 'xan'), (2, 'B', 2, 'xan'), (3, 'C', 2, 'xan');\nINSERT INTO edits VALUES (1, 1, 'A?', 'yui'), (2, 1, 'B?', 'yui'), (3, 0, 'C?', 'zed');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  1,
+                  "A / xan",
+                  2
+                ],
+                [
+                  "doc",
+                  2,
+                  "B / xan",
+                  2
+                ],
+                [
+                  "doc",
+                  3,
+                  "C / xan",
+                  2
+                ],
+                [
+                  "conflict",
+                  1,
+                  "base 1",
+                  2
+                ],
+                [
+                  "conflict",
+                  2,
+                  "base 1",
+                  2
+                ],
+                [
+                  "conflict",
+                  3,
+                  "base 0",
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "version 0 documents follow the same rule",
+            "seed": "INSERT INTO docs VALUES (7, 'Draft', 0, NULL), (8, 'Notes', 0, NULL);\nINSERT INTO edits VALUES (7, 0, 'Draft 1', 'kai'), (8, 1, 'Notes 2', 'kai');",
+            "expected": {
+              "columns": [
+                "kind",
+                "doc_id",
+                "detail",
+                "version"
+              ],
+              "rows": [
+                [
+                  "doc",
+                  7,
+                  "Draft 1 / kai",
+                  1
+                ],
+                [
+                  "doc",
+                  8,
+                  "Notes / -",
+                  0
+                ],
+                [
+                  "conflict",
+                  8,
+                  "base 1",
+                  0
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "CREATE TEMP TABLE stock (id int PRIMARY KEY, qty int NOT NULL);\nINSERT INTO stock VALUES (1, 0);\nUPDATE stock SET qty = qty - 1\nWHERE id = 1 AND qty > 0\nRETURNING qty;",
+        "choices": [
+          "-1",
+          "0",
+          "(no rows)",
+          "ERROR: new row for relation \"stock\" violates check constraint"
+        ],
+        "answer": 2,
+        "explain": "The guard `qty > 0` is false, so the UPDATE matches no row and `RETURNING` returns nothing. The application treats \"no row back\" as sold out; no separate SELECT is needed, and there is no window for a race."
+      },
+      {
+        "code": "CREATE TEMP TABLE docs (id int PRIMARY KEY, body text, version int NOT NULL);\nINSERT INTO docs VALUES (1, 'draft', 4);\nUPDATE docs SET body = 'final', version = version + 1\nWHERE id = 1 AND version = 3;\nSELECT body, version FROM docs;",
+        "choices": [
+          "final | 5",
+          "draft | 4",
+          "final | 4",
+          "ERROR: could not serialize access due to concurrent update"
+        ],
+        "answer": 1,
+        "explain": "The client read version 3, but the row is already at 4, so the optimistic UPDATE matches zero rows and changes nothing. The caller must check the affected-row count: a stale version is not an error, just `UPDATE 0`."
+      },
+      {
+        "code": "SELECT pg_advisory_lock(7);\nSELECT pg_advisory_lock(7);\nSELECT pg_advisory_unlock(7) AS first,\n       pg_advisory_unlock(7) AS second,\n       pg_advisory_unlock(7) AS third;",
+        "choices": [
+          "true | true | false",
+          "true | false | false",
+          "true | true | true"
+        ],
+        "answer": 0,
+        "explain": "Session-level advisory locks stack: the same session can take key 7 twice without blocking itself, and must release it twice. The third unlock has nothing to release, so it returns false (with a warning). The `_xact_` variants avoid this bookkeeping."
+      },
+      {
+        "code": "CREATE TEMP TABLE jobs (id int PRIMARY KEY, status text);\nINSERT INTO jobs VALUES (1, 'queued'), (2, 'queued'), (3, 'queued');\nSELECT count(*) FROM jobs WHERE status = 'queued' FOR UPDATE;",
+        "choices": [
+          "3",
+          "0",
+          "ERROR: FOR UPDATE is not allowed with aggregate functions"
+        ],
+        "answer": 2,
+        "explain": "A row lock must attach to a physical row, and an aggregate's output row comes from many. Lock the rows in a subquery (`SELECT count(*) FROM (SELECT id ... FOR UPDATE) s`) if you really need both."
+      },
+      {
+        "code": "CREATE TABLE accounts (id int PRIMARY KEY, balance int);\nCOMMIT;\nBEGIN;\nALTER TABLE accounts ADD COLUMN note text;\nSELECT mode FROM pg_locks\nWHERE relation = 'accounts'::regclass;",
+        "choices": [
+          "AccessShareLock",
+          "RowExclusiveLock",
+          "ShareUpdateExclusiveLock",
+          "AccessExclusiveLock"
+        ],
+        "answer": 3,
+        "explain": "Even a metadata-only `ADD COLUMN` takes ACCESS EXCLUSIVE and holds it until the transaction ends, blocking every reader of `accounts` meanwhile. Keep DDL transactions short and set `lock_timeout`."
+      },
+      {
+        "code": "CREATE TEMP TABLE jobs (id int PRIMARY KEY, status text);\nINSERT INTO jobs VALUES (1, 'queued'), (2, 'queued'), (3, 'queued');\nBEGIN;\nSELECT id FROM jobs WHERE id = 1 FOR UPDATE;\nSELECT count(*) FROM (\n  SELECT id FROM jobs FOR UPDATE SKIP LOCKED\n) AS free;",
+        "choices": [
+          "2",
+          "3",
+          "0"
+        ],
+        "answer": 1,
+        "explain": "A transaction never conflicts with its own locks, so `SKIP LOCKED` skips only rows locked by other transactions. Row 1 is locked by this same transaction and is counted. Testing a queue in one session therefore cannot show skipping; you need two connections."
+      }
+    ],
+    "tip": "When a concurrency question comes up, draw two vertical lanes, Session A and Session B, with time running down, and play the interleaving that breaks the naive design before proposing the fix. Then name the mechanism precisely (row lock from `FOR UPDATE`, conditional UPDATE, version check, `SKIP LOCKED`, lock order) and the failure the client must handle (zero rows, 40P01, 40001, 55P03) with its retry policy.",
+    "links": {
+      "guides": [
+        "transactions-isolation",
+        "idempotency-keys",
+        "retries-backoff",
+        "queues-async-work",
+        "schema-migrations"
+      ],
+      "lessons": [
+        "design-queues-events",
+        "design-databases-indexes"
+      ]
+    }
+  }
+}

@@ -229,6 +229,186 @@
       "front": "Why store money as `numeric` rather than `float8`?",
       "back": "float8 is binary floating point, so `0.1::float8 + 0.2` gives 0.30000000000000004. `numeric` is exact decimal; use something like `numeric(12,2)`.",
       "level": "se"
+    },
+    {
+      "id": "sql-composite-index-order",
+      "front": "Which index serves `WHERE org_id = 7 AND created_at >= '2024-03-01' AND created_at < '2024-04-01'`: `(org_id, created_at)` or `(created_at, org_id)`?",
+      "back": "`(org_id, created_at)`. Putting the equality column first makes the matching rows one contiguous slice of the index, which a single range scan reads. With `(created_at, org_id)` the scan walks every org's rows for the month and filters `org_id` along the way. Rule: equality columns first, then the one range or sort column. The leftmost-prefix rule means the index also serves `org_id` on its own, but not `created_at` on its own.",
+      "level": "se"
+    },
+    {
+      "id": "sql-sargable-predicates",
+      "front": "There is an index on `email`. Why does `WHERE lower(email) = 'ana@shop.io'` still Seq Scan?",
+      "back": "The index stores `email` values, not `lower(email)` values, so the planner cannot search it for the computed expression. The same goes for `n + 1 = 10` and `LIKE '%foo'`. Either rewrite the predicate so the bare column is compared (`n = 9`), or build an expression index: `CREATE INDEX ON users (lower(email))`. Make that index `UNIQUE` to enforce case-insensitive uniqueness.",
+      "level": "se"
+    },
+    {
+      "id": "sql-partial-index",
+      "front": "When is a partial index like `CREATE INDEX ... ON tickets (org_id, created_at) WHERE status = 'open'` the right tool?",
+      "back": "When queries always target a small, stable subset of rows (open tickets, unprocessed jobs, rows that are not soft-deleted). The index stays small and cheap to maintain, because rows outside the subset are never written to it. The planner uses it only when the query's `WHERE` implies the index predicate, e.g. it contains `status = 'open'`. A partial `UNIQUE` index enforces rules like \"one open ticket per user\".",
+      "level": "se"
+    },
+    {
+      "id": "sql-gin-jsonb",
+      "front": "A GIN index on `doc jsonb` exists. Which filter can use it: `doc @> '{\"plan\":\"pro\"}'` or `doc->>'plan' = 'pro'`?",
+      "back": "`doc @> '{\"plan\":\"pro\"}'`. GIN indexes the keys and values inside each document and maps each one to a posting list of rows, and the operators it supports are containment and existence (`@>`, `?`, `?|`, `?&`). `->>` with `=` is an ordinary expression, so it needs a B-tree expression index on `(doc->>'plan')`. GIN also serves arrays (`@>`, `&&`) and full-text `tsvector @@ tsquery`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-create-index-concurrently",
+      "front": "How do you add an index to a large production table without blocking writes?",
+      "back": "Use `CREATE INDEX CONCURRENTLY`. It builds the index in several passes, holding a lock that still allows inserts and updates. It is slower, and it cannot run inside a transaction block, so migration tools must run it outside a transaction. If it fails, it leaves an `INVALID` index behind: drop it with `DROP INDEX CONCURRENTLY` and retry. Remember that every index adds write and storage cost.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-explain-read-order",
+      "front": "In which order do you read a Postgres EXPLAIN plan, and why?",
+      "back": "Inside-out, bottom-up. The root line runs last: execution is pull-based, the leaves (scans) read tables and each parent consumes its children's rows. Follow row counts upward and compare `rows=` (estimate) with `actual rows=` at every node.",
+      "level": "se"
+    },
+    {
+      "id": "sql-explain-analyze-dml",
+      "front": "What does `EXPLAIN ANALYZE` do to an UPDATE, and how do you measure one safely?",
+      "back": "It executes the statement, so the rows really change. Wrap it: `BEGIN; EXPLAIN ANALYZE UPDATE ...; ROLLBACK;`. Locks, WAL and sequence increments still happen. Plain `EXPLAIN` only plans.",
+      "level": "se"
+    },
+    {
+      "id": "sql-explain-loops",
+      "front": "A node shows `actual rows=10.00 loops=5`. How many rows did it produce?",
+      "back": "50. `actual rows` (and time) are per-loop averages; multiply by `loops`. Inner sides of Nested Loops usually have loops > 1.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-explain-join-choice",
+      "front": "When does each join algorithm win: Nested Loop, Hash Join, Merge Join?",
+      "back": "Nested Loop: few outer rows and an index on the inner key (and any non-equality condition). Hash Join: large unsorted inputs joined on equality, hash fits work_mem. Merge Join: both inputs already sorted on the key (for example by indexes).",
+      "level": "sse"
+    },
+    {
+      "id": "sql-explain-sargable",
+      "front": "Why does `WHERE date_trunc('day', placed_at) = d` skip the index on `placed_at`, and what is the fix?",
+      "back": "The index stores `placed_at`, not the function result, so the predicate is a Filter on every row. Use a half-open range on the bare column: `placed_at >= d AND placed_at < d + interval '1 day'`. On timestamptz you cannot index `date_trunc` itself (not IMMUTABLE).",
+      "level": "se"
+    },
+    {
+      "id": "sql-tx-aborted",
+      "front": "In Postgres, one statement inside BEGIN fails. What happens to the next statements, and to COMMIT?",
+      "back": "The transaction is aborted. Every later statement errors with `current transaction is aborted, commands ignored until end of transaction block`, and COMMIT just rolls back. To keep the earlier work, open a SAVEPOINT before the risky statement and `ROLLBACK TO` it after the error.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-read-uncommitted",
+      "front": "Does Postgres ever show dirty reads? What does READ UNCOMMITTED do?",
+      "back": "No. Postgres accepts READ UNCOMMITTED but runs it as READ COMMITTED. Under MVCC a reader only sees committed row versions plus its own writes. READ COMMITTED (the default) takes a new snapshot for each statement, so two reads in one transaction can differ.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-write-skew",
+      "front": "Which Postgres isolation level prevents write skew, and what must the application do?",
+      "back": "Only SERIALIZABLE, which uses SSI. REPEATABLE READ is snapshot isolation: two transactions can each check a condition and write different rows, leaving the invariant broken. Under SERIALIZABLE one of them fails with SQLSTATE 40001, and the app must retry the whole transaction. Other fixes are `SELECT ... FOR UPDATE` on the guarded rows or a constraint.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-mvcc-update-version",
+      "front": "What physically happens when Postgres UPDATEs a row?",
+      "back": "It writes a new row version: the old version gets `xmax` set to the updating transaction, and the new one gets `xmin` = that transaction (and a new `ctid`). Snapshots decide which version each reader sees, so readers don't block writers. Even a no-op `SET x = x` writes a version, so guard with `WHERE x IS DISTINCT FROM ...`.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-vacuum-long-tx",
+      "front": "Why can one long-running or idle-in-transaction session bloat a busy table?",
+      "back": "VACUUM may only remove dead versions that no open snapshot can still see. An old transaction pins the cleanup horizon, so dead tuples from every UPDATE and DELETE pile up and tables and indexes grow. Keep transactions short and set `idle_in_transaction_session_timeout`. Vacuuming also freezes old xids to prevent transaction ID wraparound.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-lost-update-atomic",
+      "front": "Two requests each run `SELECT qty`, then `UPDATE stock SET qty = <value read - 1>`. What goes wrong, and what's the fix?",
+      "back": "A lost update. Both read 5 and both write 4, so one decrement disappears, and nothing errors under READ COMMITTED. Do the arithmetic in the database: `UPDATE stock SET qty = qty - 1 WHERE id = 1 AND qty > 0 RETURNING qty`. The row lock serialises the writers, the second one re-checks `qty > 0` against the new value, and no returned row means it was sold out.",
+      "level": "se"
+    },
+    {
+      "id": "sql-skip-locked-queue",
+      "front": "How do several workers claim jobs from a Postgres table without blocking each other or taking the same job twice?",
+      "back": "`UPDATE jobs SET status = 'running', claimed_by = $1 WHERE id IN (SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT 10 FOR UPDATE SKIP LOCKED) RETURNING *`. `FOR UPDATE` locks the chosen rows, and `SKIP LOCKED` makes other workers pass over rows that are already locked instead of waiting for them. Keep the transaction short and index `(status, created_at)`.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-deadlock-40p01",
+      "front": "What causes a Postgres deadlock (SQLSTATE `40P01`), and how do you prevent it?",
+      "back": "Two transactions each hold a row lock the other needs, for example T1 locks account 1 then 2 while T2 locks 2 then 1. After `deadlock_timeout` (1s by default) Postgres detects the cycle and aborts one of them with `40P01`. Prevent it by always locking in the same order (`ORDER BY id FOR UPDATE`), keeping transactions short, and retrying `40P01` as a transient error.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-optimistic-version",
+      "front": "How does optimistic concurrency with a version column work in SQL?",
+      "back": "Read the row along with its `version`. Write with `UPDATE docs SET body = $2, version = version + 1 WHERE id = $1 AND version = $3`, then check how many rows were affected. 1 means you won. 0 means someone else changed the row first, so reload and either merge or report a conflict. No lock is held while the user edits. Use pessimistic `FOR UPDATE` when conflicts are frequent and the critical section is short.",
+      "level": "se"
+    },
+    {
+      "id": "sql-ddl-lock-queue",
+      "front": "Why can a quick `ALTER TABLE ... ADD COLUMN` take a busy table offline, and how do you run migrations safely?",
+      "back": "`ALTER TABLE` needs an `ACCESS EXCLUSIVE` lock, so it waits behind any long-running transaction that has touched the table. While it waits it sits in the lock queue, and every later query, plain SELECTs included, queues behind it. Set `lock_timeout = '2s'` and retry, kill or avoid long transactions, and use `CREATE INDEX CONCURRENTLY`, which runs outside a transaction block.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-select-then-insert-race",
+      "front": "Why is SELECT-then-INSERT unsafe for 'create if missing', and what replaces it?",
+      "back": "Two sessions can both SELECT, see no row and both INSERT; a transaction does not help because there is no row to lock. Use `INSERT ... ON CONFLICT` so the unique index decides inside the write.",
+      "level": "se"
+    },
+    {
+      "id": "sql-on-conflict-excluded",
+      "front": "In `ON CONFLICT ... DO UPDATE`, what do the table name and `EXCLUDED` refer to?",
+      "back": "The table name (or its `AS` alias) is the stored row; `EXCLUDED` is the proposed row. Qualify both: a bare column on the right of SET is ambiguous. Counters add: `SET n = t.n + EXCLUDED.n`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-on-conflict-target",
+      "front": "What must the conflict target in `ON CONFLICT (cols)` match?",
+      "back": "A unique index or constraint on exactly those columns (or the same expression, plus the WHERE of a partial index). A plain index gives 'no unique or exclusion constraint matching the ON CONFLICT specification'.",
+      "level": "se"
+    },
+    {
+      "id": "sql-upsert-affect-twice",
+      "front": "What causes 'ON CONFLICT DO UPDATE command cannot affect row a second time', and how do you fix it?",
+      "back": "The source has the same key twice in one statement. Collapse it to one row per key first: `GROUP BY` with `sum` for counters, `DISTINCT ON (key) ... ORDER BY key, updated_at DESC` for latest. MERGE has the same rule.",
+      "level": "se"
+    },
+    {
+      "id": "sql-upsert-returning-merge",
+      "front": "What does RETURNING give for a DO NOTHING conflict, and when is MERGE better than ON CONFLICT?",
+      "back": "Nothing: only inserted or updated rows are returned. MERGE (PG15+, RETURNING merge_action() in PG17+) suits batch syncs with several branches or deletes; ON CONFLICT is the safe choice for concurrent upserts, since MERGE can still hit a unique violation.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-offset-cost",
+      "front": "Why does `LIMIT 20 OFFSET 10000` get slow even with an index on the sort columns?",
+      "back": "OFFSET does not jump: Postgres produces rows in order and discards the first 10,000, so page k of size n reads about n·k rows. The index removes the sort, not the skipping. Keyset pagination (`WHERE (created_at, id) < cursor`) seeks straight to the cursor and reads only n rows at any depth.",
+      "level": "se"
+    },
+    {
+      "id": "sql-offset-drift",
+      "front": "How can OFFSET pagination show a row twice or skip one?",
+      "back": "OFFSET counts positions in the current data. A row inserted above the reader shifts everything down, so the next page starts with the last row already shown (duplicate). A delete shifts rows up and one is never shown (gap). A keyset cursor names a row, so writes elsewhere do not move it.",
+      "level": "se"
+    },
+    {
+      "id": "sql-keyset-tiebreaker",
+      "front": "Why must a keyset cursor include a unique tie-breaker such as `id`?",
+      "back": "The sort key (`created_at`) can tie. With only the timestamp, `<` drops unseen rows that share the cursor's timestamp and `<=` repeats rows already shown. `ORDER BY created_at DESC, id DESC` is a total order, so `(created_at, id) < ($t, $id)` means exactly \"after this row\".",
+      "level": "se"
+    },
+    {
+      "id": "sql-row-value-comparison",
+      "front": "What does `(a, b) < (x, y)` mean in Postgres, and why prefer it over the OR form for keyset paging?",
+      "back": "It is lexicographic: `a < x OR (a = x AND b < y)`. The row form becomes a single B-tree index condition (one seek) on an index over `(a, b)` in matching directions; the plain OR form may become a filter that scans from the top. It only works when all sort columns go the same direction; mixed directions need the OR form written by hand.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-keyset-prev-page",
+      "front": "How do you fetch the previous page with keyset pagination, and how do you know there is a next page?",
+      "back": "Previous page: take the first row of the current page as the cursor, flip the comparison (`<` to `>`) and the order (`DESC` to `ASC`), `LIMIT n`, then reverse the rows to feed order. Next page exists: fetch `LIMIT n + 1` and check whether the extra row came back. No `count(*)` needed.",
+      "level": "sse"
     }
   ]
 }

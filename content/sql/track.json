@@ -2,7 +2,7 @@
   "id": "sql",
   "kind": "language",
   "title": "SQL & Postgres",
-  "description": "Interview SQL on real Postgres: NULL logic, grouping, every join, CTEs, window functions, dates and JSONB, and schema design, checked against result sets.",
+  "description": "Interview SQL on real Postgres: NULL logic, grouping, every join, CTEs, window functions, JSONB, schema design, indexes and EXPLAIN, transactions, locking, upserts and pagination, checked against result sets.",
   "lessons": [
     "sql-select-basics",
     "sql-aggregates",
@@ -11,7 +11,13 @@
     "sql-window-functions",
     "sql-sets-case",
     "sql-dates-strings-json",
-    "sql-schema-design"
+    "sql-schema-design",
+    "sql-indexes",
+    "sql-explain",
+    "sql-transactions-mvcc",
+    "sql-locking-concurrency",
+    "sql-upserts",
+    "sql-pagination"
   ],
   "placement": [
     {
@@ -240,6 +246,177 @@
       "explain": "CASCADE removes the child rows along with the parent. RESTRICT blocks the parent delete while child rows still exist.",
       "lessons": [
         "sql-schema-design"
+      ]
+    },
+    {
+      "question": "The query is `SELECT * FROM events WHERE org_id = $1 AND created_at >= $2 ORDER BY created_at LIMIT 20`. Which single index serves both the filter and the sort best?",
+      "choices": [
+        "`(created_at, org_id)`",
+        "`(org_id, created_at)`",
+        "Two indexes, `(org_id)` and `(created_at)`",
+        "`(org_id) INCLUDE (created_at)`"
+      ],
+      "answer": 1,
+      "explain": "With the equality column first, the matching rows sit together in the index and are already ordered by `created_at`. The scan can stop after 20 entries with no Sort step. `INCLUDE` columns are not ordered, so they cannot serve the range or the `ORDER BY`.",
+      "lessons": [
+        "sql-indexes"
+      ]
+    },
+    {
+      "question": "What happens when a migration runs this?",
+      "code": "BEGIN;\nCREATE INDEX CONCURRENTLY orders_user_idx ON orders (user_id);\nCOMMIT;",
+      "choices": [
+        "The index is built without blocking writes",
+        "The index is built, but writes are blocked until COMMIT",
+        "An error: CREATE INDEX CONCURRENTLY cannot run inside a transaction block"
+      ],
+      "answer": 2,
+      "explain": "A concurrent build commits several internal transactions of its own, so Postgres refuses to run it inside `BEGIN`. Run it outside a transaction, which many migration tools let you do with a per-migration setting.",
+      "lessons": [
+        "sql-indexes"
+      ]
+    },
+    {
+      "question": "A plan shows `Index Only Scan ... (cost=0.29..4.30 rows=1) (actual rows=5000.00 loops=1)` right after a bulk load. What is the most likely cause?",
+      "choices": [
+        "The index is corrupt",
+        "Stale statistics: the table has not been analysed since the load",
+        "work_mem is too small",
+        "The query needs a Merge Join"
+      ],
+      "answer": 1,
+      "explain": "A 5,000x estimate miss on freshly loaded values is the signature of stale statistics. Running `ANALYZE` refreshes `pg_statistic` and the estimate becomes 5,000.",
+      "lessons": [
+        "sql-explain"
+      ]
+    },
+    {
+      "question": "Which predicate on a bigint primary key `id` can be an Index Cond?",
+      "choices": [
+        "`id = 42.0`",
+        "`id + 1 = 43`",
+        "`id::text = '42'`",
+        "`id = 42`"
+      ],
+      "answer": 3,
+      "explain": "Only `id = 42` keeps the column bare and the constant the same type. `42.0` is numeric, so the column is cast; arithmetic and casts on the column make it a Filter.",
+      "lessons": [
+        "sql-explain"
+      ]
+    },
+    {
+      "question": "What does the final SELECT return (psql, autocommit on)?",
+      "code": "CREATE TABLE t (id int PRIMARY KEY);\nBEGIN;\nINSERT INTO t VALUES (1);\nSAVEPOINT a;\nINSERT INTO t VALUES (2);\nROLLBACK TO a;\nINSERT INTO t VALUES (3);\nCOMMIT;\nSELECT string_agg(id::text, ',' ORDER BY id) FROM t;",
+      "choices": [
+        "`1,2,3`",
+        "`1,3`",
+        "`3`",
+        "`NULL` (everything was rolled back)"
+      ],
+      "answer": 1,
+      "explain": "`ROLLBACK TO a` undoes only the work after the savepoint (row 2). The transaction stays open, so rows 1 and 3 commit.",
+      "lessons": [
+        "sql-transactions-mvcc"
+      ]
+    },
+    {
+      "question": "Two on-call doctors each check \"is someone else on call?\" and then go off call in parallel. Which is the lowest Postgres isolation level that stops both from succeeding?",
+      "choices": [
+        "READ COMMITTED",
+        "REPEATABLE READ",
+        "SERIALIZABLE",
+        "READ UNCOMMITTED"
+      ],
+      "answer": 2,
+      "explain": "This is write skew: each transaction writes a different row based on a snapshot. Snapshot isolation (REPEATABLE READ) allows it. SERIALIZABLE (SSI) aborts one with 40001.",
+      "lessons": [
+        "sql-transactions-mvcc"
+      ]
+    },
+    {
+      "question": "`stock` holds one row with id 1 and qty 0. What does this return?",
+      "code": "UPDATE stock SET qty = qty - 1\nWHERE id = 1 AND qty > 0\nRETURNING qty;",
+      "choices": [
+        "`-1`",
+        "`0`",
+        "No rows",
+        "An error: check constraint violated"
+      ],
+      "answer": 2,
+      "explain": "The guard `qty > 0` matches no row, so nothing is updated and `RETURNING` gives no rows. The app treats an empty result as \"sold out\". That is the atomic alternative to read-modify-write.",
+      "lessons": [
+        "sql-locking-concurrency"
+      ]
+    },
+    {
+      "question": "A report transaction has been reading `orders` for 10 minutes. A migration then runs `ALTER TABLE orders ADD COLUMN note text`. What happens to new SELECTs on `orders`?",
+      "choices": [
+        "They run normally, because MVCC readers never block",
+        "They queue behind the waiting ALTER until the report finishes",
+        "They fail immediately with a lock error",
+        "They see the new column straight away"
+      ],
+      "answer": 1,
+      "explain": "The ALTER waits for `ACCESS EXCLUSIVE` behind the report's `ACCESS SHARE` lock. Later lock requests that conflict with the queued ALTER line up behind it, so even plain reads stall. Set `lock_timeout` on migrations.",
+      "lessons": [
+        "sql-locking-concurrency"
+      ]
+    },
+    {
+      "question": "What does the last statement return?",
+      "code": "CREATE TABLE t (k int PRIMARY KEY, v text);\nINSERT INTO t VALUES (1, 'a');\nINSERT INTO t VALUES (1, 'b'), (2, 'c')\nON CONFLICT (k) DO NOTHING\nRETURNING k, v;",
+      "choices": [
+        "`2 | c`",
+        "`1 | a` and `2 | c`",
+        "`1 | b` and `2 | c`",
+        "A unique violation error"
+      ],
+      "answer": 0,
+      "explain": "RETURNING only reports rows the statement wrote. The conflicting row was skipped, and DO NOTHING does not return the existing row.",
+      "lessons": [
+        "sql-upserts"
+      ]
+    },
+    {
+      "question": "A batch upsert with `ON CONFLICT (sku) DO UPDATE` fails with 'cannot affect row a second time'. What is the fix?",
+      "choices": [
+        "Collapse the source to one row per `sku` before inserting",
+        "Switch to `DO NOTHING` and re-run",
+        "Add an index on `sku`",
+        "Run it under SERIALIZABLE"
+      ],
+      "answer": 0,
+      "explain": "The source contains the same key twice, so one statement would update the same row twice. Group or DISTINCT ON the key first.",
+      "lessons": [
+        "sql-upserts"
+      ]
+    },
+    {
+      "question": "A feed is ordered `created_at DESC, id DESC`. The last row shown is `(t, 42)`. Which predicate fetches the next page correctly when timestamps can tie?",
+      "choices": [
+        "`WHERE created_at < t`",
+        "`WHERE created_at <= t AND id < 42`",
+        "`WHERE (created_at, id) < (t, 42)`",
+        "`OFFSET 20`"
+      ],
+      "answer": 2,
+      "explain": "The row comparison is `created_at < t OR (created_at = t AND id < 42)`: older rows plus unseen ties. The first drops ties, the second drops older rows with larger ids, OFFSET drifts.",
+      "lessons": [
+        "sql-pagination"
+      ]
+    },
+    {
+      "question": "Page 1 (`LIMIT 2 OFFSET 0`) showed ids 6, 5. Then id 7 is inserted. What does page 2 return?",
+      "code": "SELECT id FROM feed ORDER BY id DESC LIMIT 2 OFFSET 2",
+      "choices": [
+        "4, 3",
+        "5, 4",
+        "7, 6"
+      ],
+      "answer": 1,
+      "explain": "OFFSET counts positions: it now skips 7 and 6, so 5 is shown again. Keyset `WHERE id < 5` would return 4, 3.",
+      "lessons": [
+        "sql-pagination"
       ]
     }
   ]
