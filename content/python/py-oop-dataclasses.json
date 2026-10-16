@@ -1,0 +1,1325 @@
+{
+  "id": "py-oop-dataclasses",
+  "track": "python",
+  "title": "Classes, dataclasses and dunder methods",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How Python finds attributes, how super() walks the MRO, which dunder methods make objects behave like built-ins, and how @dataclass writes the boilerplate for you.",
+  "prerequisites": [
+    "py-functions-closures"
+  ],
+  "prerequisiteNotes": "Functions as objects and decorators from py-functions-closures: @property, @classmethod and @dataclass are all decorators.",
+  "objectives": [
+    "Separate instance state from class state and spot the shared mutable class attribute bug.",
+    "Explain attribute lookup order and the MRO, and predict what super() calls in a diamond.",
+    "Implement __repr__, __eq__, __hash__, ordering and container dunders with the right contracts.",
+    "Use @dataclass options (default_factory, frozen, order, slots) and prefer composition over inheritance."
+  ],
+  "concepts": [
+    {
+      "title": "Classes, self, and where state lives",
+      "body": "A class body runs once and its names become **class attributes**, shared by every instance. `self` is just the first parameter: `obj.method(x)` is `type(obj).method(obj, x)`. Per-object state must be assigned through `self` (normally in `__init__`). Assigning `obj.n = 1` creates an instance attribute that **shadows** the class one; mutating a class-level list through `self.items.append` changes the one list every instance shares.",
+      "code": "class Counter:\n    created = 0              # class attribute: shared\n\n    def __init__(self, name):\n        self.name = name     # instance attribute\n        self.hits = []       # one list per object\n        Counter.created += 1\n\na, b = Counter('a'), Counter('b')\na.hits.append(1)\nprint(b.hits, Counter.created)   # [] 2",
+      "diagram": "pyo-shared"
+    },
+    {
+      "title": "Attribute lookup, @property and method kinds",
+      "body": "Reading `obj.attr` checks the class for a **data descriptor** first (a `property` is one), then the instance `__dict__`, then class attributes along the MRO, then `__getattr__`. That ordering is why `@property` can validate a field while keeping attribute syntax. `@classmethod` receives the class (`cls`), which makes it the idiom for alternate constructors that still work for subclasses; `@staticmethod` receives nothing and is a plain function namespaced in the class.",
+      "code": "class Temperature:\n    def __init__(self, celsius):\n        self.celsius = celsius        # goes through the setter\n\n    @property\n    def celsius(self):\n        return self._c\n\n    @celsius.setter\n    def celsius(self, value):\n        if value < -273.15:\n            raise ValueError('below absolute zero')\n        self._c = value\n\n    @classmethod\n    def from_fahrenheit(cls, f):\n        return cls((f - 32) * 5 / 9)\n\n    @staticmethod\n    def is_freezing(celsius):\n        return celsius <= 0\n\nprint(Temperature.from_fahrenheit(212).celsius)  # 100.0",
+      "diagram": "pyo-lookup"
+    },
+    {
+      "title": "Inheritance, the MRO and super()",
+      "body": "Every class has a **method resolution order**, `Cls.__mro__`, computed by C3 linearisation: a class comes before its bases, and bases keep the order you listed them. `super()` means \"the next class after this one in the MRO of `type(self)`\", not \"my parent\". In a diamond `D(B, C)` with `B(A)` and `C(A)`, the MRO is D, B, C, A, object, so cooperative `super()` calls visit every class exactly once.",
+      "code": "class A:\n    def hi(self): return ['A']\nclass B(A):\n    def hi(self): return ['B'] + super().hi()\nclass C(A):\n    def hi(self): return ['C'] + super().hi()\nclass D(B, C):\n    def hi(self): return ['D'] + super().hi()\n\nprint(D().hi())                                # ['D', 'B', 'C', 'A']\nprint([k.__name__ for k in D.__mro__])        # ['D', 'B', 'C', 'A', 'object']",
+      "diagram": "pyo-mro"
+    },
+    {
+      "title": "Dunder methods: making objects act like built-ins",
+      "body": "`__repr__` should be unambiguous (ideally valid constructor syntax); `print` falls back to it when there is no `__str__`. `__eq__` should return `NotImplemented` for foreign types. **Defining `__eq__` sets `__hash__` to None**, making instances unhashable, because equal objects must have equal hashes; add `__hash__` only over immutable fields. `functools.total_ordering` derives the other comparisons from `__eq__` plus one of `__lt__`/`__le__`/`__gt__`/`__ge__`. `__len__` powers `len()` and truthiness, `__iter__` powers `for` and `list()`, and `__contains__` powers `in` (falling back to iteration if absent).",
+      "code": "from functools import total_ordering\n\n@total_ordering\nclass Money:\n    def __init__(self, cents):\n        self.cents = cents\n    def __repr__(self):\n        return f'Money({self.cents})'\n    def __eq__(self, other):\n        if not isinstance(other, Money):\n            return NotImplemented\n        return self.cents == other.cents\n    def __hash__(self):\n        return hash(self.cents)\n    def __lt__(self, other):\n        if not isinstance(other, Money):\n            return NotImplemented\n        return self.cents < other.cents\n\nprint(sorted([Money(5), Money(2)]), Money(3) >= Money(3))  # [Money(2), Money(5)] True\nprint(len({Money(1), Money(1)}))                          # 1",
+      "diagram": "pyo-eqhash"
+    },
+    {
+      "title": "@dataclass writes the boilerplate",
+      "body": "`@dataclass` reads the annotated class attributes and generates `__init__`, `__repr__` and `__eq__`. Defaults follow function rules: fields without defaults come first, and a mutable default like `[]` is rejected, so use `field(default_factory=list)`. `frozen=True` blocks assignment and, together with the default `eq=True`, generates `__hash__`; a plain (non-frozen) dataclass is unhashable. `order=True` adds `<` and friends comparing fields as a tuple in declaration order. `slots=True` (3.10+) uses `__slots__`: less memory, no `__dict__`, and typos like `p.nmae = 1` raise.",
+      "code": "from dataclasses import dataclass, field\n\n@dataclass(frozen=True, order=True, slots=True)\nclass Version:\n    major: int\n    minor: int = 0\n\n@dataclass\nclass Cart:\n    owner: str\n    items: list = field(default_factory=list)\n\nprint(sorted({Version(1, 10), Version(1, 2), Version(1, 2)}))\n# [Version(major=1, minor=2), Version(major=1, minor=10)]\nprint(Cart('ana').items is Cart('bo').items)   # False"
+    },
+    {
+      "title": "Composition over inheritance",
+      "body": "Inherit only for a genuine **is-a** relationship where every base method still makes sense on the subclass. Subclassing `dict` or `list` to add rules leaks the whole base API (`pop`, `clear`, `update`) and those methods bypass your checks; built-in methods also do not call your overrides consistently. Holding the collection in a private attribute and exposing a few methods (**has-a**) keeps invariants enforceable and lets you swap the storage later.",
+      "code": "class Playlist:\n    def __init__(self):\n        self._tracks = []          # has-a list\n\n    def add(self, track):\n        if track not in self._tracks:\n            self._tracks.append(track)\n\n    def __len__(self):\n        return len(self._tracks)\n\n    def __iter__(self):\n        return iter(self._tracks)\n\np = Playlist()\np.add('a'); p.add('a'); p.add('b')\nprint(len(p), list(p))   # 2 ['a', 'b']"
+    }
+  ],
+  "example": "from dataclasses import dataclass, field\n\n@dataclass\nclass Task:\n    title: str\n    done: bool = False\n    tags: list = field(default_factory=list)\n\nclass Board:\n    def __init__(self):\n        self._tasks = {}\n\n    def add(self, task):\n        self._tasks[task.title] = task\n\n    def __contains__(self, title):\n        return title in self._tasks\n\n    def __iter__(self):\n        return (t for t in self._tasks.values() if not t.done)\n\nboard = Board()\nboard.add(Task('write tests', tags=['qa']))\nboard.add(Task('ship', done=True))\nprint('ship' in board, [t.title for t in board])  # True ['write tests']",
+  "task": "Write `run_inventory(ops)` that drives a small `Inventory` class and returns one output per operation. Operations are lists: `[\"add\", sku, qty]` returns the new quantity; `[\"remove\", sku, qty]` returns True and removes stock, or False and changes nothing if there is not enough (a SKU that reaches 0 disappears); `[\"count\", sku]` returns the quantity (0 if unknown); `[\"has\", sku]` returns whether the SKU is in stock; `[\"size\"]` returns the number of SKUs in stock; `[\"list\"]` returns the SKUs in sorted order. Quantities are positive integers. Implement `has`, `size` and `list` with `__contains__`, `__len__` and `__iter__`.",
+  "starter": "class Inventory:\n    def __init__(self):\n        self._stock = {}\n\n    def add(self, sku, qty):\n        # return the new quantity for sku\n        ...\n\n    # remove, count, __len__, __contains__, __iter__\n\n\ndef run_inventory(ops):\n    inv = Inventory()\n    out = []\n    # one output per operation\n    return out\n",
+  "hints": [
+    "Keep a private dict `self._stock` (composition) and give the class `add`, `remove` and `count`; `dict.get(sku, 0)` covers unknown SKUs.",
+    "Then `args[0] in inv`, `len(inv)` and `list(inv)` work once you define `__contains__`, `__len__` and `__iter__` (return `iter(sorted(self._stock))`)."
+  ],
+  "solution": "class Inventory:\n    def __init__(self):\n        self._stock = {}          # composition: the dict is an implementation detail\n\n    def add(self, sku, qty):\n        self._stock[sku] = self._stock.get(sku, 0) + qty\n        return self._stock[sku]\n\n    def remove(self, sku, qty):\n        have = self._stock.get(sku, 0)\n        if qty > have:\n            return False\n        if qty == have:\n            del self._stock[sku]\n        else:\n            self._stock[sku] = have - qty\n        return True\n\n    def count(self, sku):\n        return self._stock.get(sku, 0)\n\n    def __len__(self):\n        return len(self._stock)\n\n    def __contains__(self, sku):\n        return sku in self._stock\n\n    def __iter__(self):\n        return iter(sorted(self._stock))\n\n    def __repr__(self):\n        return f'Inventory({self._stock!r})'\n\n\ndef run_inventory(ops):\n    inv = Inventory()\n    out = []\n    for op, *args in ops:\n        match op:\n            case 'add':\n                out.append(inv.add(*args))\n            case 'remove':\n                out.append(inv.remove(*args))\n            case 'count':\n                out.append(inv.count(*args))\n            case 'has':\n                out.append(args[0] in inv)\n            case 'size':\n                out.append(len(inv))\n            case 'list':\n                out.append(list(inv))\n            case _:\n                raise ValueError(f'unknown op {op!r}')\n    return out\n\nThe class owns the rules (no negative stock, zero-quantity SKUs vanish) and the dict is private, so callers cannot bypass them. Defining `__len__`, `__contains__` and `__iter__` lets the driver use plain `len`, `in` and `list`, exactly like a built-in container. Each operation is O(1) on average except `list`, which sorts: O(k log k) for k SKUs.",
+  "checklist": [
+    "Instance state is created in `__init__`, not in the class body.",
+    "A failed remove returns False and leaves the stock unchanged.",
+    "A SKU whose quantity reaches 0 is removed, so `size`, `has` and `list` agree.",
+    "`in`, `len` and iteration go through dunder methods, not ad-hoc helper names."
+  ],
+  "pitfalls": [
+    "Putting `items = []` or `{}` in the class body and mutating it through `self`: every instance shares it.",
+    "Defining `__eq__` and then using instances in a set or as dict keys: `__hash__` became None, so it raises TypeError.",
+    "Writing a `__hash__` over mutable fields: change the field after insertion and the object is lost in its set.",
+    "Reading `super()` as \"the parent class\": in multiple inheritance it is the next class in the instance's MRO.",
+    "Using a mutable default in a dataclass (`tags: list = []`): it raises ValueError; use `field(default_factory=list)`.",
+    "Subclassing `dict`/`list` to enforce rules; inherited methods such as `update` skip your overrides."
+  ],
+  "walkthrough": [
+    {
+      "title": "Design the class before the driver",
+      "body": "Start with the invariant: stock is never negative and a SKU at 0 is gone. Put that rule inside `Inventory.remove`, behind a private dict, so nothing else can break it. Inheriting from `dict` would hand callers `pop` and `update`, which bypass the rule. Then add the three dunders so the class reads like a container: `sku in inv`, `len(inv)`, `for sku in inv`.",
+      "diagram": "pyo-compose"
+    },
+    {
+      "title": "Write a thin driver",
+      "body": "The driver only translates operations into method calls and collects outputs: `for op, *args in ops:` unpacks the name and arguments, and a `match` (or if/elif) dispatches. Keeping logic out of the driver means the class can be tested on its own. Raise on an unknown operation instead of silently skipping it."
+    },
+    {
+      "title": "Say the contracts out loud",
+      "body": "Interviewers probe the dunder contracts: `a == b` must imply `hash(a) == hash(b)`; `__eq__` returns `NotImplemented` for unrelated types so Python can try the reflected operation; `__repr__` is for developers. If equality is by value and the object goes in a set, make it immutable (`frozen=True`) so the hash cannot drift."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Sort version strings",
+      "prompt": "Write `sort_versions(versions)` for strings like \"1.10.2\" (always three dot-separated non-negative integers). Return the distinct versions in ascending numeric order, each in canonical form without leading zeros, so \"01.2.3\" becomes \"1.2.3\" and counts as a duplicate of it.",
+      "hints": [
+        "A `@dataclass(frozen=True, order=True)` with fields major, minor, patch compares numerically and is hashable.",
+        "Parse with a `@classmethod`, dedupe with a set, sort, and render with `__str__`."
+      ],
+      "solution": "from dataclasses import dataclass\n\n\n@dataclass(frozen=True, order=True)\nclass Version:\n    major: int\n    minor: int\n    patch: int\n\n    @classmethod\n    def parse(cls, text):\n        return cls(*(int(part) for part in text.split('.')))\n\n    def __str__(self):\n        return f'{self.major}.{self.minor}.{self.patch}'\n\n\ndef sort_versions(versions):\n    unique = {Version.parse(text) for text in versions}\n    return [str(version) for version in sorted(unique)]",
+      "checklist": [
+        "\"1.10.0\" sorts after \"1.9.5\".",
+        "Duplicates (including leading-zero spellings) appear once.",
+        "An empty input returns []."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Fix the bank simulator",
+      "prompt": "The starter `run_bank(ops)` handles `[\"open\", name]` (True if new, False if it exists), `[\"deposit\", name, amount]` (new balance), `[\"withdraw\", name, amount]` (new balance, or None if funds are short) and `[\"history\", name]` (signed amounts applied, in order). It looks right with one account but is wrong with two. Find and fix the bug, then implement `[\"transfer\", src, dst, amount]`: True and both histories updated, or False with no change if `src` is short. Accounts used in an operation exist and amounts are positive.",
+      "hints": [
+        "`history = []` in the class body is one list shared by every Account.",
+        "A `@dataclass` with `history: list = field(default_factory=list)` gives each account its own list; transfer is a withdraw plus a deposit after one balance check."
+      ],
+      "solution": "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Account:\n    owner: str\n    balance: int = 0\n    history: list = field(default_factory=list)\n\n    def apply(self, amount):\n        self.balance += amount\n        self.history.append(amount)\n\n\ndef run_bank(ops):\n    accounts = {}\n    out = []\n    for op, *args in ops:\n        if op == 'open':\n            name = args[0]\n            created = name not in accounts\n            if created:\n                accounts[name] = Account(name)\n            out.append(created)\n        elif op == 'deposit':\n            name, amount = args\n            accounts[name].apply(amount)\n            out.append(accounts[name].balance)\n        elif op == 'withdraw':\n            name, amount = args\n            account = accounts[name]\n            if amount > account.balance:\n                out.append(None)\n            else:\n                account.apply(-amount)\n                out.append(account.balance)\n        elif op == 'transfer':\n            src, dst, amount = args\n            if amount > accounts[src].balance:\n                out.append(False)\n            else:\n                accounts[src].apply(-amount)\n                accounts[dst].apply(amount)\n                out.append(True)\n        elif op == 'history':\n            out.append(list(accounts[args[0]].history))\n    return out",
+      "checklist": [
+        "Each account has its own history list.",
+        "A failed withdraw or transfer changes no balance and no history.",
+        "Re-opening an existing account returns False and keeps its balance."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does defining `__eq__` make my objects unhashable, and how should I fix it?",
+      "answer": "Sets and dicts rely on the rule that equal objects have equal hashes. The inherited identity hash would break that once equality is by value, so Python sets `__hash__ = None`. Either make the object immutable and define `__hash__` over the same fields `__eq__` compares (or use `@dataclass(frozen=True)`), or accept that it is unhashable because it is mutable."
+    },
+    {
+      "question": "When would you use `@classmethod` instead of `@staticmethod`?",
+      "answer": "When the method needs the class, typically an alternate constructor such as `from_json` or `parse`. Calling `cls(...)` means `SubClass.parse(...)` returns a SubClass. A staticmethod has no access to the class and is just a function grouped under it for discoverability."
+    },
+    {
+      "question": "What does `slots=True` (or `__slots__`) buy you, and what does it cost?",
+      "answer": "Instances store attributes in fixed slots instead of a per-object `__dict__`: less memory per object, slightly faster attribute access, and assigning an unknown attribute raises AttributeError. The cost is no dynamic attributes and some friction with multiple inheritance and tools that expect `__dict__`. It pays off when you create many small objects."
+    },
+    {
+      "question": "Your class hierarchy is getting deep. How do you decide between inheritance and composition?",
+      "answer": "Use inheritance when the subclass truly is a substitutable kind of the base (every base method still makes sense) or when a framework requires it. Otherwise compose: hold collaborators as attributes and delegate. Composition keeps the API small, makes invariants enforceable and lets you swap parts in tests."
+    }
+  ],
+  "takeaways": [
+    "Class-body attributes are shared; create per-instance state in `__init__`.",
+    "Lookup order: data descriptors, instance `__dict__`, class attributes along the MRO, then `__getattr__`.",
+    "`super()` is the next class in the instance's MRO, which makes diamond hierarchies call each class once.",
+    "Defining `__eq__` removes `__hash__`; equal objects must hash equal, so hash only immutable fields.",
+    "`@dataclass` with `default_factory`, `frozen`, `order` and `slots` replaces most hand-written boilerplate.",
+    "Prefer has-a over is-a; wrap a dict or list rather than subclassing it."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyo-shared",
+        "type": "compare",
+        "title": "Class attribute versus instance attribute",
+        "alt": "Side-by-side comparison. On the left, items = [] is written in the class body, so instances a and b both find the single list Bag.items, which holds 1 after a.add(1). On the right, self.items = [] in __init__ gives a and b their own lists: a.items holds 1 and b.items stays empty.",
+        "caption": "A mutable value in the class body is one object shared by every instance. Create per-instance state in __init__.",
+        "before": {
+          "label": "items = [] in the class body",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "instance a",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "instance b",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "l",
+              "label": "Bag.items",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "one list: [1]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "l",
+              "label": "lookup"
+            },
+            {
+              "from": "b",
+              "to": "l",
+              "label": "lookup"
+            }
+          ]
+        },
+        "after": {
+          "label": "self.items = [] in __init__",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "instance a",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "instance b",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "la",
+              "label": "a.items",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "[1]"
+            },
+            {
+              "id": "lb",
+              "label": "b.items",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "[]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "la",
+              "label": "own dict"
+            },
+            {
+              "from": "b",
+              "to": "lb",
+              "label": "own dict"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyo-lookup",
+        "type": "flow",
+        "title": "How obj.attr is found",
+        "alt": "Decision flow for reading obj.attr. First Python checks the class MRO for a data descriptor such as a property and calls its __get__. Otherwise it checks the instance __dict__. Otherwise it checks class attributes along the MRO, where methods are bound. If nothing matches, __getattr__ runs if defined, else AttributeError is raised.",
+        "caption": "A property beats the instance dict; the instance dict beats plain class attributes. That is why a property can guard a field and why an instance can shadow a class attribute.",
+        "nodes": [
+          {
+            "id": "start",
+            "label": "obj.attr",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "dd",
+            "label": "Data descriptor?",
+            "kind": "decision",
+            "col": 1,
+            "row": 0,
+            "sub": "property in MRO"
+          },
+          {
+            "id": "get",
+            "label": "Call __get__",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "property runs"
+          },
+          {
+            "id": "inst",
+            "label": "In obj.__dict__?",
+            "kind": "decision",
+            "col": 1,
+            "row": 2,
+            "sub": "per-object state"
+          },
+          {
+            "id": "val",
+            "label": "Return value",
+            "kind": "good",
+            "col": 3,
+            "row": 2,
+            "sub": "shadows the class"
+          },
+          {
+            "id": "cls",
+            "label": "Class/MRO attr?",
+            "kind": "decision",
+            "col": 1,
+            "row": 4,
+            "sub": "methods live here"
+          },
+          {
+            "id": "meth",
+            "label": "Class value",
+            "kind": "good",
+            "col": 3,
+            "row": 4,
+            "sub": "methods bind self"
+          },
+          {
+            "id": "err",
+            "label": "AttributeError",
+            "kind": "bad",
+            "col": 1,
+            "row": 5,
+            "sub": "after __getattr__"
+          }
+        ],
+        "edges": [
+          {
+            "from": "start",
+            "to": "dd"
+          },
+          {
+            "from": "dd",
+            "to": "get",
+            "label": "yes"
+          },
+          {
+            "from": "dd",
+            "to": "inst",
+            "label": "no"
+          },
+          {
+            "from": "inst",
+            "to": "val",
+            "label": "yes"
+          },
+          {
+            "from": "inst",
+            "to": "cls",
+            "label": "no"
+          },
+          {
+            "from": "cls",
+            "to": "meth",
+            "label": "yes"
+          },
+          {
+            "from": "cls",
+            "to": "err",
+            "label": "no",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Data descriptors on the class (a `property`, a slot) win first, even over a same-named key in the instance dict."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Next the instance `__dict__`. Assigning `obj.n = 1` writes here and shadows any class attribute `n`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Then plain class attributes along the MRO. Functions found here are bound, so `obj.method` carries `self`."
+          },
+          {
+            "edges": [
+              6
+            ],
+            "text": "Nothing found: `__getattr__` runs if the class defines it, otherwise `AttributeError`."
+          }
+        ]
+      },
+      {
+        "id": "pyo-mro",
+        "type": "flow",
+        "title": "Diamond inheritance: class D(B, C)",
+        "alt": "Class diagram of a diamond. D inherits from B and C, both of which inherit from A, which inherits from object. The steps show super() walking the MRO D, B, C, A, object, so B hands off to C rather than to A.",
+        "caption": "The MRO is D, B, C, A, object. super() means \"next class in the instance's MRO\", so B's super() reaches C, and A runs once.",
+        "nodes": [
+          {
+            "id": "d",
+            "label": "class D(B, C)",
+            "kind": "service",
+            "col": 2,
+            "row": 4,
+            "sub": "mro starts here"
+          },
+          {
+            "id": "b",
+            "label": "class B(A)",
+            "kind": "service",
+            "col": 1,
+            "row": 2,
+            "sub": "2nd in MRO"
+          },
+          {
+            "id": "c",
+            "label": "class C(A)",
+            "kind": "service",
+            "col": 3,
+            "row": 2,
+            "sub": "3rd in MRO"
+          },
+          {
+            "id": "a",
+            "label": "class A",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "4th in MRO"
+          },
+          {
+            "id": "o",
+            "label": "object",
+            "kind": "note",
+            "col": 0,
+            "row": 0,
+            "sub": "always last"
+          }
+        ],
+        "edges": [
+          {
+            "from": "d",
+            "to": "b",
+            "label": "first base"
+          },
+          {
+            "from": "b",
+            "to": "c",
+            "label": "super() in B"
+          },
+          {
+            "from": "c",
+            "to": "a",
+            "label": "super() in C"
+          },
+          {
+            "from": "a",
+            "to": "o",
+            "label": "then object"
+          },
+          {
+            "from": "d",
+            "to": "c",
+            "label": "second base"
+          },
+          {
+            "from": "b",
+            "to": "a",
+            "label": "B is-an A"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`D().hi()` runs D's method; its `super().hi()` goes to B, the first base listed."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "B's `super()` does not mean A. For a D instance the next class in `D.__mro__` is C."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "C hands off to A, then object. Every class appears once, after all of its subclasses (C3 linearisation)."
+          }
+        ]
+      },
+      {
+        "id": "pyo-eqhash",
+        "type": "sequence",
+        "title": "What `key in a_set` actually calls",
+        "alt": "Sequence diagram. The caller asks a set whether key is a member. The set first calls hash on the key to find a bucket, then calls __eq__ only against stored items whose hash matches, and returns True to the caller.",
+        "caption": "Sets and dicts use the hash to find candidates and __eq__ to confirm. If a == b but their hashes differ, lookups silently miss.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "set",
+            "label": "set / dict"
+          },
+          {
+            "id": "key",
+            "label": "key object"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "set",
+            "label": "key in seen"
+          },
+          {
+            "from": "set",
+            "to": "key",
+            "label": "hash(key) -> __hash__()",
+            "note": "Picks the bucket. No matching hash means no match, without calling __eq__."
+          },
+          {
+            "from": "key",
+            "to": "set",
+            "label": "int",
+            "style": "reply"
+          },
+          {
+            "from": "set",
+            "to": "key",
+            "label": "key == stored -> __eq__()",
+            "note": "Only for stored items with the same hash (identity is checked first)."
+          },
+          {
+            "from": "key",
+            "to": "set",
+            "label": "True",
+            "style": "reply"
+          },
+          {
+            "from": "set",
+            "to": "caller",
+            "label": "True",
+            "style": "reply"
+          }
+        ]
+      },
+      {
+        "id": "pyo-compose",
+        "type": "compare",
+        "title": "Inheriting from dict versus wrapping one",
+        "alt": "Side-by-side comparison. On the left, Inventory subclasses dict, so dict methods such as pop, clear and update become part of its public API and bypass the stock rules. On the right, Inventory holds a private dict and exposes only add, remove and count.",
+        "caption": "Composition keeps the public surface small: callers can only do what the class allows, and the storage can change later.",
+        "before": {
+          "label": "class Inventory(dict): is-a",
+          "nodes": [
+            {
+              "id": "inv",
+              "label": "Inventory",
+              "kind": "service",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "dict",
+              "label": "dict",
+              "kind": "storage",
+              "col": 2,
+              "row": 0,
+              "sub": "base class"
+            },
+            {
+              "id": "leak",
+              "label": "pop, clear, ...",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "skip stock rules"
+            }
+          ],
+          "edges": [
+            {
+              "from": "inv",
+              "to": "dict",
+              "label": "inherits"
+            },
+            {
+              "from": "inv",
+              "to": "leak",
+              "label": "exposes"
+            }
+          ]
+        },
+        "after": {
+          "label": "self._stock = {}: has-a",
+          "nodes": [
+            {
+              "id": "inv",
+              "label": "Inventory",
+              "kind": "service",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "dict",
+              "label": "_stock dict",
+              "kind": "storage",
+              "col": 2,
+              "row": 0,
+              "sub": "private detail"
+            },
+            {
+              "id": "api",
+              "label": "add/remove/count",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "the whole API"
+            }
+          ],
+          "edges": [
+            {
+              "from": "inv",
+              "to": "dict",
+              "label": "delegates"
+            },
+            {
+              "from": "inv",
+              "to": "api",
+              "label": "exposes"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "run_inventory",
+        "starter": "class Inventory:\n    def __init__(self):\n        self._stock = {}\n\n    def add(self, sku, qty):\n        # return the new quantity for sku\n        ...\n\n    # remove, count, __len__, __contains__, __iter__\n\n\ndef run_inventory(ops):\n    inv = Inventory()\n    out = []\n    # one output per operation\n    return out\n",
+        "solution": "class Inventory:\n    def __init__(self):\n        self._stock = {}          # composition: the dict is an implementation detail\n\n    def add(self, sku, qty):\n        self._stock[sku] = self._stock.get(sku, 0) + qty\n        return self._stock[sku]\n\n    def remove(self, sku, qty):\n        have = self._stock.get(sku, 0)\n        if qty > have:\n            return False\n        if qty == have:\n            del self._stock[sku]\n        else:\n            self._stock[sku] = have - qty\n        return True\n\n    def count(self, sku):\n        return self._stock.get(sku, 0)\n\n    def __len__(self):\n        return len(self._stock)\n\n    def __contains__(self, sku):\n        return sku in self._stock\n\n    def __iter__(self):\n        return iter(sorted(self._stock))\n\n    def __repr__(self):\n        return f'Inventory({self._stock!r})'\n\n\ndef run_inventory(ops):\n    inv = Inventory()\n    out = []\n    for op, *args in ops:\n        match op:\n            case 'add':\n                out.append(inv.add(*args))\n            case 'remove':\n                out.append(inv.remove(*args))\n            case 'count':\n                out.append(inv.count(*args))\n            case 'has':\n                out.append(args[0] in inv)\n            case 'size':\n                out.append(len(inv))\n            case 'list':\n                out.append(list(inv))\n            case _:\n                raise ValueError(f'unknown op {op!r}')\n    return out\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "apple",
+                  3
+                ],
+                [
+                  "add",
+                  "pear",
+                  2
+                ],
+                [
+                  "remove",
+                  "apple",
+                  1
+                ],
+                [
+                  "count",
+                  "apple"
+                ],
+                [
+                  "list"
+                ]
+              ]
+            ],
+            "expected": [
+              3,
+              2,
+              true,
+              2,
+              [
+                "apple",
+                "pear"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "kiwi",
+                  1
+                ],
+                [
+                  "remove",
+                  "kiwi",
+                  5
+                ],
+                [
+                  "has",
+                  "kiwi"
+                ],
+                [
+                  "size"
+                ]
+              ]
+            ],
+            "expected": [
+              1,
+              false,
+              true,
+              1
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "x",
+                  2
+                ],
+                [
+                  "remove",
+                  "x",
+                  2
+                ],
+                [
+                  "has",
+                  "x"
+                ],
+                [
+                  "size"
+                ],
+                [
+                  "list"
+                ],
+                [
+                  "count",
+                  "x"
+                ]
+              ]
+            ],
+            "expected": [
+              2,
+              true,
+              false,
+              0,
+              [],
+              0
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "count",
+                  "ghost"
+                ],
+                [
+                  "remove",
+                  "ghost",
+                  1
+                ],
+                [
+                  "has",
+                  "ghost"
+                ]
+              ]
+            ],
+            "expected": [
+              0,
+              false,
+              false
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "b",
+                  1
+                ],
+                [
+                  "add",
+                  "b",
+                  4
+                ],
+                [
+                  "add",
+                  "a",
+                  1
+                ],
+                [
+                  "add",
+                  "C",
+                  1
+                ],
+                [
+                  "list"
+                ],
+                [
+                  "size"
+                ]
+              ]
+            ],
+            "expected": [
+              1,
+              5,
+              1,
+              1,
+              [
+                "C",
+                "a",
+                "b"
+              ],
+              3
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "café",
+                  2
+                ],
+                [
+                  "add",
+                  "ñame",
+                  1
+                ],
+                [
+                  "remove",
+                  "café",
+                  1
+                ],
+                [
+                  "list"
+                ],
+                [
+                  "count",
+                  "café"
+                ]
+              ]
+            ],
+            "expected": [
+              2,
+              1,
+              true,
+              [
+                "café",
+                "ñame"
+              ],
+              1
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "add",
+                  "bolt",
+                  1000000
+                ],
+                [
+                  "remove",
+                  "bolt",
+                  999999
+                ],
+                [
+                  "count",
+                  "bolt"
+                ],
+                [
+                  "remove",
+                  "bolt",
+                  2
+                ],
+                [
+                  "has",
+                  "bolt"
+                ]
+              ]
+            ],
+            "expected": [
+              1000000,
+              true,
+              1,
+              false,
+              true
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "sort_versions",
+        "starter": "def sort_versions(versions):\n    # Compares strings, so '1.10.0' sorts before '1.2.0'\n    return sorted(set(versions))\n",
+        "solution": "from dataclasses import dataclass\n\n\n@dataclass(frozen=True, order=True)\nclass Version:\n    major: int\n    minor: int\n    patch: int\n\n    @classmethod\n    def parse(cls, text):\n        return cls(*(int(part) for part in text.split('.')))\n\n    def __str__(self):\n        return f'{self.major}.{self.minor}.{self.patch}'\n\n\ndef sort_versions(versions):\n    unique = {Version.parse(text) for text in versions}\n    return [str(version) for version in sorted(unique)]\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "1.10.0",
+                "1.2.0",
+                "1.9.5"
+              ]
+            ],
+            "expected": [
+              "1.2.0",
+              "1.9.5",
+              "1.10.0"
+            ]
+          },
+          {
+            "args": [
+              [
+                "2.0.0",
+                "2.0.0",
+                "0.1.0"
+              ]
+            ],
+            "expected": [
+              "0.1.0",
+              "2.0.0"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "3.4.5"
+              ]
+            ],
+            "expected": [
+              "3.4.5"
+            ]
+          },
+          {
+            "args": [
+              [
+                "01.2.3",
+                "1.2.3",
+                "1.02.03"
+              ]
+            ],
+            "expected": [
+              "1.2.3"
+            ]
+          },
+          {
+            "args": [
+              [
+                "10.0.0",
+                "9.99.99",
+                "1.0.10",
+                "1.0.9"
+              ]
+            ],
+            "expected": [
+              "1.0.9",
+              "1.0.10",
+              "9.99.99",
+              "10.0.0"
+            ]
+          },
+          {
+            "args": [
+              [
+                "0.0.0",
+                "0.0.1",
+                "0.1.0",
+                "1.0.0"
+              ]
+            ],
+            "expected": [
+              "0.0.0",
+              "0.0.1",
+              "0.1.0",
+              "1.0.0"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "run_bank",
+        "starter": "class Account:\n    history = []          # bug hunt: who owns this list?\n\n    def __init__(self, owner):\n        self.owner = owner\n        self.balance = 0\n\n    def apply(self, amount):\n        self.balance += amount\n        self.history.append(amount)\n\n\ndef run_bank(ops):\n    accounts = {}\n    out = []\n    for op, *args in ops:\n        if op == 'open':\n            name = args[0]\n            created = name not in accounts\n            if created:\n                accounts[name] = Account(name)\n            out.append(created)\n        elif op == 'deposit':\n            name, amount = args\n            accounts[name].apply(amount)\n            out.append(accounts[name].balance)\n        elif op == 'withdraw':\n            name, amount = args\n            account = accounts[name]\n            if amount > account.balance:\n                out.append(None)\n            else:\n                account.apply(-amount)\n                out.append(account.balance)\n        elif op == 'transfer':\n            out.append(False)  # TODO\n        elif op == 'history':\n            out.append(list(accounts[args[0]].history))\n    return out\n",
+        "solution": "from dataclasses import dataclass, field\n\n\n@dataclass\nclass Account:\n    owner: str\n    balance: int = 0\n    history: list = field(default_factory=list)\n\n    def apply(self, amount):\n        self.balance += amount\n        self.history.append(amount)\n\n\ndef run_bank(ops):\n    accounts = {}\n    out = []\n    for op, *args in ops:\n        if op == 'open':\n            name = args[0]\n            created = name not in accounts\n            if created:\n                accounts[name] = Account(name)\n            out.append(created)\n        elif op == 'deposit':\n            name, amount = args\n            accounts[name].apply(amount)\n            out.append(accounts[name].balance)\n        elif op == 'withdraw':\n            name, amount = args\n            account = accounts[name]\n            if amount > account.balance:\n                out.append(None)\n            else:\n                account.apply(-amount)\n                out.append(account.balance)\n        elif op == 'transfer':\n            src, dst, amount = args\n            if amount > accounts[src].balance:\n                out.append(False)\n            else:\n                accounts[src].apply(-amount)\n                accounts[dst].apply(amount)\n                out.append(True)\n        elif op == 'history':\n            out.append(list(accounts[args[0]].history))\n    return out\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "ana"
+                ],
+                [
+                  "open",
+                  "bo"
+                ],
+                [
+                  "deposit",
+                  "ana",
+                  50
+                ],
+                [
+                  "deposit",
+                  "bo",
+                  20
+                ],
+                [
+                  "history",
+                  "bo"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              true,
+              50,
+              20,
+              [
+                20
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "ana"
+                ],
+                [
+                  "open",
+                  "bo"
+                ],
+                [
+                  "deposit",
+                  "ana",
+                  30
+                ],
+                [
+                  "transfer",
+                  "ana",
+                  "bo",
+                  10
+                ],
+                [
+                  "history",
+                  "ana"
+                ],
+                [
+                  "history",
+                  "bo"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              true,
+              30,
+              true,
+              [
+                30,
+                -10
+              ],
+              [
+                10
+              ]
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "cy"
+                ],
+                [
+                  "withdraw",
+                  "cy",
+                  1
+                ],
+                [
+                  "history",
+                  "cy"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              null,
+              []
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a"
+                ],
+                [
+                  "open",
+                  "b"
+                ],
+                [
+                  "deposit",
+                  "a",
+                  5
+                ],
+                [
+                  "transfer",
+                  "a",
+                  "b",
+                  6
+                ],
+                [
+                  "history",
+                  "a"
+                ],
+                [
+                  "history",
+                  "b"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              true,
+              5,
+              false,
+              [
+                5
+              ],
+              []
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "dee"
+                ],
+                [
+                  "deposit",
+                  "dee",
+                  40
+                ],
+                [
+                  "open",
+                  "dee"
+                ],
+                [
+                  "withdraw",
+                  "dee",
+                  40
+                ],
+                [
+                  "history",
+                  "dee"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              40,
+              false,
+              0,
+              [
+                40,
+                -40
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "zoë"
+                ],
+                [
+                  "open",
+                  "li"
+                ],
+                [
+                  "deposit",
+                  "zoë",
+                  7
+                ],
+                [
+                  "transfer",
+                  "zoë",
+                  "li",
+                  7
+                ],
+                [
+                  "withdraw",
+                  "li",
+                  3
+                ],
+                [
+                  "history",
+                  "li"
+                ]
+              ]
+            ],
+            "expected": [
+              true,
+              true,
+              7,
+              true,
+              4,
+              [
+                7,
+                -3
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "class Bag:\n    items = []\n    def add(self, x):\n        self.items.append(x)\n\na, b = Bag(), Bag()\na.add(1)\nprint(b.items)",
+        "choices": [
+          "[]",
+          "[1]",
+          "AttributeError"
+        ],
+        "answer": 1,
+        "explain": "`items` lives on the class, so `self.items` finds the one shared list and `append` mutates it for every instance."
+      },
+      {
+        "code": "class C:\n    n = 0\n\nc = C()\nc.n += 1\nprint(C.n, c.n)",
+        "choices": [
+          "1 1",
+          "0 1",
+          "0 0"
+        ],
+        "answer": 1,
+        "explain": "`c.n += 1` reads the class value 0, then assigns 1 to the instance, creating an instance attribute that shadows the class one. Ints are immutable, so the class attribute is untouched."
+      },
+      {
+        "code": "class A:\n    def hi(self): return 'A'\nclass B(A):\n    def hi(self): return 'B' + super().hi()\nclass C(A):\n    def hi(self): return 'C' + super().hi()\nclass D(B, C):\n    def hi(self): return 'D' + super().hi()\n\nprint(D().hi())",
+        "choices": [
+          "DBA",
+          "DBCA",
+          "DBACA"
+        ],
+        "answer": 1,
+        "explain": "The MRO of D is D, B, C, A, object. B's `super()` is the next class in that order, which is C, not A, so A runs once."
+      },
+      {
+        "code": "class P:\n    def __init__(self, x):\n        self.x = x\n    def __eq__(self, other):\n        return self.x == other.x\n\ntry:\n    print(len({P(1), P(1)}))\nexcept TypeError:\n    print('TypeError')",
+        "choices": [
+          "1",
+          "2",
+          "TypeError"
+        ],
+        "answer": 2,
+        "explain": "Defining `__eq__` without `__hash__` sets `__hash__` to None, so instances cannot go into a set."
+      },
+      {
+        "code": "from dataclasses import dataclass\n\n@dataclass\nclass Pt:\n    x: int\n    y: int = 0\n\nprint(Pt(1) == Pt(1, 0), Pt(2))",
+        "choices": [
+          "False Pt(x=2, y=0)",
+          "True Pt(x=2, y=0)",
+          "True Pt(2, 0)"
+        ],
+        "answer": 1,
+        "explain": "The generated `__eq__` compares fields as a tuple, and the generated `__repr__` shows each field as name=value."
+      },
+      {
+        "code": "from dataclasses import dataclass\n\n@dataclass(order=True)\nclass V:\n    major: int\n    minor: int\n\nprint(min([V(1, 10), V(1, 2)]), V(0, 99) < V(1, 0))",
+        "choices": [
+          "V(major=1, minor=10) True",
+          "V(major=1, minor=2) True",
+          "V(major=1, minor=2) False"
+        ],
+        "answer": 1,
+        "explain": "`order=True` compares `(major, minor)` tuples numerically, field by field in declaration order."
+      }
+    ],
+    "tip": "When you design a class in an interview, state the invariant first (\"stock never goes negative\"), keep the data private, and name the dunders you will add. If you define equality, say in the same breath what you do about hashing.",
+    "links": {
+      "problems": [
+        "lru-cache",
+        "time-versioned-store",
+        "min-stack-ops"
+      ],
+      "guides": [
+        "clean-code",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "py-basics",
+        "hash-map-complements"
+      ]
+    }
+  }
+}

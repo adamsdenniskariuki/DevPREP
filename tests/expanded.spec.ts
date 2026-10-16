@@ -149,20 +149,21 @@ for (const track of tracks) {
     expect(titles).toEqual(trackLessons.map(lesson => lesson.title))
     page.on('dialog', dialog => dialog.accept())
     for (const lesson of trackLessons) {
+      const plain = (text: string) => 'lang' in lesson ? text.replace(/`|\*\*/g, '') : text
       const row = page.getByRole('article').filter({ has: page.getByRole('heading', { name: lesson.title, exact: true }) })
       await row.getByRole('button', { name: 'Start lesson' }).click()
       await expect(page.getByRole('heading', { name: lesson.title, exact: true })).toBeVisible()
-      await expect(page.getByText(lesson.prerequisiteNotes, { exact: true })).toBeVisible()
+      await expect(page.getByText(plain(lesson.prerequisiteNotes), { exact: true })).toBeVisible()
       await expect(page.getByLabel('In this lesson').locator('option')).toHaveCount(lessonSections(lesson).length)
       for (const sectionId of ['concept-0', 'example', 'walkthrough-1', 'pitfalls', 'takeaways']) {
         await page.getByLabel('In this lesson').selectOption(sectionId)
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${lesson.id}/${sectionId} overflows`).toBe(true)
       }
-      await expect(page.getByText(lesson.takeaways[0], { exact: true })).toBeVisible()
+      await expect(page.getByText(plain(lesson.takeaways[0]), { exact: true })).toBeVisible()
       await page.getByRole('button', { name: 'Continue to practice' }).click()
-      await expect(page.getByText(lesson.task, { exact: true })).toBeVisible()
+      await expect(page.getByText(plain(lesson.task), { exact: true })).toBeVisible()
       await page.getByRole('button', { name: 'Stretch', exact: true }).click()
-      await expect(page.getByText(lesson.extraPractice[1].prompt, { exact: true })).toBeVisible()
+      await expect(page.getByText(plain(lesson.extraPractice[1].prompt), { exact: true })).toBeVisible()
       await page.getByText('Stretch worked answer & rubric', { exact: true }).click()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
       await page.getByRole('link', { name: 'Tracks', exact: true }).click()

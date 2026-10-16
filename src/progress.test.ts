@@ -24,11 +24,11 @@ class MemoryStorage implements StoragePort {
 }
 
 describe('expanded curriculum contract', () => {
-  it('has original, substantive content in all five tracks', () => {
+  it('has original, substantive content in every track', () => {
     expect(lessons.length).toBeGreaterThanOrEqual(40)
     expect(new Set(lessons.map(lesson => lesson.id)).size).toBe(lessons.length)
     expect(lessons.filter(lesson => lesson.track === 'dsa').length).toBeGreaterThanOrEqual(18)
-    expect(tracks.map(track => track.id)).toEqual(['dsa', 'system-design', 'ml', 'ai', 'behavioral'])
+    expect(tracks.map(track => track.id)).toEqual(['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python'])
     for (const lesson of lessons) {
       expect(lesson.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
       expect(tracks.some(track => track.id === lesson.track)).toBe(true)

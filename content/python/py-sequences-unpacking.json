@@ -1,0 +1,996 @@
+{
+  "id": "py-sequences-unpacking",
+  "track": "python",
+  "title": "Sequences: slicing, unpacking and comprehensions",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Lists, tuples and ranges in interview code: exact slicing rules, what each list operation costs, unpacking with zip and enumerate, comprehensions in the right order, and the copy and aliasing traps behind grid bugs.",
+  "prerequisites": [
+    "py-basics"
+  ],
+  "prerequisiteNotes": "Names refer to objects and assignment never copies (py-basics). This lesson builds on that model for slices, copies and nested lists.",
+  "objectives": [
+    "Predict any slice result, including negative indices, steps, out-of-range bounds and slice assignment.",
+    "State the cost of common list operations and pick a deque when the front of the sequence changes.",
+    "Use tuple unpacking, star-unpacking, enumerate and zip (including strict=True) instead of index arithmetic.",
+    "Write list, dict and set comprehensions and generator expressions with nested clauses in the correct order.",
+    "Build nested lists without aliasing and choose between shallow and deep copies deliberately."
+  ],
+  "concepts": [
+    {
+      "title": "Three sequences and the slice rules",
+      "body": "A **list** is a mutable array of references, a **tuple** is an immutable one (the comma makes it, so a one-item tuple is `(x,)`), and a **range** is a lazy arithmetic sequence that supports `len`, indexing, slicing and a constant-time `in` for ints. Slices are **half-open**: `a[start:stop]` includes `start` and excludes `stop`, so `a[:k] + a[k:] == a` for every k. A slice of a list or tuple is a **new** sequence holding the same element objects, so `a[:]` is a shallow copy. Out-of-range slice bounds are clamped silently (`a[2:99]`), while an out-of-range index raises `IndexError`. A negative step walks backwards: `a[::-1]` reverses.",
+      "code": "a = [10, 20, 30, 40, 50]\nprint(a[1:3], a[-2:], a[::2], a[::-1])\n# [20, 30] [40, 50] [10, 30, 50] [50, 40, 30, 20, 10]\nprint(a[3:99], a[99:])   # [40, 50] []  (clamped, no error)\nprint(range(0, 20, 5)[1:3])  # range(5, 15, 5)\nprint(7 in range(0, 10**9))  # True, computed not scanned",
+      "diagram": "pyq-slice"
+    },
+    {
+      "title": "Slice assignment and what list operations cost",
+      "body": "Assigning to a slice **replaces** that region in place and may change the length: `a[1:3] = [7, 8, 9]` grows the list, `a[1:3] = []` deletes. `a[:] = new_items` swaps the contents while keeping the same list object, which matters when other names share it. A list stores references contiguously, so `a[i]`, `len(a)`, `append` and `pop()` from the end are O(1) (append is **amortised** O(1) because the array over-allocates when it grows). `insert(0, x)`, `pop(0)` and `del a[i]` shift every later element, so they cost O(n). `x in a`, `a.index(x)` and `a.count(x)` scan, so they are O(n); use a set for repeated membership. Slicing copies k references, so it costs O(k). For a queue, use `collections.deque`, whose `popleft` and `appendleft` are O(1).",
+      "code": "a = [1, 2, 3, 4]\na[1:3] = [7, 8, 9]\nprint(a)             # [1, 7, 8, 9, 4]\nalias = a\na[:] = [0]\nprint(alias)         # [0]  same object, new contents\n\nfrom collections import deque\nq = deque([1, 2, 3])\nq.append(4)\nprint(q.popleft())   # 1, O(1) unlike list.pop(0)",
+      "diagram": "pyq-costs"
+    },
+    {
+      "title": "Unpacking, enumerate and zip",
+      "body": "Unpacking assigns each item of an iterable to a target: `x, y = point`. The right side is evaluated fully before any target is assigned, which is why `a, b = b, a` swaps without a temporary. A **starred** target collects the rest into a list, possibly empty: `first, *rest = items`, `*init, last = items`. Targets can nest: `for i, (x, y) in enumerate(points)`. `enumerate(seq, start=1)` yields `(index, item)` pairs and replaces `range(len(seq))`. `zip(a, b)` pairs items and **stops at the shortest** input silently; since Python 3.10 `zip(a, b, strict=True)` raises `ValueError` on a length mismatch instead. `zip(*rows)` transposes a grid, and `zip(xs, xs[1:])` yields consecutive pairs.",
+      "code": "first, *middle, last = [1, 2, 3, 4]\nprint(first, middle, last)      # 1 [2, 3] 4\na, b = 1, 2\na, b = b, a                     # swap\nfor rank, (name, score) in enumerate([('ana', 9), ('bo', 7)], start=1):\n    print(rank, name, score)\nprint(list(zip('abc', [1, 2])))  # [('a', 1), ('b', 2)]\nprint(list(zip(*[[1, 2], [3, 4]])))  # [(1, 3), (2, 4)]\nxs = [3, 5, 4]\nprint([b - a for a, b in zip(xs, xs[1:])])  # [2, -1]"
+    },
+    {
+      "title": "Comprehensions and generator expressions",
+      "body": "`[expr for x in it if cond]` builds a list; `{k: v for ...}` builds a dict and `{expr for ...}` a set. Multiple `for` clauses read **left to right, outermost first**, exactly like the equivalent nested loops: `[x for row in grid for x in row]` flattens. A comprehension **inside** the expression builds a nested structure instead: `[[0 for c in range(w)] for r in range(h)]`. Loop variables are local to the comprehension and do not leak. Parentheses give a **generator expression**: it produces items lazily on demand, uses O(1) extra memory and can be consumed **once**. Pass one straight into `sum`, `any`, `max` or `''.join` without extra brackets: `sum(x * x for x in xs)`.",
+      "code": "grid = [[1, 2], [3, 4]]\nprint([x for row in grid for x in row])   # [1, 2, 3, 4]\nprint({w: len(w) for w in ['hi', 'hey']}) # {'hi': 2, 'hey': 3}\nprint({c.lower() for c in 'AaB'})         # {'a', 'b'} (order may vary)\nsquares = (x * x for x in range(4))\nprint(sum(squares), sum(squares))          # 14 0  (exhausted)",
+      "diagram": "pyq-gen"
+    },
+    {
+      "title": "The [[0] * n] * m trap",
+      "body": "`*` on a list repeats **references**, not objects. `[0] * 3` is fine because ints are immutable, but `[[0] * 3] * 3` makes an outer list whose three slots all point at **one** inner list, so writing `grid[0][0] = 1` changes every row. Build each row separately with a comprehension: `[[0] * cols for _ in range(rows)]`. The same trap appears with `[[]] * n` and `dict.fromkeys(keys, [])`, which share one mutable default value.",
+      "code": "bad = [[0] * 3] * 2\nbad[0][0] = 1\nprint(bad)    # [[1, 0, 0], [1, 0, 0]]\ngood = [[0] * 3 for _ in range(2)]\ngood[0][0] = 1\nprint(good)   # [[1, 0, 0], [0, 0, 0]]",
+      "diagram": "pyq-alias"
+    }
+  ],
+  "example": "def columns(rows):\n    # zip(*rows) transposes; strict=True rejects ragged input\n    return [list(col) for col in zip(*rows, strict=True)]\n\nprint(columns([[1, 2, 3], [4, 5, 6]]))  # [[1, 4], [2, 5], [3, 6]]\nprint(columns([]))                      # []\n\nhead, *tail = 'queue'\nprint(head, tail)  # q ['u', 'e', 'u', 'e']",
+  "task": "Write `rotate_clockwise(grid)` that takes a rectangular grid (a list of equal-length row lists, possibly with zero rows) and returns a **new** grid rotated 90 degrees clockwise. An R x C grid becomes C x R: the first row of the result is the original first column read from bottom to top. Rows must be lists, not tuples, and the input must not be modified.",
+  "starter": "def rotate_clockwise(grid):\n    # Return a new grid rotated 90 degrees clockwise\n    ...",
+  "hints": [
+    "Reading a column from bottom to top is the same as reading it top to bottom after reversing the order of the rows: `grid[::-1]`.",
+    "`zip(*rows)` turns rows into columns as tuples; wrap each one in `list(...)` inside a comprehension."
+  ],
+  "solution": "def rotate_clockwise(grid):\n    return [list(column) for column in zip(*grid[::-1])]\n\n`grid[::-1]` is a new list of the same row objects in reverse order, so the input is never mutated. Unpacking it into `zip` passes each row as a separate argument, and zip yields one tuple per column: the first tuple holds the old bottom-to-top first column, which is exactly the first row of the clockwise rotation. For an empty grid, `zip()` yields nothing and the result is []. Time and extra space are O(R x C), which is optimal because every cell is written once.",
+  "checklist": [
+    "I return a new grid and leave the input untouched.",
+    "Each result row is a list, not a tuple.",
+    "Non-square grids come back with their dimensions swapped, and [] gives []."
+  ],
+  "pitfalls": [
+    "Building a grid with `[[0] * cols] * rows` and then wondering why every row changes together.",
+    "Relying on `zip` with inputs of different lengths: the extra items vanish without an error unless you pass `strict=True`.",
+    "Calling `list.pop(0)` or `insert(0, x)` in a loop, turning an O(n) algorithm into O(n^2); use `collections.deque`.",
+    "Iterating a generator expression twice: the second pass sees nothing.",
+    "Writing nested `for` clauses in the wrong order; they read like nested loops, outermost first.",
+    "Treating `a[:]` or `list.copy()` as a deep copy of a list of lists."
+  ],
+  "walkthrough": [
+    {
+      "title": "Shallow versus deep copy",
+      "body": "`a[:]`, `list(a)`, `a.copy()` and `copy.copy(a)` all make a **shallow** copy: a new outer list whose slots point at the **same** element objects. Replacing a slot in the copy (`b[0] = [9]`) is invisible to `a`, but mutating a shared inner list (`b[1].append(9)`) is visible through both. `copy.deepcopy(a)` recursively copies nested mutable objects, so nothing is shared. Deep copies cost time proportional to the whole structure, so in interview code prefer building fresh rows with a comprehension, such as `[row[:] for row in grid]`, which copies exactly one level deeper.",
+      "diagram": "pyq-copy"
+    },
+    {
+      "title": "Solve the rotation in two moves",
+      "body": "Rotating clockwise is reversing the row order and then transposing. Say it out loud with a 2 x 3 example: rows `[1, 2, 3]` and `[4, 5, 6]` reversed give `[4, 5, 6]`, `[1, 2, 3]`; zipping them yields `(4, 1)`, `(5, 2)`, `(6, 3)`, which is the rotated grid. For counter-clockwise, transpose first and then reverse: `[list(c) for c in zip(*grid)][::-1]`. If asked to rotate in place, use slice assignment, `grid[:] = rotate_clockwise(grid)`, so every other name for that grid sees the result."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Step changes",
+      "prompt": "Write `step_changes(readings)` that returns the change between each pair of consecutive readings, as a list one shorter than the input. Fewer than two readings give [].",
+      "hints": [
+        "`zip(readings, readings[1:])` yields each reading paired with the next one.",
+        "Unpack each pair in the comprehension: `for prev, cur in ...`."
+      ],
+      "solution": "def step_changes(readings):\n    return [cur - prev for prev, cur in zip(readings, readings[1:])]",
+      "checklist": [
+        "Empty and single-reading inputs give [] without special cases.",
+        "Negative changes keep their sign."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Neighbour counts",
+      "prompt": "Write `neighbour_counts(grid)` for a rectangular grid of 0s and 1s. Return a new grid of the same shape where each cell holds how many of its up to eight surrounding cells are 1. The cell itself does not count. An empty grid gives [].",
+      "hints": [
+        "Build the result with a nested comprehension, one inner list per row, so no rows are shared.",
+        "Clamp the neighbour ranges with `max(r - 1, 0)` and `min(r + 2, rows)` instead of checking bounds per cell, and skip `(r, c)` itself."
+      ],
+      "solution": "def neighbour_counts(grid):\n    rows = len(grid)\n    cols = len(grid[0]) if grid else 0\n    return [\n        [\n            sum(\n                grid[nr][nc]\n                for nr in range(max(r - 1, 0), min(r + 2, rows))\n                for nc in range(max(c - 1, 0), min(c + 2, cols))\n                if (nr, nc) != (r, c)\n            )\n            for c in range(cols)\n        ]\n        for r in range(rows)\n    ]",
+      "checklist": [
+        "Corner and edge cells do not wrap around or raise IndexError.",
+        "Each result row is a separate list.",
+        "A cell never counts itself."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why is `[0] * n` safe but `[[0] * n] * m` broken?",
+      "answer": "Both repeat references. Repeating references to an immutable int is harmless because 'changing' a cell rebinds that slot to a new int. Repeating a reference to a mutable list means all m slots share one row, so mutating `grid[i][j]` shows up in every row. Use `[[0] * n for _ in range(m)]`."
+    },
+    {
+      "question": "You need a FIFO queue in Python. Why not a list?",
+      "answer": "`list.pop(0)` shifts every remaining element, so it is O(n), and n dequeues cost O(n^2). `collections.deque` is a doubly-ended block structure with O(1) `append` and `popleft`. A list is still fine as a stack, since `append` and `pop()` work at the end."
+    },
+    {
+      "question": "When would you use a generator expression instead of a list comprehension?",
+      "answer": "When the values are consumed once, in order, by something like `sum`, `any`, `max` or a `for` loop. It keeps memory O(1) and lets `any` stop early. Use a list when you need `len`, indexing, multiple passes or to keep the results."
+    },
+    {
+      "question": "Can `zip` hide a bug?",
+      "answer": "Yes. It stops at the shortest input, so mismatched lengths silently drop data. Pass `strict=True` (Python 3.10+) to get a `ValueError`, or use `itertools.zip_longest` with a `fillvalue` when padding is the intended behaviour."
+    }
+  ],
+  "takeaways": [
+    "Slices are half-open, clamp out-of-range bounds and return a new shallow copy.",
+    "End-of-list operations are O(1); front insertions, removals and `in` are O(n). Use deque or set when that matters.",
+    "Unpack instead of indexing: `a, b = b, a`, `first, *rest = xs`, `enumerate`, `zip(*grid)` and `zip(strict=True)`.",
+    "Nested `for` clauses in a comprehension read like nested loops; a comprehension in the expression builds a nested list.",
+    "`[[0] * n] * m` shares one row; build rows with a comprehension and deep copy only when you must."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyq-slice",
+        "type": "flow",
+        "title": "A slice is a new list of the same items",
+        "alt": "Diagram of slicing. Name a points to a list holding three item objects p, q and r. Name b points to a second, new list created by a[:2] whose two slots point at the same p and q objects as list a.",
+        "caption": "Slicing copies references, not items. b is a different list, but b[0] is the very same object as a[0].",
+        "nodes": [
+          {
+            "id": "na",
+            "label": "name a",
+            "kind": "state",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "nb",
+            "label": "name b",
+            "kind": "state",
+            "col": 0,
+            "row": 3
+          },
+          {
+            "id": "la",
+            "label": "list a",
+            "kind": "storage",
+            "col": 2,
+            "row": 1,
+            "sub": "3 slots"
+          },
+          {
+            "id": "lb",
+            "label": "list b",
+            "kind": "storage",
+            "col": 2,
+            "row": 3,
+            "sub": "new, 2 slots"
+          },
+          {
+            "id": "p",
+            "label": "item p",
+            "kind": "note",
+            "col": 4,
+            "row": 0
+          },
+          {
+            "id": "q",
+            "label": "item q",
+            "kind": "note",
+            "col": 4,
+            "row": 2
+          },
+          {
+            "id": "r",
+            "label": "item r",
+            "kind": "note",
+            "col": 4,
+            "row": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "na",
+            "to": "la",
+            "label": "a = [p, q, r]"
+          },
+          {
+            "from": "la",
+            "to": "p",
+            "label": "a[0]"
+          },
+          {
+            "from": "la",
+            "to": "q",
+            "label": "a[1]"
+          },
+          {
+            "from": "la",
+            "to": "r",
+            "label": "a[2]"
+          },
+          {
+            "from": "nb",
+            "to": "lb",
+            "label": "b = a[:2]"
+          },
+          {
+            "from": "lb",
+            "to": "p",
+            "label": "b[0]"
+          },
+          {
+            "from": "lb",
+            "to": "q",
+            "label": "b[1]"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "text": "List a holds three references. The items live outside the list."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "`a[:2]` is half-open: indices 0 and 1. It allocates a brand-new list, so `b is a` is False."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "The new list points at the same item objects. Mutating p through b is visible through a; reassigning `b[0]` is not."
+          }
+        ]
+      },
+      {
+        "id": "pyq-costs",
+        "type": "bars",
+        "title": "Work per list operation on an 8-item list",
+        "alt": "Bar chart of worst-case element moves or comparisons for list operations on an 8-item list. a[i], append and pop() each take 1 step. insert(0, x) moves 8 elements, pop(0) moves 7, and x in a compares up to 8 items.",
+        "caption": "Counts are worst-case moves or comparisons for n = 8, not timings. End operations stay constant; anything touching the front or scanning grows with n.",
+        "unit": "steps (n = 8)",
+        "bars": [
+          {
+            "label": "a[i]",
+            "value": 1
+          },
+          {
+            "label": "append(x)",
+            "value": 1
+          },
+          {
+            "label": "pop()",
+            "value": 1
+          },
+          {
+            "label": "insert(0, x)",
+            "value": 8,
+            "highlight": true
+          },
+          {
+            "label": "pop(0)",
+            "value": 7,
+            "highlight": true
+          },
+          {
+            "label": "x in a",
+            "value": 8,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "pyq-gen",
+        "type": "sequence",
+        "title": "sum(x * x for x in range(2)) pulls lazily",
+        "alt": "Sequence diagram. sum asks the generator expression for its next value; the generator asks the range iterator for the next x, squares it and hands the result back. After two values the range iterator raises StopIteration, the generator finishes, and sum returns the total.",
+        "caption": "Nothing is computed until the consumer asks. Each value is produced, used and dropped, so memory stays O(1), and a finished generator stays empty.",
+        "actors": [
+          {
+            "id": "sum",
+            "label": "sum()"
+          },
+          {
+            "id": "gen",
+            "label": "genexpr"
+          },
+          {
+            "id": "rng",
+            "label": "range iterator"
+          }
+        ],
+        "messages": [
+          {
+            "from": "sum",
+            "to": "gen",
+            "label": "next()",
+            "note": "The generator body starts running only now."
+          },
+          {
+            "from": "gen",
+            "to": "rng",
+            "label": "next()"
+          },
+          {
+            "from": "rng",
+            "to": "gen",
+            "label": "x = 0",
+            "style": "reply"
+          },
+          {
+            "from": "gen",
+            "to": "sum",
+            "label": "yield 0",
+            "style": "reply",
+            "note": "The generator pauses right after producing 0 * 0."
+          },
+          {
+            "from": "sum",
+            "to": "gen",
+            "label": "next()"
+          },
+          {
+            "from": "gen",
+            "to": "rng",
+            "label": "next()"
+          },
+          {
+            "from": "rng",
+            "to": "gen",
+            "label": "x = 1",
+            "style": "reply"
+          },
+          {
+            "from": "gen",
+            "to": "sum",
+            "label": "yield 1",
+            "style": "reply"
+          },
+          {
+            "from": "sum",
+            "to": "gen",
+            "label": "next()"
+          },
+          {
+            "from": "gen",
+            "to": "rng",
+            "label": "next()"
+          },
+          {
+            "from": "rng",
+            "to": "gen",
+            "label": "StopIteration",
+            "style": "fail",
+            "note": "The range is exhausted, so the generator finishes too."
+          },
+          {
+            "from": "gen",
+            "to": "sum",
+            "label": "StopIteration",
+            "style": "fail",
+            "note": "sum stops and returns 1. Iterating the same generator again yields nothing."
+          }
+        ]
+      },
+      {
+        "id": "pyq-alias",
+        "type": "compare",
+        "title": "Repeated row versus fresh rows",
+        "alt": "Side-by-side comparison. With [[0] * 3] * 3, the three slots grid[0], grid[1] and grid[2] all point at one shared row list. With a comprehension, each slot points at its own separate row list.",
+        "caption": "List repetition copies the reference to the row. A comprehension evaluates [0] * 3 once per row, giving independent lists.",
+        "before": {
+          "label": "[[0] * 3] * 3: one shared row",
+          "nodes": [
+            {
+              "id": "s0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "s1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "s2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "row",
+              "label": "[0, 0, 0]",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "one list object"
+            }
+          ],
+          "edges": [
+            {
+              "from": "s0",
+              "to": "row"
+            },
+            {
+              "from": "s1",
+              "to": "row"
+            },
+            {
+              "from": "s2",
+              "to": "row"
+            }
+          ]
+        },
+        "after": {
+          "label": "for _ in range(3): fresh rows",
+          "nodes": [
+            {
+              "id": "s0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "s1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "s2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "r0",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "r1",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 1
+            },
+            {
+              "id": "r2",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "s0",
+              "to": "r0"
+            },
+            {
+              "from": "s1",
+              "to": "r1"
+            },
+            {
+              "from": "s2",
+              "to": "r2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyq-copy",
+        "type": "flow",
+        "title": "Shallow copy shares the inner list",
+        "alt": "Diagram of copies of a list containing an inner list. The original outer list and its shallow copy are two different outer lists that both point at the same inner list. The deep copy has its own outer list pointing at its own copy of the inner list.",
+        "caption": "A shallow copy duplicates one level. Only deepcopy, or rebuilding the rows yourself, gives a structure that shares nothing.",
+        "nodes": [
+          {
+            "id": "na",
+            "label": "name a",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "ns",
+            "label": "name s",
+            "kind": "state",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "nd",
+            "label": "name d",
+            "kind": "state",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "oa",
+            "label": "outer list",
+            "kind": "storage",
+            "col": 2,
+            "row": 0,
+            "sub": "original"
+          },
+          {
+            "id": "os",
+            "label": "outer list",
+            "kind": "storage",
+            "col": 2,
+            "row": 2,
+            "sub": "a.copy()"
+          },
+          {
+            "id": "od",
+            "label": "outer list",
+            "kind": "storage",
+            "col": 2,
+            "row": 4,
+            "sub": "deepcopy(a)"
+          },
+          {
+            "id": "inner",
+            "label": "inner [1, 2]",
+            "kind": "bad",
+            "col": 4,
+            "row": 1,
+            "sub": "shared"
+          },
+          {
+            "id": "inner2",
+            "label": "inner [1, 2]",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "independent"
+          }
+        ],
+        "edges": [
+          {
+            "from": "na",
+            "to": "oa"
+          },
+          {
+            "from": "oa",
+            "to": "inner",
+            "label": "a[0]"
+          },
+          {
+            "from": "ns",
+            "to": "os",
+            "label": "s = a.copy()"
+          },
+          {
+            "from": "os",
+            "to": "inner",
+            "label": "s[0]"
+          },
+          {
+            "from": "nd",
+            "to": "od",
+            "label": "d = deepcopy(a)"
+          },
+          {
+            "from": "od",
+            "to": "inner2",
+            "label": "d[0]"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "a is a list whose only slot refers to an inner list [1, 2]."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "`a.copy()` makes a new outer list, but its slot points at the same inner list. `s[0].append(3)` is visible as `a[0]`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "`copy.deepcopy(a)` also copies the inner list, so changes through d never reach a."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "rotate_clockwise",
+        "starter": "def rotate_clockwise(grid):\n    # Return a new grid rotated 90 degrees clockwise\n    return grid\n",
+        "solution": "def rotate_clockwise(grid):\n    return [list(column) for column in zip(*grid[::-1])]\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [1, 2],
+                [3, 4]
+              ]
+            ],
+            "expected": [
+              [3, 1],
+              [4, 2]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1, 2, 3],
+                [4, 5, 6]
+              ]
+            ],
+            "expected": [
+              [4, 1],
+              [5, 2],
+              [6, 3]
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [5]
+              ]
+            ],
+            "expected": [
+              [5]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1, 2, 3]
+              ]
+            ],
+            "expected": [
+              [1],
+              [2],
+              [3]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1],
+                [2],
+                [3]
+              ]
+            ],
+            "expected": [
+              [3, 2, 1]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1, 2, 3],
+                [4, 5, 6],
+                [7, 8, 9]
+              ]
+            ],
+            "expected": [
+              [7, 4, 1],
+              [8, 5, 2],
+              [9, 6, 3]
+            ]
+          },
+          {
+            "args": [
+              [
+                ["é", "b"],
+                ["🙂", "d"]
+              ]
+            ],
+            "expected": [
+              ["🙂", "é"],
+              ["d", "b"]
+            ]
+          },
+          {
+            "args": [
+              [
+                [-1, 0],
+                [0, -1],
+                [7, 7]
+              ]
+            ],
+            "expected": [
+              [7, 0, -1],
+              [7, -1, 0]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "step_changes",
+        "starter": "def step_changes(readings):\n    return []\n",
+        "solution": "def step_changes(readings):\n    return [cur - prev for prev, cur in zip(readings, readings[1:])]\n",
+        "tests": [
+          {
+            "args": [
+              [3, 5, 4]
+            ],
+            "expected": [2, -1]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [7]
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [1, 1, 1]
+            ],
+            "expected": [0, 0]
+          },
+          {
+            "args": [
+              [-2, 3, -4]
+            ],
+            "expected": [5, -7]
+          },
+          {
+            "args": [
+              [10, 0, 10, 0]
+            ],
+            "expected": [-10, 10, -10]
+          },
+          {
+            "args": [
+              [0, 1000000000000]
+            ],
+            "expected": [1000000000000]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "neighbour_counts",
+        "starter": "def neighbour_counts(grid):\n    rows = len(grid)\n    cols = len(grid[0]) if grid else 0\n    counts = [[0] * cols] * rows\n    for r in range(rows):\n        for c in range(cols):\n            for nr in range(max(r - 1, 0), min(r + 2, rows)):\n                for nc in range(max(c - 1, 0), min(c + 2, cols)):\n                    if (nr, nc) != (r, c):\n                        counts[r][c] += grid[nr][nc]\n    return counts\n",
+        "solution": "def neighbour_counts(grid):\n    rows = len(grid)\n    cols = len(grid[0]) if grid else 0\n    return [\n        [\n            sum(\n                grid[nr][nc]\n                for nr in range(max(r - 1, 0), min(r + 2, rows))\n                for nc in range(max(c - 1, 0), min(c + 2, cols))\n                if (nr, nc) != (r, c)\n            )\n            for c in range(cols)\n        ]\n        for r in range(rows)\n    ]\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [1, 0],
+                [0, 1]
+              ]
+            ],
+            "expected": [
+              [1, 2],
+              [2, 1]
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [1]
+              ]
+            ],
+            "expected": [
+              [0]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1, 1, 1]
+              ]
+            ],
+            "expected": [
+              [1, 2, 1]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1],
+                [0],
+                [1]
+              ]
+            ],
+            "expected": [
+              [0],
+              [2],
+              [0]
+            ]
+          },
+          {
+            "args": [
+              [
+                [1, 1, 1],
+                [1, 1, 1],
+                [1, 1, 1]
+              ]
+            ],
+            "expected": [
+              [3, 5, 3],
+              [5, 8, 5],
+              [3, 5, 3]
+            ]
+          },
+          {
+            "args": [
+              [
+                [0, 0],
+                [0, 0]
+              ]
+            ],
+            "expected": [
+              [0, 0],
+              [0, 0]
+            ]
+          },
+          {
+            "args": [
+              [
+                [0, 1, 0, 0],
+                [0, 0, 0, 1]
+              ]
+            ],
+            "expected": [
+              [1, 0, 2, 1],
+              [1, 1, 2, 0]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "grid = [[0] * 2] * 2\ngrid[0][0] = 9\nprint(grid)",
+        "choices": [
+          "[[9, 0], [0, 0]]",
+          "[[9, 0], [9, 0]]",
+          "[[9, 9], [9, 9]]"
+        ],
+        "answer": 1,
+        "explain": "The outer `* 2` repeats a reference to one inner list, so both rows are the same object and both show the 9."
+      },
+      {
+        "code": "a = [1, 2, 3]\nprint(a[1:100], a[5:])",
+        "choices": [
+          "[2, 3] []",
+          "IndexError",
+          "[2, 3] [3]"
+        ],
+        "answer": 0,
+        "explain": "Slice bounds are clamped to the list, so out-of-range slices return what exists, or an empty list. Only plain indexing like `a[5]` raises."
+      },
+      {
+        "code": "first, *rest = [1]\nprint(first, rest)",
+        "choices": [
+          "1 None",
+          "1 []",
+          "ValueError"
+        ],
+        "answer": 1,
+        "explain": "A starred target takes whatever is left, even nothing, and is always a list."
+      },
+      {
+        "code": "print([(x, y) for x in range(2) for y in 'ab'])",
+        "choices": [
+          "[(0, 'a'), (1, 'b')]",
+          "[(0, 'a'), (1, 'a'), (0, 'b'), (1, 'b')]",
+          "[(0, 'a'), (0, 'b'), (1, 'a'), (1, 'b')]"
+        ],
+        "answer": 2,
+        "explain": "The first `for` is the outer loop. y cycles through 'ab' for each x."
+      },
+      {
+        "code": "a = [[1], [2]]\nb = a.copy()\nb[0].append(9)\nb[1] = [0]\nprint(a)",
+        "choices": [
+          "[[1], [2]]",
+          "[[1, 9], [2]]",
+          "[[1, 9], [0]]"
+        ],
+        "answer": 1,
+        "explain": "The shallow copy shares the inner lists, so the append shows through a. Assigning `b[1]` only replaces a slot in b's own outer list."
+      },
+      {
+        "code": "g = (x * x for x in range(3))\nprint(sum(g), sum(g))",
+        "choices": [
+          "5 5",
+          "5 0",
+          "14 0"
+        ],
+        "answer": 1,
+        "explain": "0 + 1 + 4 is 5. The first sum exhausts the generator, so the second sees no items and returns 0."
+      },
+      {
+        "code": "print(list(zip('abc', [1, 2])))",
+        "choices": [
+          "[('a', 1), ('b', 2)]",
+          "[('a', 1), ('b', 2), ('c', None)]",
+          "ValueError"
+        ],
+        "answer": 0,
+        "explain": "zip stops at the shortest input and drops 'c' silently. Only `strict=True` would raise ValueError."
+      }
+    ],
+    "tip": "Grid questions are where aliasing bugs hide. When you allocate a 2D structure, say 'one fresh row per iteration' as you write `[[0] * cols for _ in range(rows)]`, and before coding a rotation or transpose, sketch a 2 x 3 example so the interviewer sees the dimensions swap.",
+    "links": {
+      "problems": [
+        "count-regions",
+        "grid-shortest-path",
+        "best-window-sum"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "py-basics",
+        "arrays-prefix-foundations",
+        "dp-grid-paths",
+        "queues-fifo-simulation"
+      ]
+    }
+  }
+}

@@ -1,0 +1,778 @@
+{
+  "id": "py-strings",
+  "track": "python",
+  "title": "Strings: immutability, slicing and building text",
+  "minutes": 40,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Why Python strings never change, how slicing and the core methods really behave, how to build text in linear time, and the Unicode and character-class traps that break string answers.",
+  "prerequisites": [
+    "py-basics"
+  ],
+  "prerequisiteNotes": "You should be comfortable with names versus objects and rebinding from py-basics; every string operation here returns a new object rather than changing one.",
+  "objectives": [
+    "Explain why strings are immutable and what `s += c` actually does to the name and the object.",
+    "Slice with negative indices and steps, and know which operations raise and which quietly clamp.",
+    "Build output with a list of parts and `''.join(parts)`, and justify the cost difference.",
+    "Choose the right method or character test (`find` vs `index`, `lower` vs `casefold`, `isdigit` vs `isdecimal`) and format results with f-string specs."
+  ],
+  "concepts": [
+    {
+      "title": "Strings are immutable",
+      "body": "A `str` object can never change after it is created. `s[0] = 'J'` raises `TypeError`, and every method such as `upper` or `replace` returns a **new** string. `s += 'x'` therefore builds a new object and rebinds `s`; any other name still sees the old text. Immutability is also what makes strings hashable, so they can be dict keys and set members.",
+      "code": "s = 'cat'\nt = s\ns += 's'          # new object, s rebinds\nprint(s, t)      # cats cat\nprint(s.upper(), s)  # CATS cats  (upper returns a copy)\ncounts = {s: 1}  # fine: str is hashable",
+      "diagram": "pys-immutable"
+    },
+    {
+      "title": "Indexing and slicing",
+      "body": "`s[i]` returns a one-character string; negative indices count from the end, so `s[-1]` is the last character. Indexing out of range raises `IndexError`, but a **slice** `s[start:stop:step]` clamps its bounds and never raises: `s[3:99]` simply stops at the end. The stop index is excluded, so `s[:k] + s[k:] == s` for any `k`. A negative step walks backwards: `s[::-1]` is the reversed string and `s[::-2]` takes every second character from the end. Every slice is a copy, O(k) in its length.",
+      "code": "s = 'hello'\nprint(s[0], s[-1])     # h o\nprint(s[1:4], s[3:99]) # ell lo\nprint(s[::-1])         # olleh\nprint(s[::2])          # hlo\nprint(s[:2] + s[2:] == s)  # True",
+      "diagram": "pys-index"
+    },
+    {
+      "title": "Building text: collect parts, join once",
+      "body": "Because a string cannot grow, `result += ch` in a loop creates a new string each time and copies everything built so far, which is **O(n²)** characters copied in principle. CPython sometimes resizes in place when the string has no other references, but that is an implementation detail you cannot rely on (a second reference to the string, or another interpreter such as PyPy, defeats it). The idiom is to append pieces to a list and call `''.join(parts)` once: one O(n) pass. `sep.join(...)` only accepts strings, so convert numbers first with `str` or an f-string.",
+      "code": "words = ['to', 'be', 'or']\nparts = []\nfor w in words:\n    parts.append(w.upper())\nprint('-'.join(parts))           # TO-BE-OR\nprint(', '.join(str(n) for n in [1, 2, 3]))  # 1, 2, 3",
+      "diagram": "pys-concat"
+    },
+    {
+      "title": "The methods interviewers expect you to know",
+      "body": "`split()` with no argument splits on runs of whitespace and drops empty pieces; `split(',')` splits on every comma and keeps empty fields. `strip()` removes whitespace (or the given **set** of characters) from both ends only. `startswith`/`endswith` accept a tuple of options. `find` returns `-1` when absent, `index` raises `ValueError`; prefer `in` for a plain membership test. `replace(old, new)` replaces every occurrence and returns a new string. For case-insensitive comparison use `casefold()`, which also folds characters such as `ß` to `ss`; `lower()` does not.",
+      "code": "print('a,b,,c'.split(','))     # ['a', 'b', '', 'c']\nprint('  a  b '.split())        # ['a', 'b']\nprint('xxhixx'.strip('x'))      # hi\nprint('photo.png'.endswith(('.png', '.jpg')))  # True\nprint('banana'.find('z'), 'banana'.index('n'))  # -1 2\nprint('Straße'.casefold() == 'STRASSE'.casefold())  # True"
+    },
+    {
+      "title": "Characters as numbers, counting and character tests",
+      "body": "`ord(ch)` gives a character's code point and `chr(n)` turns it back, so `chr(ord('a') + 2)` is `'c'` and `ord(ch) - ord('a')` maps lowercase ASCII to 0–25. Count characters with `collections.Counter(s)` or `counts[ch] = counts.get(ch, 0) + 1`. Be careful with the `is*` tests: they are **Unicode-aware**. `'é'.isalpha()` is True, `'²'.isdigit()` is True but `int('²')` raises, and `isdecimal()` is the test that matches what `int` accepts. If the task says 'ASCII letters', compare against ranges like `'a' <= ch <= 'z'` instead.",
+      "code": "from collections import Counter\nprint(ord('a'), chr(98))         # 97 b\nprint(Counter('banana').most_common(1))  # [('a', 3)]\nprint('é'.isalpha(), 'é'.isascii())  # True False\nprint('²'.isdigit(), '²'.isdecimal())  # True False"
+    },
+    {
+      "title": "f-strings and format specs",
+      "body": "An f-string evaluates expressions inside braces: `f'{name}: {total}'`. After a colon comes a **format spec**: `:.2f` fixes two decimals, `:>8` right-aligns in 8 columns, `:<8` and `:^8` left-align and centre, `:05d` zero-pads an int, `:,` adds thousands separators and `:x`/`:b` print hex and binary. `{value!r}` uses `repr`, handy for debugging strings with hidden spaces, and `f'{x=}'` prints the expression and its value.",
+      "code": "price, qty = 3.14159, 42\nprint(f'{price:.2f}|{qty:>5}|{7:03d}')  # 3.14|   42|007\nprint(f'{1234567:,} {255:x} {5:b}')     # 1,234,567 ff 101\nword = 'hi '\nprint(f'{word!r} {qty=}')               # 'hi ' qty=42"
+    },
+    {
+      "title": "Unicode basics",
+      "body": "A Python `str` is a sequence of Unicode **code points**, not bytes and not user-perceived characters. `len('café')` is 4 when `é` is the single code point U+00E9, but 5 when it is written as `e` plus a combining accent (U+0301), even though both look identical; `unicodedata.normalize('NFC', s)` makes them comparable. Encoding to bytes is explicit: `'café'.encode('utf-8')` has length 5. Reversing or slicing can split a combining sequence, so mention it when the input may be arbitrary user text.",
+      "code": "a = 'caf\\u00e9'\nb = 'cafe\\u0301'\nprint(len(a), len(b), a == b)   # 4 5 False\nimport unicodedata\nprint(unicodedata.normalize('NFC', b) == a)  # True\nprint(len(a.encode('utf-8')))   # 5"
+    }
+  ],
+  "example": "def word_lengths(sentence):\n    # 'the quick  fox' -> 'the=3 quick=5 fox=3'\n    parts = [f'{w}={len(w)}' for w in sentence.split()]\n    return ' '.join(parts)\n\nprint(word_lengths('the quick  fox'))  # the=3 quick=5 fox=3\nprint(repr(word_lengths('   ')))      # ''",
+  "task": "Write `compress(text)` that normalises then run-length encodes a string. First casefold the text and keep only alphabetic characters (as decided by `str.isalpha`, so accented letters stay). Then replace every run of the same character by the character followed by the run length, writing the length only when it is greater than 1. Return the encoded string; an input with no letters returns `''`. For example `'Aaa bB!c'` becomes `'a3b2c'` and `'Straße'` becomes `'stras2e'`.",
+  "starter": "def compress(text):\n    # casefold, keep letters, then encode runs: 'aaab' -> 'a3b'\n    ...",
+  "hints": [
+    "Normalise first into a list of characters: `[ch for ch in text.casefold() if ch.isalpha()]`. Casefolding before filtering is what turns `ß` into two `s` letters.",
+    "Walk the list with an index `i`, advance `j` while `letters[j] == letters[i]`, then append `ch` or `f'{ch}{run}'` to a parts list and finish with `''.join(parts)`."
+  ],
+  "solution": "def compress(text):\n    letters = [ch for ch in text.casefold() if ch.isalpha()]\n    parts = []\n    i = 0\n    while i < len(letters):\n        j = i\n        while j < len(letters) and letters[j] == letters[i]:\n            j += 1\n        run = j - i\n        parts.append(letters[i] if run == 1 else f'{letters[i]}{run}')\n        i = j\n    return ''.join(parts)\n\nNormalisation and encoding are separate steps, so each is easy to reason about. The inner loop only moves `j` forward and `i` jumps to `j`, so every character is visited once: O(n) time and O(n) space for the parts. Building a list and joining once keeps the output construction linear instead of relying on `+=`. The empty case needs no special branch: the while loop never runs and `''.join([])` is `''`. `itertools.groupby(letters)` is an equivalent one-liner once you know it.",
+  "checklist": [
+    "I casefold before filtering, so `ß` becomes `ss` and `A`/`a` merge into one run.",
+    "I build a list of parts and join once instead of growing a string with `+=`.",
+    "A run of length 1 is written without a count, and a run of 12 is written as `12`, not `1` then `2`.",
+    "Input with no letters returns `''` without a special case."
+  ],
+  "pitfalls": [
+    "Trying `s[i] = ch` on a string; convert to a list, edit, then `''.join` it back.",
+    "Using `lower()` for case-insensitive matching; `casefold()` handles characters such as `ß`.",
+    "Using `isdigit()` to validate input for `int()`; superscripts pass `isdigit` but `int` rejects them. Use `isdecimal()` or try/except.",
+    "Calling `s.index(x)` when `x` may be absent; it raises `ValueError`, while `find` returns `-1` (which is also a valid index into the string, so never use it as one).",
+    "Assuming `split(',')` drops empty fields like `split()` does; `'a,,b'.split(',')` keeps an empty string.",
+    "Using `isalpha()` when the task means ASCII letters only; `'é'.isalpha()` is True."
+  ],
+  "walkthrough": [
+    {
+      "title": "What `+=` in a loop really costs",
+      "body": "Appending one character to a string of length k creates a new string and copies k + 1 characters. Doing that n times copies 1 + 2 + ... + n, about n²/2 characters: for n = 1000 that is 500,500 copies versus about 1,000 for a single join. CPython's in-place resize trick can hide this in a micro-benchmark, which is exactly why you should name the idiom and its reason rather than benchmark-guess in an interview.",
+      "diagram": "pys-cost"
+    },
+    {
+      "title": "Solve `compress` in three moves",
+      "body": "Normalise: casefold the whole string once, then filter with `isalpha`. Scan runs: two indices, `i` at the run start and `j` racing ahead while the character matches. Emit: append the character, plus the count when it is above 1, to a parts list; join at the end. State the edge cases aloud: empty input, a single letter, all non-letters and a run longer than 9.",
+      "diagram": "pys-flow"
+    },
+    {
+      "title": "Palindrome and anagram idioms",
+      "body": "For a palindrome check, normalise first (`[c for c in s.casefold() if c.isalnum()]`) and compare with its reverse: `t == t[::-1]`. That is O(n) time and space; two indices moving inward give O(1) extra space if asked. For anagrams, `sorted(a) == sorted(b)` is O(n log n) and obvious; `Counter(a) == Counter(b)` is O(n). For grouping anagrams, use `''.join(sorted(word))` or a tuple of 26 counts as the dict key, which works because strings and tuples are immutable and hashable."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Reads both ways",
+      "prompt": "Write `reads_both_ways(text)` that returns True when the text reads the same forwards and backwards after casefolding and ignoring every character that is not a letter or digit. An empty string counts as True.",
+      "hints": [
+        "Build the cleaned sequence with a comprehension over `text.casefold()` that keeps `ch.isalnum()`.",
+        "Compare the cleaned sequence with its slice `[::-1]`."
+      ],
+      "solution": "def reads_both_ways(text):\n    cleaned = [ch for ch in text.casefold() if ch.isalnum()]\n    return cleaned == cleaned[::-1]",
+      "checklist": [
+        "Punctuation and spaces are ignored.",
+        "Upper and lower case compare equal.",
+        "Digits count as characters that must match."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Rotate ASCII letters",
+      "prompt": "Write `caesar_shift(text, k)` that shifts every ASCII letter `k` places through the alphabet, wrapping around and preserving case. `k` may be negative or larger than 26. Every other character, including accented letters, is unchanged.",
+      "hints": [
+        "Map a letter to 0–25 with `ord(ch) - ord(base)`, add `k`, take `% 26`, and map back with `chr`. Python's `%` is never negative for a positive divisor.",
+        "Test `'a' <= ch <= 'z'` and `'A' <= ch <= 'Z'` rather than `isalpha()`, which is also True for `é`."
+      ],
+      "solution": "def caesar_shift(text, k):\n    out = []\n    for ch in text:\n        if 'a' <= ch <= 'z':\n            base = ord('a')\n        elif 'A' <= ch <= 'Z':\n            base = ord('A')\n        else:\n            out.append(ch)\n            continue\n        out.append(chr((ord(ch) - base + k) % 26 + base))\n    return ''.join(out)",
+      "checklist": [
+        "Negative and large shifts wrap correctly.",
+        "Case is preserved.",
+        "Non-ASCII letters and punctuation pass through unchanged."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Is `s += ch` in a loop really quadratic in CPython?",
+      "answer": "In principle yes: each step builds a new string and copies the old content. CPython has an optimisation that resizes the string in place when the only reference is the one being assigned, so simple loops often run in linear time in practice. It is not part of the language guarantee, it disappears if another name refers to the string, and other interpreters do not have it. `''.join(parts)` is linear everywhere, so it is the answer to give."
+    },
+    {
+      "question": "How would you check whether two strings are anagrams, and what does each approach cost?",
+      "answer": "`sorted(a) == sorted(b)` is O(n log n) time and O(n) space. `Counter(a) == Counter(b)` is O(n) time with space proportional to the alphabet. For lowercase ASCII only, a list of 26 counts indexed by `ord(ch) - ord('a')` is O(n) time and O(1) space. Ask whether case, spaces and Unicode matter, and normalise first."
+    },
+    {
+      "question": "Why can a string be a dict key but a list cannot?",
+      "answer": "Dict keys must be hashable, and a hash must stay stable for the key's lifetime. Strings are immutable, so their hash never changes; lists can be mutated, so they define no hash. That is why anagram grouping uses `''.join(sorted(word))` or a tuple of counts as the key, not a sorted list."
+    }
+  ],
+  "takeaways": [
+    "Strings never change; every method and `+=` returns a new object.",
+    "Slices clamp and never raise; `s[::-1]` reverses; indexing out of range raises.",
+    "Build with a list of parts and `''.join` for linear time.",
+    "`casefold` for caseless comparison, `isdecimal` before `int`, and remember `len` counts code points."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pys-immutable",
+        "type": "flow",
+        "title": "s += 's' makes a new string",
+        "alt": "Diagram of names and string objects. Names s and t both start on the string object 'cat'. After s += 's', a new string object 'cats' exists and only s points to it; t still points to 'cat'.",
+        "caption": "Strings cannot be changed in place, so += builds a new object and rebinds one name. Other names keep the old text.",
+        "nodes": [
+          {
+            "id": "s",
+            "label": "name s",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "cats",
+            "label": "str object",
+            "kind": "storage",
+            "col": 2,
+            "row": 0,
+            "sub": "'cats' (new)"
+          },
+          {
+            "id": "t",
+            "label": "name t",
+            "kind": "state",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "cat",
+            "label": "str object",
+            "kind": "storage",
+            "col": 2,
+            "row": 2,
+            "sub": "'cat'"
+          }
+        ],
+        "edges": [
+          {
+            "from": "s",
+            "to": "cat",
+            "label": "s = 'cat'"
+          },
+          {
+            "from": "t",
+            "to": "cat",
+            "label": "t = s"
+          },
+          {
+            "from": "s",
+            "to": "cats",
+            "label": "s += 's'"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`s = 'cat'` creates a string object and binds s to it."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "`t = s` binds a second name to the same object. Sharing is safe because the object can never change."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`s += 's'` cannot extend 'cat'. It builds a new object 'cats' and moves only s; t still reads 'cat'."
+          }
+        ]
+      },
+      {
+        "id": "pys-index",
+        "type": "flow",
+        "title": "Indexes and slices of 'hello'",
+        "alt": "The five characters of 'hello' in a row, each labelled with its positive and negative index. Below, s[1:4] starting at 'e' gives 'ell', s[::-1] starting at 'o' gives 'olleh', and a bottom row contrasts s[5], which raises IndexError, with s[3:99], which clamps to 'lo'.",
+        "caption": "Positive indexes count from 0, negative from -1 at the end. Slices exclude the stop and clamp out-of-range bounds; single indexes raise.",
+        "nodes": [
+          {
+            "id": "h",
+            "label": "'h'",
+            "kind": "state",
+            "col": 0,
+            "row": 0,
+            "sub": "[0] or [-5]"
+          },
+          {
+            "id": "e",
+            "label": "'e'",
+            "kind": "state",
+            "col": 1,
+            "row": 0,
+            "sub": "[1] or [-4]"
+          },
+          {
+            "id": "l1",
+            "label": "'l'",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "[2] or [-3]"
+          },
+          {
+            "id": "l2",
+            "label": "'l'",
+            "kind": "state",
+            "col": 3,
+            "row": 0,
+            "sub": "[3] or [-2]"
+          },
+          {
+            "id": "o",
+            "label": "'o'",
+            "kind": "state",
+            "col": 4,
+            "row": 0,
+            "sub": "[4] or [-1]"
+          },
+          {
+            "id": "mid",
+            "label": "s[1:4]",
+            "kind": "good",
+            "col": 1,
+            "row": 2,
+            "sub": "'ell' (stop excl.)"
+          },
+          {
+            "id": "rev",
+            "label": "s[::-1]",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "'olleh'"
+          },
+          {
+            "id": "oob",
+            "label": "s[5]",
+            "kind": "bad",
+            "col": 0,
+            "row": 4,
+            "sub": "IndexError"
+          },
+          {
+            "id": "clamp",
+            "label": "s[3:99]",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "'lo' (clamped)"
+          }
+        ],
+        "edges": [
+          {
+            "from": "e",
+            "to": "mid",
+            "label": "start at 1"
+          },
+          {
+            "from": "o",
+            "to": "rev",
+            "label": "start at -1"
+          },
+          {
+            "from": "oob",
+            "to": "clamp",
+            "label": "slice instead"
+          }
+        ]
+      },
+      {
+        "id": "pys-concat",
+        "type": "compare",
+        "title": "Growing a string versus joining parts",
+        "alt": "Side-by-side comparison. On the left, s += ch builds 'a', then copies it into 'ab', then copies that into 'abc', a new string at every step. On the right, characters are appended to a list and a single ''.join call produces 'abc' once.",
+        "caption": "Each += copies everything built so far. A parts list plus one join copies each character once.",
+        "before": {
+          "label": "s += ch: copy every step",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "'a'",
+              "kind": "bad",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "ab",
+              "label": "'ab'",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "copied 'a'"
+            },
+            {
+              "id": "abc",
+              "label": "'abc'",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "copied 'ab'"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "ab",
+              "label": "+= 'b'"
+            },
+            {
+              "from": "ab",
+              "to": "abc",
+              "label": "+= 'c'"
+            }
+          ]
+        },
+        "after": {
+          "label": "parts + join: copy once",
+          "nodes": [
+            {
+              "id": "parts",
+              "label": "parts list",
+              "kind": "storage",
+              "col": 0,
+              "row": 0,
+              "sub": "['a', 'b', 'c']"
+            },
+            {
+              "id": "join",
+              "label": "''.join",
+              "kind": "service",
+              "col": 1,
+              "row": 0,
+              "sub": "one pass"
+            },
+            {
+              "id": "out",
+              "label": "'abc'",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            }
+          ],
+          "edges": [
+            {
+              "from": "parts",
+              "to": "join"
+            },
+            {
+              "from": "join",
+              "to": "out"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pys-cost",
+        "type": "bars",
+        "title": "Characters copied building a 1,000-char string",
+        "alt": "Bar chart of characters copied to build a 1,000-character string one character at a time. Repeated += without in-place reuse copies 500,500 characters; collecting parts and calling ''.join once copies 1,000.",
+        "caption": "1 + 2 + ... + n is about n²/2. Joining once is linear, and it does not depend on an interpreter optimisation.",
+        "unit": "chars copied, n = 1000",
+        "bars": [
+          {
+            "label": "+= loop, no reuse",
+            "value": 500500
+          },
+          {
+            "label": "''.join(parts)",
+            "value": 1000,
+            "highlight": true
+          }
+        ]
+      },
+      {
+        "id": "pys-flow",
+        "type": "sequence",
+        "title": "compress('Aaa bB!c') step by step",
+        "alt": "Sequence diagram. The caller calls compress. compress casefolds the text, filters it with isalpha to get 'aaabbc', appends the run tokens a3, b2 and c to a parts list, joins the list once and returns 'a3b2c' to the caller.",
+        "caption": "Normalise first, scan runs second, build the output with one join at the end.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "fn",
+            "label": "compress()"
+          },
+          {
+            "id": "str",
+            "label": "str methods"
+          },
+          {
+            "id": "parts",
+            "label": "parts list"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "fn",
+            "label": "compress('Aaa bB!c')"
+          },
+          {
+            "from": "fn",
+            "to": "str",
+            "label": "casefold()"
+          },
+          {
+            "from": "str",
+            "to": "fn",
+            "label": "'aaa bb!c'",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "str",
+            "label": "isalpha() per char",
+            "note": "Spaces and punctuation are dropped."
+          },
+          {
+            "from": "str",
+            "to": "fn",
+            "label": "letters 'aaabbc'",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "parts",
+            "label": "append 'a3', 'b2', 'c'",
+            "note": "One token per run; count only when above 1."
+          },
+          {
+            "from": "parts",
+            "to": "fn",
+            "label": "''.join(parts)",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "caller",
+            "label": "return 'a3b2c'",
+            "style": "reply"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "compress",
+        "starter": "def compress(text):\n    # casefold, keep letters, then encode runs: 'aaab' -> 'a3b'\n    return text\n",
+        "solution": "def compress(text):\n    letters = [ch for ch in text.casefold() if ch.isalpha()]\n    parts = []\n    i = 0\n    while i < len(letters):\n        j = i\n        while j < len(letters) and letters[j] == letters[i]:\n            j += 1\n        run = j - i\n        parts.append(letters[i] if run == 1 else f'{letters[i]}{run}')\n        i = j\n    return ''.join(parts)\n",
+        "tests": [
+          {
+            "args": [
+              "Aaa bB!c"
+            ],
+            "expected": "a3b2c"
+          },
+          {
+            "args": [
+              ""
+            ],
+            "expected": ""
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              "x"
+            ],
+            "expected": "x"
+          },
+          {
+            "args": [
+              "Straße"
+            ],
+            "expected": "stras2e"
+          },
+          {
+            "args": [
+              "1122 !!"
+            ],
+            "expected": ""
+          },
+          {
+            "args": [
+              "zzzzzzzzzzzzY"
+            ],
+            "expected": "z12y"
+          },
+          {
+            "args": [
+              "abAB"
+            ],
+            "expected": "abab"
+          },
+          {
+            "args": [
+              "Zz-zZ"
+            ],
+            "expected": "z4"
+          },
+          {
+            "args": [
+              "\u00c9\u00e9E"
+            ],
+            "expected": "\u00e92e"
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "reads_both_ways",
+        "starter": "def reads_both_ways(text):\n    return text == text[::-1]\n",
+        "solution": "def reads_both_ways(text):\n    cleaned = [ch for ch in text.casefold() if ch.isalnum()]\n    return cleaned == cleaned[::-1]\n",
+        "tests": [
+          {
+            "args": [
+              "Step on no pets!"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "Python"
+            ],
+            "expected": false
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              ""
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "q"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "No 'x' in Nixon"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "12a21"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "ab12BA"
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              "?!, ."
+            ],
+            "expected": true
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "caesar_shift",
+        "starter": "def caesar_shift(text, k):\n    return ''.join(chr(ord(ch) + k) for ch in text)\n",
+        "solution": "def caesar_shift(text, k):\n    out = []\n    for ch in text:\n        if 'a' <= ch <= 'z':\n            base = ord('a')\n        elif 'A' <= ch <= 'Z':\n            base = ord('A')\n        else:\n            out.append(ch)\n            continue\n        out.append(chr((ord(ch) - base + k) % 26 + base))\n    return ''.join(out)\n",
+        "tests": [
+          {
+            "args": [
+              "Hello, World!",
+              3
+            ],
+            "expected": "Khoor, Zruog!"
+          },
+          {
+            "args": [
+              "abc",
+              -1
+            ],
+            "expected": "zab"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              "",
+              5
+            ],
+            "expected": ""
+          },
+          {
+            "args": [
+              "xyz",
+              29
+            ],
+            "expected": "abc"
+          },
+          {
+            "args": [
+              "Zebra-42",
+              1
+            ],
+            "expected": "Afcsb-42"
+          },
+          {
+            "args": [
+              "caf\u00e9",
+              1
+            ],
+            "expected": "dbg\u00e9"
+          },
+          {
+            "args": [
+              "ABC",
+              -27
+            ],
+            "expected": "ZAB"
+          },
+          {
+            "args": [
+              "Same",
+              0
+            ],
+            "expected": "Same"
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "s = 'hello'\ntry:\n    s[0] = 'J'\nexcept TypeError:\n    print('TypeError')\nelse:\n    print(s)",
+        "choices": [
+          "Jello",
+          "TypeError",
+          "hello"
+        ],
+        "answer": 1,
+        "explain": "Strings are immutable and do not support item assignment. Build a new string instead: `'J' + s[1:]`."
+      },
+      {
+        "code": "s = 'abcdef'\nprint(s[::-2], s[-2:], s[4:99])",
+        "choices": [
+          "fdb ef ef",
+          "ace ef ef",
+          "fdb e IndexError",
+          "fdb ef e"
+        ],
+        "answer": 0,
+        "explain": "`[::-2]` starts at the last character and takes every second one backwards: f, d, b. `[-2:]` is the last two characters, and `[4:99]` clamps the stop to the end instead of raising."
+      },
+      {
+        "code": "print('a,b,,c'.split(','), '  a  b '.split())",
+        "choices": [
+          "['a', 'b', 'c'] ['a', 'b']",
+          "['a', 'b', '', 'c'] ['a', 'b']",
+          "['a', 'b', '', 'c'] ['', 'a', '', 'b', '']"
+        ],
+        "answer": 1,
+        "explain": "With an explicit separator, `split` keeps empty fields between adjacent commas. With no argument it splits on runs of whitespace and drops empty strings at the ends."
+      },
+      {
+        "code": "print('banana'.find('x'), 'banana'.rfind('a'), 'banana'.count('ana'))",
+        "choices": [
+          "-1 5 2",
+          "-1 5 1",
+          "None 5 1"
+        ],
+        "answer": 1,
+        "explain": "`find` returns -1 when absent, `rfind` the last match index, and `count` counts non-overlapping occurrences, so 'ana' at index 1 consumes the overlap with index 3."
+      },
+      {
+        "code": "print('²'.isdigit(), '²'.isdecimal(), 'Straße'.lower() == 'STRASSE'.lower())",
+        "choices": [
+          "True False False",
+          "False False True",
+          "True True False",
+          "True False True"
+        ],
+        "answer": 0,
+        "explain": "Superscript two is a digit but not a decimal character, so `int('²')` would fail. `lower()` leaves `ß` alone, so the strings differ; `casefold()` would turn it into 'ss' and compare equal."
+      },
+      {
+        "code": "print(f'{3.14159:.2f}|{42:>5}|{7:03d}|{255:x}')",
+        "choices": [
+          "3.14|42   |007|ff",
+          "3.14|   42|007|ff",
+          "3.14159|   42|7|255"
+        ],
+        "answer": 1,
+        "explain": "`.2f` rounds to two decimals, `>5` right-aligns in five columns, `03d` zero-pads to three digits and `x` prints lowercase hex."
+      }
+    ],
+    "tip": "Before writing any string loop, say 'I'll normalise first, then collect parts in a list and join once.' It shows you know strings are immutable, and asking whether case, whitespace and Unicode matter often uncovers the real edge cases.",
+    "links": {
+      "problems": [
+        "almost-palindrome",
+        "anagram-windows"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "py-basics",
+        "hash-map-complements",
+        "sliding-window-distinct"
+      ]
+    }
+  }
+}

@@ -4,7 +4,9 @@ import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
-export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral']
+export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python']
+/** Language tracks and the lab language their lessons run. */
+export const LANGUAGE_TRACK_LANG: Partial<Record<Track, 'py' | 'ts'>> = { python: 'py' }
 
 type Rec = Record<string, unknown>
 const isRec = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -26,10 +28,11 @@ class Checker {
   }
   section(value: unknown, path: string) {
     if (!isRec(value)) return this.fail(path, 'expected object')
-    this.keys(value, path, ['title', 'body'], ['code'])
+    this.keys(value, path, ['title', 'body'], ['code', 'diagram'])
     this.text(value.title, `${path}.title`)
     this.text(value.body, `${path}.body`)
     if ('code' in value) this.text(value.code, `${path}.code`)
+    if ('diagram' in value) this.text(value.diagram, `${path}.diagram`)
   }
   sections(value: unknown, path: string, min: number) {
     if (!Array.isArray(value) || value.length < min) return this.fail(path, `expected at least ${min} sections`)
@@ -43,9 +46,19 @@ const LESSON_REQUIRED = ['id', 'track', 'title', 'minutes', 'summary', 'objectiv
 export function validateLesson(value: unknown, where = 'lesson'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
-  check.keys(value, '', LESSON_REQUIRED, ['starter'])
+  check.keys(value, '', LESSON_REQUIRED, ['starter', 'level', 'paths', 'lab'])
   if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
   if (!TRACK_IDS.includes(value.track as Track)) check.fail('track', 'unknown track')
+  const labLang = LANGUAGE_TRACK_LANG[value.track as Track]
+  if (labLang) {
+    if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+    if ('paths' in value) {
+      const paths = value.paths
+      if (!Array.isArray(paths) || !paths.length || paths.some(path => path !== 'swe' && path !== 'senior') || new Set(paths).size !== paths.length) check.fail('paths', 'expected a non-empty list of swe/senior')
+    }
+    if (!('lab' in value)) check.fail('', 'missing "lab"')
+    else lab(check, value.lab, labLang, value)
+  } else for (const key of ['level', 'paths', 'lab']) if (key in value) check.fail(key, 'only language-track lessons have this key')
   check.text(value.title, 'title')
   if (!Number.isInteger(value.minutes) || (value.minutes as number) < 5 || (value.minutes as number) > 120) check.fail('minutes', 'expected integer 5–120')
   for (const key of ['summary', 'example', 'task', 'solution', 'prerequisiteNotes']) check.text(value[key], key)
@@ -138,8 +151,12 @@ export function validateProblem(value: unknown, where = 'problem'): string[] {
 export function validateTrack(value: unknown, where = 'track'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
-  check.keys(value, '', ['id', 'title', 'description', 'lessons'])
+  check.keys(value, '', ['id', 'title', 'description', 'lessons'], ['kind', 'placement'])
   if (!TRACK_IDS.includes(value.id as Track)) check.fail('id', 'unknown track')
+  const language = !!LANGUAGE_TRACK_LANG[value.id as Track]
+  if (language !== (value.kind === 'language')) check.fail('kind', language ? 'expected "language"' : 'only language tracks have a kind')
+  if (language) placement(check, value.placement, value.lessons)
+  else if ('placement' in value) check.fail('placement', 'only language tracks have a placement check')
   check.text(value.title, 'title')
   check.text(value.description, 'description')
   check.texts(value.lessons, 'lessons')
@@ -405,6 +422,95 @@ function diagram(check: Checker, value: unknown, path: string) {
     }
     default: check.fail(`${path}.type`, `expected one of ${DIAGRAM_TYPES.join(', ')}`)
   }
+}
+
+function labTests(check: Checker, list: unknown, path: string, min: number) {
+  if (!Array.isArray(list) || list.length < min) return check.fail(path, `expected at least ${min} tests`)
+  list.forEach((item, index) => {
+    const at = `${path}[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['args', 'expected'])
+    if (!Array.isArray(item.args)) check.fail(`${at}.args`, 'expected array')
+  })
+}
+
+/** Validates the lab of a language-track lesson: diagrams, runnable exercises, predict quiz, tip and links. */
+function lab(check: Checker, value: unknown, lang: 'py' | 'ts', lesson: Rec) {
+  if (!isRec(value)) return check.fail('lab', 'expected object')
+  check.keys(value, 'lab', ['lang', 'diagrams', 'exercises', 'predict', 'tip', 'links'])
+  if (value.lang !== lang) check.fail('lab.lang', `expected "${lang}" for this track`)
+  check.text(value.tip, 'lab.tip')
+  const diagramIds = new Set<string>()
+  if (!Array.isArray(value.diagrams) || value.diagrams.length < 2) check.fail('lab.diagrams', 'expected at least 2 diagrams')
+  else value.diagrams.forEach((item, index) => {
+    diagram(check, item, `lab.diagrams[${index}]`)
+    if (isRec(item) && typeof item.id === 'string') {
+      if (diagramIds.has(item.id)) check.fail(`lab.diagrams[${index}].id`, 'duplicate diagram id')
+      diagramIds.add(item.id)
+    }
+  })
+  const used = new Set<string>()
+  for (const key of ['concepts', 'walkthrough']) if (Array.isArray(lesson[key])) (lesson[key] as unknown[]).forEach((section, index) => {
+    if (!isRec(section) || !('diagram' in section)) return
+    const id = section.diagram as string
+    if (!diagramIds.has(id)) check.fail(`${key}[${index}].diagram`, 'unknown diagram id')
+    else if (used.has(id)) check.fail(`${key}[${index}].diagram`, 'diagram is already shown in another section')
+    used.add(id)
+  })
+  for (const id of diagramIds) if (!used.has(id)) check.fail('lab.diagrams', `diagram ${id} is not placed in any concept or walkthrough section`)
+  const stages = new Set(['core', ...(Array.isArray(lesson.extraPractice) ? lesson.extraPractice.map(item => isRec(item) ? item.id : undefined) : [])])
+  const seen = new Set<string>()
+  if (!Array.isArray(value.exercises) || !value.exercises.length) check.fail('lab.exercises', 'expected at least the core exercise')
+  else {
+    value.exercises.forEach((item, index) => {
+      const at = `lab.exercises[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['id', 'function', 'starter', 'solution', 'tests', 'hiddenTests'])
+      if (!stages.has(item.id as string)) check.fail(`${at}.id`, 'expected core or the id of an extra practice item')
+      else if (seen.has(item.id as string)) check.fail(`${at}.id`, 'duplicate exercise')
+      seen.add(item.id as string)
+      if (!IDENT.test(String(item.function))) check.fail(`${at}.function`, 'expected identifier')
+      check.text(item.starter, `${at}.starter`)
+      check.text(item.solution, `${at}.solution`)
+      labTests(check, item.tests, `${at}.tests`, 2)
+      labTests(check, item.hiddenTests, `${at}.hiddenTests`, 3)
+    })
+    if (!seen.has('core')) check.fail('lab.exercises', 'expected a core exercise')
+  }
+  if (!Array.isArray(value.predict) || value.predict.length < 2) check.fail('lab.predict', 'expected at least 2 predict-the-output items')
+  else value.predict.forEach((item, index) => {
+    const at = `lab.predict[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['code', 'choices', 'answer', 'explain'])
+    check.text(item.code, `${at}.code`)
+    check.text(item.explain, `${at}.explain`)
+    const choices = item.choices
+    if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || choices.some(choice => typeof choice !== 'string') || new Set(choices).size !== choices.length) check.fail(`${at}.choices`, 'expected 2–4 distinct strings')
+    else if (!Number.isInteger(item.answer) || (item.answer as number) < 0 || (item.answer as number) >= choices.length) check.fail(`${at}.answer`, 'expected a choice index')
+  })
+  if (!isRec(value.links)) check.fail('lab.links', 'expected object')
+  else {
+    check.keys(value.links, 'lab.links', [], ['problems', 'guides', 'lessons'])
+    for (const key of ['problems', 'guides', 'lessons']) if (key in value.links) check.texts(value.links[key], `lab.links.${key}`)
+  }
+}
+
+/** Validates the skip-ahead placement check of a language track. */
+function placement(check: Checker, value: unknown, lessons: unknown) {
+  const listed = new Set(Array.isArray(lessons) ? lessons : [])
+  if (!Array.isArray(value) || value.length < 4) return check.fail('placement', 'expected at least 4 questions')
+  value.forEach((item, index) => {
+    const at = `placement[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['question', 'choices', 'answer', 'explain', 'lessons'], ['code'])
+    maxLength(check, item.question, `${at}.question`, QUIZ_QUESTION_MAX)
+    if ('code' in item) check.text(item.code, `${at}.code`)
+    check.text(item.explain, `${at}.explain`)
+    const choices = item.choices
+    if (!Array.isArray(choices) || choices.length < 2 || choices.length > 4 || choices.some(choice => !isText(choice)) || new Set(choices).size !== choices.length) check.fail(`${at}.choices`, 'expected 2–4 distinct strings')
+    else if (!Number.isInteger(item.answer) || (item.answer as number) < 0 || (item.answer as number) >= choices.length) check.fail(`${at}.answer`, 'expected a choice index')
+    if (!Array.isArray(item.lessons) || !item.lessons.length || item.lessons.some(id => !listed.has(id))) check.fail(`${at}.lessons`, 'expected lesson ids from this track')
+  })
 }
 
 function snippet(check: Checker, value: unknown, path: string, diagramIds: Set<string>) {

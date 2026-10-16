@@ -61,6 +61,14 @@ export interface Progress {
   mocks?: MockResult[]
   /** The behavioral story bank, in the order the user created them. */
   stories?: Story[]
+  /** Latest placement check per language track, with the lessons it marked as already known. */
+  placements?: Partial<Record<Track, Placement>>
+}
+export interface Placement {
+  percent: number
+  at: string
+  /** Lessons answered correctly in the check. They stay openable but the planner skips them. */
+  known: string[]
 }
 export interface CardState {
   /** Leitner box 0-6; higher boxes wait longer before the next review. */
@@ -158,7 +166,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -214,6 +222,7 @@ export function parseBackup(text: string): Progress {
   const guides = Object.hasOwn(root, 'guides') ? parseGuides(root.guides) : undefined
   const mocks = Object.hasOwn(root, 'mocks') ? parseMocks(root.mocks) : undefined
   const stories = Object.hasOwn(root, 'stories') ? parseStories(root.stories) : undefined
+  const placements = Object.hasOwn(root, 'placements') ? parsePlacements(root.placements) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -224,7 +233,37 @@ export function parseBackup(text: string): Progress {
     ...(mocks ? { mocks } : {}),
     ...(stories ? { stories } : {}),
     ...(guides ? { guides } : {}),
+    ...(placements ? { placements } : {}),
   }
+}
+
+function parsePlacements(value: unknown): Partial<Record<Track, Placement>> {
+  const raw = object(value)
+  const placements: Partial<Record<Track, Placement>> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    const track = tracks.find(item => item.id === id)
+    if (!track?.placement) invalid('unknown placement track. This backup may need a newer app version.')
+    const item = object(entry, ['percent', 'at', 'known'])
+    if (!Array.isArray(item.known) || new Set(item.known).size !== item.known.length ||
+      item.known.some(lessonId => lessonFor(lessonId).track !== track.id)) invalid('invalid placement lessons.')
+    placements[track.id] = { percent: integer(item.percent, 0, 100), at: timestamp(item.at), known: item.known as string[] }
+  }
+  return placements
+}
+
+/** Saves a placement check result for a language track, replacing any earlier one. */
+export function recordPlacement(progress: Progress, track: Track, percent: number, known: string[], now = new Date()): Progress {
+  const info = tracks.find(item => item.id === track)
+  if (!info?.placement) throw new Error('This track has no placement check.')
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) throw new Error('Score must be a whole percentage.')
+  const unique = [...new Set(known)]
+  if (unique.some(id => lessonFor(id).track !== track)) throw new Error('Placement lessons must belong to the track.')
+  return { ...progress, updatedAt: now.toISOString(), placements: { ...progress.placements, [track]: { percent, at: now.toISOString(), known: unique } } }
+}
+
+/** Lesson ids a placement check marked as known. */
+export function knownLessons(progress: Pick<Progress, 'placements'>): Set<string> {
+  return new Set(Object.values(progress.placements ?? {}).flatMap(item => item?.known ?? []))
 }
 
 function parseCards(value: unknown): Record<string, CardState> {

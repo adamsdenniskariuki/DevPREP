@@ -13,7 +13,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
 | **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
 | **Whiteboard** (`#board`) | A free diagram board saved on this device |
-| **Flashcards** (`#cards`) | 156 spaced-repetition concept cards across all five tracks, plus a recall card per coding problem |
+| **Flashcards** (`#cards`) | 200 spaced-repetition concept cards across all tracks, plus a recall card per coding problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
 | **Study plan** (`#plan`) | Day-by-day plan up to your interview date |
@@ -63,6 +63,16 @@ Best-practice **guides** (API design, system design, algorithm practice, code qu
 - Each case study was fact-checked against its cited sources by a separate review pass before merge. Details the sources don't state are left out or worded cautiously.
 - Finishing a quiz marks the entry read (`guides` in the backup): 15 XP, plus 5 for 100%. Quiz questions also become flashcards in the matching track's deck (`<track>-fg-<entry>-<n>`). Badges: Field notes, Well read (10 entries), Postmortem reader (3 case studies), Sharp eye (5 perfect quizzes) and one per finished topic.
 - The study plan adds an unread entry every third day (focus and weak tracks first); technical mocks add one practice question from a guide on that track.
+
+## Language tracks
+
+Interview-focused **Python** lessons (TypeScript and SQL follow), listed under **Languages** on the Tracks page. They are optional: a language joins your study plan once you start one of its lessons, take its placement check or pick it as a focus track.
+
+- Python core: names, types and functions; strings; sequences, slicing and comprehensions; dicts, sets and `collections`/`heapq`/`bisect`; sorting with keys; functions, scope and closures; classes and dataclasses; errors and exceptions.
+- Each lesson is a normal lesson (same study loop and review) plus a **lab**: several theme-aware diagrams placed in its sections (with step-throughs), runnable warm-up/core/stretch exercises with visible and hidden tests, a **predict-the-output** quiz, an interview tip and links to DSA problems, Field Guide entries and other lessons. Lessons are tagged SE/SSE core.
+- Exercises run in the same Web Worker runner as the coding problems (Python via Pyodide). Every reference solution passes its tests and every starter fails one (`src/labs.test.ts`), and every predict answer is what Python actually prints.
+- A **placement check** per track marks lessons you already know; the plan skips them. Saved as `placements` in the backup.
+- Language mocks are a coding task plus up to 4 trivia questions. Each language has 5+ flashcards per lesson. Badges: "<Language> placed" and "<Language> trivia".
 
 ## Flashcards, mocks, stories and plan
 
@@ -118,7 +128,7 @@ Both paths include every selected lesson's prerequisites earlier in the sequence
 Senior extensions cover negotiating ambiguous scope, owning an index migration/rollback, and influencing across teams without inventing authority. They appear during practice and reflection on the relevant lessons, with prompts, reasoning rubrics, and a defensible discussion. They are optional: notes share the session notebook, and they do **not** create extra completions, alter the core exercise, or add review dates.
 
 - **Home:** the first unfinished lesson in the selected path is the next recommendation. An unfinished session takes priority, even if it is outside the path. A daily completed lesson from any track still counts as study for that day.
-- **Tracks:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 60 lessons remain open; ML, AI/LLM and omitted coding/design topics are optional supplemental study.
+- **Tracks:** switch between **Selected path** (ordered phases and objectives) and **All curriculum** (the original track browser). Browsing all curriculum does not clear your path choice. All 68 lessons remain open; ML, AI/LLM and omitted coding/design topics are optional supplemental study.
 - **Progress:** the selected path has its own denominator (29 or 30); overall progress remains out of 60. Both path totals are shown separately. Supplemental work contributes to overall completion, not to a path that omits it.
 - **Practice:** the review queue always includes every due completed lesson, including supplemental ML/AI and lessons studied before a path switch. Switching neither filters nor reschedules reviews.
 - **Switching or clearing:** changing the selector updates only the path choice. Drafts, reading bookmarks, hints, checklist selections, completion records, and review dates stay intact. Choosing **All curriculum (no path selected)** restores the original recommendation behavior.
@@ -154,7 +164,7 @@ Open **App & offline** to see the actual preparation state and installation opti
 - **iPhone/iPad:** open the site in Safari, use **Share → Add to Home Screen**, and follow the OS instructions. Availability varies by browser/OS. If the option is absent, the website remains usable.
 - **Other/unsupported browsers:** use a bookmark or the online site. DevPREP cannot force browser installation, and this is not a native app-store package.
 
-After preparation, **all 60 bundled lessons**, their examples/solutions, scripts/styles, and required local assets are cached, including the split curriculum bundle. A cold offline reload can open previously unvisited lessons in any track. Local drafts, reading bookmarks, paths, reviews, and accents continue to work. JSON export/import can also work offline where the browser supports the relevant file actions; it does not add cloud synchronization.
+After preparation, **all 68 bundled lessons**, their examples/solutions, scripts/styles, and required local assets are cached, including the split curriculum bundle. A cold offline reload can open previously unvisited lessons in any track. Local drafts, reading bookmarks, paths, reviews, and accents continue to work. JSON export/import can also work offline where the browser supports the relevant file actions; it does not add cloud synchronization.
 
 Preparation checks every required file's SHA-256 before caching it and never treats failed/redirected/mismatched downloads as success. If preparation fails or cached files are missing, the panel shows a warning and **Retry offline preparation**. An interrupted or failed update does not discard the prior version's cache. Browser quota limits, private modes, eviction, or cleared site data can make offline data unavailable; offline readiness is checked, not assumed from registration alone.
 
@@ -236,6 +246,8 @@ The optional root field `designs` maps a case ID to `{ "best": 0–100 integer, 
 The optional root field `cards` maps a card ID to `{ "box": 0–6, "due": YYYY-MM-DD, "at": ISO time, "reviews": 1–100000 }`. Card IDs are append-only (`tests/fixtures/card-ids.json`). `mocks` is a list of up to 500 `{ "track", "at", "percent": 0–100 integer, "minutes": 0–600 }`. `stories` is a list of up to 50 `{ "id", "title" (≤120), "competencies", "situation"/"task"/"action"/"result" (≤2,000 each), "updatedAt" }`. Unknown IDs, tracks, competencies, keys and duplicate story IDs are rejected.
 
 The optional root field `guides` maps a Field Guide entry ID to `{ "best": 0–100 integer, "at": ISO time }`, the best quiz score. Unknown entry IDs and malformed values are rejected; entry IDs are append-only (`tests/fixtures/guide-ids.json`).
+
+The optional root field `placements` maps a language track ID to `{ "percent": 0–100 integer, "at": ISO time, "known": [lesson IDs of that track] }`. Interview tracks, unknown lessons and lessons from another track are rejected.
 
 Completed lesson counts and review dates are preserved. New lessons increase the roadmap denominator, so your displayed percentage can decrease without any lost completions. Today recommends the first unfinished lesson in the expanded curriculum order unless you explicitly select a curated path.
 

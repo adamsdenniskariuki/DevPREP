@@ -1,4 +1,4 @@
-import { lessons, tracks } from './curriculum'
+import { CORE_TRACKS, languageTracks, lessons, tracks } from './curriculum'
 import type { Track } from './curriculum'
 import { getLearningPath, pathProgress } from './learning-paths'
 import { localDay } from './progress'
@@ -138,6 +138,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const confident = progress.activity.filter(item => item.rating === 'confident').length
   const path = getLearningPath(progress.selectedPath)
   const patterns = patternProgress(progress)
+  const coreLessons = lessons.filter(lesson => CORE_TRACKS.includes(lesson.track))
   const badges: Badge[] = [
     { id: 'first-lesson', title: 'First step', description: 'Finish your first lesson.', earned: completed >= 1 },
     { id: 'ten-lessons', title: 'Ten down', description: 'Finish 10 lessons.', earned: completed >= 10 },
@@ -163,14 +164,18 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'cards-mastered-50', title: 'Long-term memory', description: 'Move 50 flashcards to a two-week interval or longer.', earned: cards.filter(card => card.box >= 4).length >= 50 },
     { id: 'first-mock', title: 'Under the clock', description: 'Finish a mock interview.', earned: mocks.length >= 1 },
     { id: 'mocks-5', title: 'Interview-ready', description: 'Finish 5 mock interviews.', earned: mocks.length >= 5 },
-    { id: 'mock-every-track', title: 'All-rounder', description: 'Finish a mock interview in every track.', earned: tracks.every(track => mocks.some(mock => mock.track === track.id)) },
+    { id: 'mock-every-track', title: 'All-rounder', description: 'Finish a mock interview in every track.', earned: CORE_TRACKS.every(track => mocks.some(mock => mock.track === track)) },
     { id: 'story-bank', title: 'Storyteller', description: 'Write 5 behavioral stories.', earned: (progress.stories ?? []).length >= 5 },
     { id: 'streak-3', title: 'Warming up', description: 'Reach a 3-day streak.', earned: streak.best >= 3 },
     { id: 'streak-7', title: 'Full week', description: 'Reach a 7-day streak.', earned: streak.best >= 7 },
     { id: 'streak-30', title: 'Habit formed', description: 'Reach a 30-day streak.', earned: streak.best >= 30 },
     ...tracks.map(track => ({ id: `track-${track.id}`, title: `${track.title} done`, description: `Finish every ${track.title} lesson.`, earned: trackComplete(progress, track.id) })),
     { id: 'path-complete', title: 'Path finished', description: 'Finish every lesson in your role path.', earned: !!path && pathProgress(path, progress).completed === pathProgress(path, progress).total },
-    { id: 'all-lessons', title: 'Completionist', description: `Finish all ${lessons.length} lessons.`, earned: completed === lessons.length },
+    { id: 'all-lessons', title: 'Completionist', description: `Finish all ${coreLessons.length} interview-track lessons.`, earned: coreLessons.every(lesson => Object.hasOwn(progress.records, lesson.id)) },
+    ...languageTracks.flatMap(track => [
+      ...track.placement ? [{ id: `placed-${track.id}`, title: `${track.title} placed`, description: `Take the ${track.title} placement check.`, earned: !!progress.placements?.[track.id] }] : [],
+      { id: `trivia-${track.id}`, title: `${track.title} trivia`, description: `Finish a ${track.title} trivia mock interview.`, earned: mocks.some(mock => mock.track === track.id) },
+    ]),
   ]
   return { xp, level: Math.floor(xp / LEVEL_XP) + 1, levelXp: xp % LEVEL_XP, streak, badges }
 }
@@ -183,10 +188,17 @@ export interface WeakArea {
   total: number
 }
 
+/** Interview tracks always count; a language track counts once it is a focus track, started or placed. */
+export function trackOptedIn(progress: Progress, track: Track): boolean {
+  if (CORE_TRACKS.includes(track)) return true
+  return !!progress.profile?.focusTracks?.includes(track) || !!progress.placements?.[track] ||
+    lessons.some(lesson => lesson.track === track && (Object.hasOwn(progress.records, lesson.id) || progress.session?.lessonId === lesson.id))
+}
+
 /** Tracks ordered by lessons last rated "Needs practice", then by lowest completion. Focus tracks come first. */
 export function weakAreas(progress: Progress): WeakArea[] {
   const focus = progress.profile?.focusTracks ?? []
-  return tracks.map(track => {
+  return tracks.filter(track => trackOptedIn(progress, track.id)).map(track => {
     const subset = lessons.filter(lesson => lesson.track === track.id)
     return {
       track: track.id, title: track.title, total: subset.length,

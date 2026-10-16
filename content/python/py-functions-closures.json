@@ -1,0 +1,418 @@
+{
+  "id": "py-functions-closures",
+  "track": "python",
+  "title": "Functions, scope and closures",
+  "minutes": 45,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "Every parameter kind, the default-argument trap, LEGB scope, closures and late binding, functions as values, memoisation with functools.cache, and the itertools you reach for in interviews.",
+  "prerequisites": ["py-basics"],
+  "prerequisiteNotes": "py-basics: names refer to objects and parameters are new names for the caller's objects. Everything about defaults and closures builds on that picture.",
+  "objectives": [
+    "Read and write signatures that mix positional-only, keyword-only, defaulted, `*args` and `**kwargs` parameters.",
+    "Explain why a mutable default is shared between calls and fix it with a `None` sentinel.",
+    "Resolve a name with the LEGB rule and know when `global` or `nonlocal` is required.",
+    "Predict late binding in closures created in a loop and fix it with a default argument or `functools.partial`.",
+    "Memoise a recursive function with `functools.cache` and know why its arguments must be hashable.",
+    "Use `accumulate`, `groupby`, `chain`, `product`, `permutations` and `combinations` without hand-written loops."
+  ],
+  "concepts": [
+    {
+      "title": "Parameter kinds and how arguments bind",
+      "body": "A call binds positional arguments left to right, then keyword arguments by name; binding the same parameter twice is a `TypeError`. Parameters before a bare `/` are **positional-only** (callers cannot use their names), and parameters after `*` or `*args` are **keyword-only** (callers must name them). `*args` collects leftover positional arguments into a tuple and `**kwargs` collects leftover keyword arguments into a dict. At the call site, `*seq` and `**mapping` unpack in the other direction. Keyword-only flags such as `reverse=True` make call sites self-documenting.",
+      "code": "def describe(name, /, size=1, *extras, sep=', ', **meta):\n    return name, size, extras, sep, meta\n\nprint(describe('box', 3, 'red', 'big', sep='|', owner='ann'))\n# ('box', 3, ('red', 'big'), '|', {'owner': 'ann'})\n\nargs = [2, 'x']\nprint(describe('cup', *args, **{'owner': 'bo'}))\n# ('cup', 2, ('x',), ', ', {'owner': 'bo'})\n# describe(name='cup') -> TypeError: name is positional-only"
+    },
+    {
+      "title": "Defaults are evaluated once, at def time",
+      "body": "A default value is computed when the `def` statement runs and stored on the function object (`f.__defaults__`). Every call that omits the argument receives **that same object**. For immutable defaults (ints, strings, tuples, None) this is harmless; for a list, dict or set, mutations accumulate across calls. The idiom is a `None` sentinel and a fresh object inside the body. The same rule means `def f(now=time.time())` freezes the timestamp at import.",
+      "code": "def tag(item, seen=[]):        # one list, created once\n    seen.append(item)\n    return seen\n\nprint(tag('a'), tag('b'))      # ['a', 'b'] ['a', 'b']\n\ndef tag_fixed(item, seen=None):\n    if seen is None:\n        seen = []                # new list every call\n    seen.append(item)\n    return seen\n\nprint(tag_fixed('a'), tag_fixed('b'))  # ['a'] ['b']",
+      "diagram": "pyf-default"
+    },
+    {
+      "title": "LEGB scope, global and nonlocal",
+      "body": "A name is looked up in four scopes in order: **L**ocal (the current function), **E**nclosing (outer functions), **G**lobal (the module) and **B**uiltins. The compiler decides scope per function: **any assignment to a name anywhere in a function makes it local for the whole body**, so reading it before the assignment raises `UnboundLocalError` even if a global of that name exists. `global x` makes assignments target the module name; `nonlocal x` targets the nearest enclosing function's name. Reading an outer name never needs a declaration; only rebinding does. Mutating an outer list (`items.append`) is not rebinding, so it needs neither.",
+      "code": "total = 0\n\ndef broken():\n    total += 1      # UnboundLocalError: total is local here\n\ndef fixed():\n    global total\n    total += 1\n\nlen = 3             # shadows the builtin in this module\ndel len             # lookup falls through to builtins again\nprint(len('abc'))   # 3",
+      "diagram": "pyf-legb"
+    },
+    {
+      "title": "Closures keep variables, not values",
+      "body": "When an inner function uses a name from an enclosing function, Python stores that variable in a **cell** shared by the outer frame and the inner function (`inner.__closure__`). The cell outlives the outer call, so the inner function can keep state between calls. Each call of the outer function creates new cells, which is why two counters from the same factory are independent. Because the cell holds the variable, the inner function sees the variable's **current** value when it runs, not the value when it was created.",
+      "code": "def make_counter(start=0):\n    count = start\n    def bump(step=1):\n        nonlocal count     # rebinding needs nonlocal\n        count += step\n        return count\n    return bump\n\na, b = make_counter(), make_counter(10)\na(); a()\nprint(a(), b())        # 3 11\nprint(a.__closure__[0].cell_contents)  # 3",
+      "diagram": "pyf-closure"
+    },
+    {
+      "title": "Functions are values: lambda, key functions and partial",
+      "body": "A function is an ordinary object: store it in a dict, pass it to `sorted`, return it from another function. `lambda` is an expression that builds a function with a single expression body; use it inline for keys and short callbacks, and use `def` once it needs a name. `functools.partial(f, *args, **kwargs)` returns a callable with some arguments fixed **now**, which is why it does not suffer from late binding. A dispatch dict of functions replaces long `if/elif` chains.",
+      "code": "from functools import partial\nfrom operator import itemgetter\n\npeople = [('ana', 31), ('bo', 25), ('cy', 31)]\nprint(sorted(people, key=lambda p: (-p[1], p[0])))\n# [('ana', 31), ('cy', 31), ('bo', 25)]\nprint(max(people, key=itemgetter(1)))   # ('ana', 31)\n\nparse_bin = partial(int, base=2)\nprint(parse_bin('1011'))                # 11\n\nops = {'+': lambda a, b: a + b, '*': lambda a, b: a * b}\nprint(ops['*'](6, 7))                   # 42"
+    },
+    {
+      "title": "Memoisation with functools.cache and lru_cache",
+      "body": "`@functools.cache` (3.9+) wraps a function with a dict from arguments to results; `@lru_cache(maxsize=n)` does the same but evicts the least recently used entry once full (`maxsize=None` means unbounded, which is what `cache` is). Recursive calls go through the wrapper too, so a top-down recursion becomes O(number of distinct states). The arguments form the dict key, so they must be **hashable**: pass tuples or frozensets, not lists, or keep the unhashable data in a closure and cache only on the changing integers. Use `f.cache_info()` to show hits and misses and `f.cache_clear()` between independent inputs. Deep recursion still hits the default limit of about 1000 frames.",
+      "code": "from functools import cache\n\n@cache\ndef fib(n):\n    return n if n < 2 else fib(n - 1) + fib(n - 2)\n\nprint(fib(90))           # 2880067194370816120, instantly\nprint(fib.cache_info())  # CacheInfo(hits=88, misses=91, maxsize=None, currsize=91)\n\n@cache\ndef total(nums):\n    return sum(nums)\n# total([1, 2]) -> TypeError: unhashable type: 'list'\nprint(total((1, 2)))     # 3",
+      "diagram": "pyf-cache"
+    },
+    {
+      "title": "The itertools you actually use",
+      "body": "`accumulate(xs)` yields running totals, and `accumulate(xs, max)` yields running maxima. `groupby(xs, key)` groups **consecutive** equal keys only, so sort by the same key first or you get split groups. `chain(a, b)` (or `chain.from_iterable(lists)`) concatenates lazily. `product(a, b)` is nested loops; `permutations(xs, r)` gives ordered arrangements (n!/(n-r)!); `combinations(xs, r)` gives unordered picks (n choose r). All return lazy iterators that can be consumed once.",
+      "code": "from itertools import accumulate, groupby, chain, product, permutations, combinations\n\nprint(list(accumulate([3, 1, 4])))           # [3, 4, 8]\nprint(list(accumulate([3, 1, 4, 1], max)))   # [3, 3, 4, 4]\nwords = sorted(['wasp', 'ant', 'moth', 'bee'], key=len)\nprint({k: list(g) for k, g in groupby(words, key=len)})\n# {3: ['ant', 'bee'], 4: ['wasp', 'moth']}\nprint(list(chain([1, 2], (3,))))             # [1, 2, 3]\nprint(list(product('ab', [0, 1])))           # 4 pairs\nprint(len(list(permutations('abc', 2))), len(list(combinations('abc', 2))))  # 6 3"
+    }
+  ],
+  "example": "from functools import cache\n\ndef count_splits(word, vocab):\n    words = frozenset(vocab)          # hashable and O(1) lookups\n\n    @cache\n    def ways(start):                  # cache on the int; word and words come from the closure\n        if start == len(word):\n            return 1\n        return sum(ways(end) for end in range(start + 1, len(word) + 1)\n                   if word[start:end] in words)\n\n    return ways(0)\n\nprint(count_splits('catsand', ['cat', 'cats', 'and', 'sand']))  # 2",
+  "task": "Write `count_routes(total, moves)`. `moves` is a list of positive integers (it may contain duplicates or be empty) and `total` is a non-negative integer. Return how many **ordered** sequences of moves add up to exactly `total`; using the same move several times is allowed and `count_routes(0, moves)` is 1 (the empty sequence). Totals up to 50 must return instantly, so memoise.",
+  "starter": "def count_routes(total, moves):\n    # Count ordered sequences of moves that sum to total.\n    return 0\n",
+  "hints": [
+    "Define a nested `ways(left)` that tries every move as the first step and recurses on what is left; `ways(0)` is 1.",
+    "Decorate the nested function with `@functools.cache`. It caches on `left` only, and reads the de-duplicated moves from the closure, so the list never needs to be hashable."
+  ],
+  "solution": "from functools import cache\n\ndef count_routes(total, moves):\n    options = sorted(set(moves))\n\n    @cache\n    def ways(left):\n        if left == 0:\n            return 1\n        return sum(ways(left - step) for step in options if step <= left)\n\n    return ways(total)\n\nThe nested `ways` is a closure over `options`, so the cache key is a single int and the unhashable list never reaches the cache. De-duplicating with `set` stops a repeated move from being counted twice. There are `total + 1` distinct states and each tries every move, so the work is O(total × moves) instead of exponential. Defining the cached function inside the call gives every input a fresh cache, so results for one move list never leak into another.",
+  "checklist": [
+    "My cached function takes only hashable arguments (here a single int).",
+    "I de-duplicate the moves so repeated values are not double-counted.",
+    "`count_routes(0, ...)` returns 1 and an empty move list returns 0 for positive totals.",
+    "The cache is created per call, so different move lists do not share results."
+  ],
+  "pitfalls": [
+    "Using a mutable default such as `def f(x, acc=[])` and accumulating state across calls.",
+    "Assigning to an outer name inside a function without `nonlocal` or `global`, which raises `UnboundLocalError` on the first read.",
+    "Creating lambdas in a loop and expecting each to remember its own loop value.",
+    "Passing a list to an `@cache` function and getting `TypeError: unhashable type`.",
+    "Putting `@cache` on a module-level function whose answers depend on data outside its arguments, so stale results are returned.",
+    "Calling `groupby` on unsorted data and getting the same key in several groups."
+  ],
+  "walkthrough": [
+    {
+      "title": "Late binding in loops and the two fixes",
+      "body": "`[lambda: i for i in range(3)]` builds three functions that all close over the **same** variable `i`. They run after the loop has finished, when `i` is 2, so all three return 2. Fix one: bind the current value as a default, `lambda i=i: i`, because defaults are evaluated when each lambda is created. Fix two: `partial(f, i)` stores the value in the partial object. A factory function such as `make_adder(i)` also works, because each call gets its own cell.",
+      "code": "from functools import partial\nfrom operator import mul\n\nlate = [lambda x: x * i for i in range(3)]\nprint([f(10) for f in late])        # [20, 20, 20]\n\nbound = [lambda x, i=i: x * i for i in range(3)]\nprint([f(10) for f in bound])       # [0, 10, 20]\n\nfixed = [partial(mul, i) for i in range(3)]\nprint([f(10) for f in fixed])       # [0, 10, 20]",
+      "diagram": "pyf-late"
+    },
+    {
+      "title": "Why the memo matters for the task",
+      "body": "Without a cache, `ways(left)` recomputes the same subtotals again and again; for moves `[1, 2]` the number of calls grows like the Fibonacci numbers themselves. With `@cache`, each `left` from `total` down to 0 is computed once and every repeat is a dictionary hit. Say this in the room: 'the state is the remaining total, there are total + 1 states, each does O(moves) work'.",
+      "diagram": "pyf-calls"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First normalise the input: `sorted(set(moves))` removes duplicates. Second, write the recurrence as a nested function with a base case at 0 and skip moves larger than what is left, so no negative states exist. Third, add `@cache` and call `ways(total)`. Mention the trade-off: the recursion depth is at most `total` frames, so for very large totals switch to a bottom-up list of size `total + 1`."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Scale by each",
+      "prompt": "Write `scaled_by_each(n, x)`. Build a list of `n` functions where function `i` multiplies its argument by `i`, then return the list of results of calling each one on `x`. The starter has a late-binding bug; fix it without dropping the list of functions.",
+      "hints": [
+        "Every lambda in the starter reads the same loop variable after the loop ends.",
+        "Bind the value when each function is made: `lambda v, i=i: v * i` or `partial(mul, i)`."
+      ],
+      "solution": "from functools import partial\nfrom operator import mul\n\ndef scaled_by_each(n, x):\n    funcs = [partial(mul, i) for i in range(n)]\n    return [f(x) for f in funcs]",
+      "checklist": [
+        "Function i really uses i, not the last loop value.",
+        "n = 0 gives an empty list.",
+        "It also works for strings, because `2 * 'ab'` is `'abab'`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Group totals with a running sum",
+      "prompt": "Write `group_totals(records)` where each record is `[key, amount]`. Return one `[key, total, running]` row per distinct key, ordered by key, where `total` sums that key's amounts and `running` is the cumulative total of all rows so far. Use `sorted`, `groupby` and `accumulate`.",
+      "hints": [
+        "`groupby` only merges adjacent records, so sort by the key first with `key=itemgetter(0)`.",
+        "Build the per-key totals first, then `accumulate` over them to get the running column."
+      ],
+      "solution": "from itertools import accumulate, groupby\nfrom operator import itemgetter\n\ndef group_totals(records):\n    by_key = itemgetter(0)\n    groups = [(key, sum(amount for _, amount in rows))\n              for key, rows in groupby(sorted(records, key=by_key), key=by_key)]\n    running = accumulate(total for _, total in groups)\n    return [[key, total, run] for (key, total), run in zip(groups, running)]",
+      "checklist": [
+        "Records with the same key that are not adjacent still form one group.",
+        "An empty input returns [].",
+        "Negative amounts are summed, and a zero total keeps its row."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What is the difference between `functools.cache` and `lru_cache(maxsize=128)`, and when would the cache be a problem?",
+      "answer": "`cache` is `lru_cache(maxsize=None)`: unbounded and slightly faster since it never evicts. A bounded `lru_cache` evicts the least recently used entry, capping memory for long-running services. Problems: unbounded growth in a server, stale answers if the function reads mutable global state, unhashable arguments, and on methods the cache holds `self` alive. Clear it with `cache_clear()` or scope it inside a call."
+    },
+    {
+      "question": "Why does `def f(x, acc=[])` behave strangely, and is it ever useful?",
+      "answer": "The default list is created once when `def` runs and stored in `f.__defaults__`, so every call that omits `acc` mutates the same list. Use `acc=None` and create the list inside. It is occasionally used deliberately as a cheap per-function cache, but an explicit `@cache` or a closure says the intent far more clearly."
+    },
+    {
+      "question": "When do you need `nonlocal` and when don't you?",
+      "answer": "Only when the inner function rebinds an enclosing variable (`count += 1`, `best = x`). Reading the variable, or mutating the object it names (`seen.add(x)`, `memo[k] = v`), needs no declaration. That is why closure state is often kept in a dict or list in older code."
+    },
+    {
+      "question": "Why are keyword-only arguments useful in an API?",
+      "answer": "They force callers to name flags such as `strict=True`, so call sites read clearly and you can reorder or add parameters later without breaking anyone. Positional-only parameters (`/`) give the opposite guarantee: you can rename them freely because callers cannot depend on the name."
+    }
+  ],
+  "takeaways": [
+    "Defaults are evaluated once at def time; use a `None` sentinel for mutable defaults.",
+    "LEGB decides lookup; any assignment makes a name local for the whole function unless declared `global` or `nonlocal`.",
+    "Closures capture variables, not values; bind loop values with a default argument or `partial`.",
+    "`@cache` turns top-down recursion into O(states) work, but its arguments must be hashable.",
+    "`groupby` needs input sorted by the same key; `accumulate` gives running totals or maxima."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyf-default",
+        "type": "compare",
+        "title": "Mutable default versus None sentinel",
+        "alt": "Side-by-side comparison. On the left, two calls tag('a') and tag('b') both point to the single default list created at def time, which ends up holding a and b. On the right, each call with seen=None gets its own new list, holding only a or only b.",
+        "caption": "A default object is created once and shared by every call; a None sentinel lets each call build its own.",
+        "before": {
+          "label": "seen=[]: one shared list",
+          "nodes": [
+            {"id": "c1", "label": "call tag('a')", "kind": "client", "col": 0, "row": 0},
+            {"id": "c2", "label": "call tag('b')", "kind": "client", "col": 0, "row": 2},
+            {"id": "d", "label": "default list", "kind": "bad", "col": 2, "row": 1, "sub": "['a', 'b']"}
+          ],
+          "edges": [
+            {"from": "c1", "to": "d", "label": "append"},
+            {"from": "c2", "to": "d", "label": "append"}
+          ]
+        },
+        "after": {
+          "label": "seen=None: fresh list per call",
+          "nodes": [
+            {"id": "c1", "label": "call tag('a')", "kind": "client", "col": 0, "row": 0},
+            {"id": "c2", "label": "call tag('b')", "kind": "client", "col": 0, "row": 2},
+            {"id": "l1", "label": "new list", "kind": "good", "col": 2, "row": 0, "sub": "['a']"},
+            {"id": "l2", "label": "new list", "kind": "good", "col": 2, "row": 2, "sub": "['b']"}
+          ],
+          "edges": [
+            {"from": "c1", "to": "l1", "label": "seen = []"},
+            {"from": "c2", "to": "l2", "label": "seen = []"}
+          ]
+        }
+      },
+      {
+        "id": "pyf-legb",
+        "type": "flow",
+        "title": "How Python resolves a name",
+        "alt": "Flow diagram of name lookup. A read of a name is tried in Local scope first, then Enclosing function scopes, then the Global module scope, then Builtins. If none has the name, a NameError is raised. A side note shows that any assignment in the function makes the name local.",
+        "caption": "Lookup walks L, E, G, B and stops at the first hit. Assignment decides scope at compile time.",
+        "nodes": [
+          {"id": "read", "label": "read name x", "kind": "client", "col": 0, "row": 0},
+          {"id": "l", "label": "Local", "kind": "state", "col": 2, "row": 0, "sub": "this function"},
+          {"id": "e", "label": "Enclosing", "kind": "state", "col": 2, "row": 1, "sub": "outer functions"},
+          {"id": "g", "label": "Global", "kind": "state", "col": 2, "row": 2, "sub": "module names"},
+          {"id": "b", "label": "Builtins", "kind": "state", "col": 2, "row": 3, "sub": "len, print, max"},
+          {"id": "err", "label": "NameError", "kind": "bad", "col": 2, "row": 4},
+          {"id": "note", "label": "x = ... in body", "kind": "note", "col": 4, "row": 0, "sub": "makes x local"}
+        ],
+        "edges": [
+          {"from": "read", "to": "l", "label": "try first"},
+          {"from": "l", "to": "e", "label": "not found"},
+          {"from": "e", "to": "g", "label": "not found"},
+          {"from": "g", "to": "b", "label": "not found"},
+          {"from": "b", "to": "err", "label": "not found", "style": "fail"},
+          {"from": "note", "to": "l", "label": "compile time"}
+        ],
+        "steps": [
+          {"edges": [0], "text": "Every read starts in the current function's local scope."},
+          {"edges": [1, 2], "text": "If the name is not local, Python checks enclosing functions (closures) and then the module's globals."},
+          {"edges": [3, 4], "text": "Builtins come last, so a module-level `len = 3` shadows the builtin. If nothing matches, `NameError`."},
+          {"edges": [5], "text": "Scope is decided when the function is compiled: one assignment anywhere makes the name local everywhere in that body, unless declared `global` or `nonlocal`."}
+        ]
+      },
+      {
+        "id": "pyf-closure",
+        "type": "flow",
+        "title": "A counter closure and its cell",
+        "alt": "Flow diagram. Calling make_counter creates a cell holding count and returns the inner bump function, which references that cell through __closure__. The name a refers to bump. Each call to a() reads and rebinds count inside the cell, which outlives the make_counter call.",
+        "caption": "The inner function keeps the variable alive in a cell; each factory call makes a new cell.",
+        "nodes": [
+          {"id": "outer", "label": "make_counter()", "kind": "service", "col": 0, "row": 0, "sub": "frame ends"},
+          {"id": "cell", "label": "cell: count", "kind": "storage", "col": 2, "row": 1, "sub": "0 then 1, 2, 3"},
+          {"id": "inner", "label": "bump function", "kind": "state", "col": 0, "row": 2, "sub": "__closure__"},
+          {"id": "name", "label": "name a", "kind": "client", "col": 0, "row": 4}
+        ],
+        "edges": [
+          {"from": "outer", "to": "cell", "label": "count = start"},
+          {"from": "outer", "to": "inner", "label": "def + return"},
+          {"from": "name", "to": "inner", "label": "a = make_counter()"},
+          {"from": "inner", "to": "cell", "label": "nonlocal count"}
+        ],
+        "steps": [
+          {"edges": [0], "text": "`count` is used by an inner function, so it lives in a cell rather than an ordinary local slot."},
+          {"edges": [1, 2], "text": "`make_counter` returns `bump` and its frame ends; the name a now refers to `bump`."},
+          {"edges": [3], "text": "Each `a()` rebinds `count` inside the cell via `nonlocal`, so the state survives between calls. A second `make_counter()` builds a separate cell."}
+        ]
+      },
+      {
+        "id": "pyf-late",
+        "type": "compare",
+        "title": "Late binding versus binding now",
+        "alt": "Comparison of lambdas made in a loop. On the left, three functions f0, f1 and f2 all point to one shared variable i whose final value is 2. On the right, each function holds its own bound value: 0, 1 and 2.",
+        "caption": "A closure reads the loop variable when it runs; a default argument or partial copies the value when the function is made.",
+        "before": {
+          "label": "lambda x: x * i",
+          "nodes": [
+            {"id": "f0", "label": "f0", "kind": "state", "col": 0, "row": 0},
+            {"id": "f1", "label": "f1", "kind": "state", "col": 0, "row": 1},
+            {"id": "f2", "label": "f2", "kind": "state", "col": 0, "row": 2},
+            {"id": "i", "label": "variable i", "kind": "bad", "col": 2, "row": 1, "sub": "ends at 2"}
+          ],
+          "edges": [
+            {"from": "f0", "to": "i"},
+            {"from": "f1", "to": "i"},
+            {"from": "f2", "to": "i"}
+          ]
+        },
+        "after": {
+          "label": "lambda x, i=i: x * i",
+          "nodes": [
+            {"id": "f0", "label": "f0", "kind": "state", "col": 0, "row": 0},
+            {"id": "f1", "label": "f1", "kind": "state", "col": 0, "row": 1},
+            {"id": "f2", "label": "f2", "kind": "state", "col": 0, "row": 2},
+            {"id": "v0", "label": "i = 0", "kind": "good", "col": 2, "row": 0},
+            {"id": "v1", "label": "i = 1", "kind": "good", "col": 2, "row": 1},
+            {"id": "v2", "label": "i = 2", "kind": "good", "col": 2, "row": 2}
+          ],
+          "edges": [
+            {"from": "f0", "to": "v0"},
+            {"from": "f1", "to": "v1"},
+            {"from": "f2", "to": "v2"}
+          ]
+        }
+      },
+      {
+        "id": "pyf-cache",
+        "type": "sequence",
+        "title": "A call through @cache",
+        "alt": "Sequence diagram with a caller, the cache wrapper, the cache dictionary and the function body. The first call to fib(3) misses, runs the body, whose recursive calls also go through the wrapper, and stores the result. The second call to fib(3) hits the dictionary and the body never runs.",
+        "caption": "The wrapper checks the dict before running the body, so each distinct argument is computed once.",
+        "actors": [
+          {"id": "caller", "label": "Caller"},
+          {"id": "wrap", "label": "@cache wrapper"},
+          {"id": "memo", "label": "cache dict"},
+          {"id": "body", "label": "fib body"}
+        ],
+        "messages": [
+          {"from": "caller", "to": "wrap", "label": "fib(3)"},
+          {"from": "wrap", "to": "memo", "label": "lookup key 3"},
+          {"from": "memo", "to": "wrap", "label": "miss", "style": "reply"},
+          {"from": "wrap", "to": "body", "label": "run fib(3)"},
+          {"from": "body", "to": "wrap", "label": "fib(2) + fib(1)", "note": "Recursive calls re-enter the wrapper, so they are cached too."},
+          {"from": "body", "to": "wrap", "label": "return 2", "style": "reply"},
+          {"from": "wrap", "to": "memo", "label": "store 3 -> 2"},
+          {"from": "wrap", "to": "caller", "label": "2", "style": "reply"},
+          {"from": "caller", "to": "wrap", "label": "fib(3) again"},
+          {"from": "wrap", "to": "memo", "label": "lookup key 3"},
+          {"from": "memo", "to": "wrap", "label": "hit: 2", "style": "reply"},
+          {"from": "wrap", "to": "caller", "label": "2", "style": "reply", "note": "The body never runs on a hit."}
+        ]
+      },
+      {
+        "id": "pyf-calls",
+        "type": "bars",
+        "title": "Times the body of fib(n) runs",
+        "alt": "Bar chart of exact body executions for the naive and cached recursive Fibonacci. Naive fib(10) runs 177 times and naive fib(15) runs 1973 times, while cached fib(10) runs 11 times and cached fib(15) runs 16 times.",
+        "caption": "Naive recursion grows exponentially; with @cache the body runs once per distinct n (n + 1 times).",
+        "unit": "body executions",
+        "bars": [
+          {"label": "fib(10) naive", "value": 177},
+          {"label": "fib(10) @cache", "value": 11, "highlight": true},
+          {"label": "fib(15) naive", "value": 1973},
+          {"label": "fib(15) @cache", "value": 16, "highlight": true}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "count_routes",
+        "starter": "def count_routes(total, moves):\n    # Count ordered sequences of moves that sum to total.\n    return 0\n",
+        "solution": "from functools import cache\n\ndef count_routes(total, moves):\n    options = sorted(set(moves))\n\n    @cache\n    def ways(left):\n        if left == 0:\n            return 1\n        return sum(ways(left - step) for step in options if step <= left)\n\n    return ways(total)\n",
+        "tests": [
+          {"args": [4, [1, 2]], "expected": 5},
+          {"args": [0, [3]], "expected": 1},
+          {"args": [8, [3, 5]], "expected": 2}
+        ],
+        "hiddenTests": [
+          {"args": [7, [3, 5]], "expected": 0},
+          {"args": [5, [1, 1, 2]], "expected": 8},
+          {"args": [3, [5]], "expected": 0},
+          {"args": [4, []], "expected": 0},
+          {"args": [10, [2, 3, 5]], "expected": 14},
+          {"args": [50, [1, 2]], "expected": 20365011074}
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "scaled_by_each",
+        "starter": "def scaled_by_each(n, x):\n    funcs = [lambda v: v * i for i in range(n)]\n    return [f(x) for f in funcs]\n",
+        "solution": "from functools import partial\nfrom operator import mul\n\ndef scaled_by_each(n, x):\n    funcs = [partial(mul, i) for i in range(n)]\n    return [f(x) for f in funcs]\n",
+        "tests": [
+          {"args": [3, 5], "expected": [0, 5, 10]},
+          {"args": [0, 7], "expected": []}
+        ],
+        "hiddenTests": [
+          {"args": [1, 9], "expected": [0]},
+          {"args": [4, -2], "expected": [0, -2, -4, -6]},
+          {"args": [3, "ab"], "expected": ["", "ab", "abab"]},
+          {"args": [2, "é"], "expected": ["", "é"]},
+          {"args": [5, 0], "expected": [0, 0, 0, 0, 0]}
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "group_totals",
+        "starter": "from itertools import groupby\n\ndef group_totals(records):\n    rows = []\n    running = 0\n    for key, group in groupby(records, key=lambda r: r[0]):\n        total = sum(amount for _, amount in group)\n        running += total\n        rows.append([key, total, running])\n    return rows\n",
+        "solution": "from itertools import accumulate, groupby\nfrom operator import itemgetter\n\ndef group_totals(records):\n    by_key = itemgetter(0)\n    groups = [(key, sum(amount for _, amount in rows))\n              for key, rows in groupby(sorted(records, key=by_key), key=by_key)]\n    running = accumulate(total for _, total in groups)\n    return [[key, total, run] for (key, total), run in zip(groups, running)]\n",
+        "tests": [
+          {"args": [[["b", 2], ["a", 1], ["b", 3]]], "expected": [["a", 1, 1], ["b", 5, 6]]},
+          {"args": [[]], "expected": []}
+        ],
+        "hiddenTests": [
+          {"args": [[["x", 4]]], "expected": [["x", 4, 4]]},
+          {"args": [[["a", 5], ["b", -2], ["a", -5]]], "expected": [["a", 0, 0], ["b", -2, -2]]},
+          {"args": [[["é", 1], ["e", 2], ["z", 3], ["é", 4]]], "expected": [["e", 2, 2], ["z", 3, 5], ["é", 5, 10]]},
+          {"args": [[["k", 1], ["k", 1], ["k", 1]]], "expected": [["k", 3, 3]]},
+          {"args": [[["c", 1], ["a", 2], ["b", 3], ["a", 4], ["c", 5]]], "expected": [["a", 6, 6], ["b", 3, 9], ["c", 6, 15]]}
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "funcs = [lambda: i for i in range(3)]\nprint([f() for f in funcs])",
+        "choices": ["[0, 1, 2]", "[2, 2, 2]", "[3, 3, 3]"],
+        "answer": 1,
+        "explain": "All three lambdas close over the same `i`, which is 2 when they finally run. `range(3)` stops at 2, so it is not 3."
+      },
+      {
+        "code": "def add(x, acc=[]):\n    acc.append(x)\n    return acc\n\nadd(1)\nprint(add(2))",
+        "choices": ["[2]", "[1, 2]", "[1]"],
+        "answer": 1,
+        "explain": "The default list is created once at def time, so the second call appends to the list the first call already used."
+      },
+      {
+        "code": "x = 10\n\ndef show():\n    try:\n        print(x)\n    except UnboundLocalError:\n        print('unbound')\n    x = 5\n\nshow()",
+        "choices": ["10", "unbound", "5"],
+        "answer": 1,
+        "explain": "The later `x = 5` makes x local for the whole function, so the earlier read finds an unassigned local instead of the global."
+      },
+      {
+        "code": "from itertools import groupby\nprint([k for k, _ in groupby('aabaa')])",
+        "choices": ["['a', 'b']", "['a', 'b', 'a']", "['a', 'a', 'b', 'a', 'a']"],
+        "answer": 1,
+        "explain": "`groupby` only merges consecutive equal items, so the two runs of a stay separate. Sort first to get one group per key."
+      },
+      {
+        "code": "def make():\n    n = 0\n    def bump():\n        nonlocal n\n        n += 1\n        return n\n    return bump\n\na, b = make(), make()\na()\na()\nprint(a(), b())",
+        "choices": ["3 1", "3 4", "1 1"],
+        "answer": 0,
+        "explain": "Each call to `make` creates a new cell for n, so a and b keep independent counts."
+      }
+    ],
+    "tip": "When you memoise in an interview, say the state out loud ('the remaining total'), count the states, and put `@cache` on a nested function that closes over the fixed inputs. That shows you know the cache key must be small and hashable.",
+    "links": {
+      "problems": ["stair-ways", "fewest-coins", "lru-cache"],
+      "guides": ["complexity-reasoning", "edge-case-checklist"],
+      "lessons": ["py-basics", "recursion-fast-power", "dp-nonadjacent-sum"]
+    }
+  }
+}

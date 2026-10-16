@@ -1,0 +1,417 @@
+{
+  "id": "py-collections",
+  "track": "python",
+  "title": "Dicts, sets and the collections toolbox",
+  "minutes": 45,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "How dicts and sets hash their keys, and when to reach for defaultdict, Counter, deque, heapq and bisect to make interview solutions short, fast and correct.",
+  "prerequisites": ["py-sequences-unpacking"],
+  "prerequisiteNotes": "Comfort with lists, tuples, slicing and unpacking. You should know that tuples are immutable and lists are not, because that decides what can be a dict key.",
+  "objectives": [
+    "Explain why dict and set lookups are O(1) on average, what makes a value hashable, and what order a dict iterates in.",
+    "Replace hand-written counting and grouping loops with `dict.get`, `defaultdict` and `Counter`.",
+    "Use `deque` for queues and fixed-size windows, and `heapq` for min-heaps, max-heaps and top-k.",
+    "Use `bisect` to search a sorted list in O(log n) and state the real cost of `insort`."
+  ],
+  "concepts": [
+    {
+      "title": "dict and set are hash tables",
+      "body": "A dict or set stores each key in a slot chosen from `hash(key)`. Lookup, insert and delete are **O(1) on average** and O(n) in the pathological case where many keys collide. Keys must be **hashable**: `int`, `str`, `bytes`, `frozenset` and tuples of hashables work; `list`, `dict` and `set` raise `TypeError`. Equal keys must hash equally, so `1`, `1.0` and `True` are the **same key**. Since Python 3.7 a dict iterates in **insertion order** (overwriting a key keeps its position); a set has no defined order, so never rely on it in output.",
+      "code": "seen = {(0, 1), (2, 3)}          # tuples are hashable\nprint((0, 1) in seen)            # True, O(1) average\nd = {'b': 1, 'a': 2}\nd['b'] = 9                        # keeps its original position\nprint(list(d))                    # ['b', 'a']\ntry:\n    {[1, 2]: 'x'}\nexcept TypeError as e:\n    print(e)                      # unhashable type: 'list'",
+      "diagram": "pyc-hash"
+    },
+    {
+      "title": "Missing keys: get, setdefault and defaultdict",
+      "body": "`d[k]` raises `KeyError` for a missing key. `d.get(k, default)` returns the default **without inserting**. `d.setdefault(k, []).append(v)` inserts the default only when the key is missing, but builds a fresh `[]` on every call. `defaultdict(list)` (or `int`, `set`) calls the factory only for missing keys, which makes grouping and counting one line. Its catch: **any** read of `d[k]` inserts the key, even inside an `if`; use `k in d` or `d.get(k)` to test without creating.",
+      "code": "from collections import defaultdict\n\nby_len = defaultdict(list)\nfor word in ['hi', 'yo', 'hey']:\n    by_len[len(word)].append(word)\nprint(dict(by_len))      # {2: ['hi', 'yo'], 3: ['hey']}\n\nprint(by_len.get(9))     # None, no key created\nif by_len[7]:            # reading creates key 7 -> []\n    pass\nprint(7 in by_len)       # True",
+      "diagram": "pyc-default"
+    },
+    {
+      "title": "Counter: a dict that counts",
+      "body": "`Counter(iterable)` counts hashable items in O(n). A missing key reads as `0` **without** being inserted. `most_common(k)` returns `(item, count)` pairs, highest first, in O(n log k); items with equal counts come back in **first-seen order**, not alphabetical. `+` and `-` combine counters and **drop counts that are zero or negative**; `subtract()` keeps them. Two counters compare equal when their counts match, which makes `Counter(a) == Counter(b)` a one-line anagram check.",
+      "code": "from collections import Counter\n\nc = Counter('banana')\nprint(c.most_common(2))        # [('a', 3), ('n', 2)]\nprint(c['z'])                  # 0, and 'z' is not added\nprint(Counter('aab') - Counter('abc'))   # Counter({'a': 1})\nprint(Counter('listen') == Counter('silent'))  # True"
+    },
+    {
+      "title": "deque: a queue with two fast ends",
+      "body": "`list.pop(0)` and `list.insert(0, x)` shift every element, so they are O(n). `collections.deque` gives **O(1)** `append`, `appendleft`, `pop` and `popleft`, which makes it the right queue for BFS. Indexing into the middle of a deque is O(n), so it is not a list replacement. `deque(maxlen=n)` keeps only the last n items: appending to a full deque silently drops one from the **opposite** end, which is a ready-made sliding window.",
+      "code": "from collections import deque\n\nq = deque([1, 2])\nq.appendleft(0)\nq.append(3)\nprint(q.popleft(), q.pop())   # 0 3\n\nlast3 = deque(maxlen=3)\nfor x in range(5):\n    last3.append(x)\nprint(list(last3))            # [2, 3, 4]",
+      "diagram": "pyc-bfs"
+    },
+    {
+      "title": "heapq: a min-heap on a plain list",
+      "body": "`heapq` keeps a list arranged so `h[0]` is always the **smallest** item. `heappush` and `heappop` are **O(log n)**; `heapify(list)` rearranges in place in **O(n)**. There is no max-heap option: push `-x`, or push tuples like `(-score, name)`. Tuples compare item by item, so add a tie-breaker such as `(priority, seq, task)` with an increasing `seq` when the payload itself cannot be compared. For the k largest of n items keep a **min-heap of size k** (O(n log k)); `heapq.nlargest(k, xs, key=...)` and `nsmallest` do exactly that.",
+      "code": "import heapq\n\nh = [5, 1, 8, 3]\nheapq.heapify(h)              # O(n), in place\nheapq.heappush(h, 0)\nprint(heapq.heappop(h), h[0]) # 0 1\n\nscores = {'ana': 7, 'bo': 9, 'cy': 7}\ntop = heapq.nsmallest(2, scores.items(), key=lambda kv: (-kv[1], kv[0]))\nprint(top)                    # [('bo', 9), ('ana', 7)]",
+      "diagram": "pyc-heap"
+    },
+    {
+      "title": "bisect: binary search on a sorted list",
+      "body": "`bisect_left(a, x)` returns the first index whose value is `>= x`; `bisect_right(a, x)` returns the first index whose value is `> x`. Their difference counts how many times `x` occurs, and `bisect_left(a, x) < len(a) and a[i] == x` is a membership test, all in **O(log n)**. `insort(a, x)` finds the spot in O(log n) but then shifts the tail to insert, so it is **O(n)** per call. Both accept `key=` since Python 3.10.",
+      "code": "import bisect\n\na = [10, 20, 20, 20, 40]\nprint(bisect.bisect_left(a, 20), bisect.bisect_right(a, 20))  # 1 4\nprint(bisect.bisect_left(a, 25))   # 4: where 25 would go\nbisect.insort(a, 30)               # O(n): shifts 40 right\nprint(a)                           # [10, 20, 20, 20, 30, 40]"
+    }
+  ],
+  "example": "from collections import Counter, deque\n\ndef first_unique_so_far(stream):\n    # After each arrival, report the oldest value seen exactly once (or None).\n    counts = Counter()\n    candidates = deque()\n    result = []\n    for value in stream:\n        counts[value] += 1\n        candidates.append(value)\n        while candidates and counts[candidates[0]] > 1:\n            candidates.popleft()\n        result.append(candidates[0] if candidates else None)\n    return result\n\nprint(first_unique_so_far(['a', 'b', 'a', 'c', 'b']))  # ['a', 'a', 'b', 'b', 'c']",
+  "task": "Write `top_tags(tags, k)`. `tags` is a list of strings (case-sensitive). Return the `k` most frequent tags as a list of `[tag, count]` pairs, highest count first. Break ties **alphabetically** by tag. If `k` is larger than the number of distinct tags, return them all; if `k` is 0 or the list is empty, return `[]`. Aim for O(n log k) after counting.",
+  "starter": "from collections import Counter\n\ndef top_tags(tags, k):\n    # Return [[tag, count], ...] highest count first, ties alphabetical\n    return Counter(tags).most_common(k)\n",
+  "hints": [
+    "`Counter(tags).most_common(k)` gets the counts right but breaks ties by first appearance. You need a sort key that orders by count descending, then tag ascending: `(-count, tag)`.",
+    "`heapq.nsmallest(k, counts.items(), key=...)` returns the k smallest items under that key in O(n log k), and handles k = 0 and k > n for you."
+  ],
+  "solution": "from collections import Counter\nimport heapq\n\ndef top_tags(tags, k):\n    counts = Counter(tags)\n    best = heapq.nsmallest(k, counts.items(), key=lambda item: (-item[1], item[0]))\n    return [[tag, count] for tag, count in best]\n\nCounting is O(n). Negating the count turns 'largest count' into 'smallest key', so a min-heap selection with key `(-count, tag)` gives highest count first and alphabetical ties in one pass: O(d log k) for d distinct tags, O(d) extra space for the counter. `nsmallest` already returns its result sorted by that key. `sorted(counts.items(), key=...)[:k]` is also correct and simpler to say aloud, at O(d log d); mention both and pick the heap when k is much smaller than d.",
+  "checklist": [
+    "I count with `Counter`, not a manual dict loop.",
+    "My ordering key is `(-count, tag)`, so ties are alphabetical, not first-seen.",
+    "k = 0, an empty list and k larger than the number of tags all work without special cases.",
+    "I can state the cost: O(n) to count, O(d log k) to select."
+  ],
+  "pitfalls": [
+    "Relying on `most_common` for tie order: it keeps first-seen order, which interviewers often test.",
+    "Using a list or dict as a dict key or set member; convert to a tuple or frozenset first.",
+    "Reading `defaultdict[k]` inside an `if` and silently creating keys.",
+    "Using `list.pop(0)` as a queue: each call is O(n), making BFS O(n²).",
+    "Expecting `h[0]` to be the minimum after `heappush` onto a list that was never heapified.",
+    "Pushing `(priority, payload)` where payloads cannot be compared; equal priorities then raise `TypeError`.",
+    "Decrementing a `Counter` to zero and still counting the key in `len(counter)`."
+  ],
+  "walkthrough": [
+    {
+      "title": "Pick the container by its cost",
+      "body": "Before coding, say which operation dominates. Many front removals: `deque`. Repeated 'give me the smallest': `heapq`. Membership or counting: `set`, `dict` or `Counter`. Sorted data with lookups and few inserts: a list plus `bisect`. The trap is the hidden O(n): `x in some_list`, `list.pop(0)` and `insort` all look cheap and are linear.",
+      "diagram": "pyc-costs"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "Count once with `Counter(tags)`. Express the ordering as a key: `(-count, tag)` sorts by count descending, then tag ascending. Select with `heapq.nsmallest(k, counts.items(), key=...)` and convert each tuple to a `[tag, count]` list. Test the tie case first, because that is where `most_common` alone gives the wrong answer."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Index words by initial",
+      "prompt": "Write `index_by_initial(words)` that groups words by their first letter, lower-cased, keeping the original words in input order. Skip empty strings. Return a plain dict, for example `{'a': ['apple', 'Avocado'], 'b': ['banana']}`.",
+      "hints": [
+        "`defaultdict(list)` lets you write `groups[key].append(word)` with no existence check.",
+        "Convert with `dict(groups)` before returning, and skip `''` with `if word:` so `word[0]` never fails."
+      ],
+      "solution": "from collections import defaultdict\n\ndef index_by_initial(words):\n    groups = defaultdict(list)\n    for word in words:\n        if word:\n            groups[word[0].lower()].append(word)\n    return dict(groups)",
+      "checklist": [
+        "'Apple' and 'avocado' land in the same group.",
+        "Empty strings are skipped, not crashed on.",
+        "Words keep their input order inside each group."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Distinct values in a sliding window",
+      "prompt": "Write `distinct_in_window(stream, size)`. After each arrival, report how many distinct values are among the last `size` items (fewer at the start). Return the list of counts. Assume `size >= 1`. Aim for O(1) work per item.",
+      "hints": [
+        "Keep the window in a `deque` and the counts in a `Counter`. When the window grows past `size`, `popleft` the oldest value and decrement its count.",
+        "A `Counter` keeps keys whose count is 0, so `del counts[old]` when it reaches zero; then `len(counts)` is the distinct count."
+      ],
+      "solution": "from collections import Counter, deque\n\ndef distinct_in_window(stream, size):\n    window = deque()\n    counts = Counter()\n    result = []\n    for item in stream:\n        window.append(item)\n        counts[item] += 1\n        if len(window) > size:\n            old = window.popleft()\n            counts[old] -= 1\n            if counts[old] == 0:\n                del counts[old]\n        result.append(len(counts))\n    return result",
+      "checklist": [
+        "Each item does O(1) work: one append, at most one popleft.",
+        "Keys with count 0 are deleted before taking `len`.",
+        "Windows shorter than `size` at the start are handled."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Dict lookup is O(1). When is it not?",
+      "answer": "It is O(1) on average. If many keys share hash slots (a weak `__hash__`, or adversarial input crafted against a known hash), probing degrades towards O(n) per lookup. CPython randomises `str` and `bytes` hashes per process to make such attacks hard. Hashing itself is also O(length) for a string, though CPython caches a string's hash after the first time."
+    },
+    {
+      "question": "How do you keep the top k of a stream that is too large to hold in memory?",
+      "answer": "Keep a min-heap of at most k items. For each new item, push while the heap is smaller than k; otherwise, if the item beats `h[0]`, call `heapq.heapreplace(h, item)` (or `heappushpop`). The root is always the weakest of the current top k. Time O(n log k), memory O(k)."
+    },
+    {
+      "question": "Why not use `sorted()` every time instead of a heap?",
+      "answer": "Sorting once is fine and often clearest: O(n log n). A heap wins when items keep arriving and you repeatedly need the minimum (Dijkstra, scheduling, merging k streams), because each push or pop is O(log n) instead of re-sorting. For a sorted list with lookups but few inserts, `bisect` is the middle ground."
+    }
+  ],
+  "takeaways": [
+    "dict and set are hash tables: O(1) average, keys must be hashable, dicts keep insertion order, sets do not.",
+    "`get` reads without inserting; `defaultdict` inserts on every read of a missing key.",
+    "`Counter.most_common` breaks ties by first appearance; use a `(-count, key)` sort key for anything else.",
+    "`deque` for queues and windows; `heapq` is a min-heap, so negate for max and add a tie-breaker.",
+    "`bisect` searches in O(log n), but `insort` is O(n) because the list must shift."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyc-hash",
+        "type": "flow",
+        "title": "Looking up a dict key",
+        "alt": "Flow diagram of a dict lookup. A key is hashed to a large integer, masked down to a slot index, and the slot is checked. If the stored hash and key match the value is returned; on a collision the lookup probes another slot. Entries themselves live in a separate array kept in insertion order.",
+        "caption": "Hash, mask, compare. A good hash spreads keys so the first slot usually matches, which is why lookup is O(1) on average.",
+        "nodes": [
+          { "id": "key", "label": "key", "kind": "client", "col": 0, "row": 1, "sub": "'ana'" },
+          { "id": "hash", "label": "hash(key)", "kind": "service", "col": 1, "row": 1, "sub": "a big int" },
+          { "id": "idx", "label": "slot index", "kind": "state", "col": 2, "row": 1, "sub": "hash & mask" },
+          { "id": "slot", "label": "check slot", "kind": "decision", "col": 3, "row": 1, "sub": "same hash and ==" },
+          { "id": "hit", "label": "found", "kind": "good", "col": 4, "row": 0, "sub": "return value" },
+          { "id": "probe", "label": "probe again", "kind": "bad", "col": 4, "row": 2, "sub": "on a collision" },
+          { "id": "entries", "label": "entries array", "kind": "storage", "col": 3, "row": 3, "sub": "insertion order" }
+        ],
+        "edges": [
+          { "from": "key", "to": "hash", "label": "__hash__" },
+          { "from": "hash", "to": "idx", "label": "mask to size" },
+          { "from": "idx", "to": "slot" },
+          { "from": "slot", "to": "hit", "label": "match" },
+          { "from": "slot", "to": "probe", "label": "other key", "style": "fail" },
+          { "from": "slot", "to": "entries", "label": "points into" }
+        ],
+        "steps": [
+          { "edges": [0, 1, 2], "text": "The key's `__hash__` gives an integer; the low bits pick a slot. That is why keys must be hashable and their hash must never change." },
+          { "edges": [3], "text": "If the slot holds an entry with the same hash and an equal key (`==`), that is the answer. Because `1 == 1.0 == True` and they hash equally, they are one key." },
+          { "edges": [4], "text": "A different key in the slot is a collision: CPython probes a pseudo-random sequence of slots. Many collisions push lookup towards O(n)." },
+          { "edges": [5], "text": "Slots point into a compact entries array that grows in insertion order, which is why iterating a dict follows insertion order." }
+        ]
+      },
+      {
+        "id": "pyc-default",
+        "type": "compare",
+        "title": "Counting words: manual check versus defaultdict",
+        "alt": "Side-by-side comparison. On the left, each word goes through a decision asking whether it is already in the dict; if not it is set to zero, then incremented. On the right, a defaultdict increments directly and calls int() to create a zero only when the key is missing.",
+        "caption": "defaultdict moves the 'is it there yet?' branch into the container. The factory runs only for missing keys.",
+        "before": {
+          "label": "Plain dict: branch on every word",
+          "nodes": [
+            { "id": "w", "label": "word", "kind": "state", "col": 0, "row": 0 },
+            { "id": "q", "label": "w in counts?", "kind": "decision", "col": 1, "row": 0 },
+            { "id": "init", "label": "counts[w] = 0", "kind": "bad", "col": 2, "row": 0 },
+            { "id": "inc", "label": "counts[w] += 1", "kind": "state", "col": 2, "row": 1 }
+          ],
+          "edges": [
+            { "from": "w", "to": "q" },
+            { "from": "q", "to": "init", "label": "no" },
+            { "from": "q", "to": "inc", "label": "yes" },
+            { "from": "init", "to": "inc" }
+          ]
+        },
+        "after": {
+          "label": "defaultdict(int): one line",
+          "nodes": [
+            { "id": "w", "label": "word", "kind": "state", "col": 0, "row": 0 },
+            { "id": "inc", "label": "counts[w] += 1", "kind": "good", "col": 1, "row": 0 },
+            { "id": "fac", "label": "int() gives 0", "kind": "note", "col": 1, "row": 1, "sub": "only if missing" }
+          ],
+          "edges": [
+            { "from": "w", "to": "inc" },
+            { "from": "inc", "to": "fac", "label": "__missing__" }
+          ]
+        }
+      },
+      {
+        "id": "pyc-bfs",
+        "type": "sequence",
+        "title": "BFS with a deque and a seen set",
+        "alt": "Sequence diagram of breadth-first search. The loop appends the start node to a deque and adds it to a seen set. It then pops the oldest node from the left of the deque, asks the seen set about each neighbour, and for an unseen neighbour adds it to seen and appends it to the right of the deque.",
+        "caption": "popleft is O(1) and set membership is O(1) on average, so BFS stays O(V + E). Mark nodes seen when you enqueue them, not when you pop them.",
+        "actors": [
+          { "id": "loop", "label": "BFS loop" },
+          { "id": "q", "label": "deque" },
+          { "id": "seen", "label": "seen set" }
+        ],
+        "messages": [
+          { "from": "loop", "to": "q", "label": "append(start)", "note": "The queue starts with the source node." },
+          { "from": "loop", "to": "seen", "label": "add(start)", "note": "Mark on enqueue so no node is queued twice." },
+          { "from": "loop", "to": "q", "label": "popleft()", "note": "O(1). With a list, pop(0) would shift every element." },
+          { "from": "q", "to": "loop", "label": "node", "style": "reply" },
+          { "from": "loop", "to": "seen", "label": "nbr in seen?", "note": "Average O(1) hash lookup." },
+          { "from": "seen", "to": "loop", "label": "False", "style": "reply" },
+          { "from": "loop", "to": "seen", "label": "add(nbr)" },
+          { "from": "loop", "to": "q", "label": "append(nbr)", "note": "New nodes join the right end and wait their turn: first in, first out." }
+        ]
+      },
+      {
+        "id": "pyc-heap",
+        "type": "flow",
+        "title": "A min-heap is a tree stored in a list",
+        "alt": "Tree diagram of the heap list [1, 3, 2, 7, 4]. The root at index 0 holds 1. Its children at indexes 1 and 2 hold 3 and 2. The children of index 1, at indexes 3 and 4, hold 7 and 4. A note shows the flat list form.",
+        "caption": "Every parent is no larger than its children, so h[0] is the minimum. Push and pop repair one root-to-leaf path: O(log n).",
+        "nodes": [
+          { "id": "n0", "label": "1", "kind": "good", "col": 2, "row": 0, "sub": "h[0], the min" },
+          { "id": "n1", "label": "3", "kind": "state", "col": 1, "row": 2, "sub": "h[1]" },
+          { "id": "n2", "label": "2", "kind": "state", "col": 3, "row": 2, "sub": "h[2]" },
+          { "id": "n3", "label": "7", "kind": "state", "col": 0, "row": 4, "sub": "h[3]" },
+          { "id": "n4", "label": "4", "kind": "state", "col": 2, "row": 4, "sub": "h[4]" },
+          { "id": "list", "label": "the list", "kind": "note", "col": 4, "row": 4, "sub": "[1, 3, 2, 7, 4]" }
+        ],
+        "edges": [
+          { "from": "n0", "to": "n1", "label": "2*0+1" },
+          { "from": "n0", "to": "n2", "label": "2*0+2" },
+          { "from": "n1", "to": "n3", "label": "2*1+1" },
+          { "from": "n1", "to": "n4", "label": "2*1+2" }
+        ],
+        "steps": [
+          { "edges": [0, 1], "text": "The children of index i live at 2i+1 and 2i+2. No pointers: the shape is implied by positions in a plain list." },
+          { "edges": [2, 3], "text": "The rule is only parent <= children. Siblings are unordered, so the list is not sorted: h[1] = 3 > h[2] = 2." },
+          { "edges": [0, 2], "text": "`heappop` moves the last item to the root and sifts it down one path; `heappush` appends and sifts up. Each walks at most log2(n) levels." }
+        ]
+      },
+      {
+        "id": "pyc-costs",
+        "type": "bars",
+        "title": "Worst-case steps per operation at n = 1024",
+        "alt": "Bar chart comparing step counts for one operation on 1024 items. list.pop(0) and insort each take about 1024 steps; heappush and bisect_left take about 10; deque.popleft and an average dict lookup take 1.",
+        "caption": "Each bar is the operation's Big-O class evaluated at n = 1024 (n, log2 n or 1), not a timing. The linear bars are the hidden costs to call out.",
+        "unit": "steps (n = 1024)",
+        "bars": [
+          { "label": "list.pop(0)", "value": 1024, "highlight": true },
+          { "label": "insort", "value": 1024, "highlight": true },
+          { "label": "heappush", "value": 10 },
+          { "label": "bisect_left", "value": 10 },
+          { "label": "deque.popleft", "value": 1 },
+          { "label": "dict lookup (avg)", "value": 1 }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "top_tags",
+        "starter": "from collections import Counter\n\ndef top_tags(tags, k):\n    # Return [[tag, count], ...] highest count first, ties alphabetical\n    return Counter(tags).most_common(k)\n",
+        "solution": "from collections import Counter\nimport heapq\n\ndef top_tags(tags, k):\n    counts = Counter(tags)\n    best = heapq.nsmallest(k, counts.items(), key=lambda item: (-item[1], item[0]))\n    return [[tag, count] for tag, count in best]\n",
+        "tests": [
+          { "args": [["py", "go", "py", "rs", "go", "py"], 2], "expected": [["py", 3], ["go", 2]] },
+          { "args": [["sql", "api", "sql", "api", "css"], 2], "expected": [["api", 2], ["sql", 2]] }
+        ],
+        "hiddenTests": [
+          { "args": [[], 3], "expected": [] },
+          { "args": [["solo"], 5], "expected": [["solo", 1]] },
+          { "args": [["z", "y", "x", "w"], 3], "expected": [["w", 1], ["x", 1], ["y", 1]] },
+          { "args": [["a", "b", "a"], 0], "expected": [] },
+          { "args": [["Go", "go", "go", "GO"], 3], "expected": [["go", 2], ["GO", 1], ["Go", 1]] },
+          { "args": [["café", "cafe", "café"], 1], "expected": [["café", 2]] },
+          { "args": [["t5", "t4", "t3", "t2", "t1", "t0", "t5", "t4", "t3", "t2", "t1", "t5", "t4", "t3", "t2", "t5", "t4", "t3", "t5", "t4", "t5", "t9", "t9", "t9", "t9"], 3], "expected": [["t5", 6], ["t4", 5], ["t3", 4]] }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "index_by_initial",
+        "starter": "def index_by_initial(words):\n    groups = {}\n    for word in words:\n        groups[word[0]] = [word]\n    return groups\n",
+        "solution": "from collections import defaultdict\n\ndef index_by_initial(words):\n    groups = defaultdict(list)\n    for word in words:\n        if word:\n            groups[word[0].lower()].append(word)\n    return dict(groups)\n",
+        "tests": [
+          { "args": [["apple", "Avocado", "banana"]], "expected": { "a": ["apple", "Avocado"], "b": ["banana"] } },
+          { "args": [[]], "expected": {} }
+        ],
+        "hiddenTests": [
+          { "args": [[""]], "expected": {} },
+          { "args": [["solo"]], "expected": { "s": ["solo"] } },
+          { "args": [["b", "a", "b", ""]], "expected": { "b": ["b", "b"], "a": ["a"] } },
+          { "args": [["éclair", "Éa", "eel"]], "expected": { "é": ["éclair", "Éa"], "e": ["eel"] } },
+          { "args": [["1st", "2nd", "10th"]], "expected": { "1": ["1st", "10th"], "2": ["2nd"] } }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "distinct_in_window",
+        "starter": "def distinct_in_window(stream, size):\n    return [len(set(stream[:i + 1])) for i in range(len(stream))]\n",
+        "solution": "from collections import Counter, deque\n\ndef distinct_in_window(stream, size):\n    window = deque()\n    counts = Counter()\n    result = []\n    for item in stream:\n        window.append(item)\n        counts[item] += 1\n        if len(window) > size:\n            old = window.popleft()\n            counts[old] -= 1\n            if counts[old] == 0:\n                del counts[old]\n        result.append(len(counts))\n    return result\n",
+        "tests": [
+          { "args": [[1, 2, 1, 3, 3], 3], "expected": [1, 2, 2, 3, 2] },
+          { "args": [[], 2], "expected": [] }
+        ],
+        "hiddenTests": [
+          { "args": [[5], 1], "expected": [1] },
+          { "args": [[4, 4, 4], 2], "expected": [1, 1, 1] },
+          { "args": [[1, 2, 3], 1], "expected": [1, 1, 1] },
+          { "args": [["a", "b", "a", "b"], 5], "expected": [1, 2, 2, 2] },
+          { "args": [[-1, 1, -1, 1, 2], 2], "expected": [1, 2, 2, 2, 2] },
+          { "args": [[1, 2, 3, 4, 5, 1, 2, 3, 4, 5, 5, 5], 4], "expected": [1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 3, 2] }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "d = {1: 'int', 1.0: 'float', True: 'bool'}\nprint(d)",
+        "choices": [
+          "{1: 'int', 1.0: 'float', True: 'bool'}",
+          "{1: 'bool'}",
+          "{True: 'bool'}"
+        ],
+        "answer": 1,
+        "explain": "`1 == 1.0 == True` and they hash equally, so they are one key. The first insertion fixes the key object (1); later ones only overwrite the value."
+      },
+      {
+        "code": "from collections import Counter\nprint(Counter('aab') - Counter('abc'))",
+        "choices": [
+          "Counter({'a': 1})",
+          "Counter({'a': 1, 'b': 0, 'c': -1})",
+          "Counter({'a': 1, 'c': -1})"
+        ],
+        "answer": 0,
+        "explain": "The `-` operator keeps only positive counts, so b (0) and c (-1) disappear. Use `subtract()` if you need negatives."
+      },
+      {
+        "code": "import heapq\nh = [5, 1, 4]\nheapq.heappush(h, 3)\nprint(h[0])",
+        "choices": [
+          "1",
+          "3",
+          "5"
+        ],
+        "answer": 2,
+        "explain": "The list was never heapified, so the heap rule does not hold. heappush only sifts the new item up past its parent (1), leaving 5 at the root. Call `heapify` first."
+      },
+      {
+        "code": "import bisect\na = [1, 2, 2, 2, 5]\nprint(bisect.bisect_left(a, 2), bisect.bisect_right(a, 2))",
+        "choices": [
+          "1 3",
+          "1 4",
+          "2 4"
+        ],
+        "answer": 1,
+        "explain": "bisect_left gives the first index holding 2; bisect_right gives the index just after the last 2. Their difference, 3, is the count of 2s."
+      },
+      {
+        "code": "from collections import deque\nd = deque([1, 2, 3], maxlen=3)\nd.append(4)\nd.appendleft(0)\nprint(list(d))",
+        "choices": [
+          "[0, 2, 3]",
+          "[0, 3, 4]",
+          "[2, 3, 4]",
+          "[0, 1, 2]"
+        ],
+        "answer": 0,
+        "explain": "A full deque drops from the opposite end: append(4) drops 1 giving [2, 3, 4]; appendleft(0) drops 4 giving [0, 2, 3]."
+      },
+      {
+        "code": "from collections import defaultdict\nd = defaultdict(list)\nif d['x']:\n    print('found')\nprint(len(d))",
+        "choices": [
+          "0",
+          "1",
+          "found\n1"
+        ],
+        "answer": 1,
+        "explain": "Reading `d['x']` calls the factory and stores an empty list, so the key now exists even though the branch was skipped. Test with `'x' in d` instead."
+      }
+    ],
+    "tip": "Name the container and its cost before you write code: \"I'll count with a Counter, O(n), then keep a size-k min-heap, O(n log k).\" Then mention the tie-break rule out loud; interviewers often check whether you noticed it.",
+    "links": {
+      "problems": [
+        "most-frequent-k",
+        "kth-largest-stream",
+        "merge-sorted-streams",
+        "count-pair-sums",
+        "group-by-letters",
+        "grid-shortest-path",
+        "target-range"
+      ],
+      "guides": [
+        "complexity-reasoning",
+        "pattern-recognition",
+        "edge-case-checklist"
+      ],
+      "lessons": [
+        "hash-map-complements",
+        "heaps-top-k",
+        "queues-fifo-simulation",
+        "graph-bfs-shortest-hops",
+        "binary-search-lower-bound",
+        "py-basics"
+      ]
+    }
+  }
+}

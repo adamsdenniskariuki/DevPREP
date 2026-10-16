@@ -10,7 +10,7 @@ import { isPathCore, loadProblems, patternProgress, problemIndex, problemPattern
 import { PROBLEM_PATTERNS } from './problem-types'
 import { recordSolve } from './progress'
 import { loadCases } from './cases'
-import { lessons, tracks } from './curriculum'
+import { interviewLessons as lessons, loadLabs, tracks } from './curriculum'
 import { selectPath } from './learning-paths'
 import { COMPETENCY_IDS, newStoryId } from './stories'
 
@@ -110,7 +110,7 @@ describe('backup fields for practice', () => {
 
 describe('mock interviews', () => {
   it('is deterministic per seed and well formed for every track and level', async () => {
-    const data = { problems: await loadProblems(), cases: await loadCases() }
+    const data = { problems: await loadProblems(), cases: await loadCases(), labs: await loadLabs() }
     for (const track of tracks.map(item => item.id)) {
       for (const level of ['se', 'sse'] as const) {
         for (const seed of [1, 42, 9_999]) {
@@ -123,7 +123,7 @@ describe('mock interviews', () => {
             expect(question.answer.length).toBeGreaterThan(20)
             expect(question.rubric.length).toBeGreaterThanOrEqual(2)
           }
-          expect(new Set(mock.questions.map(q => q.ref)).size).toBe(mock.questions.length)
+          expect(new Set(mock.questions.map(q => `${q.kind}:${q.ref}:${q.code ?? ''}`)).size).toBe(mock.questions.length)
         }
       }
     }

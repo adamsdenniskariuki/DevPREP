@@ -1,0 +1,680 @@
+{
+  "id": "py-basics",
+  "track": "python",
+  "title": "Python basics: names, types and functions",
+  "minutes": 30,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How Python names refer to objects, which values are truthy, how numbers really behave, and how functions receive arguments.",
+  "prerequisites": [],
+  "prerequisiteNotes": "None. If you already write Python daily, take the placement check and skip ahead.",
+  "objectives": [
+    "Explain that assignment binds a name to an object and never copies it.",
+    "Predict truthiness for common values and use it idiomatically in conditions.",
+    "Use floor division, modulo and arbitrary-precision integers correctly, including with negative numbers.",
+    "Write small functions with clear return values, including an explicit None for 'no answer'."
+  ],
+  "concepts": [
+    {
+      "title": "Names refer to objects",
+      "body": "In Python a variable is a **name** attached to an object. `b = a` attaches a second name to the same object; nothing is copied. If the object is mutable (a list, dict or set), a change made through one name is visible through the other. `is` asks whether two names point at the same object; `==` asks whether two objects have equal values.",
+      "code": "a = [1, 2]\nb = a          # same list, two names\nb.append(3)\nprint(a)       # [1, 2, 3]\nprint(a is b)  # True\nc = list(a)    # a shallow copy\nprint(c == a, c is a)  # True False",
+      "diagram": "pyb-names"
+    },
+    {
+      "title": "Truthiness and control flow",
+      "body": "`if`, `while`, `and`, `or` and `not` accept any value. Zero numbers, empty containers, empty strings and `None` are **falsy**; almost everything else is truthy. Write `if items:` rather than `if len(items) > 0:`. Use `is None` when zero or an empty list is a valid value, otherwise `if not x:` will treat 0 as missing.",
+      "code": "for value in [0, 0.0, '', [], {}, None, '0', [0]]:\n    print(repr(value), bool(value))\n# only '0' and [0] are truthy: they are non-empty",
+      "diagram": "pyb-truthy"
+    },
+    {
+      "title": "Numbers that behave differently",
+      "body": "`int` has arbitrary precision, so `2 ** 100` is exact and there is no overflow. `/` always returns a float; `//` floors toward negative infinity, so `-7 // 2` is `-4`, and `%` takes the sign of the divisor so that `(a // b) * b + a % b == a` always holds. Floats are IEEE 754 doubles: `0.1 + 0.2 == 0.3` is False, so compare with `math.isclose`. `bool` is a subclass of `int`, so `True + True == 2` and `isinstance(True, int)` is True.",
+      "code": "print(2 ** 100)            # exact\nprint(7 // 2, -7 // 2)     # 3 -4\nprint(-7 % 3, 7 % -3)      # 2 -2\nimport math\nprint(math.isclose(0.1 + 0.2, 0.3))  # True"
+    },
+    {
+      "title": "Functions and arguments",
+      "body": "Arguments are passed by **object reference**: the parameter becomes a new name for the caller's object. Rebinding the parameter inside the function does not affect the caller, but mutating the object does. A function without a `return` returns `None`. Prefer returning a value over mutating an input unless mutation is the documented point of the function.",
+      "code": "def add_item(items, item):\n    items.append(item)   # visible to the caller\n\ndef replace(items):\n    items = ['new']      # only rebinds the local name\n\nxs = []\nadd_item(xs, 1)\nreplace(xs)\nprint(xs)  # [1]",
+      "diagram": "pyb-call"
+    }
+  ],
+  "example": "def first_negative(nums):\n    for index, value in enumerate(nums):\n        if value < 0:\n            return index\n    return None   # explicit: 'not found' is a normal outcome\n\nprint(first_negative([3, 0, -2, -5]))  # 2\nprint(first_negative([]))              # None",
+  "task": "Write `summarize(nums)` for a list of numbers. Return `None` for an empty list. Otherwise return a dict with keys `count`, `min`, `max` and `mean`, where `mean` is rounded to 2 decimal places. Do not modify the input list.",
+  "starter": "def summarize(nums):\n    # Return None for [], else {'count', 'min', 'max', 'mean'}\n    ...",
+  "hints": [
+    "Handle the empty list first with `if not nums: return None`; the rest can assume at least one number.",
+    "The built-ins `len`, `min`, `max` and `sum` each take the list directly, and `round(total / count, 2)` gives the mean."
+  ],
+  "solution": "def summarize(nums):\n    if not nums:\n        return None\n    count = len(nums)\n    return {\n        'count': count,\n        'min': min(nums),\n        'max': max(nums),\n        'mean': round(sum(nums) / count, 2),\n    }\n\nOne pass over the list per built-in: O(n) time, O(1) extra space. Returning None (not an empty dict) makes 'no data' impossible to confuse with real statistics.",
+  "checklist": [
+    "I return None for an empty list instead of raising or returning {}.",
+    "I use the built-ins rather than hand-written loops.",
+    "I round only the mean and leave the input list untouched."
+  ],
+  "pitfalls": [
+    "Using `if not x:` to mean 'x is missing' when 0 or [] is a valid value.",
+    "Expecting `b = a` to copy a list, then being surprised when both change.",
+    "Assuming `-7 // 2` is -3 as in C or Java; Python floors to -4.",
+    "Comparing floats with `==`."
+  ],
+  "walkthrough": [
+    {
+      "title": "Mutation versus rebinding",
+      "body": "`b.append(3)` changes the object both names share. `b = b + [3]` builds a new list and moves only `b` to it, so `a` keeps the old list. `b += [3]` on a list mutates in place (it calls `__iadd__`), which is why it behaves like `append` and not like `b = b + [3]`.",
+      "diagram": "pyb-rebind"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "Guard the empty case first, so the rest of the function can assume at least one number. Then compute each statistic with a built-in. Finally round only at the edge, when building the result, so intermediate maths keeps full precision."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A strict integer check",
+      "prompt": "Write `is_strict_int(value)` that returns True only for real integers. Booleans and floats must return False.",
+      "hints": [
+        "`isinstance(True, int)` is True because bool subclasses int.",
+        "Check `type(value) is int`, or exclude bool explicitly."
+      ],
+      "solution": "def is_strict_int(value):\n    return isinstance(value, int) and not isinstance(value, bool)",
+      "checklist": [
+        "I reject True and False.",
+        "I reject floats and strings."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Split into chunks",
+      "prompt": "Write `chunk(items, size)` that splits a list into consecutive lists of length `size`; the last chunk may be shorter. Return [] for an empty list. Assume size >= 1.",
+      "hints": [
+        "`range(0, len(items), size)` gives each chunk's start index.",
+        "Slices never raise for out-of-range ends: `items[8:10]` on a 9-item list returns one item."
+      ],
+      "solution": "def chunk(items, size):\n    return [items[i:i + size] for i in range(0, len(items), size)]",
+      "checklist": [
+        "The last chunk may be short.",
+        "An empty list gives []."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does `x is 1000` sometimes behave differently from `x == 1000`?",
+      "answer": "`is` compares identity. CPython caches small integers (about -5 to 256), so identity checks on small ints can look like they work, but larger equal ints may be distinct objects. Use `==` for values and keep `is` for singletons such as None."
+    },
+    {
+      "question": "Is Python pass-by-value or pass-by-reference?",
+      "answer": "Neither, strictly. The function receives a reference to the same object (so mutations are visible), but the parameter is a new local name (so rebinding it does not affect the caller). Say 'pass by object reference' and show both cases."
+    }
+  ],
+  "takeaways": [
+    "Assignment binds names to objects; it never copies.",
+    "Empty containers, zero, '' and None are falsy; use `is None` when zero is valid.",
+    "`//` floors toward negative infinity and `int` never overflows.",
+    "Functions return None unless told otherwise; make 'no answer' explicit."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyb-names",
+        "type": "flow",
+        "title": "Two names, one list",
+        "alt": "Diagram of names and objects. The names a and b both point to the same list object containing 1, 2 and 3. A separate name x points to the int object 5.",
+        "caption": "Assignment attaches a name to an existing object. Both a and b see the append.",
+        "nodes": [
+          {
+            "id": "a",
+            "label": "name a",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "b",
+            "label": "name b",
+            "kind": "state",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "list",
+            "label": "list object",
+            "kind": "storage",
+            "col": 2,
+            "row": 1,
+            "sub": "[1, 2, 3]"
+          },
+          {
+            "id": "x",
+            "label": "name x",
+            "kind": "state",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "five",
+            "label": "int object",
+            "kind": "storage",
+            "col": 2,
+            "row": 4,
+            "sub": "5 (immutable)"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "list",
+            "label": "a = [1, 2]"
+          },
+          {
+            "from": "b",
+            "to": "list",
+            "label": "b = a"
+          },
+          {
+            "from": "x",
+            "to": "five",
+            "label": "x = 5"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`a = [1, 2]` creates a list object and attaches the name a to it."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "`b = a` attaches a second name to the same object. No copy is made, so `b.append(3)` is visible through a."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "Ints are immutable. `x += 1` cannot change the object; it rebinds x to a new int."
+          }
+        ]
+      },
+      {
+        "id": "pyb-truthy",
+        "type": "flow",
+        "title": "Which branch runs?",
+        "alt": "Decision diagram for an if statement. Values such as 0, 0.0, empty string, empty list, empty dict and None are falsy and skip the body. Every other value, including the string '0' and the list [0], is truthy and runs the body.",
+        "caption": "Emptiness and zero are falsy. A non-empty container is truthy even if it holds a falsy item.",
+        "nodes": [
+          {
+            "id": "if",
+            "label": "if value:",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "falsy",
+            "label": "Falsy: skip",
+            "kind": "bad",
+            "col": 2,
+            "row": 0,
+            "sub": "0, '', [], None"
+          },
+          {
+            "id": "truthy",
+            "label": "Truthy: run",
+            "kind": "good",
+            "col": 2,
+            "row": 2,
+            "sub": "'0', [0], -1"
+          }
+        ],
+        "edges": [
+          {
+            "from": "if",
+            "to": "falsy",
+            "label": "bool() False"
+          },
+          {
+            "from": "if",
+            "to": "truthy",
+            "label": "bool() True"
+          }
+        ]
+      },
+      {
+        "id": "pyb-call",
+        "type": "sequence",
+        "title": "Calling summarize(xs)",
+        "alt": "Sequence diagram. The caller passes its list xs to summarize. The parameter nums becomes a second name for the same list object. The function reads the items and returns a new dict to the caller; the list is unchanged.",
+        "caption": "The function gets the caller's object, not a copy. Reading it is safe; mutating it would be visible to the caller.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "fn",
+            "label": "summarize()"
+          },
+          {
+            "id": "list",
+            "label": "list object"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "fn",
+            "label": "summarize(xs)",
+            "note": "nums is bound to the same object as xs."
+          },
+          {
+            "from": "fn",
+            "to": "list",
+            "label": "len, min, max, sum"
+          },
+          {
+            "from": "list",
+            "to": "fn",
+            "label": "values",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "caller",
+            "label": "return new dict",
+            "style": "reply",
+            "note": "A new object is returned; xs is untouched."
+          }
+        ]
+      },
+      {
+        "id": "pyb-rebind",
+        "type": "compare",
+        "title": "Mutation versus rebinding",
+        "alt": "Side-by-side comparison. With b.append(3), names a and b still share one list that now holds 1, 2, 3. With b = b + [3], a keeps the old list [1, 2] and b moves to a new list [1, 2, 3].",
+        "caption": "Mutation changes the shared object. Rebinding moves one name and leaves the other alone.",
+        "before": {
+          "label": "b.append(3): shared change",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "name a",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "name b",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "l",
+              "label": "[1, 2, 3]",
+              "kind": "storage",
+              "col": 2,
+              "row": 0
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "l"
+            },
+            {
+              "from": "b",
+              "to": "l"
+            }
+          ]
+        },
+        "after": {
+          "label": "b = b + [3]: new object",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "name a",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "name b",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "l1",
+              "label": "[1, 2]",
+              "kind": "storage",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "l2",
+              "label": "[1, 2, 3]",
+              "kind": "storage",
+              "col": 2,
+              "row": 1
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "l1"
+            },
+            {
+              "from": "b",
+              "to": "l2"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "summarize",
+        "starter": "def summarize(nums):\n    # Return None for [], else {'count', 'min', 'max', 'mean'}\n    return {}\n",
+        "solution": "def summarize(nums):\n    if not nums:\n        return None\n    count = len(nums)\n    return {\n        'count': count,\n        'min': min(nums),\n        'max': max(nums),\n        'mean': round(sum(nums) / count, 2),\n    }\n",
+        "tests": [
+          {
+            "args": [
+              [
+                4,
+                8,
+                6
+              ]
+            ],
+            "expected": {
+              "count": 3,
+              "min": 4,
+              "max": 8,
+              "mean": 6
+            }
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": null
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                7
+              ]
+            ],
+            "expected": {
+              "count": 1,
+              "min": 7,
+              "max": 7,
+              "mean": 7
+            }
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                2
+              ]
+            ],
+            "expected": {
+              "count": 3,
+              "min": 1,
+              "max": 2,
+              "mean": 1.67
+            }
+          },
+          {
+            "args": [
+              [
+                -3,
+                0,
+                3,
+                10
+              ]
+            ],
+            "expected": {
+              "count": 4,
+              "min": -3,
+              "max": 10,
+              "mean": 2.5
+            }
+          },
+          {
+            "args": [
+              [
+                0,
+                0
+              ]
+            ],
+            "expected": {
+              "count": 2,
+              "min": 0,
+              "max": 0,
+              "mean": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "is_strict_int",
+        "starter": "def is_strict_int(value):\n    return isinstance(value, int)\n",
+        "solution": "def is_strict_int(value):\n    return isinstance(value, int) and not isinstance(value, bool)\n",
+        "tests": [
+          {
+            "args": [
+              5
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              true
+            ],
+            "expected": false
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              2.5
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              "3"
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              -7
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              0
+            ],
+            "expected": true
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "chunk",
+        "starter": "def chunk(items, size):\n    return [items]\n",
+        "solution": "def chunk(items, size):\n    return [items[i:i + size] for i in range(0, len(items), size)]\n",
+        "tests": [
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ],
+              2
+            ],
+            "expected": [
+              [
+                1,
+                2
+              ],
+              [
+                3,
+                4
+              ],
+              [
+                5
+              ]
+            ]
+          },
+          {
+            "args": [
+              [],
+              3
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              3
+            ],
+            "expected": [
+              [
+                1,
+                2,
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                2
+              ],
+              5
+            ],
+            "expected": [
+              [
+                1,
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "a",
+                "b",
+                "c"
+              ],
+              1
+            ],
+            "expected": [
+              [
+                "a"
+              ],
+              [
+                "b"
+              ],
+              [
+                "c"
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "a = [1, 2]\nb = a\nb.append(3)\nprint(a)",
+        "choices": [
+          "[1, 2]",
+          "[1, 2, 3]",
+          "[3]"
+        ],
+        "answer": 1,
+        "explain": "`b = a` makes a second name for the same list, so the append is visible through a."
+      },
+      {
+        "code": "print(7 // 2, -7 // 2, -7 % 3)",
+        "choices": [
+          "3 -3 -1",
+          "3 -4 2",
+          "3 -4 -1"
+        ],
+        "answer": 1,
+        "explain": "`//` floors toward negative infinity, so -3.5 becomes -4. `%` follows the divisor's sign: -7 = (-3)*3 + 2."
+      },
+      {
+        "code": "print(0.1 + 0.2 == 0.3, True + True)",
+        "choices": [
+          "True 2",
+          "False 2",
+          "False True"
+        ],
+        "answer": 1,
+        "explain": "0.1 and 0.2 have no exact binary representation, so the sum is 0.30000000000000004. bool subclasses int, so True + True is 2."
+      },
+      {
+        "code": "def f(x):\n    x = x + [1]\n\nxs = []\nf(xs)\nprint(xs)",
+        "choices": [
+          "[]",
+          "[1]",
+          "None"
+        ],
+        "answer": 0,
+        "explain": "`x = x + [1]` builds a new list and rebinds only the local name x. The caller's list is unchanged."
+      }
+    ],
+    "tip": "When asked 'pass by value or reference?', draw the names-and-objects picture: parameters are new names for the caller's objects. Mutation is shared; rebinding is not.",
+    "links": {
+      "problems": [
+        "count-pair-sums",
+        "lone-value"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "arrays-prefix-foundations"
+      ]
+    }
+  }
+}

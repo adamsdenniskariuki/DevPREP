@@ -1,0 +1,264 @@
+{
+  "id": "python",
+  "kind": "language",
+  "title": "Python",
+  "description": "Interview Python from first principles to senior depth: idioms, data structures, OOP, generators, typing, concurrency and the gotchas interviewers probe.",
+  "lessons": [
+    "py-basics",
+    "py-strings",
+    "py-sequences-unpacking",
+    "py-collections",
+    "py-sorting-keys",
+    "py-functions-closures",
+    "py-oop-dataclasses",
+    "py-errors-exceptions"
+  ],
+  "placement": [
+    {
+      "question": "What does this print?",
+      "code": "a = [1]\nb = a\nb += [2]\nprint(a)",
+      "choices": [
+        "`[1]`",
+        "`[1, 2]`",
+        "`[2]`"
+      ],
+      "answer": 1,
+      "explain": "`+=` on a list mutates it in place, and a and b name the same list.",
+      "lessons": [
+        "py-basics"
+      ]
+    },
+    {
+      "question": "What is `-9 // 4` in Python?",
+      "choices": [
+        "`-2`",
+        "`-3`",
+        "`-2.25`"
+      ],
+      "answer": 1,
+      "explain": "Floor division rounds toward negative infinity: -2.25 floors to -3.",
+      "lessons": [
+        "py-basics"
+      ]
+    },
+    {
+      "question": "Which value is truthy?",
+      "choices": [
+        "`0.0`",
+        "`''`",
+        "`[None]`",
+        "`{}`"
+      ],
+      "answer": 2,
+      "explain": "A list holding one item is non-empty, so it is truthy even though the item is None.",
+      "lessons": [
+        "py-basics"
+      ]
+    },
+    {
+      "question": "A function has no return statement. What does calling it evaluate to?",
+      "choices": [
+        "`0`",
+        "`None`",
+        "It raises an error"
+      ],
+      "answer": 1,
+      "explain": "Falling off the end of a function returns None.",
+      "lessons": [
+        "py-basics"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "s = 'abcdef'\nprint(s[::-2], s[4:99])",
+      "choices": [
+        "`fdb ef`",
+        "`ace ef`",
+        "`fdb` then IndexError",
+        "`fdb e`"
+      ],
+      "answer": 0,
+      "explain": "A negative step walks backwards from the end and takes every second character. Slice bounds clamp, so `s[4:99]` is 'ef'.",
+      "lessons": [
+        "py-strings"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "print('a,,b'.split(','), ' a  b '.split())",
+      "choices": [
+        "`['a', 'b'] ['a', 'b']`",
+        "`['a', '', 'b'] ['a', 'b']`",
+        "`['a', '', 'b'] ['', 'a', '', 'b', '']`"
+      ],
+      "answer": 1,
+      "explain": "With an explicit separator, split keeps empty fields. With no argument it splits on runs of whitespace and drops the empty pieces.",
+      "lessons": [
+        "py-strings"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "g = [[0] * 2] * 2\ng[1][0] = 5\nprint(g)",
+      "choices": [
+        "`[[0, 0], [5, 0]]`",
+        "`[[5, 0], [5, 0]]`",
+        "`[[5, 5], [5, 5]]`"
+      ],
+      "answer": 1,
+      "explain": "Both rows are the same list object, so the write appears in each row.",
+      "lessons": [
+        "py-sequences-unpacking"
+      ]
+    },
+    {
+      "question": "What does `[(x, y) for x in 'ab' for y in range(2)]` evaluate to?",
+      "choices": [
+        "`[('a', 0), ('b', 1)]`",
+        "`[('a', 0), ('a', 1), ('b', 0), ('b', 1)]`",
+        "`[('a', 0), ('b', 0), ('a', 1), ('b', 1)]`"
+      ],
+      "answer": 1,
+      "explain": "`for` clauses read like nested loops with the first one outermost, so y cycles fastest.",
+      "lessons": [
+        "py-sequences-unpacking"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "from collections import deque\nd = deque([1, 2, 3], maxlen=3)\nd.append(4)\nd.appendleft(0)\nprint(list(d))",
+      "choices": [
+        "`[0, 2, 3]`",
+        "`[0, 3, 4]`",
+        "`[2, 3, 4]`"
+      ],
+      "answer": 0,
+      "explain": "A full deque drops from the opposite end: append(4) drops 1, then appendleft(0) drops 4.",
+      "lessons": [
+        "py-collections"
+      ]
+    },
+    {
+      "question": "What does `Counter('aab') - Counter('abc')` evaluate to?",
+      "choices": [
+        "`Counter({'a': 1})`",
+        "`Counter({'a': 1, 'c': -1})`",
+        "`Counter({'a': 1, 'b': 0, 'c': -1})`"
+      ],
+      "answer": 0,
+      "explain": "Counter's `-` keeps only positive counts. `subtract()` keeps zero and negative counts.",
+      "lessons": [
+        "py-collections"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "pairs = [('b', 1), ('a', 2), ('c', 1)]\nprint([p[0] for p in sorted(pairs, key=lambda p: p[1], reverse=True)])",
+      "choices": [
+        "`['a', 'b', 'c']`",
+        "`['a', 'c', 'b']`",
+        "`['c', 'b', 'a']`"
+      ],
+      "answer": 0,
+      "explain": "The sort is stable even with `reverse=True`, so 'b' and 'c' (both 1) keep their input order after 'a'.",
+      "lessons": [
+        "py-sorting-keys"
+      ]
+    },
+    {
+      "question": "You need the 5 largest of 10 million scores. Which is the best fit?",
+      "choices": [
+        "`sorted(scores)[-5:]`",
+        "`heapq.nlargest(5, scores)`",
+        "`max(scores)` called 5 times"
+      ],
+      "answer": 1,
+      "explain": "`nlargest` keeps a heap of size k: O(n log k). A full sort is O(n log n).",
+      "lessons": [
+        "py-sorting-keys"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "fs = [lambda: i for i in range(3)]\nprint([f() for f in fs])",
+      "choices": [
+        "`[0, 1, 2]`",
+        "`[2, 2, 2]`",
+        "`[3, 3, 3]`"
+      ],
+      "answer": 1,
+      "explain": "Each lambda closes over the same variable `i`, which is 2 by the time they run.",
+      "lessons": [
+        "py-functions-closures"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "def add(x, acc=[]):\n    acc.append(x)\n    return acc\nadd(1)\nprint(add(2))",
+      "choices": [
+        "`[2]`",
+        "`[1, 2]`",
+        "`[1]`"
+      ],
+      "answer": 1,
+      "explain": "The default list is created once at def time and shared by every call that omits `acc`.",
+      "lessons": [
+        "py-functions-closures"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "class C:\n    n = 0\nc = C()\nc.n += 1\nprint(C.n, c.n)",
+      "choices": [
+        "`1 1`",
+        "`0 1`",
+        "`0 0`"
+      ],
+      "answer": 1,
+      "explain": "`c.n += 1` reads the class value, then assigns a new instance attribute that shadows it. The class attribute stays 0.",
+      "lessons": [
+        "py-oop-dataclasses"
+      ]
+    },
+    {
+      "question": "A class defines `__eq__` but not `__hash__`. What does `{Obj(1)}` do?",
+      "choices": [
+        "Builds a one-item set",
+        "Raises `TypeError`",
+        "Uses identity hashing"
+      ],
+      "answer": 1,
+      "explain": "Defining `__eq__` sets `__hash__` to None, so instances are unhashable.",
+      "lessons": [
+        "py-oop-dataclasses"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "def f():\n    try:\n        return 'a'\n    finally:\n        print('b', end=' ')\nprint(f())",
+      "choices": [
+        "`a`",
+        "`b a`",
+        "`a b`"
+      ],
+      "answer": 1,
+      "explain": "`finally` runs after the return value is computed but before the function returns, so `b` prints first.",
+      "lessons": [
+        "py-errors-exceptions"
+      ]
+    },
+    {
+      "question": "`{}['k']` raises inside `try`. Handlers are `except LookupError:` then `except KeyError:`. Which runs?",
+      "choices": [
+        "The `LookupError` handler",
+        "The `KeyError` handler",
+        "Both, in order"
+      ],
+      "answer": 0,
+      "explain": "KeyError subclasses LookupError and the first matching clause wins, so the KeyError handler can never run.",
+      "lessons": [
+        "py-errors-exceptions"
+      ]
+    }
+  ]
+}

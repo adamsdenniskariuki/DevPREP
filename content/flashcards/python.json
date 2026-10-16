@@ -1,0 +1,270 @@
+{
+  "track": "python",
+  "title": "Python interview essentials",
+  "cards": [
+    {
+      "id": "python-assignment",
+      "front": "What does `b = a` do when a is a list?",
+      "back": "It binds a second name to the same list object. Nothing is copied, so mutations through either name are visible through both. Use `list(a)`, `a[:]` or `copy.copy(a)` for a shallow copy.",
+      "level": "se"
+    },
+    {
+      "id": "python-is-vs-eq",
+      "front": "When do you use `is` instead of `==`?",
+      "back": "`is` compares identity (same object); `==` compares values. Use `is` only for singletons such as `None`, and `==` for everything else.",
+      "level": "se"
+    },
+    {
+      "id": "python-falsy",
+      "front": "List Python's common falsy values.",
+      "back": "False, None, 0, 0.0, 0j, '' and empty containers ([], (), {}, set(), range(0)). Everything else is truthy by default.",
+      "level": "se"
+    },
+    {
+      "id": "python-floor-div",
+      "front": "What are `-7 // 2` and `-7 % 2`?",
+      "back": "-4 and 1. `//` floors toward negative infinity and `%` takes the divisor's sign, so `(a // b) * b + a % b == a`.",
+      "level": "se"
+    },
+    {
+      "id": "python-int-precision",
+      "front": "Can a Python int overflow?",
+      "back": "No. `int` has arbitrary precision, so big products and powers are exact; they just cost more time and memory as they grow.",
+      "level": "se"
+    },
+    {
+      "id": "python-float-compare",
+      "front": "How should you compare floats in Python?",
+      "back": "Not with `==`. Use `math.isclose(a, b)` (optionally with `rel_tol`/`abs_tol`), or use `decimal.Decimal` or integer cents for money.",
+      "level": "se"
+    },
+    {
+      "id": "python-bool-int",
+      "front": "What is `True + True`, and why?",
+      "back": "2. `bool` is a subclass of `int`, with True == 1 and False == 0. That is also why `isinstance(True, int)` is True.",
+      "level": "se"
+    },
+    {
+      "id": "python-pass-by",
+      "front": "How are arguments passed in Python?",
+      "back": "By object reference: the parameter is a new local name for the caller's object. Mutating it is visible to the caller; rebinding the parameter is not.",
+      "level": "se"
+    },
+    {
+      "id": "python-implicit-none",
+      "front": "What does a function without `return` return?",
+      "back": "None. The same happens with a bare `return`.",
+      "level": "se"
+    },
+    {
+      "id": "python-plus-equals",
+      "front": "How do `b += [3]` and `b = b + [3]` differ for a list?",
+      "back": "`+=` calls `__iadd__`, which extends the list in place, so other names see the change. `b = b + [3]` builds a new list and rebinds only b.",
+      "level": "se"
+    },
+    {
+      "id": "python-sort-returns-none",
+      "front": "What does `xs.sort()` return, and how does it differ from `sorted(xs)`?",
+      "back": "`xs.sort()` sorts the list in place and returns None. `sorted()` takes any iterable and returns a new list, leaving the input unchanged.",
+      "level": "se"
+    },
+    {
+      "id": "python-tuple-sort-key",
+      "front": "How do you sort by score descending, then name ascending, in one call?",
+      "back": "`sorted(rows, key=lambda r: (-r.score, r.name))`. Tuples compare item by item, and negating the number flips only that field.",
+      "level": "se"
+    },
+    {
+      "id": "python-sort-stability",
+      "front": "Is Python's sort stable, and how do you use that for multi-key sorts?",
+      "back": "Yes. Equal items keep their original order. Sort by the least important key first and the most important key last.",
+      "level": "se"
+    },
+    {
+      "id": "python-reverse-vs-slice",
+      "front": "Why is `sorted(xs, key=f, reverse=True)` not the same as `sorted(xs, key=f)[::-1]`?",
+      "back": "`reverse=True` keeps equal items in their input order. Slicing reverses them too, which breaks stability.",
+      "level": "sse"
+    },
+    {
+      "id": "python-cmp-to-key",
+      "front": "When do you need `functools.cmp_to_key`?",
+      "back": "When the order is defined only between pairs, with no value you can compute per item. Example: put `a` before `b` if `a+b > b+a` when concatenating digit strings. Otherwise prefer a key, which runs n times instead of on every comparison.",
+      "level": "sse"
+    },
+    {
+      "id": "python-str-immutable-plus-equals",
+      "front": "What does `s += 'x'` do when `s` is a str?",
+      "back": "It builds a new string object and rebinds `s`. Other names still see the old text. In a loop this is O(n²) copying in principle; collect parts in a list and call `''.join(parts)` once.",
+      "level": "se"
+    },
+    {
+      "id": "python-slice-vs-index-bounds",
+      "front": "`s = 'hello'`: what do `s[5]` and `s[3:99]` give?",
+      "back": "`s[5]` raises IndexError. `s[3:99]` returns 'lo' because slices clamp their bounds and never raise.",
+      "level": "se"
+    },
+    {
+      "id": "python-find-vs-index",
+      "front": "`str.find` vs `str.index` when the substring is missing?",
+      "back": "`find` returns -1 (which is also a valid index, so never use it as one); `index` raises ValueError. Use `in` for a plain membership test.",
+      "level": "se"
+    },
+    {
+      "id": "python-casefold-vs-lower",
+      "front": "Why use `casefold()` rather than `lower()` for caseless comparison?",
+      "back": "`casefold` does more aggressive folding, e.g. 'ß' becomes 'ss', so 'Straße' and 'STRASSE' compare equal. `lower()` leaves 'ß' unchanged.",
+      "level": "se"
+    },
+    {
+      "id": "python-isdigit-isdecimal",
+      "front": "Is `s.isdigit()` a safe check before `int(s)`?",
+      "back": "No. Superscripts like '²' pass `isdigit()` but `int('²')` raises. `isdecimal()` matches what `int` accepts; otherwise use try/except.",
+      "level": "sse"
+    },
+    {
+      "id": "python-repeated-row-alias",
+      "front": "Why does `grid = [[0] * 3] * 3; grid[0][0] = 1` change every row?",
+      "back": "List `*` repeats references. All three slots point at one inner list. Build rows with `[[0] * 3 for _ in range(3)]`.",
+      "level": "se"
+    },
+    {
+      "id": "python-list-front-cost",
+      "front": "Cost of `list.pop(0)` and `list.insert(0, x)`? What should you use instead?",
+      "back": "O(n): every later element shifts. Use `collections.deque`, whose `popleft` and `appendleft` are O(1). `append` and `pop()` at the end of a list are O(1), amortised for append.",
+      "level": "se"
+    },
+    {
+      "id": "python-zip-strict",
+      "front": "What does `zip` do with inputs of different lengths, and how do you make that an error?",
+      "back": "It stops at the shortest input and silently drops the rest. Since Python 3.10, `zip(..., strict=True)` raises ValueError on a mismatch. Use `itertools.zip_longest` to pad instead.",
+      "level": "se"
+    },
+    {
+      "id": "python-shallow-copy",
+      "front": "After `b = a.copy()` on a list of lists, which changes to `b` are visible through `a`?",
+      "back": "Mutating a shared inner list (`b[0].append(x)`) is visible. Replacing a slot (`b[0] = [...]`) is not. Use `copy.deepcopy` or `[row[:] for row in a]` for independent rows.",
+      "level": "se"
+    },
+    {
+      "id": "python-dict-key-equality",
+      "front": "What does `{1: 'a', 1.0: 'b', True: 'c'}` evaluate to, and why?",
+      "back": "`{1: 'c'}`. 1, 1.0 and True are equal and hash equally, so they are one key. The first key object stays and the last value wins.",
+      "level": "se"
+    },
+    {
+      "id": "python-defaultdict-read-inserts",
+      "front": "What is the catch with reading `d[k]` on a defaultdict?",
+      "back": "Any read of a missing key calls the factory and inserts it. Use `k in d` or `d.get(k)` to test without creating the key.",
+      "level": "se"
+    },
+    {
+      "id": "python-counter-tie-order",
+      "front": "How does `Counter.most_common` order items with equal counts?",
+      "back": "By first appearance, not alphabetically. For a custom tie-break, sort or use `heapq.nsmallest` with key `(-count, item)`.",
+      "level": "se"
+    },
+    {
+      "id": "python-heapq-max-and-ties",
+      "front": "How do you get a max-heap or safe priorities with heapq?",
+      "back": "heapq is min-only: push `-x` or `(-score, ...)`. Add an increasing sequence number, `(prio, seq, item)`, so equal priorities never compare payloads.",
+      "level": "se"
+    },
+    {
+      "id": "python-insort-cost",
+      "front": "What is the cost of `bisect.insort` on a list?",
+      "back": "O(n). Finding the position is O(log n), but inserting shifts the tail of the list.",
+      "level": "sse"
+    },
+    {
+      "id": "python-mutable-default",
+      "front": "Why does `def f(x, acc=[])` keep growing across calls?",
+      "back": "Defaults are evaluated once, when `def` runs, and stored on the function. Every call that omits `acc` shares that one list. Use `acc=None` and create the list inside the body.",
+      "level": "se"
+    },
+    {
+      "id": "python-unboundlocalerror",
+      "front": "Why does reading a global inside a function raise UnboundLocalError?",
+      "back": "Any assignment to the name anywhere in the function makes it local for the whole body, so the earlier read finds an unassigned local. Declare it `global` (or `nonlocal` for an enclosing function).",
+      "level": "se"
+    },
+    {
+      "id": "python-late-binding",
+      "front": "What does `[lambda: i for i in range(3)]` return when each lambda is called, and how do you fix it?",
+      "back": "All return 2, because closures capture the variable, not its value. Fix with `lambda i=i: i` or `functools.partial`.",
+      "level": "se"
+    },
+    {
+      "id": "python-cache-hashable",
+      "front": "What must be true of the arguments to a `functools.cache` function?",
+      "back": "They must be hashable, because they form the dict key. Pass tuples or frozensets, or keep list data in a closure and cache only on ints.",
+      "level": "se"
+    },
+    {
+      "id": "python-groupby-sorted",
+      "front": "What is the gotcha with `itertools.groupby`?",
+      "back": "It only groups consecutive equal keys. Sort by the same key first, or one key will appear in several groups.",
+      "level": "se"
+    },
+    {
+      "id": "python-shared-class-attr",
+      "front": "Why is `items = []` in a class body dangerous?",
+      "back": "It is one list stored on the class. `self.items.append(...)` finds and mutates that shared list for every instance. Create per-instance state in `__init__`.",
+      "level": "se"
+    },
+    {
+      "id": "python-eq-kills-hash",
+      "front": "What happens to `__hash__` when a class defines `__eq__` only?",
+      "back": "Python sets `__hash__ = None`, so instances become unhashable (TypeError in sets or as dict keys). Equal objects must hash equal; hash only immutable fields.",
+      "level": "se"
+    },
+    {
+      "id": "python-super-mro",
+      "front": "In `class D(B, C)` with `B(A)` and `C(A)`, where does `super()` inside B go for a D instance?",
+      "back": "To C. `super()` is the next class in `type(self).__mro__`, which is D, B, C, A, object.",
+      "level": "sse"
+    },
+    {
+      "id": "python-dataclass-hash",
+      "front": "When does `@dataclass` generate `__hash__`?",
+      "back": "With `eq=True` (the default) plus `frozen=True`. A plain mutable dataclass gets `__hash__ = None` and is unhashable.",
+      "level": "sse"
+    },
+    {
+      "id": "python-classmethod-ctor",
+      "front": "Why use `@classmethod` rather than `@staticmethod` for an alternate constructor?",
+      "back": "It receives `cls`, so `cls(...)` builds the right subclass when called as `Sub.parse(...)`. A staticmethod has no access to the class.",
+      "level": "se"
+    },
+    {
+      "id": "python-finally-runs-after-return",
+      "front": "If a `try` body executes `return x`, does `finally` still run?",
+      "back": "Yes. The return value is computed first, then `finally` runs, then the function returns. `finally` also runs after `break`, `continue` and unhandled exceptions.",
+      "level": "se"
+    },
+    {
+      "id": "python-return-in-finally",
+      "front": "What happens if `finally` contains `return` while an exception is propagating?",
+      "back": "The exception is silently discarded and the `finally` return value wins. It's an anti-pattern; Python 3.14 emits a SyntaxWarning for it. Keep `finally` for cleanup only.",
+      "level": "se"
+    },
+    {
+      "id": "python-bare-except",
+      "front": "Why is a bare `except:` a bug?",
+      "back": "It catches BaseException, including KeyboardInterrupt, SystemExit and NameError from typos. Catch the specific exception, or `except Exception` at a top-level boundary with logging.",
+      "level": "se"
+    },
+    {
+      "id": "python-raise-from",
+      "front": "What does `raise NewError() from err` do?",
+      "back": "It raises NewError with `err` stored as `__cause__` and sets `__suppress_context__` to True. The traceback shows both errors. `from None` hides the original; bare `raise` re-raises the current exception unchanged.",
+      "level": "sse"
+    },
+    {
+      "id": "python-assert-not-validation",
+      "front": "Why shouldn't `assert` validate caller input?",
+      "back": "`python -O` strips every assert, so the check disappears. Use asserts for internal invariants; use `if ...: raise ValueError(...)` or an error result for input.",
+      "level": "se"
+    }
+  ]
+}

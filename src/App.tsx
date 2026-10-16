@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPlacement, recordSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
 import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
 import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
@@ -12,6 +12,7 @@ import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath
 import type { PathId } from './learning-paths'
 import { activityXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, solveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
+import { placementResult } from './placement'
 import { caseIds } from './cases'
 import { guideIds } from './guides'
 import type { CodeLanguage } from './problem-types'
@@ -155,6 +156,13 @@ export default function App() {
     latest.current = after
     return designXp(after) - designXp(before)
   }
+  function placeTrack(track: Track, answers: (number | undefined)[]) {
+    const questions = tracks.find(item => item.id === track)?.placement ?? []
+    const result = placementResult(questions, answers)
+    latest.current = recordPlacement(latest.current, track, result.percent, result.known)
+    store.update(value => recordPlacement(value, track, result.percent, result.known))
+    return result
+  }
   function readGuide(id: string, percent: number) {
     const before = latest.current
     const after = recordGuide(before, id, percent)
@@ -274,7 +282,7 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, readGuide, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, scoreDesign, readGuide, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
   const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
