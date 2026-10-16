@@ -1,0 +1,239 @@
+{
+  "id": "typescript",
+  "kind": "language",
+  "title": "TypeScript",
+  "description": "Interview JavaScript and TypeScript from scope and the event loop to generics: the runtime model, async behaviour, collections and the type system interviewers probe.",
+  "lessons": [
+    "ts-scope-closures",
+    "ts-this-prototypes",
+    "ts-equality-coercion",
+    "ts-event-loop",
+    "ts-promises-async",
+    "ts-arrays-maps-sets",
+    "ts-types-basics",
+    "ts-generics"
+  ],
+  "placement": [
+    {
+      "question": "What does this print?",
+      "code": "const fns: (() => number)[] = []\nfor (var i = 0; i < 3; i++) fns.push(() => i)\nconsole.log(fns.map(f => f()).join(','))",
+      "choices": [
+        "`0,1,2`",
+        "`3,3,3`",
+        "`2,2,2`"
+      ],
+      "answer": 1,
+      "explain": "`var` is one function-scoped binding; the arrows read it after the loop, when it is 3.",
+      "lessons": [
+        "ts-scope-closures"
+      ]
+    },
+    {
+      "question": "Inside a function, `console.log(x)` runs before the line `let x = 1`. What happens?",
+      "choices": [
+        "It logs `undefined`",
+        "It throws `ReferenceError`",
+        "It logs `1`"
+      ],
+      "answer": 1,
+      "explain": "`let` bindings are hoisted but uninitialised; reading one in the temporal dead zone throws.",
+      "lessons": [
+        "ts-scope-closures"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "class G {\n  name = 'Ada';\n  hi() { return this === undefined ? 'none' : this.name; }\n}\nconst f = new G().hi;\nconsole.log(f());",
+      "choices": [
+        "`Ada`",
+        "`none`",
+        "`undefined`"
+      ],
+      "answer": 1,
+      "explain": "`f()` is a plain call, and class code is strict, so `this` is `undefined`.",
+      "lessons": [
+        "ts-this-prototypes"
+      ]
+    },
+    {
+      "question": "`const bound = who.bind({ n: 'b' })`. What `this.n` does `bound.call({ n: 'c' })` see?",
+      "choices": [
+        "`'c'`",
+        "`'b'`",
+        "`undefined`"
+      ],
+      "answer": 1,
+      "explain": "A bound function's `this` cannot be overridden by `call` or `apply`; only `new` replaces it.",
+      "lessons": [
+        "ts-this-prototypes"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "const n: number | null = 0\nconsole.log(n || 5, n ?? 5)",
+      "choices": [
+        "`5 0`",
+        "`0 0`",
+        "`5 5`",
+        "`0 5`"
+      ],
+      "answer": 0,
+      "explain": "`||` replaces any falsy value; `??` replaces only null/undefined.",
+      "lessons": [
+        "ts-equality-coercion"
+      ]
+    },
+    {
+      "question": "Which expression is `true`?",
+      "choices": [
+        "`NaN === NaN`",
+        "`Object.is(0, -0)`",
+        "`[NaN].includes(NaN)`",
+        "`[NaN].indexOf(NaN) !== -1`"
+      ],
+      "answer": 2,
+      "explain": "`includes` uses SameValueZero, which finds NaN; `===` and `indexOf` never match NaN, and Object.is separates 0 from -0.",
+      "lessons": [
+        "ts-equality-coercion"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "setTimeout(() => console.log('T'), 0)\nPromise.resolve().then(() => console.log('P'))\nconsole.log('S')",
+      "choices": [
+        "`S P T`",
+        "`S T P`",
+        "`T P S`",
+        "`P S T`"
+      ],
+      "answer": 0,
+      "explain": "Synchronous code runs first, then microtasks (the `then` callback), then the timer task.",
+      "lessons": [
+        "ts-event-loop"
+      ]
+    },
+    {
+      "question": "A long loop awaits between chunks, yet a 0 ms timer still waits until the whole loop is done. Which await is it most likely using?",
+      "choices": [
+        "`await Promise.resolve()`",
+        "`await new Promise(r => setTimeout(r, 0))`",
+        "`await new Promise(r => setTimeout(r, 10))`"
+      ],
+      "answer": 0,
+      "explain": "A resolved-promise `await` resumes as a microtask, and microtasks drain before any timer runs. Timer-based awaits yield to the task queue.",
+      "lessons": [
+        "ts-event-loop"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "Promise.resolve(2)\n  .then(v => { v * 10 })\n  .then(v => console.log(String(v)))",
+      "choices": [
+        "`20`",
+        "`undefined`",
+        "`2`"
+      ],
+      "answer": 1,
+      "explain": "The block body has no `return`, so the next link gets `undefined`.",
+      "lessons": [
+        "ts-promises-async"
+      ]
+    },
+    {
+      "question": "One input rejects at 5 ms and another fulfils with `'b'` at 10 ms. What do `Promise.race` and `Promise.any` produce?",
+      "choices": [
+        "race rejects, any fulfils with `'b'`",
+        "both fulfil with `'b'`",
+        "both reject"
+      ],
+      "answer": 0,
+      "explain": "`race` copies whichever input settles first. `any` waits for the first fulfilment.",
+      "lessons": [
+        "ts-promises-async"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "const a = [3, 1, 2];\nconst b = a.sort((x, y) => x - y);\nb.push(9);\nconsole.log(a.length);",
+      "choices": [
+        "`3`",
+        "`4`",
+        "`TypeError`"
+      ],
+      "answer": 1,
+      "explain": "`sort` mutates `a` and returns the same array, so pushing to `b` grows `a`.",
+      "lessons": [
+        "ts-arrays-maps-sets"
+      ]
+    },
+    {
+      "question": "You count words from user input with `counts[w] = (counts[w] ?? 0) + 1` on a `{}` literal. Which input breaks it?",
+      "choices": [
+        "`'length'`",
+        "`'constructor'`",
+        "`'size'`",
+        "`'map'`"
+      ],
+      "answer": 1,
+      "explain": "`counts['constructor']` is inherited from Object.prototype, so `?? 0` doesn't apply and `+ 1` produces a string. Use a Map.",
+      "lessons": [
+        "ts-arrays-maps-sets"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "const raw: unknown = JSON.parse('{\"x\": \"3\", \"y\": 4}')\nconst p = raw as { x: number; y: number }\nconsole.log(p.x + p.y)",
+      "choices": [
+        "`7`",
+        "`34`",
+        "a TypeError"
+      ],
+      "answer": 1,
+      "explain": "`as` is erased and checks nothing. `p.x` is really the string '3', so `+` joins the values into '34'.",
+      "lessons": [
+        "ts-types-basics"
+      ]
+    },
+    {
+      "question": "`function f(v: number | null) { if (!v) return 'none'; return String(v) }`: what does `f(0)` return?",
+      "choices": [
+        "`'0'`",
+        "`'none'`",
+        "a compile error"
+      ],
+      "answer": 1,
+      "explain": "The truthiness check removes `null` but also rejects `0`. Use `v === null` when zero is a real value.",
+      "lessons": [
+        "ts-types-basics"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "function parse<T>(s: string): T { return JSON.parse(s) as T; }\nconsole.log(typeof parse<number>('\"42\"'));",
+      "choices": [
+        "`number`",
+        "`string`",
+        "A compile error"
+      ],
+      "answer": 1,
+      "explain": "The type argument and the `as T` assertion are erased when TypeScript emits JavaScript. `JSON.parse` returns the string `'42'`, and nothing checks it.",
+      "lessons": [
+        "ts-generics"
+      ]
+    },
+    {
+      "question": "Which signature rejects `get(user, 'agee')` at compile time and returns the property's exact type?",
+      "choices": [
+        "`get(obj: object, key: string): unknown`",
+        "`get<T>(obj: T, key: string): any`",
+        "`get<T, K extends keyof T>(obj: T, key: K): T[K]`",
+        "`get<T>(obj: T, key: keyof any): T`"
+      ],
+      "answer": 2,
+      "explain": "`K extends keyof T` limits the key to real property names, and `T[K]` is the type of that property.",
+      "lessons": [
+        "ts-generics"
+      ]
+    }
+  ]
+}

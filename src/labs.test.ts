@@ -1,5 +1,7 @@
-import { readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import ts from 'typescript'
 import { loadPyodide, type PyodideAPI } from 'pyodide'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { isLanguageTrack, lessons, loadLabs, tracks, type LessonLab } from './curriculum'
@@ -9,11 +11,14 @@ import { placementResult } from './placement'
 import { lessonQueue } from './planner'
 import { emptyProgress, parseBackup, recordMock, recordPlacement, serializeBackup, updateProfile, type Progress } from './progress'
 import { problemIndex } from './problems'
-import { PY_HARNESS, runPython } from './runner/core'
+import { PY_HARNESS, runJsAsync, runPython } from './runner/core'
+import { createTsCompiler, formatDiagnostic, libClosure } from './runner/ts-core'
+import { TYPESCRIPT_VERSION } from './runner/ts-version'
 
 const labs = await loadLabs()
 const labLessons = lessons.filter(lesson => isLanguageTrack(lesson.track))
 const pyLabs = labLessons.filter(lesson => labs.get(lesson.id)?.lang === 'py').map(lesson => [lesson.id, labs.get(lesson.id)!] as const)
+const tsLabs = labLessons.filter(lesson => labs.get(lesson.id)?.lang === 'ts').map(lesson => [lesson.id, labs.get(lesson.id)!] as const)
 const guideIds = new Set(readdirSync('content/field-guide').map(file => file.replace(/\.json$/, '')))
 const problemIds = new Set(problemIndex.map(problem => problem.id))
 const lessonIds = new Set(lessons.map(lesson => lesson.id))
@@ -68,6 +73,45 @@ describe('Python labs (Pyodide)', () => {
       py.setStdout({ batched: text => { output += `${text}\n` } })
       try { py.runPython(item.code, { globals: py.toPy({}) }) } finally { py.setStdout({}) }
       expect(output.trim()).toBe(item.choices[item.answer])
+    }
+  })
+})
+
+describe('TypeScript labs (compiler + runner)', () => {
+  const read = (name: string) => readFileSync(resolve('node_modules/typescript/lib', name), 'utf8')
+  const compiler = createTsCompiler(ts, Object.fromEntries(libClosure(read).map(name => [name, read(name)])))
+
+  it('pins the served compiler to the installed typescript package', () => {
+    expect(ts.version).toBe(TYPESCRIPT_VERSION)
+    expect(compiler.check('const n: number = "x"').map(diagnostic => diagnostic.code)).toEqual([2322])
+    expect(compiler.check('console.log([1, 2].at(-1)); setTimeout(() => {}, 0)')).toEqual([])
+  })
+
+  it('awaits promise results and fails promises that never settle', async () => {
+    const code = compiler.transpile('function later(n: number): Promise<number> { return new Promise(done => setTimeout(() => done(n * 2), 5)) }\nfunction never(): Promise<number> { return new Promise(() => {}) }')
+    expect(await runJsAsync({ code, name: 'later', cases: [{ args: [4], expected: 8 }] })).toMatchObject({ kind: 'done', outcomes: [{ pass: true }] })
+    const stuck = await runJsAsync({ code, name: 'never', cases: [{ args: [], expected: 1 }] }, 50)
+    expect(stuck).toMatchObject({ kind: 'done', outcomes: [{ pass: false }] })
+  })
+
+  it.each(tsLabs)('%s: every solution type-checks and passes its tests, and every starter fails one', async (_id, lab) => {
+    for (const exercise of lab.exercises) {
+      expect(compiler.check(exercise.solution).map(formatDiagnostic), exercise.id).toEqual([])
+      const cases = [...exercise.tests, ...exercise.hiddenTests]
+      const result = await runJsAsync({ code: compiler.transpile(exercise.solution), name: exercise.function, cases })
+      expect(result, exercise.id).toMatchObject({ kind: 'done' })
+      if (result.kind === 'done') expect(result.outcomes.filter(outcome => !outcome.pass), exercise.id).toEqual([])
+      const starter = await runJsAsync({ code: compiler.transpile(exercise.starter), name: exercise.function, cases: exercise.tests })
+      expect(starter.kind, exercise.id).toBe('done')
+      if (starter.kind === 'done') expect(starter.outcomes.some(outcome => !outcome.pass), exercise.id).toBe(true)
+    }
+  })
+
+  it.each(tsLabs)('%s: every predict-the-output answer is what Node prints once timers drain', (_id, lab) => {
+    for (const item of lab.predict) {
+      const run = spawnSync(process.execPath, ['-'], { input: compiler.transpile(item.code), encoding: 'utf8', timeout: 10_000 })
+      expect(run.stderr, item.code).toBe('')
+      expect(run.stdout.trim(), item.code).toBe(item.choices[item.answer])
     }
   })
 })

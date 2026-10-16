@@ -1,0 +1,1354 @@
+{
+  "id": "ts-this-prototypes",
+  "track": "typescript",
+  "title": "this binding and prototypes",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How `this` is decided at the call site, why extracted methods lose it, how arrows and `bind` keep it, and the prototype chain underneath every object and `class`: lookup, shadowing, `Object.create`, the four steps of `new`, and typing `this` in TypeScript.",
+  "prerequisites": [
+    "ts-scope-closures"
+  ],
+  "prerequisiteNotes": "ts-scope-closures: arrow functions get `this` the same way they get any outer variable, from the enclosing scope, so the closure model is what makes the arrow-function fix work.",
+  "objectives": [
+    "Decide the value of `this` for any call by applying the rules in order: arrow, `new`, bound, `call`/`apply`, method call, plain call.",
+    "Spot the extracted-method bug (`setTimeout(obj.m)`, `arr.forEach(obj.m)`, handler tables) and fix it with an arrow wrapper, `bind`, or an arrow class field, knowing the trade-offs.",
+    "Draw the prototype chain of a class instance and explain lookup, shadowing on write, and why mutable data on a prototype is shared.",
+    "Use `Object.create` (including `Object.create(null)`) and explain how `class`, `extends` and `new` map onto prototypes.",
+    "Type `this` in TypeScript with `this` parameters, `ThisParameterType`/`OmitThisParameter` and polymorphic `this` return types."
+  ],
+  "concepts": [
+    {
+      "title": "this is decided by the call, not the definition",
+      "body": "For a normal function, `this` is a hidden argument supplied by **how it is called**. Check the rules in order: a function called with `new` gets a fresh object; a function made by `bind` always gets its bound value (even `call` cannot override it, though `new` can); `f.call(x)` and `f.apply(x, args)` pass `x` explicitly; `obj.f()` passes the object left of the dot; a plain `f()` passes `undefined` in strict code (classes and modules are always strict) and `globalThis` in sloppy scripts. Arrow functions skip all of this: they have no own `this` and read it from the enclosing scope.",
+      "code": "function show(this: { tag: string } | void): string {\n  return this ? this.tag : 'undefined';\n}\nconst obj = { tag: 'obj', show };\nconsole.log(obj.show());                 // obj        implicit: the receiver\nconsole.log(show.call({ tag: 'call' })); // call       explicit\nconst bound = show.bind({ tag: 'bound' });\nconsole.log(bound.call({ tag: 'x' }));   // bound      bind beats call\nconsole.log(show());                     // undefined  strict default",
+      "diagram": "tst-this-rules"
+    },
+    {
+      "title": "Extracting a method loses its receiver",
+      "body": "`obj.method` evaluates to the bare function; the link to `obj` only exists during an `obj.method()` call expression. So `const f = obj.method; f()`, `setTimeout(obj.method, 0)`, `arr.forEach(obj.method)` and `{ add: tally.add }` all end up calling the method with `this === undefined`, and the first `this.x` throws `TypeError: Cannot read properties of undefined`. Three fixes: wrap in an arrow (`n => obj.method(n)`), bind once (`obj.method.bind(obj)`), or pass a `thisArg` where the API accepts one (`arr.forEach(fn, obj)`). TypeScript does **not** catch this for ordinary class methods; the `@typescript-eslint/unbound-method` lint rule does.",
+      "code": "class Tally {\n  value = 0;\n  add(n: number): void { this.value += n; }\n}\nconst t = new Tally();\nconst add = t.add;               // just the function; t is forgotten\n// add(1);                       // TypeError: this is undefined\n// [1, 2].forEach(t.add);        // same bug: forEach calls it plainly\n\n[1, 2].forEach(n => t.add(n));   // fix 1: arrow wrapper keeps the receiver\n[1, 2].forEach(t.add.bind(t));   // fix 2: bind once\n[1, 2].forEach(t.add, t);        // fix 3: the API's thisArg\nconsole.log(t.value);            // 9",
+      "diagram": "tst-extract"
+    },
+    {
+      "title": "Arrow functions and arrow class fields",
+      "body": "An arrow function has no own `this`, `arguments` or `super`; it closes over them like any outer variable, so `call`, `apply` and `bind` cannot change its `this`, and it cannot be used with `new`. That makes arrows ideal for callbacks inside methods. An **arrow class field** (`tick = () => {...}`) is always bound, but it is an own property created per instance (memory per object), it is not on the prototype (a subclass cannot call it with `super.tick()`, and spying on the prototype misses it), and it is wrong as an object-literal method because the outer `this` is not the object.",
+      "code": "class Clock {\n  ticks = 0;\n  tick = () => { this.ticks++; };            // own property, bound forever\n  start(): void {\n    setTimeout(() => this.tick(), 10);       // arrow: start()'s this\n    setTimeout(this.tick, 10);               // fine: the field is pre-bound\n  }\n}\nconst c = new Clock();\nconsole.log(Object.hasOwn(c, 'tick'));        // true, one closure per instance\nconsole.log('start' in Clock.prototype);      // true, shared method\n\n// @ts-expect-error TS7041: the arrow captures the outer this, not the object\nconst bad = { n: 1, get: () => typeof this };"
+    },
+    {
+      "title": "The prototype chain and property lookup",
+      "body": "Every object has a hidden `[[Prototype]]` link (read it with `Object.getPrototypeOf`). Reading `obj.key` checks the object's **own** properties first, then follows the link, and repeats until it finds the key or reaches `null`, which yields `undefined`. Methods live once on a prototype and are shared by every instance; `this` inside them is still the instance the lookup started from. `Object.hasOwn(obj, k)` asks only about own properties, `k in obj` walks the chain, `Object.keys` lists own enumerable keys, and `for...in` also visits inherited enumerable keys.",
+      "code": "class Animal { eat(): string { return 'eats'; } }\nclass Dog extends Animal {\n  constructor(public name: string) { super(); }\n  bark(): string { return this.name + ' barks'; }\n}\nconst rex = new Dog('Rex');\nObject.hasOwn(rex, 'name');                                // true   own\nObject.hasOwn(rex, 'bark');                                // false  on Dog.prototype\nObject.getPrototypeOf(rex) === Dog.prototype;              // true\nObject.getPrototypeOf(Dog.prototype) === Animal.prototype; // true\n'toString' in rex;                                         // true   Object.prototype\nObject.getPrototypeOf(Dog) === Animal;                     // true   statics inherit too",
+      "diagram": "tst-proto-chain"
+    },
+    {
+      "title": "Writes shadow; mutations go through",
+      "body": "Lookup walks the chain, but **assignment** creates or updates an own property on the object itself, shadowing the inherited one without touching the prototype (unless the inherited property is a setter or read-only). Mutating an inherited object is different: `a.tags.push(x)` reads `tags` through the chain and then changes the one shared array, so every object linked to that prototype sees it. That is why per-instance state belongs in the constructor or class fields and only methods and constants belong on the prototype. `delete a.greet` removes the own property and uncovers the inherited one again.",
+      "code": "const base = { greet: 'hello', tags: [] as string[] };\nconst a = Object.create(base) as typeof base;\nconst b = Object.create(base) as typeof base;\n\na.greet = 'hi';            // new own property on a: shadows base.greet\na.tags.push('x');          // reads base.tags, mutates the shared array\nconsole.log(b.greet, b.tags.join());       // hello x\nconsole.log(Object.keys(a).join());        // greet\ndelete (a as Partial<typeof base>).greet;\nconsole.log(a.greet);                      // hello again",
+      "diagram": "tst-shadow"
+    },
+    {
+      "title": "Object.create and what class really builds",
+      "body": "`Object.create(proto)` makes an empty object whose `[[Prototype]]` is `proto`; `Object.create(null)` makes one with **no** prototype, a clean dictionary where `toString` or `__proto__` are just keys (a `Map` is usually better still). A `class` is syntax over the same machinery: the class is a constructor function, methods go on `Class.prototype` (non-enumerable), statics on the function, and `extends` links both `Child.prototype → Parent.prototype` and `Child → Parent`. Real differences from hand-written constructors: class bodies are strict, calling a class without `new` throws, the class binding is not hoisted (temporal dead zone), and a subclass must call `super()` before touching `this`.",
+      "code": "const proto = { greet(this: { name: string }): string { return 'hi ' + this.name; } };\nconst ann = Object.create(proto) as typeof proto & { name: string };\nann.name = 'Ann';\nconsole.log(ann.greet());                         // hi Ann, found on proto\n\nconst dict = Object.create(null) as Record<string, number>;\nconsole.log('toString' in dict);                  // false: nothing inherited\n\nclass Point {\n  constructor(public x: number) {}\n  double(): number { return this.x * 2; }\n}\nconsole.log(typeof Point);                         // function\nconsole.log(Object.keys(Point.prototype));         // [] methods are non-enumerable\n// Point(1);  -> TypeError: Class constructor Point cannot be invoked without 'new'"
+    },
+    {
+      "title": "Typing this in TypeScript",
+      "body": "A function can declare a fake first parameter `this: T`; it is erased from the output and makes TypeScript check every call site, so extracting and calling it plainly is a compile error (TS2684). With `noImplicitThis` (part of `strict`), using `this` in a standalone function without such a declaration is an error. `ThisParameterType<F>` extracts the declared type and `OmitThisParameter<F>` removes it (that is the type `bind` returns). Methods that `return this` get the **polymorphic** `this` type, so fluent chains on a subclass keep the subclass type. Ordinary class methods do not declare `this`, so the extraction bug in classes is caught by lint, not the compiler.",
+      "code": "interface Button { label: string; onClick(this: Button): string }\nfunction describe(this: Button): string { return 'button ' + this.label; }\n\nconst ok: Button = { label: 'OK', onClick: describe };\nok.onClick();                   // fine: receiver is a Button\nconst loose = ok.onClick;\n// loose();                     // error TS2684: 'this' context of type 'void' is not assignable\ntype Free = OmitThisParameter<typeof describe>;   // () => string\nconst fixed: Free = describe.bind(ok);\n\nclass Query {\n  protected parts: string[] = [];\n  where(c: string): this { this.parts.push(c); return this; }\n}\nclass SqlQuery extends Query {\n  build(): string { return this.parts.join(' AND '); }\n}\nnew SqlQuery().where('a').where('b').build();    // where() returned SqlQuery"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "What new does, in four steps",
+      "body": "`new Box(2, 3)`: (1) create a fresh object; (2) set its `[[Prototype]]` to `Box.prototype`; (3) run `Box` with `this` bound to that object; (4) if the body returns an **object** (or function), that replaces the result; any primitive return is ignored and the fresh object is returned. Saying these four steps, and writing the five-line `construct` helper from the stretch exercise, is a common senior-level probe. `class` constructors follow the same steps, except that in a subclass the object is created by the base constructor when `super()` runs.",
+      "code": "function construct<T extends object, A extends unknown[]>(ctor: (this: T, ...args: A) => unknown, ...args: A): T {\n  const instance = Object.create(ctor.prototype) as T;   // steps 1 and 2\n  const result = ctor.apply(instance, args);               // step 3\n  const isObject = (typeof result === 'object' && result !== null) || typeof result === 'function';\n  return isObject ? (result as T) : instance;              // step 4\n}",
+      "diagram": "tst-new-steps"
+    },
+    {
+      "title": "Solve the task: a dispatch table that keeps its receivers",
+      "body": "Two separate bugs hide in the starter. First, `{ add: tally.add }` stores bare functions, so `handler(n)` runs with `this === undefined`; store `n => tally.add(n)` or `tally.add.bind(tally)` instead. Second, a plain object literal inherits from `Object.prototype`, so `table['valueOf']` or `table['__proto__']` is defined and gets called; use a `Map` (no inherited keys), an `Object.create(null)` table, or guard with `Object.hasOwn`. Then the loop is three lines: look up, call if present (`table.get(name)?.(n)`), record `tally.value`. Mention that the arrow wrapper and `bind` are equivalent here; `bind` reads better when the signature is long, arrows when you want to adapt arguments."
+    },
+    {
+      "title": "How to reason about any this question in the room",
+      "body": "Find the **call site**, not the definition. Ask in order: is it an arrow (look outward to the enclosing function's `this`)? Is it called with `new`? Is it a bound function? Is it `call`/`apply`? Is there a dot (or bracket) immediately before the call parentheses? If none apply, it is a plain call: `undefined` in strict code. Callbacks are the trap: when you pass `obj.m` to `setTimeout`, `forEach`, `then` or an event emitter, the call site is inside that API and it calls your function plainly unless it documents a `thisArg`."
+    }
+  ],
+  "example": "class Emitter {\n  private handlers = new Map<string, Array<(payload: number) => void>>();\n\n  on(event: string, fn: (payload: number) => void): this {\n    const list = this.handlers.get(event) ?? [];\n    list.push(fn);\n    this.handlers.set(event, list);\n    return this;\n  }\n\n  emit(event: string, payload: number): void {\n    for (const fn of this.handlers.get(event) ?? []) fn(payload);  // plain calls\n  }\n}\n\nclass Stats {\n  total = 0;\n  record(n: number): void { this.total += n; }\n}\n\nconst stats = new Stats();\nnew Emitter()\n  .on('sale', n => stats.record(n))          // arrow keeps the receiver\n  .on('sale', stats.record.bind(stats))      // so does bind\n  .emit('sale', 5);\nconsole.log(stats.total);                    // 10",
+  "task": "Write `runCommands(start, commands)`. The starter defines a `Tally` class whose `add(n)`, `times(n)` and `undo()` methods update `this.value` and record history so `undo` can restore the previous value (it is a no-op with no history). Commands are `[name, arg]` pairs. Build a lookup table from command name to a handler **once**, dispatch every command through it, and return the tally's value after each command. Unknown names are skipped, and that includes names such as `toString`, `valueOf`, `constructor` or `__proto__`: they are not commands. The starter crashes because its handlers lose `this`, and its plain-object table also answers for keys inherited from `Object.prototype`.",
+  "starter": "class Tally {\n  value: number;\n  private history: number[] = [];\n\n  constructor(start: number) {\n    this.value = start;\n  }\n\n  add(n: number): void {\n    this.history.push(this.value);\n    this.value += n;\n  }\n\n  times(n: number): void {\n    this.history.push(this.value);\n    this.value *= n;\n  }\n\n  undo(): void {\n    const previous = this.history.pop();\n    if (previous !== undefined) this.value = previous;\n  }\n}\n\nfunction runCommands(start: number, commands: [string, number][]): number[] {\n  const tally = new Tally(start);\n  // TODO: these handlers forget their receiver, and table[name] also finds Object.prototype keys\n  const table: Record<string, (n: number) => void> = {\n    add: tally.add,\n    times: tally.times,\n    undo: tally.undo,\n  };\n  const seen: number[] = [];\n  for (const [name, n] of commands) {\n    const handler = table[name];\n    if (handler) handler(n);\n    seen.push(tally.value);\n  }\n  return seen;\n}\n",
+  "hints": [
+    "Each table entry must remember `tally`: store `n => tally.add(n)` or `tally.times.bind(tally)` rather than `tally.add`.",
+    "A `Map` has no inherited keys, so `table.get('valueOf')` is `undefined`; with a plain object you would need `Object.hasOwn(table, name)` before calling."
+  ],
+  "solution": "function runCommands(start: number, commands: [string, number][]): number[] {\n  const tally = new Tally(start);\n  const table = new Map<string, (n: number) => void>([\n    ['add', n => tally.add(n)],\n    ['times', tally.times.bind(tally)],\n    ['undo', () => tally.undo()],\n  ]);\n  const seen: number[] = [];\n  for (const [name, n] of commands) {\n    table.get(name)?.(n);\n    seen.push(tally.value);\n  }\n  return seen;\n}\n\nEvery handler now carries its receiver: the arrows close over `tally` and call it with a dot, and `bind` returns a function whose `this` is fixed to `tally` whatever the call site does. Using a `Map` instead of an object literal removes the second bug: only the three keys that were put in exist, so `valueOf`, `toString`, `constructor` and `__proto__` are simply missing and skipped by the optional call. The table is built once, so dispatch is O(1) per command and the whole run is O(commands). `Tally` itself is unchanged: its methods stay on the prototype and are shared, and only the table entries pay for a small closure each.",
+  "checklist": [
+    "No table entry is a bare `tally.method` reference; each is an arrow wrapper or a bound function.",
+    "Inherited names (`toString`, `valueOf`, `__proto__`, `constructor`) are skipped, not called.",
+    "`undo` with no history leaves the value unchanged.",
+    "The table is built once, outside the loop, and the result has one value per command (an empty command list returns `[]`)."
+  ],
+  "pitfalls": [
+    "Passing `obj.method` as a callback (`setTimeout`, `forEach`, `then`, event handlers) and getting `this === undefined`.",
+    "Writing an object-literal method as an arrow (`{ get: () => this.x }`) and getting the outer scope's `this`.",
+    "Expecting `call` or `bind` to change an arrow function's `this`, or re-binding an already bound function.",
+    "Putting mutable data (arrays, objects) on a prototype or as a shared default object, so every instance mutates the same one.",
+    "Using a plain object as a lookup table and matching inherited keys like `toString`, or letting user input write `__proto__`.",
+    "Assuming TypeScript catches extracted class methods; it only does when the function declares a `this` parameter."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Walk the chain",
+      "prompt": "Write `lookupChain(layers, keys)`. `layers[0]` is the object you hold, `layers[1]` is its prototype, and so on. Build that chain with `Object.create`, ending in a **null** prototype so built-ins such as `toString` are not found. For each key return `[value, depth]`, where `depth` is the number of prototype hops to the object that owns the key (0 = own property), or `null` if no layer has it.",
+      "hints": [
+        "Build from the last layer backwards: `top = Object.assign(Object.create(top), layer)` starting with `top = null`, so the root links to nothing.",
+        "Walk with `Object.getPrototypeOf` and test `Object.hasOwn(obj, key)` at each step, counting hops; `in` cannot tell you the depth."
+      ],
+      "solution": "type Scalar = string | number | boolean | null;\n\nfunction lookupChain(layers: Record<string, Scalar>[], keys: string[]): ([Scalar, number] | null)[] {\n  let top: object | null = null;\n  for (let i = layers.length - 1; i >= 0; i--) {\n    top = Object.assign(Object.create(top) as object, layers[i]);\n  }\n  return keys.map((key): [Scalar, number] | null => {\n    let depth = 0;\n    for (let obj = top; obj !== null; obj = Object.getPrototypeOf(obj) as object | null) {\n      if (Object.hasOwn(obj, key)) return [(obj as Record<string, Scalar>)[key], depth];\n      depth++;\n    }\n    return null;\n  });\n}",
+      "checklist": [
+        "The nearest layer wins when several layers own the same key (shadowing).",
+        "A key owned with value `null` is still found and reported, not treated as missing.",
+        "`toString`, `constructor` and `hasOwnProperty` are not found unless a layer owns them."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Implement new by hand",
+      "prompt": "The starter defines old-style constructor functions (`Box`, `Square` inheriting from `Box`, `Legacy` that returns an object, `Prim` that returns a number) and `buildAll(specs)`, which builds each `[kind, a, b]` spec and reports `[area, instanceof Box, instanceof Square]`, skipping unknown kinds. Only `construct(ctor, ...args)` is wrong. Make it behave exactly like `new ctor(...args)` without using `new`: link the prototype, run the body with the right `this`, and honour the return-value rule.",
+      "hints": [
+        "`Object.create(ctor.prototype)` does steps 1 and 2 at once; `ctor.apply(instance, args)` is step 3.",
+        "Step 4: if the body returned an object or function, return that; otherwise (undefined, 42, a string) return the instance."
+      ],
+      "solution": "function construct<T extends object, A extends unknown[]>(ctor: (this: T, ...args: A) => unknown, ...args: A): T {\n  const proto: unknown = ctor.prototype;\n  const linked = typeof proto === 'object' && proto !== null ? proto : Object.prototype;\n  const instance = Object.create(linked) as T;\n  const result = ctor.apply(instance, args);\n  const isObject = (typeof result === 'object' && result !== null) || typeof result === 'function';\n  return isObject ? (result as T) : instance;\n}",
+      "checklist": [
+        "Instances find `area` through the prototype and pass `instanceof`.",
+        "`Legacy` returns its own object, which is not an instance of `Box`.",
+        "`Prim`'s numeric return value is ignored and the linked instance is returned."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Arrow class field or prototype method plus bind: which do you choose for a callback-heavy class?",
+      "answer": "Prototype methods are shared, overridable with `super.method()` and visible to prototype spies; an arrow field is a new closure per instance and invisible to subclasses' `super`. For a few long-lived objects (UI components, services) arrow fields are convenient and safe. For many instances, or class hierarchies, keep prototype methods and bind or wrap at the point you hand them out."
+    },
+    {
+      "question": "What happens with `new` on a bound function, and why?",
+      "answer": "`new` wins: the bound `this` is ignored and a fresh object linked to the original function's prototype is used, while bound leading arguments are still applied. `call` and `apply`, by contrast, cannot override a bound `this`. Arrow functions cannot be used with `new` at all."
+    },
+    {
+      "question": "How is `class Dog extends Animal` different from setting `Dog.prototype = Object.create(Animal.prototype)`?",
+      "answer": "Both link the instance prototypes, but `extends` also links the constructors (`Object.getPrototypeOf(Dog) === Animal`) so statics inherit, keeps `constructor` correct and non-enumerable, makes methods non-enumerable, runs in strict mode, forbids calling without `new`, and lets the base constructor create the object in `super()` so built-ins like `Array` and `Error` subclass correctly."
+    },
+    {
+      "question": "Why use `Object.create(null)` or `Map` for dictionaries keyed by user input?",
+      "answer": "A plain object inherits keys like `toString` and `constructor`, so lookups give false hits, and writing `__proto__` from untrusted input can change an object's prototype or, through merge helpers, pollute `Object.prototype` for the whole process. A null-prototype object has no inherited keys; a `Map` additionally allows any key type, has `size` and keeps insertion order."
+    }
+  ],
+  "takeaways": [
+    "`this` is set by the call site: arrow (lexical) > `new` > `bind` > `call`/`apply` > `obj.m()` > plain call (`undefined` in strict code).",
+    "Passing `obj.method` as a value drops `obj`; wrap it in an arrow, `bind` it, or use the API's `thisArg`.",
+    "Reads walk the prototype chain to `null`; writes create own properties that shadow; mutating an inherited object changes it for everyone.",
+    "`class` is a constructor function plus methods on `prototype`; `new` creates, links, runs the body and returns the object unless the body returns another object.",
+    "Declare `this: T` parameters to make TypeScript check receivers; use a `Map` or `Object.create(null)` for lookup tables."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tst-this-rules",
+        "type": "flow",
+        "title": "Deciding what this is at a call site",
+        "alt": "Decision flow down the left column: arrow function, called with new, bound function, call or apply, obj.method call, plain call. Each yes branch points right to the resulting this: the outer scope's this, a new object, the bound value, the first argument, the receiver, or undefined in strict mode.",
+        "caption": "Check the rules top to bottom and stop at the first match; a plain call gets undefined in strict code.",
+        "nodes": [
+          {
+            "id": "d0",
+            "label": "arrow function?",
+            "kind": "decision",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "d1",
+            "label": "called with new?",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "d2",
+            "label": "bound function?",
+            "kind": "decision",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "d3",
+            "label": "call / apply?",
+            "kind": "decision",
+            "col": 0,
+            "row": 3
+          },
+          {
+            "id": "d4",
+            "label": "obj.method()?",
+            "kind": "decision",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "d5",
+            "label": "plain call f()",
+            "kind": "client",
+            "col": 0,
+            "row": 5
+          },
+          {
+            "id": "r0",
+            "label": "outer this",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "lexical, fixed"
+          },
+          {
+            "id": "r1",
+            "label": "new object",
+            "kind": "good",
+            "col": 2,
+            "row": 1,
+            "sub": "linked to proto"
+          },
+          {
+            "id": "r2",
+            "label": "bound value",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "call cannot change"
+          },
+          {
+            "id": "r3",
+            "label": "first argument",
+            "kind": "state",
+            "col": 2,
+            "row": 3,
+            "sub": "f.call(obj, 1)"
+          },
+          {
+            "id": "r4",
+            "label": "the receiver",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "left of the dot"
+          },
+          {
+            "id": "r5",
+            "label": "undefined",
+            "kind": "bad",
+            "col": 2,
+            "row": 5,
+            "sub": "globalThis sloppy"
+          }
+        ],
+        "edges": [
+          {
+            "from": "d0",
+            "to": "r0",
+            "label": "yes"
+          },
+          {
+            "from": "d0",
+            "to": "d1",
+            "label": "no"
+          },
+          {
+            "from": "d1",
+            "to": "r1",
+            "label": "yes"
+          },
+          {
+            "from": "d1",
+            "to": "d2",
+            "label": "no"
+          },
+          {
+            "from": "d2",
+            "to": "r2",
+            "label": "yes"
+          },
+          {
+            "from": "d2",
+            "to": "d3",
+            "label": "no"
+          },
+          {
+            "from": "d3",
+            "to": "r3",
+            "label": "yes"
+          },
+          {
+            "from": "d3",
+            "to": "d4",
+            "label": "no"
+          },
+          {
+            "from": "d4",
+            "to": "r4",
+            "label": "yes"
+          },
+          {
+            "from": "d4",
+            "to": "d5",
+            "label": "no"
+          },
+          {
+            "from": "d5",
+            "to": "r5",
+            "label": "strict mode",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Arrows have no own `this`: they use the enclosing function's, and nothing at the call site can change it."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "`new f()` always gets a fresh object linked to `f.prototype`, even when `f` is a bound function."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "A function made by `bind` ignores the call site: `bound.call(other)` still sees the bound value."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "`call` and `apply` pass `this` explicitly as their first argument."
+          },
+          {
+            "edges": [
+              7,
+              8
+            ],
+            "text": "`obj.m()` or `obj['m']()` passes the object immediately before the call; only the last link of `a.b.c()` counts."
+          },
+          {
+            "edges": [
+              9,
+              10
+            ],
+            "text": "Anything else is a plain call, including callbacks invoked by `setTimeout` or `forEach`: `undefined` in strict code and classes."
+          }
+        ]
+      },
+      {
+        "id": "tst-extract",
+        "type": "compare",
+        "title": "Extracted method versus a wrapper that keeps the receiver",
+        "alt": "Comparison. On the left, a table handler is the bare add method from the prototype; calling handler(5) plainly gives this undefined and a TypeError. On the right, the handler is an arrow wrapper that closes over tally and calls tally.add(5), so this is the tally.",
+        "caption": "A method reference forgets its object; an arrow wrapper or bind brings it along.",
+        "before": {
+          "label": "add: tally.add",
+          "nodes": [
+            {
+              "id": "c",
+              "label": "handler(5)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "f",
+              "label": "add method",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "on the prototype"
+            },
+            {
+              "id": "t",
+              "label": "this: undefined",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "TypeError"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c",
+              "to": "f",
+              "label": "plain call"
+            },
+            {
+              "from": "f",
+              "to": "t",
+              "label": "this.history"
+            }
+          ]
+        },
+        "after": {
+          "label": "add: n => tally.add(n)",
+          "nodes": [
+            {
+              "id": "c",
+              "label": "handler(5)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "w",
+              "label": "arrow wrapper",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "closes over tally"
+            },
+            {
+              "id": "m",
+              "label": "tally.add(5)",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "this = tally"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c",
+              "to": "w",
+              "label": "plain call"
+            },
+            {
+              "from": "w",
+              "to": "m",
+              "label": "method call"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tst-proto-chain",
+        "type": "flow",
+        "title": "The prototype chain of a class instance",
+        "alt": "Flow diagram. The instance rex owns only name and links to Dog.prototype, which holds bark and constructor and links to Animal.prototype with eat, then Object.prototype with toString, then null. On the right the Dog and Animal class functions point to their prototype objects and Dog links to Animal.",
+        "caption": "A read climbs the [[Prototype]] links until it finds the key or hits null; classes are functions that own the prototype objects.",
+        "nodes": [
+          {
+            "id": "rex",
+            "label": "rex",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "own: name"
+          },
+          {
+            "id": "dogp",
+            "label": "Dog.prototype",
+            "kind": "state",
+            "col": 0,
+            "row": 1,
+            "sub": "bark, constructor"
+          },
+          {
+            "id": "animp",
+            "label": "Animal.prototype",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "eat"
+          },
+          {
+            "id": "objp",
+            "label": "Object.prototype",
+            "kind": "state",
+            "col": 0,
+            "row": 3,
+            "sub": "toString, valueOf"
+          },
+          {
+            "id": "nul",
+            "label": "null",
+            "kind": "bad",
+            "col": 0,
+            "row": 4,
+            "sub": "miss: undefined"
+          },
+          {
+            "id": "dog",
+            "label": "class Dog",
+            "kind": "service",
+            "col": 2,
+            "row": 1,
+            "sub": "a function"
+          },
+          {
+            "id": "animal",
+            "label": "class Animal",
+            "kind": "service",
+            "col": 2,
+            "row": 2,
+            "sub": "a function"
+          }
+        ],
+        "edges": [
+          {
+            "from": "rex",
+            "to": "dogp",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "dogp",
+            "to": "animp",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "animp",
+            "to": "objp",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "objp",
+            "to": "nul",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "dog",
+            "to": "dogp",
+            "label": ".prototype"
+          },
+          {
+            "from": "animal",
+            "to": "animp",
+            "label": ".prototype"
+          },
+          {
+            "from": "dog",
+            "to": "animal",
+            "label": "extends: statics"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`rex.name` is own and found at once. `rex.bark` is not own, so lookup follows the link to `Dog.prototype` and finds it there."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "`rex.eat` is one more hop up on `Animal.prototype`; `rex.toString` comes from `Object.prototype`. Inside each method, `this` is still `rex`."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "A key nobody owns reaches `null` and reads as `undefined`. `Object.create(null)` objects start here, with nothing inherited."
+          },
+          {
+            "edges": [
+              4,
+              5,
+              6
+            ],
+            "text": "Each class is a function whose `prototype` property is the shared object; `extends` links the prototypes and the functions, so statics inherit too."
+          }
+        ]
+      },
+      {
+        "id": "tst-shadow",
+        "type": "compare",
+        "title": "Shared data on a prototype versus own fields",
+        "alt": "Comparison. On the left, objects a and b both link to one shared prototype whose tags array ends up containing x after a.tags.push, so b sees it too. On the right, a and b each own their own tags array, so only a's array holds x and b's stays empty.",
+        "caption": "Methods belong on the prototype; per-instance state belongs on the instance.",
+        "before": {
+          "label": "tags on the prototype",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "object a",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "object b",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "p",
+              "label": "shared proto",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "tags: ['x']"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "p",
+              "label": "a.tags.push('x')"
+            },
+            {
+              "from": "b",
+              "to": "p",
+              "label": "b.tags sees x"
+            }
+          ]
+        },
+        "after": {
+          "label": "tags as a class field",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "object a",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "object b",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "ta",
+              "label": "a's own tags",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "['x']"
+            },
+            {
+              "id": "tb",
+              "label": "b's own tags",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "[]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "ta",
+              "label": "own field"
+            },
+            {
+              "from": "b",
+              "to": "tb",
+              "label": "own field"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tst-new-steps",
+        "type": "sequence",
+        "title": "What new Box(2, 3) does",
+        "alt": "Sequence diagram with the caller, the new operator, Box.prototype and the Box function body. The operator creates an object linked to Box.prototype, runs the body with this set to that object, sees that the body returned undefined, and returns the object. A later area call on it is found on Box.prototype.",
+        "caption": "Create, link, run with this, then return the object unless the body returned a different object.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "op",
+            "label": "new operator"
+          },
+          {
+            "id": "proto",
+            "label": "Box.prototype"
+          },
+          {
+            "id": "body",
+            "label": "Box body"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "op",
+            "label": "new Box(2, 3)"
+          },
+          {
+            "from": "op",
+            "to": "proto",
+            "label": "Object.create(Box.prototype)",
+            "note": "Steps 1 and 2: a fresh object whose [[Prototype]] is Box.prototype."
+          },
+          {
+            "from": "proto",
+            "to": "op",
+            "label": "empty linked obj",
+            "style": "reply"
+          },
+          {
+            "from": "op",
+            "to": "body",
+            "label": "run with this = obj",
+            "note": "Step 3: this.w = 2 and this.h = 3 create own properties."
+          },
+          {
+            "from": "body",
+            "to": "op",
+            "label": "returns undefined",
+            "style": "reply"
+          },
+          {
+            "from": "op",
+            "to": "caller",
+            "label": "obj",
+            "style": "reply",
+            "note": "Step 4: only a returned object or function would replace obj; primitives are ignored."
+          },
+          {
+            "from": "caller",
+            "to": "proto",
+            "label": "box.area() lookup",
+            "note": "area is not own, so it is found one hop up with this = box."
+          },
+          {
+            "from": "proto",
+            "to": "caller",
+            "label": "6",
+            "style": "reply"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "runCommands",
+        "starter": "class Tally {\n  value: number;\n  private history: number[] = [];\n\n  constructor(start: number) {\n    this.value = start;\n  }\n\n  add(n: number): void {\n    this.history.push(this.value);\n    this.value += n;\n  }\n\n  times(n: number): void {\n    this.history.push(this.value);\n    this.value *= n;\n  }\n\n  undo(): void {\n    const previous = this.history.pop();\n    if (previous !== undefined) this.value = previous;\n  }\n}\n\nfunction runCommands(start: number, commands: [string, number][]): number[] {\n  const tally = new Tally(start);\n  // TODO: these handlers forget their receiver, and table[name] also finds Object.prototype keys\n  const table: Record<string, (n: number) => void> = {\n    add: tally.add,\n    times: tally.times,\n    undo: tally.undo,\n  };\n  const seen: number[] = [];\n  for (const [name, n] of commands) {\n    const handler = table[name];\n    if (handler) handler(n);\n    seen.push(tally.value);\n  }\n  return seen;\n}\n",
+        "solution": "class Tally {\n  value: number;\n  private history: number[] = [];\n\n  constructor(start: number) {\n    this.value = start;\n  }\n\n  add(n: number): void {\n    this.history.push(this.value);\n    this.value += n;\n  }\n\n  times(n: number): void {\n    this.history.push(this.value);\n    this.value *= n;\n  }\n\n  undo(): void {\n    const previous = this.history.pop();\n    if (previous !== undefined) this.value = previous;\n  }\n}\n\nfunction runCommands(start: number, commands: [string, number][]): number[] {\n  const tally = new Tally(start);\n  const table = new Map<string, (n: number) => void>([\n    ['add', n => tally.add(n)],\n    ['times', tally.times.bind(tally)],\n    ['undo', () => tally.undo()],\n  ]);\n  const seen: number[] = [];\n  for (const [name, n] of commands) {\n    table.get(name)?.(n);\n    seen.push(tally.value);\n  }\n  return seen;\n}\n",
+        "tests": [
+          {
+            "args": [
+              5,
+              [
+                [
+                  "add",
+                  3
+                ],
+                [
+                  "times",
+                  2
+                ],
+                [
+                  "undo",
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              8,
+              16,
+              8
+            ]
+          },
+          {
+            "args": [
+              1,
+              [
+                [
+                  "undo",
+                  0
+                ],
+                [
+                  "add",
+                  -4
+                ],
+                [
+                  "jump",
+                  9
+                ]
+              ]
+            ],
+            "expected": [
+              1,
+              -3,
+              -3
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              0,
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              2,
+              [
+                [
+                  "toString",
+                  1
+                ],
+                [
+                  "valueOf",
+                  1
+                ],
+                [
+                  "__proto__",
+                  1
+                ],
+                [
+                  "constructor",
+                  1
+                ]
+              ]
+            ],
+            "expected": [
+              2,
+              2,
+              2,
+              2
+            ]
+          },
+          {
+            "args": [
+              3,
+              [
+                [
+                  "add",
+                  1
+                ],
+                [
+                  "add",
+                  1
+                ],
+                [
+                  "undo",
+                  0
+                ],
+                [
+                  "undo",
+                  0
+                ],
+                [
+                  "undo",
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              4,
+              5,
+              4,
+              3,
+              3
+            ]
+          },
+          {
+            "args": [
+              -2,
+              [
+                [
+                  "times",
+                  -3
+                ],
+                [
+                  "times",
+                  0
+                ],
+                [
+                  "undo",
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              6,
+              0,
+              6
+            ]
+          },
+          {
+            "args": [
+              7,
+              [
+                [
+                  "ADD",
+                  1
+                ],
+                [
+                  "add",
+                  0.5
+                ],
+                [
+                  "hasOwnProperty",
+                  2
+                ]
+              ]
+            ],
+            "expected": [
+              7,
+              7.5,
+              7.5
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "lookupChain",
+        "starter": "type Scalar = string | number | boolean | null;\n\nfunction lookupChain(layers: Record<string, Scalar>[], keys: string[]): ([Scalar, number] | null)[] {\n  let top: object = {};\n  for (let i = layers.length - 1; i >= 0; i--) {\n    top = Object.assign(Object.create(top) as object, layers[i]);\n  }\n  // TODO: report how many hops up the chain each key was found, and ignore Object.prototype\n  return keys.map((key): [Scalar, number] | null =>\n    key in top ? [(top as Record<string, Scalar>)[key], 0] : null);\n}\n",
+        "solution": "type Scalar = string | number | boolean | null;\n\nfunction lookupChain(layers: Record<string, Scalar>[], keys: string[]): ([Scalar, number] | null)[] {\n  let top: object | null = null;\n  for (let i = layers.length - 1; i >= 0; i--) {\n    top = Object.assign(Object.create(top) as object, layers[i]);\n  }\n  return keys.map((key): [Scalar, number] | null => {\n    let depth = 0;\n    for (let obj = top; obj !== null; obj = Object.getPrototypeOf(obj) as object | null) {\n      if (Object.hasOwn(obj, key)) return [(obj as Record<string, Scalar>)[key], depth];\n      depth++;\n    }\n    return null;\n  });\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "a": 1
+                },
+                {
+                  "a": 2,
+                  "b": "x"
+                },
+                {
+                  "c": true
+                }
+              ],
+              [
+                "a",
+                "b",
+                "c",
+                "d"
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                0
+              ],
+              [
+                "x",
+                1
+              ],
+              [
+                true,
+                2
+              ],
+              null
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "kid"
+                },
+                {
+                  "name": "base",
+                  "toString": "own"
+                }
+              ],
+              [
+                "toString",
+                "name",
+                "hasOwnProperty"
+              ]
+            ],
+            "expected": [
+              [
+                "own",
+                1
+              ],
+              [
+                "kid",
+                0
+              ],
+              null
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              [
+                "a"
+              ]
+            ],
+            "expected": [
+              null
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "x": null
+                },
+                {
+                  "x": 5
+                }
+              ],
+              [
+                "x"
+              ]
+            ],
+            "expected": [
+              [
+                null,
+                0
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "é": "ü"
+                }
+              ],
+              [
+                "é",
+                "e"
+              ]
+            ],
+            "expected": [
+              [
+                "ü",
+                0
+              ],
+              null
+            ]
+          },
+          {
+            "args": [
+              [
+                {},
+                {},
+                {
+                  "deep": -1
+                }
+              ],
+              [
+                "deep",
+                "constructor"
+              ]
+            ],
+            "expected": [
+              [
+                -1,
+                2
+              ],
+              null
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "k": 1
+                },
+                {
+                  "k": 2
+                },
+                {
+                  "k": 3
+                }
+              ],
+              []
+            ],
+            "expected": []
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "buildAll",
+        "starter": "interface BoxShape {\n  w: number;\n  h: number;\n  area(): number;\n}\n\nfunction Box(this: BoxShape, w: number, h: number): void {\n  this.w = w;\n  this.h = h;\n}\nBox.prototype.area = function (this: BoxShape): number {\n  return this.w * this.h;\n};\n\nfunction Square(this: BoxShape, side: number): void {\n  Box.call(this, side, side);\n}\nSquare.prototype = Object.create(Box.prototype);\nSquare.prototype.constructor = Square;\n\nfunction Legacy(this: BoxShape, w: number, h: number): BoxShape {\n  this.w = w;\n  this.h = h;\n  return { w: 1, h: 1, area: () => 99 };\n}\n\nfunction Prim(this: BoxShape, w: number, h: number): number {\n  Box.call(this, w, h);\n  return 42;\n}\nPrim.prototype = Object.create(Box.prototype);\n\n// Emulate `new ctor(...args)` without using `new` or `class`.\nfunction construct<T extends object, A extends unknown[]>(ctor: (this: T, ...args: A) => unknown, ...args: A): T {\n  // TODO: link the prototype and honour an object returned by the constructor\n  const instance = {} as T;\n  ctor.apply(instance, args);\n  return instance;\n}\n\nfunction buildAll(specs: [string, number, number][]): [number, boolean, boolean][] {\n  const out: [number, boolean, boolean][] = [];\n  for (const [kind, a, b] of specs) {\n    let shape: BoxShape;\n    if (kind === 'box') shape = construct(Box, a, b);\n    else if (kind === 'square') shape = construct(Square, a);\n    else if (kind === 'legacy') shape = construct(Legacy, a, b);\n    else if (kind === 'prim') shape = construct(Prim, a, b);\n    else continue;\n    out.push([shape.area(), shape instanceof Box, shape instanceof Square]);\n  }\n  return out;\n}\n",
+        "solution": "interface BoxShape {\n  w: number;\n  h: number;\n  area(): number;\n}\n\nfunction Box(this: BoxShape, w: number, h: number): void {\n  this.w = w;\n  this.h = h;\n}\nBox.prototype.area = function (this: BoxShape): number {\n  return this.w * this.h;\n};\n\nfunction Square(this: BoxShape, side: number): void {\n  Box.call(this, side, side);\n}\nSquare.prototype = Object.create(Box.prototype);\nSquare.prototype.constructor = Square;\n\nfunction Legacy(this: BoxShape, w: number, h: number): BoxShape {\n  this.w = w;\n  this.h = h;\n  return { w: 1, h: 1, area: () => 99 };\n}\n\nfunction Prim(this: BoxShape, w: number, h: number): number {\n  Box.call(this, w, h);\n  return 42;\n}\nPrim.prototype = Object.create(Box.prototype);\n\nfunction construct<T extends object, A extends unknown[]>(ctor: (this: T, ...args: A) => unknown, ...args: A): T {\n  const proto: unknown = ctor.prototype;\n  const linked = typeof proto === 'object' && proto !== null ? proto : Object.prototype;\n  const instance = Object.create(linked) as T;\n  const result = ctor.apply(instance, args);\n  const isObject = (typeof result === 'object' && result !== null) || typeof result === 'function';\n  return isObject ? (result as T) : instance;\n}\n\nfunction buildAll(specs: [string, number, number][]): [number, boolean, boolean][] {\n  const out: [number, boolean, boolean][] = [];\n  for (const [kind, a, b] of specs) {\n    let shape: BoxShape;\n    if (kind === 'box') shape = construct(Box, a, b);\n    else if (kind === 'square') shape = construct(Square, a);\n    else if (kind === 'legacy') shape = construct(Legacy, a, b);\n    else if (kind === 'prim') shape = construct(Prim, a, b);\n    else continue;\n    out.push([shape.area(), shape instanceof Box, shape instanceof Square]);\n  }\n  return out;\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  "box",
+                  2,
+                  3
+                ],
+                [
+                  "square",
+                  4,
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                6,
+                true,
+                false
+              ],
+              [
+                16,
+                true,
+                true
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "legacy",
+                  5,
+                  5
+                ],
+                [
+                  "prim",
+                  2,
+                  5
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                99,
+                false,
+                false
+              ],
+              [
+                10,
+                true,
+                false
+              ]
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "circle",
+                  1,
+                  1
+                ],
+                [
+                  "box",
+                  0,
+                  7
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                true,
+                false
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "box",
+                  -2,
+                  3
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                -6,
+                true,
+                false
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "square",
+                  1.5,
+                  9
+                ],
+                [
+                  "square",
+                  -3,
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                2.25,
+                true,
+                true
+              ],
+              [
+                9,
+                true,
+                true
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "prim",
+                  1,
+                  1
+                ],
+                [
+                  "prim",
+                  3,
+                  3
+                ],
+                [
+                  "legacy",
+                  0,
+                  0
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                true,
+                false
+              ],
+              [
+                9,
+                true,
+                false
+              ],
+              [
+                99,
+                false,
+                false
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "class Greeter {\n  name = 'Ada';\n  hi(): string {\n    return this === undefined ? 'undefined this' : 'hi ' + this.name;\n  }\n}\nconst g = new Greeter();\nconst f = g.hi;\nconsole.log(f());",
+        "choices": [
+          "hi Ada",
+          "undefined this",
+          "hi undefined"
+        ],
+        "answer": 1,
+        "explain": "`g.hi` is just the function; `f()` is a plain call. Class bodies are strict, so `this` is `undefined`, not the instance and not `globalThis`."
+      },
+      {
+        "code": "class Timer {\n  label = 'T';\n  start(): string {\n    const arrow = () => this.label;\n    function regular(this: unknown): string {\n      return typeof this;\n    }\n    return arrow() + ' ' + regular();\n  }\n}\nconsole.log(new Timer().start());",
+        "choices": [
+          "T undefined",
+          "T object",
+          "undefined undefined"
+        ],
+        "answer": 0,
+        "explain": "The arrow reads `this` from `start`, which was called on the instance. The nested `function` gets its own `this` from its plain call, which is `undefined` in strict class code."
+      },
+      {
+        "code": "const base = { greet: 'hello', tags: [] as string[] };\nconst a = Object.create(base) as typeof base;\nconst b = Object.create(base) as typeof base;\na.greet = 'hi';\na.tags.push('x');\nconsole.log(b.greet, b.tags.length, Object.hasOwn(a, 'tags'));",
+        "choices": [
+          "hello 1 false",
+          "hi 1 true",
+          "hello 0 true",
+          "hello 1 true"
+        ],
+        "answer": 0,
+        "explain": "Assigning `a.greet` creates an own property that only shadows for `a`. `a.tags.push` reads the inherited array and mutates the one shared copy, so `b` sees it and `a` still has no own `tags`."
+      },
+      {
+        "code": "function who(this: { n: string }): string {\n  return this.n;\n}\nconst bound = who.bind({ n: 'bound' });\nconsole.log(bound.call({ n: 'call' }));",
+        "choices": [
+          "call",
+          "bound",
+          "undefined"
+        ],
+        "answer": 1,
+        "explain": "A bound function ignores the `this` passed by `call` or `apply`; only `new` can override it."
+      },
+      {
+        "code": "class Clock {\n  ticks = 0;\n  tick(): void { this.ticks++; }\n  tickArrow = (): void => { this.ticks++; };\n}\nconst c = new Clock();\n[1, 2, 3].forEach(c.tickArrow);\nlet status = 'ok';\ntry {\n  [1].forEach(c.tick);\n} catch {\n  status = 'lost';\n}\nconsole.log(status, c.ticks);",
+        "choices": [
+          "ok 4",
+          "lost 3",
+          "ok 3",
+          "lost 0"
+        ],
+        "answer": 1,
+        "explain": "The arrow field is bound to `c`, so three ticks land. `forEach(c.tick)` calls the prototype method plainly, `this` is `undefined`, and reading `this.ticks` throws."
+      },
+      {
+        "code": "class Dog {\n  bark(): string { return 'woof'; }\n}\nconst d = new Dog();\nconsole.log(typeof Dog, Object.hasOwn(d, 'bark'), Object.getPrototypeOf(d) === Dog.prototype);",
+        "choices": [
+          "function false true",
+          "class false true",
+          "function true true",
+          "object false false"
+        ],
+        "answer": 0,
+        "explain": "A class is a constructor function, and its methods live once on `Dog.prototype`, which `new` sets as the instance's prototype."
+      }
+    ],
+    "tip": "When asked what `this` is, point at the call site and say the rules in order (arrow, `new`, bound, `call`/`apply`, method call, plain call). Then sketch the instance → `Class.prototype` → parent prototype → `Object.prototype` → `null` chain; drawing it answers most follow-ups about shadowing, `instanceof` and `class` before they are asked.",
+    "links": {
+      "problems": [
+        "min-stack-ops",
+        "lru-cache"
+      ],
+      "guides": [
+        "clean-code",
+        "communicating-solutions"
+      ],
+      "lessons": [
+        "py-oop-dataclasses",
+        "py-functions-closures"
+      ]
+    }
+  }
+}

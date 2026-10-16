@@ -1,0 +1,246 @@
+{
+  "track": "typescript",
+  "title": "TypeScript interview essentials",
+  "cards": [
+    {
+      "id": "typescript-tdz",
+      "front": "What is the temporal dead zone?",
+      "back": "The span from the start of a scope until a `let`/`const`/`class` declaration runs. The binding exists but any read, even `typeof`, throws ReferenceError.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-var-vs-let-scope",
+      "front": "Block scope vs function scope: which keywords use which?",
+      "back": "`let`/`const` are block-scoped (nearest `{ }`); `var` is function-scoped and hoisted as `undefined`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-loop-closure-bug",
+      "front": "Why does `for (var i...) fns.push(() => i)` give all 3s, and how does `let` fix it?",
+      "back": "`var` gives one shared `i`, read after the loop ends (3). `let` in a for header makes a fresh binding per iteration, so each closure keeps its own value.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-closure-captures-variable",
+      "front": "Does a closure capture a variable's value or the variable?",
+      "back": "The variable. It sees later reassignments, and each factory call creates a new, private environment.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-const-literal-inference",
+      "front": "How does TypeScript type `const d = 'up'`, `let d = 'up'` and `{ d: 'up' } as const`?",
+      "back": "`'up'` (literal), `string` (widened), and `{ readonly d: 'up' }`. A plain `const` object still has mutable `string` properties.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-this-binding-order",
+      "front": "In what order do you apply the rules that decide `this` at a call site?",
+      "back": "Arrow function (uses the enclosing scope's `this`) > `new` (fresh object) > bound function (the bound value) > `call`/`apply` (first argument) > `obj.m()` (the receiver) > plain call (`undefined` in strict code, `globalThis` in sloppy scripts).",
+      "level": "se"
+    },
+    {
+      "id": "typescript-extracted-method",
+      "front": "Why does `arr.forEach(obj.method)` throw when the method uses `this`, and how do you fix it?",
+      "back": "`obj.method` is just the function. `forEach` calls it plainly, so `this` is `undefined`. Fix it with `x => obj.method(x)`, `obj.method.bind(obj)`, `forEach(fn, obj)`, or an arrow class field.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-new-four-steps",
+      "front": "What four steps does `new F(...args)` perform?",
+      "back": "1. Create a new object. 2. Set its `[[Prototype]]` to `F.prototype`. 3. Run `F` with `this` set to that object. 4. Return the object, unless the body returned an object or function, which replaces it. Returned primitives are ignored.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-shadow-vs-mutate",
+      "front": "With `a = Object.create(base)`, what is the difference between `a.x = 1` and `a.list.push(1)`?",
+      "back": "Assignment creates an own property on `a` that shadows `base.x`. `push` reads the inherited `base.list` and changes that one shared array, so every object linked to `base` sees the change.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-this-parameter",
+      "front": "What does declaring `function f(this: Button)` give you in TypeScript?",
+      "back": "The fake first parameter is removed from the compiled output. TypeScript then checks every call site, so calling `f` without a `Button` as `this` is error TS2684. `OmitThisParameter<typeof f>` gives the type with `this` removed, which is what `bind` returns. Ordinary class methods don't declare `this`, so lint, not the compiler, catches extracted methods.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-falsy-values",
+      "front": "List every falsy value in JavaScript.",
+      "back": "false, 0, -0, 0n, \"\", null, undefined, NaN. Everything else is truthy, including \"0\", [] and {}.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-nullish-vs-or",
+      "front": "When does `a ?? b` differ from `a || b`?",
+      "back": "When a is 0, \"\", false, NaN or 0n: `||` replaces any falsy value, `??` only null/undefined.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-object-is",
+      "front": "How does `Object.is` differ from `===`?",
+      "back": "Object.is(NaN, NaN) is true and Object.is(0, -0) is false; otherwise identical.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-loose-equality-steps",
+      "front": "Outline how `x == y` converts operands.",
+      "back": "Same type → ===. null/undefined equal only each other. Boolean → number. number vs string → string to number. Object vs primitive → ToPrimitive. Then compare again.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-default-sort",
+      "front": "What does `[10, 9, 1].sort()` return and why?",
+      "back": "[1, 10, 9], sorted in place: with no comparator, elements are compared as strings by UTF-16 code units. Use (a, b) => a - b.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-event-loop-order",
+      "front": "In what order does the event loop serve synchronous code, microtasks and tasks?",
+      "back": "Run the current task (the script itself is one) to completion, then drain the entire microtask queue, including microtasks queued along the way, then take one task. Repeat. So: sync, then all microtasks, then `setTimeout(0)`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-microtask-sources",
+      "front": "Which callbacks become microtasks and which become tasks?",
+      "back": "Microtasks: promise reactions (`then`/`catch`/`finally`), `await` continuations and `queueMicrotask`. Tasks: timers, I/O completions, UI events and messages.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-async-sync-part",
+      "front": "How much of an `async` function runs synchronously when you call it?",
+      "back": "Everything up to the first `await`. The rest resumes as a microtask, and the call returns a promise at once. A `new Promise` executor also runs synchronously.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-microtask-starvation",
+      "front": "What is microtask starvation?",
+      "back": "Microtasks that keep queueing more microtasks never let the queue empty. Timers, I/O, input and painting then never run. Fix it by rescheduling each step with `setTimeout` so it becomes a separate task.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-yield-task-vs-micro",
+      "front": "Why doesn't `await Promise.resolve()` keep a long loop from blocking the page?",
+      "back": "It resumes as a microtask, which runs before any task or render step. To let other work run, yield to a task with `await new Promise(r => setTimeout(r, 0))`, or move heavy work to a worker.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-then-missing-return",
+      "front": "What does the next `.then` receive if a callback is `v => { work(v) }`?",
+      "back": "`undefined`. A block body with no `return` fulfils the next link right away, and the promise from `work` runs detached, so its errors escape the chain. Write `v => work(v)` or add `return`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-promise-combinators",
+      "front": "When do `Promise.all`, `allSettled`, `race` and `any` settle?",
+      "back": "`all`: all fulfil (values in input order), or the first rejection. `allSettled`: once everything settles, and it never rejects. `race`: as soon as the first input settles, either way. `any`: the first fulfilment, or an `AggregateError` if every input rejects.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-foreach-async",
+      "front": "Why is `xs.forEach(async x => { await work(x) })` a bug?",
+      "back": "`forEach` ignores the returned promises. Every item starts at once, the caller carries on before any of them finish, and rejections go unhandled. Use `for...of` with `await` to run in series, or `await Promise.all(xs.map(work))` to run in parallel.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-return-await-try",
+      "front": "Inside `try/catch`, why write `return await p` instead of `return p`?",
+      "back": "`return p` leaves the `try` straight away, so a rejection skips the local `catch` and `finally` runs too early. `return await p` waits inside the `try`, so the `catch` handles the rejection.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-pool-lanes",
+      "front": "How do you run async jobs with at most k in flight and keep results in input order?",
+      "back": "Start `min(k, n)` lanes. Each lane is an async loop that claims `const i = next++`, awaits job `i` and stores the result in `results[i]`. Then `await Promise.all(lanes)`. `next++` is safe because JavaScript only switches between async functions at an `await`.",
+      "level": "sse"
+    },
+    {
+      "id": "typescript-default-sort-strings",
+      "front": "What does `[10, 9, 1, 2].sort()` return, and why?",
+      "back": "`[1, 10, 2, 9]`. With no comparator, sort converts elements to strings and compares UTF-16 code units. Use `(a, b) => a - b` for numbers.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-sort-vs-tosorted",
+      "front": "How do `sort` and `toSorted` differ?",
+      "back": "`sort` reorders the array in place and returns that same array. `toSorted` (ES2023) returns a new sorted array and leaves the original alone. It also exists on `ReadonlyArray`. The same pairing holds for reverse/toReversed and splice/toSpliced, plus `with` for index assignment.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-map-vs-object-keys",
+      "front": "Name three ways a plain object differs from a Map as a key→value store.",
+      "back": "1. Object keys are coerced to strings (so `1` and `'1'` collide); Map keeps any key type. 2. Objects inherit keys like `constructor` and treat `__proto__` specially; a Map has no inherited keys. 3. Objects list integer-like keys first in ascending order; Map iterates in insertion order and has an O(1) `size`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-spread-shallow",
+      "front": "After `const c = { ...o }; c.tags.push('x')`, does `o.tags` change?",
+      "back": "Yes. Spread is shallow: `c.tags` points to the same array as `o.tags`. Use `structuredClone`, or copy the changed path: `{ ...o, tags: [...o.tags, 'x'] }`.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-set-membership-cost",
+      "front": "Why replace `other.includes(x)` inside a `filter` with a Set?",
+      "back": "`includes` scans the array, so the filter is O(n·m). Build `new Set(other)` once (O(m)); then `has` is O(1) on average, for O(n + m) total. Sets compare objects by reference.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-structural-typing",
+      "front": "Why does TypeScript accept a `Person` instance where a `Named` interface is expected, with no `implements`?",
+      "back": "Assignability is structural: any value with at least the required members (`name: string`) fits. Class names and declarations don't matter, and extra properties are allowed.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-excess-property-check",
+      "front": "When does TypeScript report an excess property error?",
+      "back": "Only when a fresh object literal goes straight into a typed slot (`const x: Named = { name, role }`). Put the same object in a variable first and it is accepted, because extra keys are only flagged on fresh literals.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-extends-vs-intersection",
+      "front": "`interface B extends A` versus `type B = A & {...}` when a property type conflicts?",
+      "back": "`extends` gives a compile error at the declaration. The intersection gives no error: the property silently becomes `never`, and the failure shows up later wherever a value is created.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-unknown-vs-any",
+      "front": "`unknown` versus `any` for `JSON.parse` results?",
+      "back": "`any` turns checking off and spreads to everything it touches. `unknown` accepts any value but allows no use until you narrow it with `typeof`, `in`, `Array.isArray` or a type guard. Prefer `unknown` at boundaries.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-type-erasure",
+      "front": "Does `JSON.parse(body) as User` validate the data?",
+      "back": "No. Types and `as` are erased when the compiler emits JavaScript, so nothing is checked at runtime. Parse to `unknown` and validate with guards or a schema library before trusting the value.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-keyof-indexed-access",
+      "front": "How do you type a function that reads `obj[key]` so typos fail and the result has the property's type?",
+      "back": "`function get<T, K extends keyof T>(obj: T, key: K): T[K]`. `K` is inferred as the literal key, the constraint rejects a key that isn't a property of `T`, and `T[K]` is that property's exact type.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-satisfies-vs-annotation",
+      "front": "`const x: T = v` versus `const x = v satisfies T`: what's the difference?",
+      "back": "An annotation replaces the inferred type with `T`, so literal keys and values are lost. `satisfies` checks `v` against `T` but keeps the precise inferred type, so unknown keys such as `routes.hmoe` are compile errors. Use `satisfies` for config tables and lookup maps.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-omit-unchecked",
+      "front": "Why does `Omit<User, 'pasword'>` compile, and does `Omit` remove the property at runtime?",
+      "back": "`Omit<T, K extends keyof any>` doesn't check `K` against `T`, so a typo removes nothing. A strict version is `type StrictOmit<T, K extends keyof T> = Omit<T, K>`. And no: utility types are erased, so the object keeps the property.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-type-param-twice",
+      "front": "When is a type parameter unnecessary?",
+      "back": "When it appears only once. `function show<T>(x: T): void` links nothing and is just `x: unknown`. A type parameter should relate at least two places, such as two parameters or a parameter and the return type. One that appears only in the return type, like `get<T>(): T`, is really an unchecked cast.",
+      "level": "se"
+    },
+    {
+      "id": "typescript-derive-types",
+      "front": "How do you get the resolved value type of an async function `load` without restating it?",
+      "back": "`Awaited<ReturnType<typeof load>>`. `typeof` turns the value into a type, `ReturnType` gives `Promise<X>`, and `Awaited` unwraps it recursively. `Parameters<typeof load>` gives the argument tuple.",
+      "level": "se"
+    }
+  ]
+}

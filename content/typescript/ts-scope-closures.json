@@ -1,0 +1,406 @@
+{
+  "id": "ts-scope-closures",
+  "track": "typescript",
+  "title": "Scope, hoisting and closures",
+  "minutes": 45,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "`let`, `const` and `var`, block versus function scope, hoisting and the temporal dead zone, the scope chain, closures as private state, once and memoize wrappers, the classic loop-closure bug, and how TypeScript infers types from `const`.",
+  "prerequisites": [],
+  "prerequisiteNotes": "No earlier TypeScript lesson is needed. You should be comfortable writing small functions and arrays in any language; every JavaScript rule here is introduced from scratch.",
+  "objectives": [
+    "Choose between `let`, `const` and `var` and explain block scope versus function scope.",
+    "Explain hoisting and the temporal dead zone and predict when a read throws `ReferenceError`.",
+    "Resolve a name by walking the lexical scope chain, including shadowing.",
+    "Build closures that hold private state: counters, `once` and `memoize` wrappers.",
+    "Diagnose the `var`-in-a-loop closure bug and fix it with `let`.",
+    "Describe how TypeScript infers literal types from `const` and when narrowing survives into a callback."
+  ],
+  "concepts": [
+    {
+      "title": "let, const and var: block scope versus function scope",
+      "body": "`let` and `const` are **block-scoped**: they exist only inside the nearest `{ }` (an `if`, a loop body, or a bare block). `var` is **function-scoped**: it ignores blocks and belongs to the whole enclosing function (or the script, where a top-level `var` even becomes a property of `globalThis`). `const` forbids **rebinding** the name, not changing the object it points to, so `const xs = []; xs.push(1)` is fine. Redeclaring a `let`/`const` in the same scope is a `SyntaxError`, while `var x; var x` is silently allowed. Default to `const`, use `let` when you reassign, and treat `var` as legacy you must still be able to read.",
+      "code": "function scopes(): void {\n  if (true) {\n    var f = 'function-scoped'\n    let b = 'block-scoped'\n    const box = { n: 1 }\n    box.n = 2          // fine: const fixes the binding, not the object\n    // box = { n: 3 }  // TypeError: Assignment to constant variable\n  }\n  console.log(f)       // 'function-scoped'\n  // console.log(b)    // ReferenceError: b is not defined\n}"
+    },
+    {
+      "title": "Hoisting and the temporal dead zone",
+      "body": "Before any code in a scope runs, the engine creates **all** of its bindings. A `var` is created and set to `undefined`, so reading it early gives `undefined`. A function **declaration** is created with its full body, so you can call it above the line where it is written. A `let`, `const` or `class` binding is created but left **uninitialised**: from the start of the block until its declaration line executes it is in the **temporal dead zone (TDZ)**, and any read, even `typeof x`, throws `ReferenceError`. The TDZ is about time, not text: a closure written above the declaration is safe as long as it is **called** after the declaration has run. A function **expression** assigned to a `var` hoists only the `undefined` variable.",
+      "code": "console.log(typeof hoisted)   // 'function': declaration hoisted with body\nconsole.log(early)            // undefined: var hoisted, value not yet assigned\nvar early = 1\nfunction hoisted(): void {}\n\nconst read = () => late       // fine to write: nothing runs yet\n// read()                     // here it would throw: late is in the TDZ\nconst late = 'ready'\nconsole.log(read())           // 'ready': called after the declaration ran",
+      "diagram": "tsc-tdz"
+    },
+    {
+      "title": "The lexical scope chain",
+      "body": "Scope is **lexical**: where a function is written decides which variables it can see, not where it is called from. Each block, function and module gets an environment that links to the environment it was written inside. A read starts in the innermost environment and walks outward until it finds the name; the first match wins, so an inner `let x` **shadows** an outer `x`. If the walk reaches the global environment without a match, the read throws `ReferenceError`. Writing to an undeclared name throws too in strict mode, which is always on in ES modules and classes; TypeScript reports it at compile time as `Cannot find name`.",
+      "code": "const level = 'module'\n\nfunction outer(): string {\n  const level = 'outer'          // shadows the module-level name\n  function inner(): string {\n    return level                 // found one step out: 'outer'\n  }\n  return inner()\n}\n\nfunction caller(): string {\n  const level = 'caller'         // irrelevant: lookup is lexical\n  return outer()\n}\nconsole.log(caller())            // 'outer'",
+      "diagram": "tsc-scope-chain"
+    },
+    {
+      "title": "Closures keep variables, not values",
+      "body": "A **closure** is a function plus the environment it was created in. When `makeCounter` returns its inner functions, its local `value` cannot be thrown away because those functions still reference it, so the variable lives on after the call ends. Each call of the factory creates a **new** environment, so two counters never share state, and nothing outside can reach `value` except through the returned methods: that is real privacy without classes. Because the closure holds the **variable**, it sees the value at the moment it runs, including any reassignment made after it was created.",
+      "code": "interface Counter { next(): number; peek(): number; reset(): number }\n\nfunction makeCounter(start = 0, step = 1): Counter {\n  let value = start                 // private: only these three functions see it\n  return {\n    next: () => (value += step),\n    peek: () => value,\n    reset: () => (value = start),\n  }\n}\n\nconst a = makeCounter()\nconst b = makeCounter(10, 5)\na.next(); a.next()\nconsole.log(a.peek(), b.next())     // 2 15",
+      "diagram": "tsc-closure"
+    },
+    {
+      "title": "Wrapper patterns: once and memoize",
+      "body": "Higher-order wrappers are closures that keep bookkeeping beside a function you pass in. `once(fn)` keeps a flag and the first result; `memoize(fn, keyOf)` keeps a `Map` from a **string key** to results. Key choice matters: a `Map` compares object keys by reference, so two equal arrays are different keys; derive a string with a key function such as `` (r, c) => `${r},${c}` ``. Store results in a box (`{ value }`) or test `cache.has(key)` so that a cached `undefined` or `0` still counts as a hit. Typing them generically with `A extends unknown[]` keeps the wrapped function's exact parameter list.",
+      "code": "function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {\n  let done: { value: R } | undefined     // the box survives between calls\n  return (...args: A): R => {\n    if (done === undefined) done = { value: fn(...args) }\n    return done.value\n  }\n}\n\nconst init = once((name: string) => `hello ${name}`)\nconsole.log(init('ann'), init('bo'))   // hello ann hello ann",
+      "diagram": "tsc-memo"
+    },
+    {
+      "title": "TypeScript and const: literal types and narrowing",
+      "body": "TypeScript uses the declaration keyword when it infers types. `const dir = 'up'` gets the **literal type** `'up'` because it can never change; `let dir = 'up'` is **widened** to `string`. Object properties stay mutable even under `const`, so `{ dir: 'up' }` is `{ dir: string }` unless you add `as const`, which makes every property `readonly` and literal. Narrowing (`typeof x === 'string'`) always carries into callbacks for a `const`; for a `let` or parameter, TypeScript 5.4+ keeps it only when no assignment can happen after the closure is created. These are compile-time facts only: at runtime `const` still does not freeze objects (use `Object.freeze` for a shallow freeze).",
+      "code": "const dir = 'up'                    // type 'up'\nlet mode = 'up'                     // type string\nconst cfg = { dir: 'up' }           // { dir: string }\nconst fixed = { dir: 'up' } as const // { readonly dir: 'up' }\n\nfunction label(id: string | number): () => string {\n  const key = typeof id === 'number' ? String(id) : id\n  return () => key.toUpperCase()    // key is string: const narrowing is stable\n}"
+    }
+  ],
+  "example": "function debounce<A extends unknown[]>(fn: (...args: A) => void, waitMs: number): (...args: A) => void {\n  let timer: ReturnType<typeof setTimeout> | undefined   // private to this debounced copy\n  return (...args: A): void => {\n    clearTimeout(timer)                                 // cancel the pending call, if any\n    timer = setTimeout(() => fn(...args), waitMs)       // args captured per call\n  }\n}\n\nconst saved: string[] = []\nconst save = debounce((text: string) => { saved.push(text) }, 20)\nsave('h'); save('he'); save('hel')\nsetTimeout(() => console.log(saved.join(',')), 50)     // hel",
+  "task": "Write `runCounters(ops)`. Each op is an array: `['make', name, start?, step?]` creates (or replaces) a counter called `name` that starts at `start` (default 0) and moves by `step` (default 1); `['next', name]` advances it by `step` and records the new value; `['peek', name]` records the current value; `['reset', name]` sets it back to its start and records that value. Return the recorded values in order, recording `null` for any op on a name that was never made. Counters must be fully independent: build each one with a `makeCounter(start, step)` closure factory, not shared outer variables.",
+  "starter": "type Op =\n  | [action: 'make', name: string, start?: number, step?: number]\n  | [action: 'next' | 'peek' | 'reset', name: string]\n\ninterface Counter {\n  next(): number\n  peek(): number\n  reset(): number\n}\n\nlet value = 0 // TODO: every counter shares this one variable\n\nfunction makeCounter(start = 0, step = 1): Counter {\n  value = start\n  return {\n    next: () => (value += step),\n    peek: () => value,\n    reset: () => (value = start),\n  }\n}\n\nfunction runCounters(ops: Op[]): (number | null)[] {\n  const counters = new Map<string, Counter>()\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'make') {\n      const [, name, start, step] = op\n      counters.set(name, makeCounter(start, step))\n      continue\n    }\n    const [action, name] = op\n    const counter = counters.get(name)\n    out.push(counter ? counter[action]() : null)\n  }\n  return out\n}\n",
+  "hints": [
+    "Run the second visible test by hand: after `make a` and `make b`, which variable does `a.next()` change? Both counters' arrows read the same module-level `value`.",
+    "Move `let value = start` inside `makeCounter`. Each call then creates a fresh environment, and the three returned arrows close over that call's `value` only."
+  ],
+  "solution": "type Op =\n  | [action: 'make', name: string, start?: number, step?: number]\n  | [action: 'next' | 'peek' | 'reset', name: string]\n\ninterface Counter {\n  next(): number\n  peek(): number\n  reset(): number\n}\n\nfunction makeCounter(start = 0, step = 1): Counter {\n  let value = start\n  return {\n    next: () => (value += step),\n    peek: () => value,\n    reset: () => (value = start),\n  }\n}\n\nfunction runCounters(ops: Op[]): (number | null)[] {\n  const counters = new Map<string, Counter>()\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'make') {\n      const [, name, start, step] = op\n      counters.set(name, makeCounter(start, step))\n      continue\n    }\n    const [action, name] = op\n    const counter = counters.get(name)\n    out.push(counter ? counter[action]() : null)\n  }\n  return out\n}\n\nThe only real change is where `value` lives. Declared inside `makeCounter`, it belongs to that call's environment, so every counter gets its own private variable and the returned arrows are its only way in. Default parameters turn a missing `start` or `step` (a hole in the tuple, so `undefined`) into 0 and 1. The `Op` type is a union of labelled tuples, so checking `op[0] === 'make'` narrows the tuple and `counter[action]` is known to be one of the three methods. The `Map` lookup gives `undefined` for an unknown name, which becomes `null` in the output. Each op is O(1), so the whole run is O(ops).",
+  "checklist": [
+    "`let value` is declared inside `makeCounter`, so no counter can see another's state.",
+    "Missing `start` and `step` fall back to 0 and 1 through default parameters.",
+    "An op on a name that was never made records `null` instead of throwing.",
+    "Making a name again replaces the old counter with a fresh one.",
+    "There is no module-level mutable state, so repeated calls of `runCounters` give the same answer."
+  ],
+  "pitfalls": [
+    "Using `var i` in a loop that creates callbacks and expecting each callback to see its own `i`.",
+    "Reading a `let` or `const` (even with `typeof`) before its declaration line has run and hitting the TDZ `ReferenceError`.",
+    "Believing `const` makes an object or array immutable; it only stops the name being rebound.",
+    "Keeping factory state in an outer variable, so every instance silently shares it.",
+    "Memoising with an object or array as the `Map` key, which compares by reference and never hits.",
+    "Writing `once` with `if (!result)`, which re-runs the function whenever the first result was falsy such as `0` or `''`."
+  ],
+  "walkthrough": [
+    {
+      "title": "The var-in-a-loop bug and why let fixes it",
+      "body": "`for (var i = 0; i < 3; i++) fns.push(() => i)` creates three arrows that all close over the **same** function-scoped `i`. They run after the loop, when `i` is 3 (the value that failed the test), so they all return 3. With `let`, the spec creates a **fresh binding per iteration** and copies the current value into it before the increment, so each arrow captures its own `i`. The pre-ES2015 fix was an IIFE, `(j => () => j)(i)`, which builds a new scope per iteration by hand. The same bug appears with `setTimeout` inside a `var` loop, the version interviewers usually show.",
+      "code": "const late: (() => number)[] = []\nfor (var i = 0; i < 3; i++) late.push(() => i)\nconsole.log(late.map(f => f()).join(','))   // 3,3,3\n\nconst fresh: (() => number)[] = []\nfor (let j = 0; j < 3; j++) fresh.push(() => j)\nconsole.log(fresh.map(f => f()).join(','))  // 0,1,2\n\nconst iife: (() => number)[] = []\nfor (var k = 0; k < 3; k++) iife.push((n => () => n)(k))\nconsole.log(iife.map(f => f()).join(','))   // 0,1,2",
+      "diagram": "tsc-loop"
+    },
+    {
+      "title": "Arrow functions close over this, too",
+      "body": "Scope rules also explain `this`. A regular `function` gets its own `this` from **how it is called**, so a callback passed to `setTimeout` or `map` loses the object. An **arrow function** has no `this` of its own; it looks `this` up lexically, exactly like a variable, so it sees the `this` of the method it was written in. That is why class methods that hand out callbacks usually use arrows. Say it this way in the room: arrows close over `this` and `arguments`; regular functions bind them per call.",
+      "code": "class Ticker {\n  count = 0\n  tickLater(): void {\n    setTimeout(() => { this.count++ }, 0)  // arrow: this is the Ticker\n  }\n}\n// With setTimeout(function () { this.count++ }, 0) TypeScript reports\n// 'this' implicitly has type 'any', and at runtime this is not the Ticker."
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First find the shared state: the starter's `value` is declared at module level, so the arrows from every `makeCounter` call close over one variable. Second, move the declaration into the factory so each call gets its own environment; nothing else in the counter changes. Third, check the driver: default parameters cover a missing `start`/`step`, the `Map` returns `undefined` for unknown names (record `null`), and `make` on an existing name builds a fresh counter. Mention that each op is O(1) and that the closure gives privacy: the caller cannot set `value` directly."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Square only once",
+      "prompt": "Write `squareOnce(inputs)`. Inside, wrap a squaring function that counts how many times its body runs with a generic `once` wrapper, call the wrapped function on every input in order, and return `{ results, calls }`. Every result must equal the first call's result, and `calls` must be 1 (or 0 for no inputs). The starter's `once` keeps its memory in the wrong scope; fix it.",
+      "hints": [
+        "Where is `done` declared in the starter? A variable declared inside the returned arrow is created fresh on every call.",
+        "Declare the box in `once` itself, beside the returned arrow, so it survives between calls."
+      ],
+      "solution": "function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {\n  let done: { value: R } | undefined\n  return (...args: A): R => {\n    if (done === undefined) done = { value: fn(...args) }\n    return done.value\n  }\n}\n\nfunction squareOnce(inputs: number[]): { results: number[]; calls: number } {\n  let calls = 0\n  const square = once((x: number): number => {\n    calls++\n    return x * x\n  })\n  const results = inputs.map(x => square(x))\n  return { results, calls }\n}",
+      "checklist": [
+        "The memory lives in `once`, not inside the returned function.",
+        "A first result of 0 is still remembered, because the box is checked, not the value.",
+        "No inputs means the body never runs and `calls` is 0."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Memoised grid paths",
+      "prompt": "Write `pathStats(queries)`. Each query is `[rows, cols]`; answer it with `paths(rows, cols)`, the number of right/down routes across a grid with that many steps each way: 1 when either is 0, 0 when either is negative, otherwise `paths(rows - 1, cols) + paths(rows, cols - 1)`. Build `paths` with a generic `memoize(fn, keyOf)` shared across all queries in one call, count how many times the body runs, and return `{ results, computed }`. The starter's key function collides; fix `memoize` so it uses `keyOf`.",
+      "hints": [
+        "The starter keys on the first argument only, so `paths(1, 2)` and `paths(1, 0)` share a cache entry.",
+        "Call `keyOf(...args)` to build the key, and make the recursive calls go through the memoised `const paths` so they hit the cache too."
+      ],
+      "solution": "function memoize<A extends unknown[], R>(fn: (...args: A) => R, keyOf: (...args: A) => string): (...args: A) => R {\n  const cache = new Map<string, { value: R }>()\n  return (...args: A): R => {\n    const key = keyOf(...args)\n    const hit = cache.get(key)\n    if (hit) return hit.value\n    const value = fn(...args)\n    cache.set(key, { value })\n    return value\n  }\n}\n\nfunction pathStats(queries: [number, number][]): { results: number[]; computed: number } {\n  let computed = 0\n  const paths: (rows: number, cols: number) => number = memoize(\n    (rows: number, cols: number): number => {\n      computed++\n      if (rows < 0 || cols < 0) return 0\n      if (rows === 0 || cols === 0) return 1\n      return paths(rows - 1, cols) + paths(rows, cols - 1)\n    },\n    (rows, cols) => `${rows},${cols}`,\n  )\n  const results = queries.map(([rows, cols]) => paths(rows, cols))\n  return { results, computed }\n}",
+      "checklist": [
+        "The key includes both arguments, so different cells never collide.",
+        "Recursive calls use the memoised `paths`, so each cell's body runs once per call of `pathStats`.",
+        "The cache is created inside `pathStats`, so separate calls do not share counts.",
+        "`paths` has an explicit type because it is referenced inside its own initialiser."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does `let` in a `for` loop give each closure its own value when `var` does not?",
+      "answer": "The loop header's `let` binding is copied into a new environment for every iteration (the spec's per-iteration environment), so a closure created in iteration 2 holds the iteration-2 binding. `var` is function-scoped: there is one `i` for the whole function, and every closure reads its final value. Only `for`, `for...in` and `for...of` headers do the per-iteration copy; a `let` declared above a `while` loop is still one binding."
+    },
+    {
+      "question": "When would you use a closure for private state instead of a class with `#private` fields?",
+      "answer": "Both are truly private at runtime (TypeScript's `private` keyword is compile-time only). A closure factory is lighter for a few functions and works naturally with callbacks, but each instance gets its own copies of the functions. A class with `#fields` shares methods on the prototype, supports `instanceof` and inheritance, and is better when you create many instances or need many methods."
+    },
+    {
+      "question": "Can closures cause memory leaks?",
+      "answer": "A closure keeps alive whatever it can reach in its environment. A long-lived closure, such as an event listener, a `setInterval` callback or an entry in an unbounded memo cache, keeps its captured objects alive too. Remove listeners and clear timers when done, bound or scope caches (create them per call, cap their size, or use a `WeakMap` keyed by objects), and avoid capturing large objects you do not need."
+    },
+    {
+      "question": "What is the TDZ for, given that `var` works without it?",
+      "answer": "It turns a silent bug into a loud one. With `var`, reading too early gives `undefined` and execution continues with a wrong value; with `let`/`const` the read throws `ReferenceError` at the exact line. It is also what makes `const` meaningful: a `const` can never be observed with any value other than the one it was declared with."
+    }
+  ],
+  "takeaways": [
+    "Default to `const`, use `let` when you reassign, and read `var` as function-scoped and hoisted to `undefined`.",
+    "`let`, `const` and `class` are hoisted but uninitialised: reading them before the declaration runs throws (the TDZ).",
+    "Scope is lexical: lookup walks outward from where the function was written, and the first match wins.",
+    "A closure captures variables, not values; each factory call creates a fresh, private environment.",
+    "`let` in a `for` header gives each iteration its own binding, which fixes the classic callback-in-a-loop bug.",
+    "TypeScript infers literal types from `const`, widens `let`, and needs `as const` for literal object properties."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsc-scope-chain",
+        "type": "flow",
+        "title": "How JavaScript resolves a name",
+        "alt": "Flow diagram of name lookup. A read of a name is tried first in the innermost block scope, then the enclosing function scope, then the module scope, then the global scope. If none has the name, a ReferenceError is thrown. A note shows that a same-name let in an inner block shadows the outer one.",
+        "caption": "Lookup walks outward through the scopes a function was written in and stops at the first match.",
+        "nodes": [
+          {"id": "read", "label": "read name x", "kind": "client", "col": 0, "row": 0},
+          {"id": "block", "label": "block scope", "kind": "state", "col": 2, "row": 0, "sub": "let/const in { }"},
+          {"id": "func", "label": "function scope", "kind": "state", "col": 2, "row": 1, "sub": "params and var"},
+          {"id": "module", "label": "module scope", "kind": "state", "col": 2, "row": 2, "sub": "top level of file"},
+          {"id": "global", "label": "global scope", "kind": "state", "col": 2, "row": 3, "sub": "globalThis, Math"},
+          {"id": "err", "label": "ReferenceError", "kind": "bad", "col": 2, "row": 4},
+          {"id": "note", "label": "inner let x", "kind": "note", "col": 4, "row": 0, "sub": "shadows outer x"}
+        ],
+        "edges": [
+          {"from": "read", "to": "block", "label": "try first"},
+          {"from": "block", "to": "func", "label": "not found"},
+          {"from": "func", "to": "module", "label": "not found"},
+          {"from": "module", "to": "global", "label": "not found"},
+          {"from": "global", "to": "err", "label": "not found", "style": "fail"},
+          {"from": "note", "to": "block", "label": "first match wins"}
+        ],
+        "steps": [
+          {"edges": [0], "text": "Every read starts in the innermost environment: the block the code sits in."},
+          {"edges": [1, 2], "text": "If the name is not there, the engine follows the link to the environment the code was **written** inside: the function, then the module."},
+          {"edges": [3, 4], "text": "The global environment comes last. If the name is still missing, the read throws `ReferenceError`."},
+          {"edges": [5], "text": "The first match wins, so a `let x` in an inner block hides any outer `x` for the rest of that block."}
+        ]
+      },
+      {
+        "id": "tsc-tdz",
+        "type": "timeline",
+        "title": "The life of a let binding in a block",
+        "alt": "Timeline of a block that declares const label on its fourth line. At block entry the binding exists but is uninitialised. A read on line two throws ReferenceError. A closure defined on line three is fine because it has not run. Line four initialises the binding and ends the temporal dead zone, after which reads and calls of the closure succeed.",
+        "caption": "The TDZ runs from block entry until the declaration executes; it is about time, not position in the text.",
+        "events": [
+          {"at": "enter block", "label": "Binding `label` is created but uninitialised: the TDZ begins", "kind": "trigger"},
+          {"at": "line 2", "label": "`label` or `typeof label` throws ReferenceError", "kind": "impact"},
+          {"at": "line 3", "label": "`const get = () => label` is fine: the arrow has not run yet", "kind": "detect"},
+          {"at": "line 4", "label": "`const label = 'inner'` executes: the binding is initialised", "kind": "mitigate"},
+          {"at": "line 5 onward", "label": "`label` and `get()` both return 'inner'", "kind": "resolve"}
+        ]
+      },
+      {
+        "id": "tsc-closure",
+        "type": "flow",
+        "title": "Two counters, two private environments",
+        "alt": "Flow diagram. makeCounter is called twice. Each call creates its own environment holding value, one starting at 0 and one at 10. Each call returns a counter object whose next, peek and reset arrows close over that call's environment. The names a and b refer to the two counter objects.",
+        "caption": "Every factory call makes a new environment; the returned functions are the only way to reach it.",
+        "nodes": [
+          {"id": "make", "label": "makeCounter()", "kind": "service", "col": 2, "row": 0, "sub": "called twice"},
+          {"id": "envA", "label": "env A: value", "kind": "storage", "col": 0, "row": 1, "sub": "starts at 0"},
+          {"id": "envB", "label": "env B: value", "kind": "storage", "col": 4, "row": 1, "sub": "starts at 10"},
+          {"id": "objA", "label": "counter A", "kind": "state", "col": 0, "row": 3, "sub": "next/peek/reset"},
+          {"id": "objB", "label": "counter B", "kind": "state", "col": 4, "row": 3, "sub": "next/peek/reset"},
+          {"id": "nameA", "label": "const a", "kind": "client", "col": 0, "row": 5},
+          {"id": "nameB", "label": "const b", "kind": "client", "col": 4, "row": 5}
+        ],
+        "edges": [
+          {"from": "make", "to": "envA", "label": "let value = 0"},
+          {"from": "make", "to": "envB", "label": "let value = 10"},
+          {"from": "make", "to": "objA", "label": "returns"},
+          {"from": "make", "to": "objB", "label": "returns"},
+          {"from": "nameA", "to": "objA"},
+          {"from": "nameB", "to": "objB"},
+          {"from": "objA", "to": "envA", "label": "closes over"},
+          {"from": "objB", "to": "envB", "label": "closes over"}
+        ],
+        "steps": [
+          {"edges": [0, 1], "text": "Each call of `makeCounter` creates a new environment with its own `value`."},
+          {"edges": [2, 3, 4, 5], "text": "Each call returns an object of arrows; `a` and `b` refer to different objects. The factory's call has finished."},
+          {"edges": [6, 7], "text": "The arrows still reference their own environment, so `value` stays alive and private. `a.next()` can never touch B's `value`."}
+        ]
+      },
+      {
+        "id": "tsc-loop",
+        "type": "compare",
+        "title": "var versus let in a loop that makes callbacks",
+        "alt": "Comparison of closures made in a for loop. On the left, with var, three callbacks f0, f1 and f2 all point to one shared variable i whose value is 3 after the loop. On the right, with let, each callback points to its own per-iteration binding holding 0, 1 and 2.",
+        "caption": "var gives the whole function one i; let gives every iteration a fresh binding for its closures.",
+        "before": {
+          "label": "for (var i ...): one binding",
+          "nodes": [
+            {"id": "f0", "label": "f0", "kind": "state", "col": 0, "row": 0},
+            {"id": "f1", "label": "f1", "kind": "state", "col": 0, "row": 1},
+            {"id": "f2", "label": "f2", "kind": "state", "col": 0, "row": 2},
+            {"id": "i", "label": "var i", "kind": "bad", "col": 2, "row": 1, "sub": "3 after the loop"}
+          ],
+          "edges": [
+            {"from": "f0", "to": "i"},
+            {"from": "f1", "to": "i"},
+            {"from": "f2", "to": "i"}
+          ]
+        },
+        "after": {
+          "label": "for (let i ...): one per iteration",
+          "nodes": [
+            {"id": "f0", "label": "f0", "kind": "state", "col": 0, "row": 0},
+            {"id": "f1", "label": "f1", "kind": "state", "col": 0, "row": 1},
+            {"id": "f2", "label": "f2", "kind": "state", "col": 0, "row": 2},
+            {"id": "v0", "label": "i = 0", "kind": "good", "col": 2, "row": 0},
+            {"id": "v1", "label": "i = 1", "kind": "good", "col": 2, "row": 1},
+            {"id": "v2", "label": "i = 2", "kind": "good", "col": 2, "row": 2}
+          ],
+          "edges": [
+            {"from": "f0", "to": "v0"},
+            {"from": "f1", "to": "v1"},
+            {"from": "f2", "to": "v2"}
+          ]
+        }
+      },
+      {
+        "id": "tsc-memo",
+        "type": "sequence",
+        "title": "A call through memoize",
+        "alt": "Sequence diagram with a caller, the memoize wrapper, its Map cache and the paths function body. The first call paths(1,1) builds the key 1,1, misses, runs the body whose recursive calls re-enter the wrapper, and stores the result 2. A second call with the same arguments hits the Map and the body never runs.",
+        "caption": "The wrapper turns the arguments into a string key and checks the Map before running the body.",
+        "actors": [
+          {"id": "caller", "label": "Caller"},
+          {"id": "wrap", "label": "memo wrapper"},
+          {"id": "cache", "label": "Map cache"},
+          {"id": "body", "label": "paths body"}
+        ],
+        "messages": [
+          {"from": "caller", "to": "wrap", "label": "paths(1, 1)"},
+          {"from": "wrap", "to": "cache", "label": "get('1,1')", "note": "keyOf turns the arguments into one string key."},
+          {"from": "cache", "to": "wrap", "label": "undefined: miss", "style": "reply"},
+          {"from": "wrap", "to": "body", "label": "run body"},
+          {"from": "body", "to": "wrap", "label": "paths(0, 1) + paths(1, 0)", "note": "The body calls the memoised const, so recursion is cached too."},
+          {"from": "body", "to": "wrap", "label": "return 2", "style": "reply"},
+          {"from": "wrap", "to": "cache", "label": "set('1,1', { value: 2 })"},
+          {"from": "wrap", "to": "caller", "label": "2", "style": "reply"},
+          {"from": "caller", "to": "wrap", "label": "paths(1, 1) again"},
+          {"from": "wrap", "to": "cache", "label": "get('1,1')"},
+          {"from": "cache", "to": "wrap", "label": "hit: { value: 2 }", "style": "reply"},
+          {"from": "wrap", "to": "caller", "label": "2", "style": "reply", "note": "The body never runs on a hit."}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "runCounters",
+        "starter": "type Op =\n  | [action: 'make', name: string, start?: number, step?: number]\n  | [action: 'next' | 'peek' | 'reset', name: string]\n\ninterface Counter {\n  next(): number\n  peek(): number\n  reset(): number\n}\n\nlet value = 0 // TODO: every counter shares this one variable\n\nfunction makeCounter(start = 0, step = 1): Counter {\n  value = start\n  return {\n    next: () => (value += step),\n    peek: () => value,\n    reset: () => (value = start),\n  }\n}\n\nfunction runCounters(ops: Op[]): (number | null)[] {\n  const counters = new Map<string, Counter>()\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'make') {\n      const [, name, start, step] = op\n      counters.set(name, makeCounter(start, step))\n      continue\n    }\n    const [action, name] = op\n    const counter = counters.get(name)\n    out.push(counter ? counter[action]() : null)\n  }\n  return out\n}\n",
+        "solution": "type Op =\n  | [action: 'make', name: string, start?: number, step?: number]\n  | [action: 'next' | 'peek' | 'reset', name: string]\n\ninterface Counter {\n  next(): number\n  peek(): number\n  reset(): number\n}\n\nfunction makeCounter(start = 0, step = 1): Counter {\n  let value = start\n  return {\n    next: () => (value += step),\n    peek: () => value,\n    reset: () => (value = start),\n  }\n}\n\nfunction runCounters(ops: Op[]): (number | null)[] {\n  const counters = new Map<string, Counter>()\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'make') {\n      const [, name, start, step] = op\n      counters.set(name, makeCounter(start, step))\n      continue\n    }\n    const [action, name] = op\n    const counter = counters.get(name)\n    out.push(counter ? counter[action]() : null)\n  }\n  return out\n}\n",
+        "tests": [
+          {"args": [[["make", "a"], ["next", "a"], ["next", "a"], ["peek", "a"]]], "expected": [1, 2, 2]},
+          {"args": [[["make", "a", 10, 5], ["make", "b"], ["next", "a"], ["next", "b"], ["next", "a"]]], "expected": [15, 1, 20]},
+          {"args": [[["make", "x", 3, 2], ["next", "x"], ["reset", "x"], ["next", "x"]]], "expected": [5, 3, 5]}
+        ],
+        "hiddenTests": [
+          {"args": [[]], "expected": []},
+          {"args": [[["next", "ghost"], ["peek", "ghost"]]], "expected": [null, null]},
+          {"args": [[["make", "d", 0, -3], ["next", "d"], ["next", "d"]]], "expected": [-3, -6]},
+          {"args": [[["make", "a"], ["next", "a"], ["make", "a", 100], ["peek", "a"], ["next", "a"]]], "expected": [1, 100, 101]},
+          {"args": [[["make", "café", 1], ["next", "café"], ["peek", "cafe"]]], "expected": [2, null]},
+          {"args": [[["make", "z", 7, 0], ["next", "z"], ["reset", "z"]]], "expected": [7, 7]},
+          {"args": [[["make", "p", 1], ["make", "q", 1], ["next", "p"], ["next", "p"], ["peek", "q"], ["reset", "p"], ["next", "q"]]], "expected": [2, 3, 1, 1, 2]}
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "squareOnce",
+        "starter": "function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {\n  return (...args: A): R => {\n    let done: { value: R } | undefined // TODO: this memory is lost after every call\n    if (done === undefined) done = { value: fn(...args) }\n    return done.value\n  }\n}\n\nfunction squareOnce(inputs: number[]): { results: number[]; calls: number } {\n  let calls = 0\n  const square = once((x: number): number => {\n    calls++\n    return x * x\n  })\n  const results = inputs.map(x => square(x))\n  return { results, calls }\n}\n",
+        "solution": "function once<A extends unknown[], R>(fn: (...args: A) => R): (...args: A) => R {\n  let done: { value: R } | undefined\n  return (...args: A): R => {\n    if (done === undefined) done = { value: fn(...args) }\n    return done.value\n  }\n}\n\nfunction squareOnce(inputs: number[]): { results: number[]; calls: number } {\n  let calls = 0\n  const square = once((x: number): number => {\n    calls++\n    return x * x\n  })\n  const results = inputs.map(x => square(x))\n  return { results, calls }\n}\n",
+        "tests": [
+          {"args": [[3, 4, 5]], "expected": {"results": [9, 9, 9], "calls": 1}},
+          {"args": [[]], "expected": {"results": [], "calls": 0}}
+        ],
+        "hiddenTests": [
+          {"args": [[7]], "expected": {"results": [49], "calls": 1}},
+          {"args": [[-2, 3]], "expected": {"results": [4, 4], "calls": 1}},
+          {"args": [[0, 6, 0]], "expected": {"results": [0, 0, 0], "calls": 1}},
+          {"args": [[1.5, 1.5]], "expected": {"results": [2.25, 2.25], "calls": 1}},
+          {"args": [[10, 9, 8, 7, 6]], "expected": {"results": [100, 100, 100, 100, 100], "calls": 1}}
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "pathStats",
+        "starter": "function memoize<A extends unknown[], R>(fn: (...args: A) => R, keyOf: (...args: A) => string): (...args: A) => R {\n  const cache = new Map<string, { value: R }>()\n  return (...args: A): R => {\n    const key = String(args[0]) // TODO: use keyOf so every argument is part of the key\n    const hit = cache.get(key)\n    if (hit) return hit.value\n    const value = fn(...args)\n    cache.set(key, { value })\n    return value\n  }\n}\n\nfunction pathStats(queries: [number, number][]): { results: number[]; computed: number } {\n  let computed = 0\n  const paths: (rows: number, cols: number) => number = memoize(\n    (rows: number, cols: number): number => {\n      computed++\n      if (rows < 0 || cols < 0) return 0\n      if (rows === 0 || cols === 0) return 1\n      return paths(rows - 1, cols) + paths(rows, cols - 1)\n    },\n    (rows, cols) => `${rows},${cols}`,\n  )\n  const results = queries.map(([rows, cols]) => paths(rows, cols))\n  return { results, computed }\n}\n",
+        "solution": "function memoize<A extends unknown[], R>(fn: (...args: A) => R, keyOf: (...args: A) => string): (...args: A) => R {\n  const cache = new Map<string, { value: R }>()\n  return (...args: A): R => {\n    const key = keyOf(...args)\n    const hit = cache.get(key)\n    if (hit) return hit.value\n    const value = fn(...args)\n    cache.set(key, { value })\n    return value\n  }\n}\n\nfunction pathStats(queries: [number, number][]): { results: number[]; computed: number } {\n  let computed = 0\n  const paths: (rows: number, cols: number) => number = memoize(\n    (rows: number, cols: number): number => {\n      computed++\n      if (rows < 0 || cols < 0) return 0\n      if (rows === 0 || cols === 0) return 1\n      return paths(rows - 1, cols) + paths(rows, cols - 1)\n    },\n    (rows, cols) => `${rows},${cols}`,\n  )\n  const results = queries.map(([rows, cols]) => paths(rows, cols))\n  return { results, computed }\n}\n",
+        "tests": [
+          {"args": [[[2, 2]]], "expected": {"results": [6], "computed": 8}},
+          {"args": [[[1, 1], [2, 2]]], "expected": {"results": [2, 6], "computed": 8}}
+        ],
+        "hiddenTests": [
+          {"args": [[]], "expected": {"results": [], "computed": 0}},
+          {"args": [[[0, 0]]], "expected": {"results": [1], "computed": 1}},
+          {"args": [[[-1, 3]]], "expected": {"results": [0], "computed": 1}},
+          {"args": [[[3, 3], [3, 3]]], "expected": {"results": [20, 20], "computed": 15}},
+          {"args": [[[1, 2], [2, 1]]], "expected": {"results": [3, 3], "computed": 7}},
+          {"args": [[[0, 5], [5, 0]]], "expected": {"results": [1, 1], "computed": 2}},
+          {"args": [[[16, 16]]], "expected": {"results": [601080390], "computed": 288}}
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const fns: (() => number)[] = []\nfor (var i = 0; i < 3; i++) fns.push(() => i)\nconsole.log(fns.map(f => f()).join(','))",
+        "choices": ["0,1,2", "3,3,3", "2,2,2"],
+        "answer": 1,
+        "explain": "`var i` is one binding for the whole scope. The arrows run after the loop, when `i` is 3: the value that made `i < 3` false."
+      },
+      {
+        "code": "function check(): string {\n  // @ts-expect-error -- TS knows v is read before it is assigned\n  const before = String(v)\n  var v = 1\n  return before + ' ' + v\n}\nconsole.log(check())",
+        "choices": ["undefined 1", "1 1", "ReferenceError"],
+        "answer": 0,
+        "explain": "`var v` is hoisted to the top of the function and initialised to `undefined`; only the assignment `= 1` stays where it is written."
+      },
+      {
+        "code": "const label = 'outer'\nfunction read(): string {\n  let result = 'none'\n  try {\n    // @ts-expect-error -- TS also rejects using label before its declaration\n    result = label\n  } catch (e) {\n    result = e instanceof ReferenceError ? 'ReferenceError' : 'other'\n  }\n  const label = 'inner'\n  return result + ' ' + label\n}\nconsole.log(read())",
+        "choices": ["outer inner", "undefined inner", "ReferenceError inner"],
+        "answer": 2,
+        "explain": "The inner `const label` exists from the start of the function body and shadows the outer one, but it is in the TDZ until its line runs, so the read throws instead of falling back to `'outer'`."
+      },
+      {
+        "code": "if (true) {\n  var a = 1\n  let b = 2\n}\n// @ts-expect-error -- b is not in scope here\nconsole.log(typeof a, typeof b)",
+        "choices": ["number number", "number undefined", "undefined undefined"],
+        "answer": 1,
+        "explain": "`var a` ignores the block, so it is still visible. `let b` ended with the block; `typeof` on a name that does not exist anywhere returns `'undefined'` instead of throwing."
+      },
+      {
+        "code": "// @ts-expect-error -- TS flags notYet as read before assignment\nconsole.log(typeof hoisted, typeof notYet)\nfunction hoisted(): void {}\nvar notYet = function (): void {}",
+        "choices": ["function function", "function undefined", "undefined undefined"],
+        "answer": 1,
+        "explain": "A function declaration is hoisted with its body. `var notYet` is hoisted only as `undefined`; the function expression is assigned when its line runs."
+      },
+      {
+        "code": "function make(): () => number {\n  let n = 0\n  return () => ++n\n}\nconst a = make()\nconst b = make()\na()\na()\nconsole.log(a(), b())",
+        "choices": ["3 1", "3 4", "1 1"],
+        "answer": 0,
+        "explain": "Each call of `make` creates a new environment with its own `n`, so `a` and `b` count independently."
+      },
+      {
+        "code": "let n = 1\nconst read = () => n\nn = 2\nconsole.log(read())",
+        "choices": ["1", "2"],
+        "answer": 1,
+        "explain": "The arrow captures the variable `n`, not the value it had when the arrow was created, so it sees the later assignment."
+      }
+    ],
+    "tip": "When an interviewer shows a `var` loop with `setTimeout`, say the mechanism, not just the fix: 'one function-scoped binding, callbacks run after the loop, `let` creates a binding per iteration'. Then draw the shared box versus three boxes. For a closure factory, point at where the private variable is declared and say 'one environment per call'.",
+    "links": {
+      "problems": ["lru-cache", "stair-ways", "hit-counter-window", "token-bucket-limiter"],
+      "guides": ["clean-code", "edge-case-checklist"],
+      "lessons": ["py-functions-closures", "dp-grid-paths"]
+    }
+  }
+}

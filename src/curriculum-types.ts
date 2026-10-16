@@ -1,6 +1,6 @@
 import type { Diagram } from './guide-types'
 
-export type Track = 'dsa' | 'system-design' | 'ml' | 'ai' | 'behavioral' | 'python'
+export type Track = 'dsa' | 'system-design' | 'ml' | 'ai' | 'behavioral' | 'python' | 'typescript'
 /** Language tracks teach one programming language; lessons there carry a runnable lab. */
 export type LabLanguage = 'py' | 'ts'
 export type PathTag = 'swe' | 'senior'

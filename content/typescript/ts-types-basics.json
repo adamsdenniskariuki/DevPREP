@@ -1,0 +1,1116 @@
+{
+  "id": "ts-types-basics",
+  "track": "typescript",
+  "title": "TypeScript types: structure, unions and narrowing",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How TypeScript decides assignability by shape, when to reach for `type` or `interface`, how unions narrow through checks, why `unknown` beats `any`, and why untrusted JSON still needs runtime validation.",
+  "prerequisites": [
+    "ts-scope-closures"
+  ],
+  "prerequisiteNotes": "You should be comfortable with JavaScript values, `typeof`, functions and closures. Types here describe those same runtime values; nothing new happens at runtime.",
+  "objectives": [
+    "Explain structural typing and predict when an excess property check fires.",
+    "Choose between a `type` alias and an `interface`, and explain declaration merging and `extends` versus `&`.",
+    "Narrow a union with `typeof`, `in`, `instanceof`, equality, truthiness and user-defined type guards, and use `never` for exhaustiveness.",
+    "Treat external data as `unknown` and validate it at runtime, because types are erased by the compiler."
+  ],
+  "concepts": [
+    {
+      "title": "Structural typing and excess property checks",
+      "body": "TypeScript compares **shapes**, not names. A value is assignable to `Named` if it has at least a `name: string`, whatever class or literal produced it; extra properties are fine. The one exception is a **fresh object literal** assigned straight to a typed slot: there an unknown key is almost always a typo, so the compiler reports an **excess property** error. Put the same literal in a variable first and the check no longer applies, because the value is no longer fresh.",
+      "code": "interface Named { name: string }\nclass Person { constructor(public name: string, public age: number) {} }\nfunction greet(who: Named): string { return `hi ${who.name}` }\n\ngreet(new Person('Ada', 36))       // OK: it has a name\nconst pet = { name: 'Rex', legs: 4 }\ngreet(pet)                         // OK: not a fresh literal\ngreet({ name: 'Bo', legs: 2 })     // error: 'legs' does not exist in type 'Named'",
+      "diagram": "tsb-structural"
+    },
+    {
+      "title": "`type` alias or `interface`?",
+      "body": "Both can describe an object shape, and most code could use either. Differences that interviewers probe: an `interface` with the same name declared twice **merges** (that is how libraries let you augment `Window` or a module), while a duplicate `type` is an error. Only a `type` alias can name a union, a tuple, a literal, or a mapped/conditional type. `interface B extends A` checks compatibility **at the declaration** and reports a conflict there; the intersection `A & B` never complains and quietly turns a conflicting property into `never`. A common rule: `interface` for object shapes others extend, `type` for unions and computed types, and be consistent.",
+      "code": "interface Config { title: string }\ninterface Config { width: number }    // merges: Config needs both\n\ntype Id = string | number              // unions need a type alias\ntype Pair = [label: string, score: number]\n\ninterface Base { id: string }\ninterface Clash extends Base { id: number }   // error here, at the declaration\ntype Silent = Base & { id: number }         // id: string & number = never, no error yet",
+      "diagram": "tsb-extends"
+    },
+    {
+      "title": "Unions, literal types and narrowing",
+      "body": "A union `string | number | null` means 'one of these, you do not know which'. You may only use what all members share until you **narrow** with a check the compiler understands: `=== null` or a literal comparison, `typeof x === 'number'`, `'meow' in pet`, `x instanceof Date`, `Array.isArray(x)` or a truthiness test. Each branch sees a smaller type, and after an early `return` the rest of the function sees what is left. Literal types such as `'circle' | 'square'` make **discriminated unions**: switching on a shared `kind` field narrows the whole object. Beware truthiness: `if (!count)` also rejects `0` and `''`.",
+      "code": "function describe(value: string | number | null | Date): string {\n  if (value === null) return 'nothing'                    // equality\n  if (typeof value === 'number') return value.toFixed(1)  // typeof\n  if (value instanceof Date) return value.toISOString()   // instanceof\n  return value.toUpperCase()                              // only string is left\n}\n\ntype Cat = { meow(): string }\ntype Dog = { bark(): string }\nfunction speak(pet: Cat | Dog): string {\n  return 'meow' in pet ? pet.meow() : pet.bark()          // in\n}",
+      "diagram": "tsb-narrow"
+    },
+    {
+      "title": "`unknown`, `any` and `never`",
+      "body": "`any` switches the checker off: every property access and call compiles, and the `any` spreads into everything it touches. `unknown` is the safe top type: anything can be assigned to it, but you can do nothing with it until you narrow. `never` is the bottom type: no value has it. It is the return type of a function that always throws, the type left in a branch the checks have ruled out, and what a conflicting intersection collapses to. Declare `JSON.parse` results, `catch` variables and external input as `unknown`; reaching for `any` is a smell you should be able to justify.",
+      "code": "const a: any = JSON.parse('{}')\na.user.name                 // compiles, throws TypeError at runtime\n\nconst u: unknown = JSON.parse('{}')\n// u.user                   // error: 'u' is of type 'unknown'\nif (typeof u === 'object' && u !== null && 'user' in u) {\n  console.log(u.user)       // OK: u is object & Record<'user', unknown>\n}\n\nfunction fail(message: string): never { throw new Error(message) }",
+      "diagram": "tsb-any-unknown"
+    },
+    {
+      "title": "Types are erased: validate at the boundary",
+      "body": "The compiler checks your code, then **strips every type** and emits plain JavaScript. An `interface` produces no output, and `as User` is a promise you make to the compiler, not a check. So data from the network, storage or a user is whatever it is at runtime: parse it as `unknown` and validate before you trust it. Turn on `\"strict\": true`; it enables `strictNullChecks` (so `null` and `undefined` must be handled), `noImplicitAny` (no silent `any` parameters), `useUnknownInCatchVariables` and more. `noUncheckedIndexedAccess` is not part of `strict` but is worth adding.",
+      "code": "interface User { name: string; age: number }\nconst body = '{\"name\": \"Ada\", \"age\": \"36\"}'\nconst user = JSON.parse(body) as User   // compiles: no runtime check\nconsole.log(user.age + 1)               // \"361\": age is really a string\n\nfunction len(s: string | undefined): number {\n  return s.length   // strictNullChecks: 's' is possibly 'undefined'\n}",
+      "diagram": "tsb-erasure"
+    }
+  ],
+  "example": "type Shape =\n  | { kind: 'circle'; radius: number }\n  | { kind: 'rect'; width: number; height: number }\n\nfunction area(shape: Shape): number {\n  switch (shape.kind) {\n    case 'circle': return Math.PI * shape.radius ** 2\n    case 'rect': return shape.width * shape.height\n    default: {\n      const unreachable: never = shape   // fails to compile if a kind is added\n      return unreachable\n    }\n  }\n}\n\nconsole.log(area({ kind: 'rect', width: 2, height: 3 }))  // 6",
+  "task": "Write `parseUser(input: unknown): ParseResult` that validates untrusted JSON. `input` must be a plain object (not null, not an array), otherwise return `{ ok: false, errors: ['expected an object'] }`. Check fields in this order and collect every problem: `name` must be a string that is non-empty after trimming (`'name: expected a non-empty string'`); `age` must be a non-negative integer number (`'age: expected a non-negative integer'`); `email` is optional (missing or null), otherwise a string containing `@` (`'email: expected a string containing @'`); `tags` is optional, otherwise an array of strings (`'tags: expected an array of strings'`). If any check fails return `{ ok: false, errors }`. Otherwise return `{ ok: true, user }` with the name trimmed, email trimmed and lower-cased (or `null`), tags de-duplicated in first-seen order (or `[]`), and unknown keys dropped. No `any`, no `as`.",
+  "starter": "type User = { name: string; age: number; email: string | null; tags: string[] }\ntype ParseResult = { ok: true; user: User } | { ok: false; errors: string[] }\n\nfunction parseUser(input: unknown): ParseResult {\n  // TODO: narrow `input` step by step; never trust its shape\n  return { ok: false, errors: [] }\n}\n",
+  "hints": [
+    "Start with a guard `isRecord(value: unknown): value is Record<string, unknown>` that rejects `null` and arrays; after it, destructure the four fields as `unknown` constants.",
+    "Narrow each field into a clean local (`cleanName`, `cleanAge: number | null`, ...) and push an error when narrowing fails; build the user only after checking `errors.length === 0`."
+  ],
+  "solution": "type User = { name: string; age: number; email: string | null; tags: string[] }\ntype ParseResult = { ok: true; user: User } | { ok: false; errors: string[] }\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value)\n}\n\nfunction isStringArray(value: unknown): value is string[] {\n  return Array.isArray(value) && value.every(item => typeof item === 'string')\n}\n\nfunction parseUser(input: unknown): ParseResult {\n  if (!isRecord(input)) return { ok: false, errors: ['expected an object'] }\n  const { name, age, email, tags } = input\n  const errors: string[] = []\n\n  const cleanName = typeof name === 'string' ? name.trim() : ''\n  if (cleanName === '') errors.push('name: expected a non-empty string')\n\n  const cleanAge = typeof age === 'number' && Number.isInteger(age) && age >= 0 ? age : null\n  if (cleanAge === null) errors.push('age: expected a non-negative integer')\n\n  let cleanEmail: string | null = null\n  if (email != null) {\n    if (typeof email === 'string' && email.includes('@')) cleanEmail = email.trim().toLowerCase()\n    else errors.push('email: expected a string containing @')\n  }\n\n  let cleanTags: string[] = []\n  if (tags != null) {\n    if (isStringArray(tags)) cleanTags = [...new Set(tags)]\n    else errors.push('tags: expected an array of strings')\n  }\n\n  if (errors.length > 0 || cleanAge === null) return { ok: false, errors }\n  return { ok: true, user: { name: cleanName, age: cleanAge, email: cleanEmail, tags: cleanTags } }\n}\n\nEvery field starts as `unknown`, so the compiler forces a check before each use: `typeof` for primitives, `Number.isInteger` for the integer rule, a custom guard for the string array. `email != null` covers both missing and `null` in one comparison. The final `cleanAge === null` test is redundant at runtime but lets the compiler see that `cleanAge` is a `number` in the success branch. The returned object is built from cleaned locals, so unknown keys never leak through. Time is O(n) in the number of tags.",
+  "checklist": [
+    "My input parameter is `unknown`, and nothing is cast with `as` or typed `any`.",
+    "I reject `null` and arrays even though `typeof` says `'object'` for both.",
+    "I collect all field errors in a fixed order instead of stopping at the first.",
+    "The success object is built from narrowed locals, so extra input keys are dropped."
+  ],
+  "pitfalls": [
+    "Writing `JSON.parse(text) as User` and believing the data is now checked; `as` changes nothing at runtime.",
+    "Using `typeof x === 'object'` alone: `null` and arrays both pass.",
+    "Narrowing with truthiness (`if (!age)`) so that `0` or `''` is treated as missing.",
+    "Using `&` to 'extend' a type with a conflicting property and getting a silent `never` instead of an error.",
+    "Writing a type guard whose body does not actually prove the claim; the compiler trusts `x is T` blindly."
+  ],
+  "walkthrough": [
+    {
+      "title": "Write guards you can trust",
+      "body": "A **user-defined type guard** returns `value is T`; when it returns true the caller sees `T`. The compiler does not verify the body, so keep guards small and exhaustive. An **assertion function** (`asserts value is T`) narrows by throwing instead of returning false, which suits code that cannot continue. Since TypeScript 5.5 simple arrow predicates are inferred: `items.filter(x => x !== null)` already returns a non-null array. Note that `Array.isArray` narrows `unknown` to `any[]`, so wrap it in a guard returning `unknown[]` to stay safe.",
+      "code": "function isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value)\n}\n\nfunction assertString(value: unknown, field: string): asserts value is string {\n  if (typeof value !== 'string') throw new TypeError(`${field} must be a string`)\n}\n\nconst raw: unknown = JSON.parse('{\"id\": \"a1\"}')\nif (isRecord(raw)) {\n  assertString(raw.id, 'id')\n  console.log(raw.id.toUpperCase())   // narrowed to string\n}"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First gate the whole input with `isRecord`, returning the single 'expected an object' error, so the rest can read fields. Second, narrow each field into a clean, precisely typed local and push a message when narrowing fails; never reuse the raw `unknown`. Third, return the error list if it is non-empty, otherwise assemble the `User` from the clean locals. The discriminated `ParseResult` union forces callers to check `result.ok` before touching `result.user`."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Format a nullable value",
+      "prompt": "Write `formatValue(value: string | number | null): string`. Return `'n/a'` for `null` or a string that is blank after trimming. Return other strings trimmed. Return numbers rounded to at most two decimal places with `String(Math.round(value * 100) / 100)`, so `0` becomes `'0'`, not `'n/a'`.",
+      "hints": [
+        "Check `value === null` first; after that the type is `string | number`.",
+        "A `typeof value === 'number'` branch leaves only `string`, where `.trim()` is allowed. Avoid a truthiness test: it would treat `0` as missing."
+      ],
+      "solution": "function formatValue(value: string | number | null): string {\n  if (value === null) return 'n/a'\n  if (typeof value === 'number') return String(Math.round(value * 100) / 100)\n  const trimmed = value.trim()\n  return trimmed === '' ? 'n/a' : trimmed\n}\n",
+      "checklist": [
+        "`0` and `-2.5` are formatted, not treated as missing.",
+        "Blank strings and `null` both give `'n/a'`.",
+        "No branch needs a cast; each check narrows the union."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Tally numbers in nested JSON",
+      "prompt": "Write `tallyNumbers(input: unknown): Tally` returning `{ sum, count, skipped }`. Walk nested arrays and plain-object values to any depth. Every number leaf adds to `sum` and `count`; `null` is ignored; every other leaf (strings, including numeric ones, and booleans) increments `skipped`. Do not use `any`.",
+      "hints": [
+        "Order the checks: `null`/`undefined`, then `typeof 'number'`, then arrays, then plain objects, else skipped.",
+        "`Array.isArray` narrows `unknown` to `any[]`; wrap it in `value is readonly unknown[]`. `Object.values` on a `Record<string, unknown>` returns `unknown[]`."
+      ],
+      "solution": "type Tally = { sum: number; count: number; skipped: number }\n\nfunction isUnknownArray(value: unknown): value is readonly unknown[] {\n  return Array.isArray(value)\n}\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value)\n}\n\nfunction tallyNumbers(input: unknown): Tally {\n  const tally: Tally = { sum: 0, count: 0, skipped: 0 }\n  const visit = (node: unknown): void => {\n    if (node === null || node === undefined) return\n    if (typeof node === 'number') {\n      tally.sum += node\n      tally.count += 1\n    } else if (isUnknownArray(node)) {\n      for (const item of node) visit(item)\n    } else if (isRecord(node)) {\n      for (const item of Object.values(node)) visit(item)\n    } else {\n      tally.skipped += 1\n    }\n  }\n  visit(input)\n  return tally\n}\n",
+      "checklist": [
+        "The string `'7'` is skipped, not summed.",
+        "`null` inside arrays or objects changes nothing.",
+        "Recursion handles any depth and empty containers give zeros."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "If types are erased, how do teams keep runtime validation and static types in sync?",
+      "answer": "Write the schema once and derive the type from it. Schema libraries such as Zod or Valibot validate at runtime and expose an inferred static type, so the guard and the type cannot drift. Hand-written guards work for small cases; generated validators from JSON Schema or OpenAPI work for large ones. Either way, validate at the boundary and use precise types inside."
+    },
+    {
+      "question": "When is `any` acceptable?",
+      "answer": "Rarely: during an incremental JavaScript migration, or at a tiny well-commented interop seam where the type truly cannot be expressed. Even then `unknown` plus a narrowing check is usually possible. `any` disables checking for everything it flows into, so a single `any` can hide errors far away; lint rules such as `no-explicit-any` keep it visible."
+    },
+    {
+      "question": "What is the difference between `const c: Config = {...}` and `const c = {...} satisfies Config`?",
+      "answer": "An annotation widens the variable to `Config`, losing the precise literal types of the value. `satisfies` (TypeScript 4.9+) checks the value against `Config`, including excess property checks, but keeps the narrower inferred type, so `c.mode` stays `'dark'` rather than `string`."
+    }
+  ],
+  "takeaways": [
+    "Assignability is structural; excess property checks apply only to fresh object literals.",
+    "Use `interface` for extendable object shapes and `type` for unions, tuples and computed types; `extends` reports conflicts that `&` hides.",
+    "Narrow unions with `===`, `typeof`, `in`, `instanceof` and guards; use `never` to prove a switch is exhaustive.",
+    "Prefer `unknown` to `any`, and validate untrusted data at runtime: types and `as` vanish when the code runs."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsb-narrow",
+        "type": "flow",
+        "title": "Narrowing string | number | null",
+        "alt": "Flow diagram. A value typed string | number | null enters an equality check against null; the null branch returns 'n/a'. The rest goes to a typeof number check; the number branch rounds the value. What remains can only be a string, which is trimmed, and after every branch has returned the type is never.",
+        "caption": "Each check splits the union. After a branch returns, the code below sees only the members that are left.",
+        "nodes": [
+          {
+            "id": "in",
+            "label": "value",
+            "kind": "state",
+            "col": 0,
+            "row": 1,
+            "sub": "string|number|null"
+          },
+          {
+            "id": "isnull",
+            "label": "=== null ?",
+            "kind": "decision",
+            "col": 1,
+            "row": 1,
+            "sub": "equality"
+          },
+          {
+            "id": "null",
+            "label": "null",
+            "kind": "good",
+            "col": 1,
+            "row": 3,
+            "sub": "return 'n/a'"
+          },
+          {
+            "id": "isnum",
+            "label": "typeof number ?",
+            "kind": "decision",
+            "col": 2,
+            "row": 1,
+            "sub": "string | number"
+          },
+          {
+            "id": "num",
+            "label": "number",
+            "kind": "good",
+            "col": 2,
+            "row": 3,
+            "sub": "round to 2 dp"
+          },
+          {
+            "id": "str",
+            "label": "string",
+            "kind": "good",
+            "col": 3,
+            "row": 1,
+            "sub": "value.trim()"
+          },
+          {
+            "id": "never",
+            "label": "never",
+            "kind": "note",
+            "col": 4,
+            "row": 1,
+            "sub": "nothing left"
+          }
+        ],
+        "edges": [
+          {
+            "from": "in",
+            "to": "isnull"
+          },
+          {
+            "from": "isnull",
+            "to": "null",
+            "label": "true"
+          },
+          {
+            "from": "isnull",
+            "to": "isnum",
+            "label": "false"
+          },
+          {
+            "from": "isnum",
+            "to": "num",
+            "label": "true"
+          },
+          {
+            "from": "isnum",
+            "to": "str",
+            "label": "false"
+          },
+          {
+            "from": "str",
+            "to": "never",
+            "label": "after return",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`value === null` is an equality check. In the true branch the type is exactly `null`, so we return `'n/a'`."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "Past the early return, `null` is gone: the compiler now sees `string | number`."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "`typeof value === 'number'` narrows to `number`, so `Math.round` and arithmetic are allowed."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Only `string` is left, so `.trim()` compiles with no cast."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "If code followed every return, `value` would have type `never`. Assigning it to a `never` variable is how you prove a check is exhaustive."
+          }
+        ]
+      },
+      {
+        "id": "tsb-structural",
+        "type": "flow",
+        "title": "Who can be a Named?",
+        "alt": "Flow diagram. Four values point at the type Named, which needs name: string. A Person instance and a variable holding an object with extra fields are accepted. A Robot instance without a name is rejected. A fresh object literal with an unknown key is rejected by the excess property check.",
+        "caption": "Shape decides, not the class name. Extra fields are fine except on a fresh literal, where they look like typos.",
+        "nodes": [
+          {
+            "id": "person",
+            "label": "new Person()",
+            "kind": "good",
+            "col": 0,
+            "row": 0,
+            "sub": "name, age"
+          },
+          {
+            "id": "var",
+            "label": "variable pet",
+            "kind": "good",
+            "col": 0,
+            "row": 1,
+            "sub": "{ name, legs }"
+          },
+          {
+            "id": "robot",
+            "label": "new Robot()",
+            "kind": "bad",
+            "col": 0,
+            "row": 2,
+            "sub": "id only"
+          },
+          {
+            "id": "fresh",
+            "label": "fresh literal",
+            "kind": "bad",
+            "col": 0,
+            "row": 3,
+            "sub": "{ name, legs }"
+          },
+          {
+            "id": "named",
+            "label": "Named",
+            "kind": "service",
+            "col": 2,
+            "row": 1,
+            "sub": "{ name: string }"
+          }
+        ],
+        "edges": [
+          {
+            "from": "person",
+            "to": "named",
+            "label": "has name: OK"
+          },
+          {
+            "from": "var",
+            "to": "named",
+            "label": "extra keys: OK"
+          },
+          {
+            "from": "robot",
+            "to": "named",
+            "label": "missing name",
+            "style": "fail"
+          },
+          {
+            "from": "fresh",
+            "to": "named",
+            "label": "excess property",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`Person` never mentions `Named`, but it has `name: string`, so it is assignable. No `implements` needed."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "A variable holding `{ name, legs }` is accepted: extra properties are allowed on non-fresh values."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`Robot` lacks `name`, so the shapes do not match and the compiler rejects it."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "The same `{ name, legs }` written inline is a fresh literal: `legs` triggers the excess property check."
+          }
+        ]
+      },
+      {
+        "id": "tsb-extends",
+        "type": "compare",
+        "title": "Intersection versus extends",
+        "alt": "Side-by-side comparison. On the left, type A with id string intersected with type B with id number yields id of type never with no error until a value is created. On the right, interface B extends A with id number fails to compile at the declaration.",
+        "caption": "`extends` reports a conflicting property where you wrote it; `&` quietly produces `never` and fails somewhere else later.",
+        "before": {
+          "label": "A & B: silent never",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "type A",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "{ id: string }"
+            },
+            {
+              "id": "b",
+              "label": "type B",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "{ id: number }"
+            },
+            {
+              "id": "ab",
+              "label": "A & B",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "id: never"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "ab"
+            },
+            {
+              "from": "b",
+              "to": "ab",
+              "label": "no error yet"
+            }
+          ]
+        },
+        "after": {
+          "label": "extends: error up front",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "interface A",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "{ id: string }"
+            },
+            {
+              "id": "b",
+              "label": "B extends A",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "{ id: number }"
+            },
+            {
+              "id": "err",
+              "label": "compile error",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "at the declaration"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "b",
+              "label": "base"
+            },
+            {
+              "from": "b",
+              "to": "err",
+              "label": "id incompatible"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsb-any-unknown",
+        "type": "compare",
+        "title": "any versus unknown for parsed JSON",
+        "alt": "Side-by-side comparison. On the left, JSON.parse returns any, so data.user.name compiles and may throw at runtime, and the any spreads to callers. On the right, the result is unknown, a type guard checks it, and only the true branch sees a User while the false branch returns an error.",
+        "caption": "`any` moves the failure to runtime. `unknown` forces the check up front and gives precise types after it.",
+        "before": {
+          "label": "any: checking switched off",
+          "nodes": [
+            {
+              "id": "parse",
+              "label": "JSON.parse()",
+              "kind": "external",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "data",
+              "label": "data: any",
+              "kind": "bad",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "use",
+              "label": "data.user.name",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "may throw"
+            },
+            {
+              "id": "leak",
+              "label": "any spreads",
+              "kind": "bad",
+              "col": 1,
+              "row": 1,
+              "sub": "callers lose types"
+            }
+          ],
+          "edges": [
+            {
+              "from": "parse",
+              "to": "data"
+            },
+            {
+              "from": "data",
+              "to": "use",
+              "label": "compiles"
+            },
+            {
+              "from": "data",
+              "to": "leak"
+            }
+          ]
+        },
+        "after": {
+          "label": "unknown: narrow first",
+          "nodes": [
+            {
+              "id": "parse",
+              "label": "JSON.parse()",
+              "kind": "external",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "data",
+              "label": "data: unknown",
+              "kind": "state",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "guard",
+              "label": "isUser(data)?",
+              "kind": "decision",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "user",
+              "label": "data: User",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "safe to use"
+            },
+            {
+              "id": "reject",
+              "label": "return error",
+              "kind": "bad",
+              "col": 1,
+              "row": 1
+            }
+          ],
+          "edges": [
+            {
+              "from": "parse",
+              "to": "data"
+            },
+            {
+              "from": "data",
+              "to": "guard"
+            },
+            {
+              "from": "guard",
+              "to": "user",
+              "label": "true"
+            },
+            {
+              "from": "guard",
+              "to": "reject",
+              "label": "false",
+              "style": "fail"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsb-erasure",
+        "type": "sequence",
+        "title": "Compile time versus runtime",
+        "alt": "Sequence diagram. The source file is type-checked by tsc, which reports errors or OK, then emits JavaScript with all types stripped. At runtime untrusted JSON arrives from the network, the code passes it to a type guard, which either confirms the shape or rejects it.",
+        "caption": "Types protect you only until emit. At runtime the only protection is code that checks values.",
+        "actors": [
+          {
+            "id": "src",
+            "label": "your .ts"
+          },
+          {
+            "id": "tsc",
+            "label": "tsc"
+          },
+          {
+            "id": "js",
+            "label": "emitted .js"
+          },
+          {
+            "id": "guard",
+            "label": "type guard"
+          },
+          {
+            "id": "net",
+            "label": "network"
+          }
+        ],
+        "messages": [
+          {
+            "from": "src",
+            "to": "tsc",
+            "label": "type-check (strict)",
+            "note": "Interfaces, unions and generics exist only in this phase."
+          },
+          {
+            "from": "tsc",
+            "to": "src",
+            "label": "errors or OK",
+            "style": "reply"
+          },
+          {
+            "from": "tsc",
+            "to": "js",
+            "label": "emit JS, types erased",
+            "note": "`interface User` compiles to zero bytes; `as User` disappears too."
+          },
+          {
+            "from": "net",
+            "to": "js",
+            "label": "untrusted JSON body",
+            "style": "async",
+            "note": "The payload can be any shape, whatever the types claimed."
+          },
+          {
+            "from": "js",
+            "to": "guard",
+            "label": "isUser(value)"
+          },
+          {
+            "from": "guard",
+            "to": "js",
+            "label": "true: value is User",
+            "style": "reply",
+            "note": "Only now is it safe to read `value.name`."
+          },
+          {
+            "from": "guard",
+            "to": "js",
+            "label": "false: reject",
+            "style": "fail",
+            "note": "Return a validation error instead of crashing deep in the code."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "parseUser",
+        "starter": "type User = { name: string; age: number; email: string | null; tags: string[] }\ntype ParseResult = { ok: true; user: User } | { ok: false; errors: string[] }\n\nfunction parseUser(input: unknown): ParseResult {\n  // TODO: narrow `input` step by step; never trust its shape\n  return { ok: false, errors: [] }\n}\n",
+        "solution": "type User = { name: string; age: number; email: string | null; tags: string[] }\ntype ParseResult = { ok: true; user: User } | { ok: false; errors: string[] }\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value)\n}\n\nfunction isStringArray(value: unknown): value is string[] {\n  return Array.isArray(value) && value.every(item => typeof item === 'string')\n}\n\nfunction parseUser(input: unknown): ParseResult {\n  if (!isRecord(input)) return { ok: false, errors: ['expected an object'] }\n  const { name, age, email, tags } = input\n  const errors: string[] = []\n\n  const cleanName = typeof name === 'string' ? name.trim() : ''\n  if (cleanName === '') errors.push('name: expected a non-empty string')\n\n  const cleanAge = typeof age === 'number' && Number.isInteger(age) && age >= 0 ? age : null\n  if (cleanAge === null) errors.push('age: expected a non-negative integer')\n\n  let cleanEmail: string | null = null\n  if (email != null) {\n    if (typeof email === 'string' && email.includes('@')) cleanEmail = email.trim().toLowerCase()\n    else errors.push('email: expected a string containing @')\n  }\n\n  let cleanTags: string[] = []\n  if (tags != null) {\n    if (isStringArray(tags)) cleanTags = [...new Set(tags)]\n    else errors.push('tags: expected an array of strings')\n  }\n\n  if (errors.length > 0 || cleanAge === null) return { ok: false, errors }\n  return { ok: true, user: { name: cleanName, age: cleanAge, email: cleanEmail, tags: cleanTags } }\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "name": "  Ada ",
+                "age": 36,
+                "email": "Ada@Example.COM",
+                "tags": [
+                  "admin",
+                  "ops",
+                  "admin"
+                ]
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "user": {
+                "name": "Ada",
+                "age": 36,
+                "email": "ada@example.com",
+                "tags": [
+                  "admin",
+                  "ops"
+                ]
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "",
+                "age": "36"
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "name: expected a non-empty string",
+                "age: expected a non-negative integer"
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              null
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "expected an object"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Ada",
+                  "age": 1
+                }
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "expected an object"
+              ]
+            }
+          },
+          {
+            "args": [
+              "Ada"
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "expected an object"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "Zoë ",
+                "age": 0,
+                "email": null,
+                "role": "admin"
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "user": {
+                "name": "Zoë",
+                "age": 0,
+                "email": null,
+                "tags": []
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "Bo",
+                "age": 2.5
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "age: expected a non-negative integer"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "Bo",
+                "age": -1,
+                "email": "bo.example.com",
+                "tags": [
+                  "a",
+                  1
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "age: expected a non-negative integer",
+                "email: expected a string containing @",
+                "tags: expected an array of strings"
+              ]
+            }
+          },
+          {
+            "args": [
+              {}
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "name: expected a non-empty string",
+                "age: expected a non-negative integer"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "Cy",
+                "age": 40,
+                "tags": []
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "user": {
+                "name": "Cy",
+                "age": 40,
+                "email": null,
+                "tags": []
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "name": "   ",
+                "age": true,
+                "tags": "a,b"
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "name: expected a non-empty string",
+                "age: expected a non-negative integer",
+                "tags: expected an array of strings"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "formatValue",
+        "starter": "function formatValue(value: string | number | null): string {\n  // TODO: 0 is a real value; only null and blank strings are missing\n  return value ? String(value) : 'n/a'\n}\n",
+        "solution": "function formatValue(value: string | number | null): string {\n  if (value === null) return 'n/a'\n  if (typeof value === 'number') return String(Math.round(value * 100) / 100)\n  const trimmed = value.trim()\n  return trimmed === '' ? 'n/a' : trimmed\n}\n",
+        "tests": [
+          {
+            "args": [
+              3.14159
+            ],
+            "expected": "3.14"
+          },
+          {
+            "args": [
+              0
+            ],
+            "expected": "0"
+          },
+          {
+            "args": [
+              null
+            ],
+            "expected": "n/a"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              "  hello "
+            ],
+            "expected": "hello"
+          },
+          {
+            "args": [
+              ""
+            ],
+            "expected": "n/a"
+          },
+          {
+            "args": [
+              "   "
+            ],
+            "expected": "n/a"
+          },
+          {
+            "args": [
+              -2.5
+            ],
+            "expected": "-2.5"
+          },
+          {
+            "args": [
+              "0"
+            ],
+            "expected": "0"
+          },
+          {
+            "args": [
+              42
+            ],
+            "expected": "42"
+          },
+          {
+            "args": [
+              " café "
+            ],
+            "expected": "café"
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "tallyNumbers",
+        "starter": "type Tally = { sum: number; count: number; skipped: number }\n\nfunction tallyNumbers(input: unknown): Tally {\n  // TODO: walk arrays and plain objects; count numbers, skip other leaves\n  return { sum: 0, count: 0, skipped: 0 }\n}\n",
+        "solution": "type Tally = { sum: number; count: number; skipped: number }\n\nfunction isUnknownArray(value: unknown): value is readonly unknown[] {\n  return Array.isArray(value)\n}\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value)\n}\n\nfunction tallyNumbers(input: unknown): Tally {\n  const tally: Tally = { sum: 0, count: 0, skipped: 0 }\n  const visit = (node: unknown): void => {\n    if (node === null || node === undefined) return\n    if (typeof node === 'number') {\n      tally.sum += node\n      tally.count += 1\n    } else if (isUnknownArray(node)) {\n      for (const item of node) visit(item)\n    } else if (isRecord(node)) {\n      for (const item of Object.values(node)) visit(item)\n    } else {\n      tally.skipped += 1\n    }\n  }\n  visit(input)\n  return tally\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                1,
+                [
+                  2,
+                  [
+                    3
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "sum": 6,
+              "count": 3,
+              "skipped": 0
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1,
+                "b": {
+                  "c": "2",
+                  "d": [
+                    4,
+                    true
+                  ]
+                }
+              }
+            ],
+            "expected": {
+              "sum": 5,
+              "count": 2,
+              "skipped": 2
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "sum": 0,
+              "count": 0,
+              "skipped": 0
+            }
+          },
+          {
+            "args": [
+              null
+            ],
+            "expected": {
+              "sum": 0,
+              "count": 0,
+              "skipped": 0
+            }
+          },
+          {
+            "args": [
+              7
+            ],
+            "expected": {
+              "sum": 7,
+              "count": 1,
+              "skipped": 0
+            }
+          },
+          {
+            "args": [
+              "7"
+            ],
+            "expected": {
+              "sum": 0,
+              "count": 0,
+              "skipped": 1
+            }
+          },
+          {
+            "args": [
+              [
+                -1.5,
+                -2,
+                {
+                  "x": null,
+                  "y": {}
+                }
+              ]
+            ],
+            "expected": {
+              "sum": -3.5,
+              "count": 2,
+              "skipped": 0
+            }
+          },
+          {
+            "args": [
+              [
+                [
+                  [
+                    [
+                      [
+                        10
+                      ]
+                    ]
+                  ]
+                ],
+                "x",
+                {
+                  "ü": 1,
+                  "n": [
+                    0,
+                    false
+                  ]
+                }
+              ]
+            ],
+            "expected": {
+              "sum": 11,
+              "count": 3,
+              "skipped": 2
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const values: unknown[] = [null, [], () => 1, NaN]\nconsole.log(values.map(v => typeof v).join(' '))",
+        "choices": [
+          "null array function NaN",
+          "object object function number",
+          "null object function number"
+        ],
+        "answer": 1,
+        "explain": "`typeof null` is `'object'` (a historical bug kept for compatibility), arrays are objects, and `NaN` is a number. That is why guards check `value !== null` and `Array.isArray` alongside `typeof`."
+      },
+      {
+        "code": "interface Point { x: number; y: number }\nconst raw: unknown = JSON.parse('{\"x\": \"3\", \"y\": 4}')\nconst p = raw as Point\nconsole.log(p.x + p.y)",
+        "choices": [
+          "7",
+          "34",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "`as Point` is erased; nothing checks the data. `p.x` is really the string `'3'`, so `+` concatenates to `'34'`."
+      },
+      {
+        "code": "function label(count: number | null): string {\n  if (!count) return 'missing'\n  return `n=${count}`\n}\nconsole.log([label(0), label(null), label(2)].join(','))",
+        "choices": [
+          "n=0,missing,n=2",
+          "missing,missing,n=2",
+          "n=0,n=null,n=2"
+        ],
+        "answer": 1,
+        "explain": "Truthiness narrowing removes `null` but also rejects `0`. Use `count === null` when zero is a real value."
+      },
+      {
+        "code": "type Named = { name: string }\nconst extra = { name: 'Ada', role: 'admin' }\nconst a: Named = extra\n// @ts-expect-error excess property check on a fresh literal\nconst b: Named = { name: 'Bo', role: 'dev' }\nconsole.log(Object.keys(a).length, Object.keys(b).length)",
+        "choices": [
+          "1 1",
+          "2 1",
+          "2 2"
+        ],
+        "answer": 2,
+        "explain": "Types never remove properties at runtime. `a` is accepted structurally; `b` is a compile error (suppressed here), but the emitted JavaScript still creates both keys."
+      },
+      {
+        "code": "const settings: { retries?: number } = { retries: 0 }\nconsole.log(settings.retries || 3, settings.retries ?? 3)",
+        "choices": [
+          "0 0",
+          "3 0",
+          "3 3"
+        ],
+        "answer": 1,
+        "explain": "`||` falls back on any falsy value, so `0` becomes `3`. `??` falls back only on `null` or `undefined`, keeping `0`."
+      }
+    ],
+    "tip": "When asked to handle API data, say 'it arrives as `unknown`' and sketch the narrowing flow: object check, then each field, then build the typed result. Mention that types are erased, so `as` is not validation; that one sentence signals real TypeScript experience.",
+    "links": {
+      "problems": [
+        "flatten-nested-iterator",
+        "evaluate-postfix"
+      ],
+      "guides": [
+        "injection-and-xss",
+        "api-error-format",
+        "edge-case-checklist"
+      ],
+      "lessons": [
+        "py-typing",
+        "py-basics"
+      ]
+    }
+  }
+}

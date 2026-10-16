@@ -1,0 +1,1104 @@
+{
+  "id": "ts-equality-coercion",
+  "track": "typescript",
+  "title": "Values, equality and coercion",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How JavaScript copies primitives but shares objects, what `typeof` really reports, how `==`, `===` and `Object.is` differ, which values are falsy, when `??` beats `||`, and the number and sort gotchas TypeScript helps you catch.",
+  "prerequisites": [
+    "ts-scope-closures"
+  ],
+  "prerequisiteNotes": "Comfort with `let`/`const`, functions and closures from ts-scope-closures. No prior knowledge of the coercion rules is assumed.",
+  "objectives": [
+    "Explain that primitives are copied by value while objects are shared by reference, and why `{} === {}` is false.",
+    "Walk through the abstract equality (`==`) algorithm for null, booleans, number/string pairs and objects, and say when `Object.is` differs from `===`.",
+    "List the eight falsy values and choose `??` over `||` whenever 0, `\"\"` or `false` are legitimate values.",
+    "Avoid the number and sort traps: float sums, unsafe integers, global `isNaN`, and `sort()` without a comparator."
+  ],
+  "concepts": [
+    {
+      "title": "Primitives are values, objects are references",
+      "body": "JavaScript has seven primitive types: `string`, `number`, `bigint`, `boolean`, `undefined`, `symbol` and `null`. Primitives are immutable and compared by value, so assigning one copies the value. Everything else (arrays, functions, plain objects, Maps) is an **object**: a variable holds a reference, `b = a` shares it, and `===` compares identity, so two separately built `{ n: 1 }` are never equal. Arguments work the same way (pass by sharing): mutating a parameter object is visible to the caller, reassigning the parameter is not. `Symbol(\"id\") !== Symbol(\"id\")`: each symbol is unique even though it is a primitive.",
+      "code": "const a = { n: 1 }\nconst b = a            // same object, two names\nb.n = 2\nconsole.log(a.n)       // 2\nconst c = { n: 2 }\nconsole.log(a === b, a === c)  // true false\nlet x = 5\nlet y = x              // copies the value\ny++\nconsole.log(x, y)      // 5 6",
+      "diagram": "tse-refs"
+    },
+    {
+      "title": "`typeof` quirks and the eight falsy values",
+      "body": "`typeof null` is `\"object\"` (a bug kept for compatibility), `typeof` a function is `\"function\"`, and arrays are just `\"object\"`, so use `Array.isArray`. `typeof 10n` is `\"bigint\"` and `typeof Symbol()` is `\"symbol\"`. Exactly eight values are **falsy**: `false`, `0`, `-0`, `0n`, `\"\"`, `null`, `undefined` and `NaN`. Everything else is truthy, including `\"0\"`, `\"false\"`, `[]`, `{}` and `new Boolean(false)`. Unlike Python, an empty array is truthy, so test `arr.length === 0`.",
+      "code": "console.log(typeof null, typeof [], typeof (() => 1), typeof 10n)\n// object object function bigint\nconsole.log(Array.isArray([]))               // true\nconst values: unknown[] = [0, -0, 0n, '', null, undefined, NaN, '0', [], {}]\nconsole.log(values.map(v => Boolean(v)).join(' '))\n// false x7, then true true true",
+      "diagram": "tse-falsy"
+    },
+    {
+      "title": "`===`, `==` and `Object.is`",
+      "body": "`===` (strict equality) never converts: different types are unequal, objects compare by identity. `==` (abstract equality) converts first: `null` and `undefined` equal each other and nothing else; a boolean becomes a number; in a number/string pair the string becomes a number; an object compared with a primitive is turned into a primitive (`valueOf`, then `toString`; arrays join with commas). Then it compares again. `Object.is` is `===` with two fixes: `Object.is(NaN, NaN)` is true and `Object.is(0, -0)` is false. `includes`, `Map` and `Set` use SameValueZero (finds NaN, treats ±0 as equal); `indexOf` uses `===` and never finds NaN.",
+      "code": "console.log(0 === -0, Object.is(0, -0))        // true false\nconsole.log([NaN].indexOf(NaN), [NaN].includes(NaN)) // -1 true\nconst v: unknown = null\nconsole.log(v == undefined, v === undefined)    // true false\n// the one common deliberate use of ==: x == null catches null and undefined",
+      "diagram": "tse-loose-eq"
+    },
+    {
+      "title": "`??` versus `||`, and optional chaining",
+      "body": "`a || b` returns `b` whenever `a` is **falsy**, so a real `0`, `\"\"` or `false` is silently replaced. `a ?? b` (nullish coalescing) falls back only for `null` or `undefined`; `??=` assigns only when the target is nullish. You cannot mix `??` with `||`/`&&` without parentheses (it is a SyntaxError). Optional chaining `a?.b.c`, `a?.[k]` and `fn?.()` stops the whole chain and yields `undefined` as soon as the value before `?.` is nullish; it does not swallow errors further down, and it cannot be an assignment target.",
+      "code": "function port(configured: number | null | undefined): number {\n  return configured ?? 8080\n}\nconsole.log(port(0), port(null))   // 0 8080\nconst user: { address?: { city: string } } = {}\nconsole.log(user.address?.city ?? 'unknown')  // unknown",
+      "diagram": "tse-nullish"
+    },
+    {
+      "title": "Number and sort gotchas",
+      "body": "Every `number` is an IEEE 754 double: `0.1 + 0.2` is `0.30000000000000004`, and integers are exact only up to `Number.MAX_SAFE_INTEGER` (2^53 - 1), so `2 ** 53 === 2 ** 53 + 1`. Use integer cents or `bigint` (`10n`) for exact maths; mixing `bigint` and `number` in arithmetic throws a TypeError. Global `isNaN(\"abc\")` coerces and returns true; `Number.isNaN` does not coerce. `Number(\"12px\")` is NaN but `parseInt(\"12px\", 10)` is 12, and `Number(\"\")` is 0. Finally, `sort()` with no comparator converts elements to strings and orders by UTF-16 code units, so `[10, 9, 1].sort()` gives `[1, 10, 9]`. It also sorts in place; `toSorted` (ES2023) returns a copy.",
+      "code": "console.log(0.1 + 0.2 === 0.3, Math.abs(0.1 + 0.2 - 0.3) < Number.EPSILON)  // false true\nconsole.log(Number.isSafeInteger(2 ** 53))    // false\nconsole.log(2n ** 64n)                         // 18446744073709551616n\nconsole.log(Number.isNaN('abc'))               // false\nconsole.log([10, 9, 1].toSorted((a, b) => a - b).join(','))  // 1,9,10",
+      "diagram": "tse-sort"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Implementing `==` by hand",
+      "body": "Order the checks the way the algorithm resolves them. Handle `null` first, because `typeof null` is `\"object\"` and would otherwise be treated as an object. Next, if both sides have the same `typeof`, the answer is just `===`. Otherwise convert one side and **recurse**: a boolean becomes a number, a string facing a number becomes a number, an object facing a primitive becomes a string via `String(obj)`. Recursion is what makes `[] == false` true: false becomes 0, `[]` becomes `\"\"`, and `\"\"` becomes 0."
+    },
+    {
+      "title": "Let TypeScript catch the trap",
+      "body": "Under `strict`, many of these bugs never compile. `1 == \"1\"` with known types is error TS2367 (the types have no overlap); `x === NaN` is TS2845, which suggests `Number.isNaN`; `1n + 1` is rejected; `strictNullChecks` forces you to handle `undefined` before using a value, which pushes you toward `?.` and `??`. When a snippet needs the loose behaviour on purpose, route the value through `unknown` or mark the line with `// @ts-expect-error`, which also fails the build if the error ever disappears. TypeScript does **not** catch `||` swallowing 0, or `sort()` without a comparator on numbers."
+    }
+  ],
+  "example": "function countBy(words: string[]): Record<string, number> {\n  const counts: Record<string, number> = {}\n  for (const word of words) {\n    counts[word] = (counts[word] ?? 0) + 1   // missing key is undefined, so ?? supplies 0\n  }\n  return counts\n}\n\nconsole.log(JSON.stringify(countBy(['a', 'b', 'a'])))  // {\"a\":2,\"b\":1}\nconsole.log([3, 20, 100].toSorted((x, y) => x - y).join(','))  // 3,20,100",
+  "task": "Write `looseEqual(a, b)` for JSON values (`null`, booleans, numbers, strings, arrays and plain objects) that returns exactly what `a == b` would, without using `==` or `!=`. Two separate arrays or objects are never equal; an array compared with a primitive is first turned into its comma-joined string, and a plain object into `\"[object Object]\"`.",
+  "starter": "type Json = null | boolean | number | string | Json[] | { [key: string]: Json }\n\nfunction looseEqual(a: Json, b: Json): boolean {\n  // TODO: reproduce a == b without using == (null, booleans, number/string, objects)\n  return a === b\n}\n",
+  "hints": [
+    "Check `null` before anything else: `typeof null` is `\"object\"`, and null is only loosely equal to null (or undefined).",
+    "When the `typeof`s differ, convert exactly one side (boolean → `Number`, string facing a number → `Number`, object → `String`) and call `looseEqual` again."
+  ],
+  "solution": "type Json = null | boolean | number | string | Json[] | { [key: string]: Json }\n\nfunction looseEqual(a: Json, b: Json): boolean {\n  // null only loosely equals null (or undefined, which JSON cannot carry)\n  if (a === null || b === null) return a === b\n  // same type: plain strict equality (objects compare by identity)\n  if (typeof a === typeof b) return a === b\n  // a boolean side becomes a number first, then we compare again\n  if (typeof a === 'boolean') return looseEqual(Number(a), b)\n  if (typeof b === 'boolean') return looseEqual(a, Number(b))\n  // number vs string: the string becomes a number\n  if (typeof a === 'number' && typeof b === 'string') return a === Number(b)\n  if (typeof a === 'string' && typeof b === 'number') return Number(a) === b\n  // object vs primitive: ToPrimitive (arrays join, plain objects give \"[object Object]\")\n  if (typeof a === 'object') return looseEqual(String(a), b)\n  if (typeof b === 'object') return looseEqual(a, String(b))\n  return false\n}\n\nEach call either answers directly or converts one side and recurses; every conversion moves towards a primitive, so the recursion is at most three levels deep (for example `[] == false` → `[] == 0` → `\"\" == 0` → `0 === 0`). Time is O(size of the array being stringified). The same-`typeof` check doubles as identity comparison for objects, which is exactly what `==` does when both sides are objects.",
+  "checklist": [
+    "I handle `null` before relying on `typeof` returning `\"object\"`.",
+    "Same-type comparisons use `===`, so two distinct arrays are unequal.",
+    "Booleans are converted to numbers before any other conversion.",
+    "Objects become primitives with `String(...)` and the comparison recurses."
+  ],
+  "pitfalls": [
+    "Using `||` for defaults when 0, `\"\"` or `false` are valid values; use `??`.",
+    "Testing `typeof x === \"object\"` and forgetting that null passes; arrays pass too.",
+    "Comparing with `x === NaN` (always false); use `Number.isNaN(x)`.",
+    "Calling `nums.sort()` on numbers and getting string order.",
+    "Expecting `{ a: 1 } === { a: 1 }` or `[1] === [1]` to be true.",
+    "Summing money as floats, or using numbers above 2^53 - 1 as IDs."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Defaults that respect zero",
+      "prompt": "Write `resolveSettings(input)` where every field of `{ retries, label, verbose }` may be missing or `null`. Fill in defaults 3, `\"default\"` and `true`, but keep any value the caller actually supplied, including `0`, `\"\"` and `false`.",
+      "hints": [
+        "`input.retries || 3` turns a deliberate 0 into 3.",
+        "`??` falls back only for `null` and `undefined`."
+      ],
+      "solution": "interface Settings { retries: number; label: string; verbose: boolean }\ntype SettingsInput = { [K in keyof Settings]?: Settings[K] | null }\n\nfunction resolveSettings(input: SettingsInput): Settings {\n  return {\n    retries: input.retries ?? 3,\n    label: input.label ?? 'default',\n    verbose: input.verbose ?? true,\n  }\n}\n",
+      "checklist": [
+        "0, \"\" and false survive.",
+        "Missing and null fields both get the default."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Exact money sums",
+      "prompt": "Write `addMoney(amounts)` that adds decimal strings such as `\"12\"`, `\"0.1\"` or `\"-3.07\"` (at most two decimals) and returns the exact total with exactly two decimals, e.g. `\"0.30\"`. An empty list gives `\"0.00\"`. Totals may exceed `Number.MAX_SAFE_INTEGER` cents.",
+      "hints": [
+        "Parse each amount into whole cents as a `bigint` so nothing is rounded.",
+        "Format at the end: sign, `abs / 100n`, a dot, and `abs % 100n` padded to two digits."
+      ],
+      "solution": "function toCents(amount: string): bigint {\n  const match = /^(-?)(\\d+)(?:\\.(\\d{1,2}))?$/.exec(amount)\n  if (!match) throw new Error(`bad amount: ${amount}`)\n  const [, sign, whole, fraction = ''] = match\n  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))\n  return sign === '-' ? -cents : cents\n}\n\nfunction addMoney(amounts: string[]): string {\n  const total = amounts.reduce((sum, amount) => sum + toCents(amount), 0n)\n  const negative = total < 0n\n  const abs = negative ? -total : total\n  const cents = (abs % 100n).toString().padStart(2, '0')\n  return `${negative ? '-' : ''}${abs / 100n}.${cents}`\n}\n",
+      "checklist": [
+        "0.1 + 0.2 gives \"0.30\", not a float artefact.",
+        "Negative totals keep their sign, including \"-0.05\".",
+        "Large totals stay exact."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why is `[] == ![]` true?",
+      "answer": "`![]` is `false` because every object is truthy. Then `[] == false`: the boolean becomes 0, the array becomes the primitive `\"\"` (empty join), and `\"\"` becomes 0, so `0 === 0`. It is a neat demonstration that `==` is not even consistent with truthiness."
+    },
+    {
+      "question": "Is there ever a good reason to use `==`?",
+      "answer": "One: `x == null` is true for exactly `null` and `undefined`, a compact nullish check that many lint configs allow (`eqeqeq` with the null exception). Everywhere else use `===`, so reviewers never have to run the coercion algorithm in their heads."
+    },
+    {
+      "question": "How would you compare two objects for equality?",
+      "answer": "There is no built-in deep equality. Write a recursive structural compare (same key set, equal values, `Object.is` for leaves if NaN matters) or use a tested library. `JSON.stringify(a) === JSON.stringify(b)` is fragile: key order matters, `undefined` and functions vanish, NaN becomes null, and Maps serialize as `{}`."
+    },
+    {
+      "question": "How do you handle IDs larger than 2^53?",
+      "answer": "Keep them as strings end to end, or parse to `bigint` when you need arithmetic. `JSON.parse` turns large numeric literals into rounded doubles, so a 64-bit ID from an API must arrive as a string to stay exact."
+    }
+  ],
+  "takeaways": [
+    "Primitives are copied by value; objects are shared by reference and `===` compares identity.",
+    "Exactly eight values are falsy: false, 0, -0, 0n, \"\", null, undefined and NaN.",
+    "Use `===` everywhere, `x == null` at most, and `Object.is` when NaN or -0 matter.",
+    "`??` defaults only on null/undefined; `||` also clobbers 0, \"\" and false.",
+    "Doubles are inexact past 2^53 - 1 and for most decimals; `sort()` without a comparator compares strings."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tse-refs",
+        "type": "flow",
+        "title": "Shared object, copied number",
+        "alt": "Memory diagram. Variables a and b both point to one object holding n: 2. Variable c points to a different object that also holds n: 2. Variables x and y each hold their own copy of a number, 5 and 6.",
+        "caption": "Objects are shared through references and compared by identity; primitives are copied, so changing y never touches x.",
+        "nodes": [
+          {
+            "id": "a",
+            "label": "const a",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "b",
+            "label": "const b",
+            "kind": "state",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "obj",
+            "label": "object #1",
+            "kind": "storage",
+            "col": 2,
+            "row": 0,
+            "sub": "{ n: 2 }"
+          },
+          {
+            "id": "c",
+            "label": "const c",
+            "kind": "state",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "obj2",
+            "label": "object #2",
+            "kind": "storage",
+            "col": 2,
+            "row": 2,
+            "sub": "{ n: 2 }"
+          },
+          {
+            "id": "x",
+            "label": "let x",
+            "kind": "state",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "five",
+            "label": "5",
+            "kind": "storage",
+            "col": 2,
+            "row": 4,
+            "sub": "own copy"
+          },
+          {
+            "id": "y",
+            "label": "let y",
+            "kind": "state",
+            "col": 0,
+            "row": 5
+          },
+          {
+            "id": "six",
+            "label": "6",
+            "kind": "storage",
+            "col": 2,
+            "row": 5,
+            "sub": "copied, then y++"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "obj",
+            "label": "a = { n: 1 }"
+          },
+          {
+            "from": "b",
+            "to": "obj",
+            "label": "b = a"
+          },
+          {
+            "from": "c",
+            "to": "obj2",
+            "label": "c = { n: 2 }"
+          },
+          {
+            "from": "x",
+            "to": "five",
+            "label": "x = 5"
+          },
+          {
+            "from": "y",
+            "to": "six",
+            "label": "y = x; y++"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`b = a` copies the reference, not the object. `b.n = 2` changes the one object both names reach, so `a.n` is 2 and `a === b` is true."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`c` points at a different object with the same contents. `a === c` is false: `===` on objects compares identity, never contents."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "Numbers are primitives. `y = x` copies the value 5, so `y++` changes only y."
+          }
+        ]
+      },
+      {
+        "id": "tse-falsy",
+        "type": "bars",
+        "title": "The eight falsy values, by typeof",
+        "alt": "Bar chart counting falsy values per typeof result. number has three (0, -0, NaN); bigint, string, boolean, undefined and object (null) have one each. Eight in total.",
+        "caption": "Memorise the list, not a rule: three numbers plus one each of 0n, \"\", false, undefined and null. Every other value, including [] and \"0\", is truthy.",
+        "unit": "falsy values",
+        "bars": [
+          {
+            "label": "number: 0 -0 NaN",
+            "value": 3,
+            "highlight": true
+          },
+          {
+            "label": "bigint: 0n",
+            "value": 1
+          },
+          {
+            "label": "string: \"\"",
+            "value": 1
+          },
+          {
+            "label": "boolean: false",
+            "value": 1
+          },
+          {
+            "label": "undefined",
+            "value": 1
+          },
+          {
+            "label": "object: null",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "id": "tse-loose-eq",
+        "type": "flow",
+        "title": "How a == b decides",
+        "alt": "Decision flow for abstract equality. If both sides have the same type, use strict equality. If either side is null or undefined, the result is true only when both are. A boolean side becomes a number. In a number and string pair the string becomes a number. An object facing a primitive becomes a primitive. Each conversion loops back to compare again; anything else is false.",
+        "caption": "Every conversion moves one side towards a number and compares again. That recursion is why [] == false ends up as 0 === 0.",
+        "nodes": [
+          {
+            "id": "same",
+            "label": "Same type?",
+            "kind": "decision",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "strict",
+            "label": "Use ===",
+            "kind": "good",
+            "col": 2,
+            "row": 0,
+            "sub": "objects: identity"
+          },
+          {
+            "id": "nul",
+            "label": "null/undefined?",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "both",
+            "label": "true if both",
+            "kind": "good",
+            "col": 2,
+            "row": 1,
+            "sub": "one only: false"
+          },
+          {
+            "id": "bool",
+            "label": "Boolean side?",
+            "kind": "decision",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "tonum",
+            "label": "ToNumber(bool)",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "then compare again"
+          },
+          {
+            "id": "numstr",
+            "label": "number & string?",
+            "kind": "decision",
+            "col": 0,
+            "row": 3
+          },
+          {
+            "id": "strnum",
+            "label": "ToNumber(string)",
+            "kind": "state",
+            "col": 2,
+            "row": 3,
+            "sub": "then compare again"
+          },
+          {
+            "id": "objprim",
+            "label": "object vs prim?",
+            "kind": "decision",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "toprim",
+            "label": "ToPrimitive(obj)",
+            "kind": "state",
+            "col": 2,
+            "row": 4,
+            "sub": "valueOf, toString"
+          },
+          {
+            "id": "no",
+            "label": "false",
+            "kind": "bad",
+            "col": 0,
+            "row": 5,
+            "sub": "e.g. symbol vs 1"
+          }
+        ],
+        "edges": [
+          {
+            "from": "same",
+            "to": "strict",
+            "label": "yes"
+          },
+          {
+            "from": "same",
+            "to": "nul",
+            "label": "no"
+          },
+          {
+            "from": "nul",
+            "to": "both",
+            "label": "yes"
+          },
+          {
+            "from": "nul",
+            "to": "bool",
+            "label": "no"
+          },
+          {
+            "from": "bool",
+            "to": "tonum",
+            "label": "yes"
+          },
+          {
+            "from": "bool",
+            "to": "numstr",
+            "label": "no"
+          },
+          {
+            "from": "numstr",
+            "to": "strnum",
+            "label": "yes"
+          },
+          {
+            "from": "numstr",
+            "to": "objprim",
+            "label": "no"
+          },
+          {
+            "from": "objprim",
+            "to": "toprim",
+            "label": "yes"
+          },
+          {
+            "from": "objprim",
+            "to": "no",
+            "label": "no"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Same type: `==` behaves exactly like `===`. Two arrays are equal only if they are the same array."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "`null == undefined` is true, but `null == 0` and `null == false` are false: null is not converted to a number here."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "A boolean side is converted first: `\"1\" == true` becomes `\"1\" == 1`, then the string rule applies."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "Number versus string: the string becomes a number, so `\"\" == 0` and `\" 12 \" == 12` are both true."
+          },
+          {
+            "edges": [
+              7,
+              8
+            ],
+            "text": "Object versus primitive: `[1, 2] == \"1,2\"` is true because the array joins to \"1,2\". A plain object becomes \"[object Object]\"."
+          },
+          {
+            "edges": [
+              9
+            ],
+            "text": "Anything left over (for example a symbol versus a number) is false."
+          }
+        ]
+      },
+      {
+        "id": "tse-nullish",
+        "type": "compare",
+        "title": "Defaults with || versus ??",
+        "alt": "Side-by-side comparison. With x || 8080, the inputs 0, empty string and null all fall through to the default 8080. With x ?? 8080, 0 and the empty string are kept and only null falls through to 8080.",
+        "caption": "|| treats every falsy value as missing. ?? treats only null and undefined as missing, so deliberate zeros and empty strings survive.",
+        "before": {
+          "label": "x || 8080: any falsy value replaced",
+          "nodes": [
+            {
+              "id": "zero",
+              "label": "x = 0",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "empty",
+              "label": "x = ''",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "nil",
+              "label": "x = null",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "def",
+              "label": "8080",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "input lost"
+            }
+          ],
+          "edges": [
+            {
+              "from": "zero",
+              "to": "def"
+            },
+            {
+              "from": "empty",
+              "to": "def"
+            },
+            {
+              "from": "nil",
+              "to": "def"
+            }
+          ]
+        },
+        "after": {
+          "label": "x ?? 8080: only nullish replaced",
+          "nodes": [
+            {
+              "id": "zero",
+              "label": "x = 0",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "empty",
+              "label": "x = ''",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "nil",
+              "label": "x = null",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "keep0",
+              "label": "0",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "kept"
+            },
+            {
+              "id": "keepe",
+              "label": "''",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "kept"
+            },
+            {
+              "id": "def",
+              "label": "8080",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "default"
+            }
+          ],
+          "edges": [
+            {
+              "from": "zero",
+              "to": "keep0"
+            },
+            {
+              "from": "empty",
+              "to": "keepe"
+            },
+            {
+              "from": "nil",
+              "to": "def"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tse-sort",
+        "type": "sequence",
+        "title": "Why [10, 9, 1].sort() gives [1, 10, 9]",
+        "alt": "Sequence diagram. Code calls sort on the array 10, 9, 1 with no comparator. Sort converts each element to a string and compares them by UTF-16 code units, so \"10\" sorts before \"9\". The array is mutated to 1, 10, 9. A second call with the comparator (a, b) => a - b returns 1, 9, 10.",
+        "caption": "Always pass a comparator for numbers. Without one, sort compares strings character by character.",
+        "actors": [
+          {
+            "id": "code",
+            "label": "Your code"
+          },
+          {
+            "id": "sort",
+            "label": "Array.sort"
+          },
+          {
+            "id": "cmp",
+            "label": "Comparison"
+          }
+        ],
+        "messages": [
+          {
+            "from": "code",
+            "to": "sort",
+            "label": "[10, 9, 1].sort()",
+            "note": "No comparator supplied."
+          },
+          {
+            "from": "sort",
+            "to": "cmp",
+            "label": "compare '10' and '9'",
+            "note": "Each element is converted with String(); undefined is moved to the end."
+          },
+          {
+            "from": "cmp",
+            "to": "sort",
+            "label": "'1' (49) < '9' (57)",
+            "style": "reply",
+            "note": "Strings compare by UTF-16 code units, first character first."
+          },
+          {
+            "from": "sort",
+            "to": "code",
+            "label": "[1, 10, 9]",
+            "style": "reply",
+            "note": "Sorted in place: the original array is mutated and returned."
+          },
+          {
+            "from": "code",
+            "to": "sort",
+            "label": "sort((a, b) => a - b)"
+          },
+          {
+            "from": "sort",
+            "to": "cmp",
+            "label": "10 - 9 = 1 > 0",
+            "note": "Negative: a first. Positive: b first. Zero: keep order (sort is stable)."
+          },
+          {
+            "from": "sort",
+            "to": "code",
+            "label": "[1, 9, 10]",
+            "style": "reply"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "looseEqual",
+        "starter": "type Json = null | boolean | number | string | Json[] | { [key: string]: Json }\n\nfunction looseEqual(a: Json, b: Json): boolean {\n  // TODO: reproduce a == b without using == (null, booleans, number/string, objects)\n  return a === b\n}\n",
+        "solution": "type Json = null | boolean | number | string | Json[] | { [key: string]: Json }\n\nfunction looseEqual(a: Json, b: Json): boolean {\n  // null only loosely equals null (or undefined, which JSON cannot carry)\n  if (a === null || b === null) return a === b\n  // same type: plain strict equality (objects compare by identity)\n  if (typeof a === typeof b) return a === b\n  // a boolean side becomes a number first, then we compare again\n  if (typeof a === 'boolean') return looseEqual(Number(a), b)\n  if (typeof b === 'boolean') return looseEqual(a, Number(b))\n  // number vs string: the string becomes a number\n  if (typeof a === 'number' && typeof b === 'string') return a === Number(b)\n  if (typeof a === 'string' && typeof b === 'number') return Number(a) === b\n  // object vs primitive: ToPrimitive (arrays join, plain objects give \"[object Object]\")\n  if (typeof a === 'object') return looseEqual(String(a), b)\n  if (typeof b === 'object') return looseEqual(a, String(b))\n  return false\n}\n",
+        "tests": [
+          {
+            "args": [
+              1,
+              "1"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              null,
+              0
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              0,
+              ""
+            ],
+            "expected": true
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              false
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "0",
+              false
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              null,
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              null,
+              null
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              [
+                1,
+                2
+              ],
+              "1,2"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              [
+                [
+                  1
+                ],
+                [
+                  2,
+                  3
+                ]
+              ],
+              "1,2,3"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              [],
+              []
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              "[object Object]"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              " 12\n",
+              12
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "1e3",
+              1000
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              true,
+              "true"
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              "abc",
+              "abc"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              "é",
+              "é"
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              0,
+              0
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              [
+                null
+              ],
+              ""
+            ],
+            "expected": true
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "resolveSettings",
+        "starter": "interface Settings { retries: number; label: string; verbose: boolean }\ntype SettingsInput = { [K in keyof Settings]?: Settings[K] | null }\n\nfunction resolveSettings(input: SettingsInput): Settings {\n  // TODO: 0, '' and false are real choices; only a missing value gets the default\n  return {\n    retries: input.retries || 3,\n    label: input.label || 'default',\n    verbose: input.verbose || true,\n  }\n}\n",
+        "solution": "interface Settings { retries: number; label: string; verbose: boolean }\ntype SettingsInput = { [K in keyof Settings]?: Settings[K] | null }\n\nfunction resolveSettings(input: SettingsInput): Settings {\n  return {\n    retries: input.retries ?? 3,\n    label: input.label ?? 'default',\n    verbose: input.verbose ?? true,\n  }\n}\n",
+        "tests": [
+          {
+            "args": [
+              {}
+            ],
+            "expected": {
+              "retries": 3,
+              "label": "default",
+              "verbose": true
+            }
+          },
+          {
+            "args": [
+              {
+                "retries": 0,
+                "label": "",
+                "verbose": false
+              }
+            ],
+            "expected": {
+              "retries": 0,
+              "label": "",
+              "verbose": false
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "retries": null,
+                "label": null,
+                "verbose": null
+              }
+            ],
+            "expected": {
+              "retries": 3,
+              "label": "default",
+              "verbose": true
+            }
+          },
+          {
+            "args": [
+              {
+                "retries": 5
+              }
+            ],
+            "expected": {
+              "retries": 5,
+              "label": "default",
+              "verbose": true
+            }
+          },
+          {
+            "args": [
+              {
+                "retries": -1,
+                "verbose": false
+              }
+            ],
+            "expected": {
+              "retries": -1,
+              "label": "default",
+              "verbose": false
+            }
+          },
+          {
+            "args": [
+              {
+                "label": "héllo ✓"
+              }
+            ],
+            "expected": {
+              "retries": 3,
+              "label": "héllo ✓",
+              "verbose": true
+            }
+          },
+          {
+            "args": [
+              {
+                "label": "",
+                "retries": null
+              }
+            ],
+            "expected": {
+              "retries": 3,
+              "label": "",
+              "verbose": true
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "addMoney",
+        "starter": "function addMoney(amounts: string[]): string {\n  // TODO: floats lose cents; work in exact integer cents instead\n  return String(amounts.reduce((sum, amount) => sum + Number(amount), 0))\n}\n",
+        "solution": "function toCents(amount: string): bigint {\n  const match = /^(-?)(\\d+)(?:\\.(\\d{1,2}))?$/.exec(amount)\n  if (!match) throw new Error(`bad amount: ${amount}`)\n  const [, sign, whole, fraction = ''] = match\n  const cents = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))\n  return sign === '-' ? -cents : cents\n}\n\nfunction addMoney(amounts: string[]): string {\n  const total = amounts.reduce((sum, amount) => sum + toCents(amount), 0n)\n  const negative = total < 0n\n  const abs = negative ? -total : total\n  const cents = (abs % 100n).toString().padStart(2, '0')\n  return `${negative ? '-' : ''}${abs / 100n}.${cents}`\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "0.10",
+                "0.20"
+              ]
+            ],
+            "expected": "0.30"
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": "0.00"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                "-0.05"
+              ]
+            ],
+            "expected": "-0.05"
+          },
+          {
+            "args": [
+              [
+                "12",
+                "0.5",
+                "-2.25"
+              ]
+            ],
+            "expected": "10.25"
+          },
+          {
+            "args": [
+              [
+                "90071992547409.91",
+                "0.02"
+              ]
+            ],
+            "expected": "90071992547409.93"
+          },
+          {
+            "args": [
+              [
+                "1.10",
+                "-1.10"
+              ]
+            ],
+            "expected": "0.00"
+          },
+          {
+            "args": [
+              [
+                "0.1",
+                "0.1",
+                "0.1"
+              ]
+            ],
+            "expected": "0.30"
+          },
+          {
+            "args": [
+              [
+                "-3",
+                "-4.5"
+              ]
+            ],
+            "expected": "-7.50"
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "console.log([typeof null, typeof [], typeof (() => 1), typeof 10n].join(' '))",
+        "choices": [
+          "null array function bigint",
+          "object object function bigint",
+          "object array object number",
+          "null object function number"
+        ],
+        "answer": 1,
+        "explain": "`typeof null` is the historical \"object\" bug, arrays are objects (use `Array.isArray`), functions get their own \"function\" tag, and bigint literals report \"bigint\"."
+      },
+      {
+        "code": "// @ts-expect-error -- TS2367: number and string have no overlap\nconst a = 0 == ''\nconst b = (null as unknown) == 0\nconst c = (null as unknown) == undefined\n// @ts-expect-error -- string and number[] have no overlap\nconst d = '1,2' == [1, 2]\nconsole.log(a, b, c, d)",
+        "choices": [
+          "true false true true",
+          "true true true false",
+          "false false true false",
+          "true false false true"
+        ],
+        "answer": 0,
+        "explain": "`\"\"` becomes 0, so `0 == \"\"`. null loosely equals only null and undefined, so `null == 0` is false. The array becomes the string \"1,2\". Note that TypeScript rejects two of these lines outright: that is the compiler protecting you."
+      },
+      {
+        "code": "function show(n: number | null, s: string | undefined): string {\n  return JSON.stringify([n || 10, n ?? 10, s || 'none', s ?? 'none'])\n}\nconsole.log(show(0, ''))",
+        "choices": [
+          "[10,0,\"none\",\"\"]",
+          "[0,0,\"\",\"\"]",
+          "[10,10,\"none\",\"none\"]",
+          "[0,10,\"\",\"none\"]"
+        ],
+        "answer": 0,
+        "explain": "`||` replaces any falsy value, so 0 → 10 and \"\" → \"none\". `??` replaces only null/undefined, so the deliberate 0 and \"\" are kept."
+      },
+      {
+        "code": "const x = NaN\n// @ts-expect-error -- TS2845: this condition will always return 'false'\nconst same = x === NaN\nconsole.log(same, Object.is(x, NaN), 0 === -0, Object.is(0, -0))",
+        "choices": [
+          "false true true false",
+          "true true true true",
+          "false false true true",
+          "false true false false"
+        ],
+        "answer": 0,
+        "explain": "NaN is never `===` to anything, itself included; TypeScript even flags the comparison and suggests `Number.isNaN`. `Object.is` fixes both edge cases: NaN equals NaN, and 0 differs from -0."
+      },
+      {
+        "code": "const nums = [10, 9, 1, 100]\nconst sorted = nums.sort()\nconsole.log(sorted.join(','), sorted === nums)",
+        "choices": [
+          "1,9,10,100 false",
+          "1,10,100,9 true",
+          "1,10,100,9 false",
+          "1,9,10,100 true"
+        ],
+        "answer": 1,
+        "explain": "Without a comparator, elements are compared as strings: \"1\" < \"10\" < \"100\" < \"9\". `sort` mutates in place and returns the same array, so `sorted === nums`. Use `toSorted((a, b) => a - b)` for a sorted copy."
+      },
+      {
+        "code": "console.log(0.1 + 0.2 === 0.3, 2 ** 53 === 2 ** 53 + 1, isNaN(Number('abc')), Number.isNaN('abc'))",
+        "choices": [
+          "false true true false",
+          "false false true true",
+          "true true true false",
+          "false true true true"
+        ],
+        "answer": 0,
+        "explain": "0.1 and 0.2 are not exact in binary. 2^53 + 1 is not representable as a double and rounds back to 2^53. `Number.isNaN` does not coerce, so the string \"abc\" is simply not NaN."
+      },
+      {
+        "code": "const a = { n: 1 }\nconst b = a\nconst c = { ...a }\nb.n = 2\nconsole.log(a.n, c.n, a === b, a === c)",
+        "choices": [
+          "2 1 true false",
+          "1 1 true false",
+          "2 2 true true",
+          "2 1 false false"
+        ],
+        "answer": 0,
+        "explain": "`b = a` shares the reference, so the write is visible through a. The spread made a new (shallow) copy before the write, so c keeps 1 and is a different object."
+      }
+    ],
+    "tip": "When an interviewer shows a `==` puzzle, narrate the algorithm out loud (\"boolean to number, array to primitive, string to number\") instead of guessing, then say you would write `===` and let TypeScript reject the comparison. For defaults, say \"?? because 0 is valid\" before they ask.",
+    "links": {
+      "problems": [
+        "merge-overlaps",
+        "group-by-letters",
+        "count-pair-sums"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "ts-scope-closures",
+        "py-basics"
+      ]
+    }
+  }
+}

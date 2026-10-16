@@ -2,6 +2,7 @@ import { appDocument, cachePrefix, precacheEntries, sha256 } from './pwa-cache'
 import type { PrecacheEntry } from './pwa-cache'
 import type { WorkerReply } from './pwa-types'
 import { PYODIDE_VERSION } from './runner/pyodide-version'
+import { TYPESCRIPT_VERSION } from './runner/ts-version'
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: PrecacheEntry[] }
 
@@ -15,6 +16,9 @@ let preparing: Promise<void> | undefined
 // The Python runtime (~13 MB) is fetched only when someone first runs Python, then kept for offline use.
 const pyodideCachePrefix = `devprep-runtime-pyodide:${encodeURIComponent(scope)}:`
 const pyodideCache = pyodideCachePrefix + PYODIDE_VERSION
+// Likewise the TypeScript compiler (~9 MB), fetched when a TypeScript lab first runs.
+const typescriptCachePrefix = `devprep-runtime-typescript:${encodeURIComponent(scope)}:`
+const typescriptCache = typescriptCachePrefix + TYPESCRIPT_VERSION
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Browser offline storage is unavailable.'
@@ -65,17 +69,18 @@ self.addEventListener('install', event => {
 })
 
 // Never remove old build caches during activation: other windows can still need their hashed chunks.
-// Only superseded Python runtimes are pruned, since every build loads exactly one pinned version.
+// Only superseded Python and TypeScript runtimes are pruned, since every build loads exactly one pinned version of each.
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
-    const stale = (await caches.keys()).filter(name => name.startsWith(pyodideCachePrefix) && name !== pyodideCache)
+    const stale = (await caches.keys()).filter(name =>
+      (name.startsWith(pyodideCachePrefix) && name !== pyodideCache) || (name.startsWith(typescriptCachePrefix) && name !== typescriptCache))
     await Promise.all(stale.map(name => caches.delete(name)))
     await self.clients.claim()
   })())
 })
 
-async function pyodideAsset(request: Request) {
-  const cache = await caches.open(pyodideCache)
+async function runtimeAsset(request: Request, cacheName: string) {
+  const cache = await caches.open(cacheName)
   const hit = await cache.match(request.url)
   if (hit) return hit
   const response = await fetch(request.url, { credentials: 'same-origin' })
@@ -107,7 +112,11 @@ self.addEventListener('fetch', event => {
     return
   }
   if (url.pathname.startsWith(`${base.pathname}pyodide/${PYODIDE_VERSION}/`)) {
-    event.respondWith(pyodideAsset(event.request))
+    event.respondWith(runtimeAsset(event.request, pyodideCache))
+    return
+  }
+  if (url.pathname.startsWith(`${base.pathname}typescript/${TYPESCRIPT_VERSION}/`)) {
+    event.respondWith(runtimeAsset(event.request, typescriptCache))
     return
   }
   if (urls.has(url.href) || url.pathname.startsWith(`${base.pathname}assets/`) || url.pathname.startsWith(`${base.pathname}icons/`)) {

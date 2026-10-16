@@ -1,6 +1,6 @@
 import Icon from './Icon'
-import { formatArgs, formatValue, TIMEOUT_MS, type CaseOutcome } from '../runner/core'
-import type { RunReport } from '../runner/runner'
+import { formatArgs, formatValue, TIMEOUT_MS, type CaseOutcome, type TypeDiagnostic } from '../runner/core'
+import { TS_TIMEOUT_MS, type RunReport } from '../runner/runner'
 import type { CodeLanguage, ProblemTest } from '../problem-types'
 
 function describeActual(outcome: CaseOutcome, lang: CodeLanguage) {
@@ -8,10 +8,11 @@ function describeActual(outcome: CaseOutcome, lang: CodeLanguage) {
 }
 
 /** Test results for one run: visible cases in detail, hidden cases as a count, then console output. */
-export default function RunResults({ tests, fn, lang, report, message }: { tests: ProblemTest[]; fn: string; lang: CodeLanguage; report: RunReport; message?: string }) {
-  if (report.kind === 'timeout') return <div className="run-summary fail"><strong>Stopped after {TIMEOUT_MS[lang] / 1000} seconds.</strong> Check for an infinite loop or a slower-than-needed approach.</div>
-  if (report.kind === 'load-error') return <div className="run-summary fail"><strong>{lang === 'py' ? 'Python' : 'The runner'} could not start.</strong> {report.error}</div>
+export default function RunResults({ tests, fn, lang, typescript = false, report, message }: { tests: ProblemTest[]; fn: string; lang: CodeLanguage; typescript?: boolean; report: RunReport; message?: string }) {
+  if (report.kind === 'timeout') return <div className="run-summary fail"><strong>Stopped after {(typescript ? TS_TIMEOUT_MS : TIMEOUT_MS[lang]) / 1000} seconds.</strong> Check for an infinite loop or a slower-than-needed approach.</div>
+  if (report.kind === 'load-error') return <div className="run-summary fail"><strong>{typescript ? 'TypeScript' : lang === 'py' ? 'Python' : 'The runner'} could not start.</strong> {report.error}</div>
   if (report.kind === 'error') return <><div className="run-summary fail"><strong>Your code didn’t run.</strong><pre>{report.error}</pre></div>{report.output && <Output text={report.output} />}</>
+  const diagnostics = report.diagnostics ?? []
   const visible = report.outcomes.slice(0, tests.length)
   const hidden = report.outcomes.slice(tests.length)
   const passed = report.outcomes.filter(outcome => outcome.pass).length
@@ -31,8 +32,16 @@ export default function RunResults({ tests, fn, lang, report, message }: { tests
         <span>{hidden.filter(outcome => outcome.pass).length} of {hidden.length} passed{hidden.some(outcome => outcome.error) ? ' · some raised errors' : ''}</span>
       </li>}
     </ul>
+    {diagnostics.length > 0 && <TypeErrors diagnostics={diagnostics} />}
     {report.output && <Output text={report.output} />}
   </>
+}
+
+function TypeErrors({ diagnostics }: { diagnostics: TypeDiagnostic[] }) {
+  return <details className="run-output type-errors" open>
+    <summary>{diagnostics.length === 1 ? '1 type error' : `${diagnostics.length} type errors`} · the code still ran</summary>
+    <ul>{diagnostics.slice(0, 20).map((diagnostic, index) => <li key={index}><code>Line {diagnostic.line}:{diagnostic.column}</code> {diagnostic.message} <span className="muted">TS{diagnostic.code}</span></li>)}</ul>
+  </details>
 }
 
 function Output({ text }: { text: string }) {

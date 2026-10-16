@@ -7,6 +7,9 @@ import { createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { PYODIDE_VERSION } from './src/runner/pyodide-version'
+import { TYPESCRIPT_VERSION } from './src/runner/ts-version'
+import { libClosure } from './src/runner/ts-core'
+import { readFileSync } from 'node:fs'
 
 let outputDirectory = resolve('dist')
 
@@ -36,6 +39,38 @@ function pyodideAssets(): Plugin {
   }
 }
 
+// The TypeScript compiler (~9 MB) and its ES lib declarations are served from typescript/<version>/,
+// fetched lazily by the TypeScript lab worker and cached at runtime by the service worker.
+function typescriptLibs() {
+  const read = (name: string) => readFileSync(resolve('node_modules/typescript/lib', name), 'utf8')
+  return JSON.stringify(Object.fromEntries(libClosure(read).map(name => [name, read(name)])))
+}
+function typescriptAssets(): Plugin {
+  const prefix = `typescript/${TYPESCRIPT_VERSION}/`
+  let libs: string | undefined
+  return {
+    name: 'devprep-typescript-assets',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const path = new URL(request.url ?? '/', 'http://localhost').pathname
+        const at = path.indexOf(`/${prefix}`)
+        const name = at >= 0 ? path.slice(at + prefix.length + 1) : ''
+        if (name === 'typescript.js') {
+          response.setHeader('Content-Type', 'text/javascript')
+          createReadStream(resolve('node_modules/typescript/lib/typescript.js')).pipe(response)
+        } else if (name === 'libs.json') {
+          response.setHeader('Content-Type', 'application/json')
+          response.end(libs ??= typescriptLibs())
+        } else next()
+      })
+    },
+    async generateBundle() {
+      this.emitFile({ type: 'asset', fileName: `${prefix}typescript.js`, source: await readFile(resolve('node_modules/typescript/lib/typescript.js')) })
+      this.emitFile({ type: 'asset', fileName: `${prefix}libs.json`, source: typescriptLibs() })
+    },
+  }
+}
+
 export default defineConfig({
   base: './',
   define: {
@@ -44,6 +79,7 @@ export default defineConfig({
   plugins: [
     react(),
     pyodideAssets(),
+    typescriptAssets(),
     { name: 'devprep-output-directory', configResolved(config) { outputDirectory = resolve(config.root, config.build.outDir) } },
     VitePWA({
       strategies: 'injectManifest',
@@ -69,7 +105,7 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'],
-        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**'],
+        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**', '**/typescript/**'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         rollupFormat: 'iife',
         manifestTransforms: [async entries => ({

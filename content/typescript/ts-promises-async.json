@@ -1,0 +1,1093 @@
+{
+  "id": "ts-promises-async",
+  "track": "typescript",
+  "title": "Promises and async/await",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Promise states, chaining and the missing-return bug, where `.catch` belongs, why `async` always returns a promise, sequential versus parallel awaits, the four combinators, a concurrency pool, retry with backoff, timeouts, unhandled rejections, and typing with `Promise<T>` and `Awaited<T>`.",
+  "prerequisites": [
+    "ts-event-loop"
+  ],
+  "prerequisiteNotes": "ts-event-loop: promise callbacks run as microtasks after the current synchronous code finishes, and timers are macrotasks. Every ordering question in this lesson is that rule applied to `.then` and `await`.",
+  "objectives": [
+    "Describe the three promise states and explain why a promise settles at most once.",
+    "Predict what a `.then` chain produces when a callback forgets to `return`, and where a `.catch` stops a rejection.",
+    "Explain why an `async` function always returns a promise and how `await` suspends only that function.",
+    "Choose between a sequential `for...of` with `await` and `Promise.all`, and spot the `forEach(async ...)` bug.",
+    "State exactly when `Promise.all`, `allSettled`, `race` and `any` settle and with what value.",
+    "Implement a concurrency-limited pool, retry with exponential backoff and a timeout wrapper, typed with `Promise<T>` and `Awaited<T>`."
+  ],
+  "concepts": [
+    {
+      "title": "Three states, settled once",
+      "body": "A promise is **pending** until it is **fulfilled** with a value or **rejected** with a reason; both end states are called **settled**, and a settled promise never changes again. The executor passed to `new Promise` runs **synchronously**; later calls to `resolve` or `reject` after the first are ignored, and a `throw` inside the executor becomes a rejection. Resolving with another promise (or any thenable) makes the outer promise **adopt** that one's eventual state. Handlers attached with `.then` always run later as microtasks, even if the promise is already settled, so `.then` never calls back synchronously.",
+      "code": "const p = new Promise<number>((resolve, reject) => {\n  console.log('executor runs now')   // synchronous\n  resolve(1)\n  resolve(2)                         // ignored: already settled\n  reject(new Error('late'))          // ignored too\n})\np.then(v => console.log('value', v)) // value 1, on a microtask\nconsole.log('after then')            // prints before 'value 1'",
+      "diagram": "tsp-states"
+    },
+    {
+      "title": "Chaining: `.then` returns a new promise",
+      "body": "Every `.then`, `.catch` and `.finally` returns a **new** promise that settles with whatever its callback returns (or throws). Returning a plain value fulfils the next link with it; returning a promise makes the next link wait for it; **forgetting to** `return` fulfils the next link with `undefined` immediately, and the inner work runs detached, so its errors escape the chain. With arrow functions, `v => { work(v) }` has a block body and returns nothing, while `v => work(v)` returns the call. TypeScript helps: the next callback's parameter becomes `void`. `.finally` passes the previous value through unchanged unless its callback throws.",
+      "code": "const double = (n: number) => Promise.resolve(n * 2)\n\nPromise.resolve(5)\n  .then(n => { double(n) })      // block body: returns undefined\n  .then(v => console.log(v))     // undefined (v: void)\n\nPromise.resolve(5)\n  .then(n => double(n))          // returns the promise, so the chain waits\n  .then(v => console.log(v))     // 10"
+    },
+    {
+      "title": "Errors travel down the chain to the next handler",
+      "body": "A rejection (or a `throw` in any callback) skips every following `.then(onFulfilled)` until it reaches a `.catch` or a `.then(_, onRejected)`. If that handler returns normally, the chain is **recovered** and the following `.then` runs with the handler's return value; rethrow to keep it failing. Placement matters: a `.catch` at the end guards every step above it, while `.then(ok, fail)` does **not** catch errors thrown by `ok` itself. In `async` code the same rules appear as `try/catch` around `await`. Inside a `catch` clause the error is typed `unknown` in strict mode, so narrow with `instanceof Error` before reading `.message`.",
+      "code": "async function load(id: number): Promise<string> {\n  if (id < 0) throw new Error('bad id')\n  return `item ${id}`\n}\n\nload(-1)\n  .then(s => s.toUpperCase())          // skipped\n  .catch((e: unknown) => {\n    return e instanceof Error ? `fallback (${e.message})` : 'fallback'\n  })\n  .then(s => console.log(s))           // fallback (bad id)"
+    },
+    {
+      "title": "`async` always returns a promise; typing with `Promise<T>` and `Awaited<T>`",
+      "body": "An `async` function **always** returns a promise: a returned value fulfils it, a thrown error rejects it, and returning a promise adopts it. Its body runs synchronously up to the first `await`; `await x` then suspends **only that function**, schedules the rest as a microtask once `x` settles, and gives the caller the pending promise straight away. So the declared return type of an `async` function must be `Promise<T>`. `Awaited<T>` recursively unwraps promise types the way `await` does, which is what you want for helper types: `Awaited<ReturnType<typeof f>>` is the value `f` eventually produces. `return await p` inside `try` matters: plain `return p` lets the rejection skip the local `catch`.",
+      "code": "async function count(): Promise<number> {\n  return 3                      // wrapped: Promise<number>\n}\n\ntype A = Awaited<Promise<Promise<string>>>       // string\ntype B = Awaited<ReturnType<typeof count>>       // number\n\nasync function safe(p: Promise<number>): Promise<number> {\n  try {\n    return await p              // a rejection lands in the catch below\n  } catch {\n    return -1\n  }\n}\n\nconsole.log(count() instanceof Promise)          // true"
+    },
+    {
+      "title": "The four combinators",
+      "body": "`Promise.all` fulfils with an array of values **in input order** once all fulfil, and rejects as soon as **any** rejects (fail-fast); the other operations keep running, their results are simply ignored. `Promise.allSettled` never rejects: it waits for everything and gives `{status: 'fulfilled', value}` or `{status: 'rejected', reason}` per input. `Promise.race` settles like the **first input to settle**, fulfilled or rejected. `Promise.any` fulfils with the **first fulfilment** and rejects with an `AggregateError` only if every input rejects. An empty array makes `all`/`allSettled` fulfil with `[]`, `any` reject, and `race` stay pending forever. TypeScript types a tuple argument precisely: `Promise.all([num(), str()])` is `Promise<[number, string]>`.",
+      "code": "const wait = <T>(ms: number, v: T) => new Promise<T>(r => setTimeout(() => r(v), ms))\nconst fail = (ms: number) => new Promise<never>((_, rej) => setTimeout(() => rej(new Error('x')), ms))\n\nconst [n, s] = await Promise.all([wait(20, 1), wait(10, 'a')])   // [1, 'a'] after 20 ms\nconst settled = await Promise.allSettled([wait(5, 1), fail(5)])\nconsole.log(settled.map(r => r.status).join())                  // fulfilled,rejected\nconsole.log(await Promise.any([fail(5), wait(10, 'b')]))         // b\nawait Promise.race([fail(5), wait(10, 'c')]).catch(() => 'race rejected')"
+    },
+    {
+      "title": "Timeouts and unhandled rejections",
+      "body": "A timeout is a race between the work and a promise that rejects after `ms`; clear the timer in `.finally` so a fast result does not leave it pending. The race only stops **waiting**: the underlying work keeps running unless you also cancel it (with an `AbortController` in real APIs). A rejection that has no handler attached when the microtask queue drains is an **unhandled rejection**: browsers fire `unhandledrejection`, and Node (15+) crashes the process by default. The classic trap is starting two promises and awaiting them one after another: if the second rejects while you wait on the first, nothing is listening yet. `Promise.all` attaches handlers to both at once.",
+      "code": "function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {\n  let timer: ReturnType<typeof setTimeout> | undefined\n  const timeout = new Promise<never>((_, reject) => {\n    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms)\n  })\n  return Promise.race([work, timeout]).finally(() => clearTimeout(timer))\n}\n\n// Risky: if b rejects first, it is unhandled while we await a\nconst a = slowTask(), b = flakyTask()\nconst ra = await a\nconst rb = await b\n// Safe: both handled from the start\nconst [x, y] = await Promise.all([slowTask(), flakyTask()])"
+    },
+    {
+      "title": "Retry with exponential backoff",
+      "body": "Retry wraps an operation in a loop of `attempts`: on failure, wait `base * 2 ** (n - 1)` ms and try again, and after the last failure **rethrow the last error** so the caller still sees why it failed. Write it as a `for` loop with `try { return await op() } catch { ... }`: the `await` is essential, because a bare `return op()` hands back the promise before it rejects and the `catch` never runs. In production add **jitter** (a random fraction of the delay) so many clients do not retry in lockstep, cap the delay, and retry only errors that are transient (timeouts, 503s), never validation errors.",
+      "code": "async function retry<T>(op: () => Promise<T>, attempts: number, baseMs: number): Promise<T> {\n  let lastError: unknown\n  for (let n = 1; n <= attempts; n++) {\n    try {\n      return await op()\n    } catch (error) {\n      lastError = error\n      if (n < attempts) await delay(baseMs * 2 ** (n - 1))\n    }\n  }\n  throw lastError\n}",
+      "diagram": "tsp-retry"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Sequential awaits versus parallel awaits",
+      "body": "`const u = await getUser(); const o = await getOrders()` does not start `getOrders` until `getUser` has finished, so the total is the **sum** of the latencies. When the calls are independent, start both first and await together: `const [u, o] = await Promise.all([getUser(), getOrders()])` takes the **max**. Sequential is correct only when the second call needs the first result (fetch the user, then their orders by user id). In the room, say which calls depend on which before writing any `await`.",
+      "code": "// 30 ms + 30 ms = 60 ms\nconst user = await getUser()\nconst orders = await getOrders()\n\n// max(30 ms, 30 ms) = 30 ms\nconst [user2, orders2] = await Promise.all([getUser(), getOrders()])",
+      "diagram": "tsp-awaits"
+    },
+    {
+      "title": "`await` in a loop, `forEach(async ...)` and `Promise.all(map)`",
+      "body": "`for (const x of xs) { await work(x) }` runs one item at a time, which is right for ordered side effects or rate limits. `xs.map(x => work(x))` starts everything at once and `Promise.all` collects results in input order. The broken middle ground is `xs.forEach(async x => { await work(x) })`: `forEach` ignores the promises its callback returns, so all items start at once **and** the caller continues immediately, before any finish, and rejections go unhandled. Use `for...of` for sequential, `Promise.all(xs.map(...))` for parallel, and a pool when you need something in between.",
+      "code": "for (const id of ids) await save(id)               // one at a time, in order\nconst rows = await Promise.all(ids.map(load))      // all at once, results in order\nids.forEach(async id => { await save(id) })        // bug: nothing waits for these",
+      "diagram": "tsp-loop"
+    },
+    {
+      "title": "A pool of workers keeps the limit busy",
+      "body": "A concurrency limit of `k` means at most `k` jobs in flight, and a new one starts **as soon as any** finishes, not when a whole batch finishes. Chunking into batches of `k` with `Promise.all` per batch wastes time waiting for the slowest job of each batch. The clean shape is `k` **lanes**: each lane is an `async` loop that claims the next index (`const i = next++` is safe because JavaScript runs one callback at a time), awaits that job, stores the result at `results[i]`, and repeats until the queue is empty. `Promise.all` over the lanes finishes when the last lane drains. Storing by index keeps input order regardless of completion order.",
+      "diagram": "tsp-pool"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First write a generic `mapPool<T, R>(items, limit, worker)` that pre-sizes `results`, keeps a shared `next` index and starts `min(max(1, limit), items.length)` lanes, so an empty input starts none and returns `[]`. Second, each lane loops `while (next < items.length)`, claims an index and awaits the worker. Third, `runPool` passes a worker that bumps an `active` counter, records the peak, awaits the delay and returns `i:ms`. Mention that a rejected job rejects the pool through `Promise.all`; wrap the worker in `try/catch` or switch to `allSettled` semantics if the caller wants partial results."
+    }
+  ],
+  "example": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function firstOk(urls: string[], fetchOne: (u: string) => Promise<string>): Promise<string> {\n  try {\n    return await Promise.any(urls.map(fetchOne))\n  } catch (error) {\n    if (error instanceof AggregateError) return `all ${error.errors.length} failed`\n    throw error\n  }\n}\n\nconst fake = async (u: string) => {\n  await delay(u.length)\n  if (u.startsWith('bad')) throw new Error(u)\n  return u\n}\n\nfirstOk(['bad-a', 'mirror-b', 'c'], fake).then(console.log)   // c (first to fulfil)\nfirstOk(['bad-a', 'bad-b'], fake).then(console.log)          // all 2 failed",
+  "task": "Write `runPool(delays, limit)`. Job `i` waits `delays[i]` milliseconds and then produces the string `\"i:ms\"` (for example `\"0:30\"`). Run the jobs with **at most** `limit` **in flight** at any moment, starting the next job as soon as one finishes, and return `{ results, peak }`: `results` in **input order** (not completion order) and `peak`, the largest number of jobs that were running at the same time. A `limit` below 1 is treated as 1, and an empty list returns `{ results: [], peak: 0 }`.",
+  "starter": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\ninterface PoolReport {\n  results: string[]\n  peak: number\n}\n\nasync function runPool(delays: number[], limit: number): Promise<PoolReport> {\n  let active = 0\n  let peak = 0\n  const results: string[] = []\n  // TODO: never run more than `limit` jobs at once, and keep results in input order.\n  await Promise.all(delays.map(async (ms, i) => {\n    active++\n    peak = Math.max(peak, active)\n    await delay(ms)\n    active--\n    results.push(`${i}:${ms}`)\n  }))\n  return { results, peak }\n}\n",
+  "hints": [
+    "Do not batch. Start `limit` lanes; each lane is an `async` loop that takes `const i = next++`, awaits job `i`, and loops until `next` reaches the end.",
+    "Write the result to `results[i]` instead of pushing, so completion order does not matter. Start `Math.min(Math.max(1, limit), delays.length)` lanes and `await Promise.all(lanes)`."
+  ],
+  "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function mapPool<T, R>(items: readonly T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {\n  const results = new Array<R>(items.length)\n  let next = 0\n  async function lane(): Promise<void> {\n    while (next < items.length) {\n      const index = next++\n      results[index] = await worker(items[index], index)\n    }\n  }\n  const lanes = Math.min(Math.max(1, limit), items.length)\n  await Promise.all(Array.from({ length: lanes }, lane))\n  return results\n}\n\nasync function runPool(delays: number[], limit: number): Promise<{ results: string[]; peak: number }> {\n  let active = 0\n  let peak = 0\n  const results = await mapPool(delays, limit, async (ms, i) => {\n    active++\n    peak = Math.max(peak, active)\n    await delay(ms)\n    active--\n    return `${i}:${ms}`\n  })\n  return { results, peak }\n}\n\nThe pool starts `min(limit, n)` lanes. Each lane claims the next index with `next++`; that read-and-increment cannot interleave with another lane because JavaScript only switches between async functions at an `await`. Results are written by index, so `results` is in input order even though short jobs finish first. As soon as a lane's job finishes it loops and claims the next index, so the limit stays saturated instead of waiting for a whole batch. `peak` therefore reaches exactly `min(limit, n)`. Total time is roughly the makespan of greedy scheduling on `limit` machines, and memory is O(n) for the results. `mapPool` is generic, so the same helper types an array of user ids into `Promise<User[]>`.",
+  "checklist": [
+    "At most `limit` jobs run at once, and a new one starts as soon as any finishes (no batching).",
+    "`results` is in input order because each result is stored at its index.",
+    "An empty list returns `{ results: [], peak: 0 }` without starting any lane.",
+    "A `limit` of 0 or less behaves like 1, and a limit above `n` starts only `n` lanes.",
+    "The helper is generic (`mapPool<T, R>`) and the solution type-checks with no `any`."
+  ],
+  "pitfalls": [
+    "Forgetting to `return` inside a `.then` block body, so the next step gets `undefined` and the inner promise's errors escape the chain.",
+    "Using `xs.forEach(async ...)` and expecting the caller to wait for the work.",
+    "Awaiting independent calls one after another, turning a max of latencies into a sum.",
+    "Writing `return op()` instead of `return await op()` inside `try`, so the local `catch` never sees the rejection.",
+    "Expecting `Promise.all` to cancel the other operations when one rejects; it only stops waiting for them.",
+    "Starting promises early and awaiting them one at a time, so an early rejection of a later one is reported as unhandled.",
+    "Implementing a limit by batching chunks with `Promise.all`, which idles slots while each batch waits for its slowest job."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Really in series",
+      "prompt": "Write `runInSeries(delays)`. For each index `i` in order, log `\"start i\"`, wait `delays[i]` ms, then log `\"end i\"`; the next job must not start until the previous one has ended. Return the log once everything has finished. The starter uses `forEach(async ...)` and returns too early; fix it.",
+      "hints": [
+        "`forEach` throws away the promise its callback returns, so nothing waits for the delays.",
+        "Use `for (const [i, ms] of delays.entries())` with `await delay(ms)` in the loop body."
+      ],
+      "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function runInSeries(delays: number[]): Promise<string[]> {\n  const log: string[] = []\n  for (const [i, ms] of delays.entries()) {\n    log.push(`start ${i}`)\n    await delay(ms)\n    log.push(`end ${i}`)\n  }\n  return log\n}",
+      "checklist": [
+        "Every `start i` is immediately followed by `end i`, even when a later job is shorter.",
+        "The function resolves only after the last job has ended.",
+        "An empty list resolves to `[]`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Retry with backoff, reported",
+      "prompt": "Write `retryReport(failures, attempts, baseMs)`. A simulated operation fails with `Error('fail #n')` on attempts `1..failures` and returns `'ok on try n'` afterwards. Retry it up to `attempts` times (fewer than 1 counts as 1), waiting `baseMs * Math.pow(2, n - 1)` ms after failure `n` unless it was the last attempt. Return `{ ok, tries, waits, last }`: whether it succeeded, how many attempts ran, the list of waits in ms, and the success value or the last error's message.",
+      "hints": [
+        "Write a generic `retry<T>(op, attempts, baseMs, onWait)` that loops with `try { return await op(n) } catch (e) { ... }` and rethrows the last error after the loop.",
+        "Call `onWait(ms)` before each `await delay(ms)` so the report can record the waits; narrow the caught `unknown` with `instanceof Error` to read the message."
+      ],
+      "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function retry<T>(\n  op: (attempt: number) => Promise<T>,\n  attempts: number,\n  baseMs: number,\n  onWait: (ms: number) => void = () => {},\n): Promise<T> {\n  const total = Math.max(1, attempts)\n  let lastError: unknown\n  for (let attempt = 1; attempt <= total; attempt++) {\n    try {\n      return await op(attempt)\n    } catch (error) {\n      lastError = error\n      if (attempt < total) {\n        const ms = baseMs * 2 ** (attempt - 1)\n        onWait(ms)\n        await delay(ms)\n      }\n    }\n  }\n  throw lastError\n}\n\ninterface RetryReport {\n  ok: boolean\n  tries: number\n  waits: number[]\n  last: string\n}\n\nasync function retryReport(failures: number, attempts: number, baseMs: number): Promise<RetryReport> {\n  let tries = 0\n  const waits: number[] = []\n  const flaky = async (attempt: number): Promise<string> => {\n    tries = attempt\n    if (attempt <= failures) throw new Error(`fail #${attempt}`)\n    return `ok on try ${attempt}`\n  }\n  try {\n    const last = await retry(flaky, attempts, baseMs, ms => waits.push(ms))\n    return { ok: true, tries, waits, last }\n  } catch (error) {\n    const last = error instanceof Error ? error.message : String(error)\n    return { ok: false, tries, waits, last }\n  }\n}",
+      "checklist": [
+        "There is no wait after the final failed attempt.",
+        "The last error is rethrown, not swallowed or replaced.",
+        "Zero failures means one try and no waits; `attempts` below 1 still makes one try."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How would you cancel the work when a timeout fires, not just stop waiting?",
+      "answer": "A promise has no cancel method; the race only abandons the result. Pass an `AbortSignal` into the operation (`fetch(url, { signal })`, or check `signal.aborted` between steps) and call `controller.abort()` when the timer fires. `AbortSignal.timeout(ms)` builds a signal that aborts on its own, and `AbortSignal.any([...])` combines a user cancel with a timeout."
+    },
+    {
+      "question": "When would you choose `allSettled` over `all` in a real service?",
+      "answer": "When partial results are useful and one failure should not discard the rest: fan-out to several recommendation sources, a dashboard of widgets, or bulk notifications where you report which ones failed. Use `all` when the result is meaningless unless every part succeeds (assembling one response from required pieces), because fail-fast returns the error sooner."
+    },
+    {
+      "question": "Is `const i = next++` in the pool a race condition?",
+      "answer": "No. JavaScript runs one piece of code at a time on the event loop and only switches between async functions at an `await`, so a read-and-increment with no `await` in the middle is atomic with respect to other lanes. It would be a race in threaded code, which is why the same pool in Java uses an `AtomicInteger`. Shared state does become risky when an `await` sits between reading and writing it."
+    },
+    {
+      "question": "What is the difference between `return p` and `return await p` in an `async` function?",
+      "answer": "Outside `try` they behave the same for the caller (both adopt `p`), and `return await` costs one extra microtask tick at most. Inside `try/catch` or `try/finally` they differ: `return await p` waits for `p` while still inside the `try`, so a rejection is caught and the `finally` runs after `p` settles; `return p` leaves the `try` immediately and the rejection goes straight to the caller. `return await` also keeps the function in async stack traces."
+    }
+  ],
+  "takeaways": [
+    "A promise settles once; `.then` callbacks always run later as microtasks.",
+    "Each `.then` returns a new promise: return the inner promise or the chain moves on without it.",
+    "`async` functions always return a promise; use `return await` inside `try` and narrow `catch (e: unknown)`.",
+    "Independent awaits belong in `Promise.all`; `forEach(async ...)` waits for nothing.",
+    "`all` fails fast, `allSettled` never rejects, `race` takes the first settlement, `any` the first fulfilment.",
+    "A pool of `k` lanes sharing a `next` index keeps `k` jobs busy and stores results by index."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsp-states",
+        "type": "flow",
+        "title": "The life of a promise",
+        "alt": "State machine for a promise. The executor runs synchronously and leaves the promise pending. Pending moves to fulfilled on resolve or to rejected on reject or a throw. Both settled states queue the matching handler on the microtask queue. A note shows that a second resolve or reject is ignored.",
+        "caption": "Pending moves to exactly one settled state, once; handlers always run later as microtasks.",
+        "nodes": [
+          {
+            "id": "exec",
+            "label": "executor runs",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "synchronously"
+          },
+          {
+            "id": "pend",
+            "label": "pending",
+            "kind": "state",
+            "col": 2,
+            "row": 1
+          },
+          {
+            "id": "ok",
+            "label": "fulfilled",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "value fixed"
+          },
+          {
+            "id": "bad",
+            "label": "rejected",
+            "kind": "bad",
+            "col": 4,
+            "row": 2,
+            "sub": "reason fixed"
+          },
+          {
+            "id": "mq",
+            "label": "microtask queue",
+            "kind": "queue",
+            "col": 2,
+            "row": 3,
+            "sub": "then/catch run"
+          },
+          {
+            "id": "note",
+            "label": "2nd resolve",
+            "kind": "note",
+            "col": 0,
+            "row": 3,
+            "sub": "ignored"
+          }
+        ],
+        "edges": [
+          {
+            "from": "exec",
+            "to": "pend",
+            "label": "new Promise"
+          },
+          {
+            "from": "pend",
+            "to": "ok",
+            "label": "resolve(v)"
+          },
+          {
+            "from": "pend",
+            "to": "bad",
+            "label": "reject / throw",
+            "style": "fail"
+          },
+          {
+            "from": "ok",
+            "to": "mq",
+            "label": "queue onFulfilled",
+            "style": "async"
+          },
+          {
+            "from": "bad",
+            "to": "mq",
+            "label": "queue onRejected",
+            "style": "async"
+          },
+          {
+            "from": "note",
+            "to": "pend",
+            "label": "no effect"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`new Promise(executor)` runs the executor immediately; the promise starts pending."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "The first `resolve(v)` or `reject(e)` (or a `throw` in the executor) settles it for good."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "Handlers registered with `.then`/`.catch` are queued as microtasks, even if they were attached after settling, so they never run synchronously."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "Any later `resolve` or `reject` call is silently ignored: a settled promise is immutable."
+          }
+        ]
+      },
+      {
+        "id": "tsp-awaits",
+        "type": "sequence",
+        "title": "Two awaits in a row versus Promise.all",
+        "alt": "Sequence diagram with an async function and two services. In the sequential version, the function calls getUser, waits 30 ms for the reply, then calls getOrders and waits another 30 ms, finishing at 60 ms. In the parallel version, it calls both services immediately and both reply by 30 ms.",
+        "caption": "Awaiting independent calls one by one adds their latencies; starting both and awaiting Promise.all takes the slowest one.",
+        "actors": [
+          {
+            "id": "fn",
+            "label": "async fn"
+          },
+          {
+            "id": "users",
+            "label": "getUser"
+          },
+          {
+            "id": "orders",
+            "label": "getOrders"
+          }
+        ],
+        "messages": [
+          {
+            "from": "fn",
+            "to": "users",
+            "label": "await getUser()",
+            "note": "Sequential: nothing else starts until this settles."
+          },
+          {
+            "from": "users",
+            "to": "fn",
+            "label": "user at 30 ms",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "orders",
+            "label": "await getOrders()"
+          },
+          {
+            "from": "orders",
+            "to": "fn",
+            "label": "orders at 60 ms",
+            "style": "reply"
+          },
+          {
+            "from": "fn",
+            "to": "users",
+            "label": "getUser() started",
+            "style": "async",
+            "note": "Parallel: both calls start before the first await."
+          },
+          {
+            "from": "fn",
+            "to": "orders",
+            "label": "getOrders() started",
+            "style": "async"
+          },
+          {
+            "from": "users",
+            "to": "fn",
+            "label": "user at 30 ms",
+            "style": "reply"
+          },
+          {
+            "from": "orders",
+            "to": "fn",
+            "label": "orders at 30 ms",
+            "style": "reply",
+            "note": "await Promise.all resumes once both are in: 30 ms total."
+          }
+        ]
+      },
+      {
+        "id": "tsp-loop",
+        "type": "compare",
+        "title": "await in a loop versus Promise.all over map",
+        "alt": "Comparison of two ways to process three jobs of 30 ms. On the left, a for-of loop awaits job A, then B, then C, which occupy 0 to 30, 30 to 60 and 60 to 90 ms. On the right, Promise.all over map starts A, B and C together, and all three finish by 30 ms.",
+        "caption": "Use a loop with await when order or rate matters; use Promise.all(map) when jobs are independent.",
+        "before": {
+          "label": "for...of + await: 90 ms",
+          "nodes": [
+            {
+              "id": "loop",
+              "label": "for...of",
+              "kind": "client",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "a",
+              "label": "await job A",
+              "kind": "worker",
+              "col": 2,
+              "row": 0,
+              "sub": "0-30 ms"
+            },
+            {
+              "id": "b",
+              "label": "await job B",
+              "kind": "worker",
+              "col": 2,
+              "row": 1,
+              "sub": "30-60 ms"
+            },
+            {
+              "id": "c",
+              "label": "await job C",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "60-90 ms"
+            }
+          ],
+          "edges": [
+            {
+              "from": "loop",
+              "to": "a",
+              "label": "1st"
+            },
+            {
+              "from": "a",
+              "to": "b",
+              "label": "then"
+            },
+            {
+              "from": "b",
+              "to": "c",
+              "label": "then"
+            }
+          ]
+        },
+        "after": {
+          "label": "Promise.all(map): 30 ms",
+          "nodes": [
+            {
+              "id": "all",
+              "label": "Promise.all",
+              "kind": "client",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "a",
+              "label": "job A",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "0-30 ms"
+            },
+            {
+              "id": "b",
+              "label": "job B",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "0-30 ms"
+            },
+            {
+              "id": "c",
+              "label": "job C",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "0-30 ms"
+            }
+          ],
+          "edges": [
+            {
+              "from": "all",
+              "to": "a",
+              "label": "start now"
+            },
+            {
+              "from": "all",
+              "to": "b",
+              "label": "start now"
+            },
+            {
+              "from": "all",
+              "to": "c",
+              "label": "start now"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsp-pool",
+        "type": "timeline",
+        "title": "A pool of 2 running jobs of 30, 10, 20 and 10 ms",
+        "alt": "Timeline of a concurrency pool with two lanes. At 0 ms jobs 0 (30 ms) and 1 (10 ms) start. At 10 ms job 1 ends and its lane starts job 2 (20 ms). At 30 ms job 0 and job 2 both end and job 3 (10 ms) starts. At 40 ms job 3 ends and the pool resolves with results in input order.",
+        "caption": "A free lane immediately claims the next job, so two jobs stay in flight; batching would have waited for job 0 before starting job 2.",
+        "events": [
+          {
+            "at": "0 ms",
+            "label": "Lane 1 claims job 0 (30 ms), lane 2 claims job 1 (10 ms)",
+            "kind": "trigger"
+          },
+          {
+            "at": "10 ms",
+            "label": "Job 1 ends; lane 2 stores results[1] and claims job 2 (20 ms)",
+            "kind": "detect"
+          },
+          {
+            "at": "30 ms",
+            "label": "Job 0 ends; lane 1 stores results[0] and claims job 3 (10 ms)",
+            "kind": "detect"
+          },
+          {
+            "at": "30 ms",
+            "label": "Job 2 ends; lane 2 finds no work left and exits",
+            "kind": "mitigate"
+          },
+          {
+            "at": "40 ms",
+            "label": "Job 3 ends; lane 1 exits and Promise.all over the lanes resolves",
+            "kind": "resolve"
+          }
+        ]
+      },
+      {
+        "id": "tsp-retry",
+        "type": "sequence",
+        "title": "Retry with exponential backoff",
+        "alt": "Sequence diagram with a caller, a retry wrapper, the flaky operation and a timer. Attempt 1 fails, the wrapper waits 10 ms; attempt 2 fails, it waits 20 ms; attempt 3 succeeds and the value is returned to the caller.",
+        "caption": "Wait base times 2 to the power n minus 1 between attempts, never after the last one, and rethrow the last error if all fail.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "caller"
+          },
+          {
+            "id": "retry",
+            "label": "retry()"
+          },
+          {
+            "id": "op",
+            "label": "flaky op"
+          },
+          {
+            "id": "timer",
+            "label": "setTimeout"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "retry",
+            "label": "await retry(op, 3, 10)"
+          },
+          {
+            "from": "retry",
+            "to": "op",
+            "label": "attempt 1"
+          },
+          {
+            "from": "op",
+            "to": "retry",
+            "label": "reject: fail #1",
+            "style": "fail"
+          },
+          {
+            "from": "retry",
+            "to": "timer",
+            "label": "delay(10)",
+            "style": "async"
+          },
+          {
+            "from": "timer",
+            "to": "retry",
+            "label": "fires",
+            "style": "reply"
+          },
+          {
+            "from": "retry",
+            "to": "op",
+            "label": "attempt 2"
+          },
+          {
+            "from": "op",
+            "to": "retry",
+            "label": "reject: fail #2",
+            "style": "fail"
+          },
+          {
+            "from": "retry",
+            "to": "timer",
+            "label": "delay(20)",
+            "style": "async"
+          },
+          {
+            "from": "timer",
+            "to": "retry",
+            "label": "fires",
+            "style": "reply"
+          },
+          {
+            "from": "retry",
+            "to": "op",
+            "label": "attempt 3"
+          },
+          {
+            "from": "op",
+            "to": "retry",
+            "label": "ok on try 3",
+            "style": "reply"
+          },
+          {
+            "from": "retry",
+            "to": "caller",
+            "label": "ok on try 3",
+            "style": "reply",
+            "note": "Had attempt 3 failed too, the wrapper would rethrow fail #3 without waiting again."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "runPool",
+        "starter": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\ninterface PoolReport {\n  results: string[]\n  peak: number\n}\n\nasync function runPool(delays: number[], limit: number): Promise<PoolReport> {\n  let active = 0\n  let peak = 0\n  const results: string[] = []\n  // TODO: never run more than `limit` jobs at once, and keep results in input order.\n  await Promise.all(delays.map(async (ms, i) => {\n    active++\n    peak = Math.max(peak, active)\n    await delay(ms)\n    active--\n    results.push(`${i}:${ms}`)\n  }))\n  return { results, peak }\n}\n",
+        "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function mapPool<T, R>(\n  items: readonly T[],\n  limit: number,\n  worker: (item: T, index: number) => Promise<R>,\n): Promise<R[]> {\n  const results = new Array<R>(items.length)\n  let next = 0\n  async function lane(): Promise<void> {\n    while (next < items.length) {\n      const index = next++\n      results[index] = await worker(items[index], index)\n    }\n  }\n  const lanes = Math.min(Math.max(1, limit), items.length)\n  await Promise.all(Array.from({ length: lanes }, lane))\n  return results\n}\n\ninterface PoolReport {\n  results: string[]\n  peak: number\n}\n\nasync function runPool(delays: number[], limit: number): Promise<PoolReport> {\n  let active = 0\n  let peak = 0\n  const results = await mapPool(delays, limit, async (ms, i) => {\n    active++\n    peak = Math.max(peak, active)\n    await delay(ms)\n    active--\n    return `${i}:${ms}`\n  })\n  return { results, peak }\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                30,
+                10,
+                20
+              ],
+              2
+            ],
+            "expected": {
+              "results": [
+                "0:30",
+                "1:10",
+                "2:20"
+              ],
+              "peak": 2
+            }
+          },
+          {
+            "args": [
+              [
+                5,
+                5,
+                5,
+                5
+              ],
+              1
+            ],
+            "expected": {
+              "results": [
+                "0:5",
+                "1:5",
+                "2:5",
+                "3:5"
+              ],
+              "peak": 1
+            }
+          },
+          {
+            "args": [
+              [
+                20,
+                5,
+                10,
+                5
+              ],
+              3
+            ],
+            "expected": {
+              "results": [
+                "0:20",
+                "1:5",
+                "2:10",
+                "3:5"
+              ],
+              "peak": 3
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              3
+            ],
+            "expected": {
+              "results": [],
+              "peak": 0
+            }
+          },
+          {
+            "args": [
+              [
+                10
+              ],
+              4
+            ],
+            "expected": {
+              "results": [
+                "0:10"
+              ],
+              "peak": 1
+            }
+          },
+          {
+            "args": [
+              [
+                15,
+                15,
+                15
+              ],
+              10
+            ],
+            "expected": {
+              "results": [
+                "0:15",
+                "1:15",
+                "2:15"
+              ],
+              "peak": 3
+            }
+          },
+          {
+            "args": [
+              [
+                0,
+                0,
+                0
+              ],
+              0
+            ],
+            "expected": {
+              "results": [
+                "0:0",
+                "1:0",
+                "2:0"
+              ],
+              "peak": 1
+            }
+          },
+          {
+            "args": [
+              [
+                3,
+                3,
+                3,
+                3,
+                3
+              ],
+              -2
+            ],
+            "expected": {
+              "results": [
+                "0:3",
+                "1:3",
+                "2:3",
+                "3:3",
+                "4:3"
+              ],
+              "peak": 1
+            }
+          },
+          {
+            "args": [
+              [
+                40,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              2
+            ],
+            "expected": {
+              "results": [
+                "0:40",
+                "1:1",
+                "2:1",
+                "3:1",
+                "4:1",
+                "5:1"
+              ],
+              "peak": 2
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "runInSeries",
+        "starter": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function runInSeries(delays: number[]): Promise<string[]> {\n  const log: string[] = []\n  delays.forEach(async (ms, i) => {\n    log.push(`start ${i}`)\n    await delay(ms)\n    log.push(`end ${i}`)\n  })\n  return log\n}\n",
+        "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function runInSeries(delays: number[]): Promise<string[]> {\n  const log: string[] = []\n  for (const [i, ms] of delays.entries()) {\n    log.push(`start ${i}`)\n    await delay(ms)\n    log.push(`end ${i}`)\n  }\n  return log\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                20,
+                5
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0",
+              "start 1",
+              "end 1"
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                1
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0"
+            ]
+          },
+          {
+            "args": [
+              [
+                0,
+                0
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0",
+              "start 1",
+              "end 1"
+            ]
+          },
+          {
+            "args": [
+              [
+                30,
+                1,
+                10
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0",
+              "start 1",
+              "end 1",
+              "start 2",
+              "end 2"
+            ]
+          },
+          {
+            "args": [
+              [
+                5,
+                5,
+                5
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0",
+              "start 1",
+              "end 1",
+              "start 2",
+              "end 2"
+            ]
+          },
+          {
+            "args": [
+              [
+                -5,
+                2
+              ]
+            ],
+            "expected": [
+              "start 0",
+              "end 0",
+              "start 1",
+              "end 1"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "retryReport",
+        "starter": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\ninterface RetryReport {\n  ok: boolean\n  tries: number\n  waits: number[]\n  last: string\n}\n\nasync function retryReport(failures: number, attempts: number, baseMs: number): Promise<RetryReport> {\n  const waits: number[] = []\n  // TODO: retry up to `attempts` times, waiting baseMs * 2 ** (n - 1) after failure n.\n  if (failures >= 1) return { ok: false, tries: 1, waits, last: 'fail #1' }\n  return { ok: true, tries: 1, waits, last: 'ok on try 1' }\n}\n",
+        "solution": "function delay(ms: number): Promise<void> {\n  return new Promise(resolve => setTimeout(resolve, ms))\n}\n\nasync function retry<T>(\n  op: (attempt: number) => Promise<T>,\n  attempts: number,\n  baseMs: number,\n  onWait: (ms: number) => void = () => {},\n): Promise<T> {\n  const total = Math.max(1, attempts)\n  let lastError: unknown\n  for (let attempt = 1; attempt <= total; attempt++) {\n    try {\n      return await op(attempt)\n    } catch (error) {\n      lastError = error\n      if (attempt < total) {\n        const ms = baseMs * 2 ** (attempt - 1)\n        onWait(ms)\n        await delay(ms)\n      }\n    }\n  }\n  throw lastError\n}\n\ninterface RetryReport {\n  ok: boolean\n  tries: number\n  waits: number[]\n  last: string\n}\n\nasync function retryReport(failures: number, attempts: number, baseMs: number): Promise<RetryReport> {\n  let tries = 0\n  const waits: number[] = []\n  const flaky = async (attempt: number): Promise<string> => {\n    tries = attempt\n    if (attempt <= failures) throw new Error(`fail #${attempt}`)\n    return `ok on try ${attempt}`\n  }\n  try {\n    const last = await retry(flaky, attempts, baseMs, ms => waits.push(ms))\n    return { ok: true, tries, waits, last }\n  } catch (error) {\n    const last = error instanceof Error ? error.message : String(error)\n    return { ok: false, tries, waits, last }\n  }\n}\n",
+        "tests": [
+          {
+            "args": [
+              2,
+              4,
+              1
+            ],
+            "expected": {
+              "ok": true,
+              "tries": 3,
+              "waits": [
+                1,
+                2
+              ],
+              "last": "ok on try 3"
+            }
+          },
+          {
+            "args": [
+              3,
+              3,
+              2
+            ],
+            "expected": {
+              "ok": false,
+              "tries": 3,
+              "waits": [
+                2,
+                4
+              ],
+              "last": "fail #3"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              0,
+              3,
+              5
+            ],
+            "expected": {
+              "ok": true,
+              "tries": 1,
+              "waits": [],
+              "last": "ok on try 1"
+            }
+          },
+          {
+            "args": [
+              1,
+              1,
+              5
+            ],
+            "expected": {
+              "ok": false,
+              "tries": 1,
+              "waits": [],
+              "last": "fail #1"
+            }
+          },
+          {
+            "args": [
+              4,
+              5,
+              1
+            ],
+            "expected": {
+              "ok": true,
+              "tries": 5,
+              "waits": [
+                1,
+                2,
+                4,
+                8
+              ],
+              "last": "ok on try 5"
+            }
+          },
+          {
+            "args": [
+              10,
+              4,
+              3
+            ],
+            "expected": {
+              "ok": false,
+              "tries": 4,
+              "waits": [
+                3,
+                6,
+                12
+              ],
+              "last": "fail #4"
+            }
+          },
+          {
+            "args": [
+              0,
+              0,
+              1
+            ],
+            "expected": {
+              "ok": true,
+              "tries": 1,
+              "waits": [],
+              "last": "ok on try 1"
+            }
+          },
+          {
+            "args": [
+              2,
+              -1,
+              1
+            ],
+            "expected": {
+              "ok": false,
+              "tries": 1,
+              "waits": [],
+              "last": "fail #1"
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const log: string[] = []\nasync function f(): Promise<number> {\n  log.push('b')\n  return 1\n}\nlog.push('a')\nf().then(v => log.push('d' + v))\nlog.push('c')\nsetTimeout(() => console.log(log.join(' ')), 0)",
+        "choices": [
+          "a b c d1",
+          "a c b d1",
+          "a b d1 c"
+        ],
+        "answer": 0,
+        "explain": "An `async` body runs synchronously until its first `await`, so `b` is logged during the call. The `.then` callback is a microtask, so it runs only after the synchronous `c`."
+      },
+      {
+        "code": "Promise.resolve(2)\n  .then(v => { v * 10 })\n  .then(v => console.log(String(v)))",
+        "choices": [
+          "20",
+          "undefined",
+          "2"
+        ],
+        "answer": 1,
+        "explain": "The braces make a block body with no `return`, so the first `.then` fulfils with `undefined`. TypeScript even types the next `v` as `void`."
+      },
+      {
+        "code": "const log: string[] = []\nPromise.reject(new Error('boom'))\n  .then(() => log.push('then'))\n  .catch((e: Error) => log.push('caught ' + e.message))\n  .then(() => log.push('after'))\n  .finally(() => console.log(log.join(', ')))",
+        "choices": [
+          "caught boom",
+          "then, caught boom, after",
+          "caught boom, after"
+        ],
+        "answer": 2,
+        "explain": "The rejection skips the first `.then`, the `.catch` handles it and returns normally, which recovers the chain, so the following `.then` runs."
+      },
+      {
+        "code": "const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))\n\nasync function total(xs: number[]): Promise<number> {\n  let sum = 0\n  xs.forEach(async x => {\n    await delay(5)\n    sum += x\n  })\n  return sum\n}\n\ntotal([1, 2, 3]).then(s => console.log(s))",
+        "choices": [
+          "6",
+          "0",
+          "NaN"
+        ],
+        "answer": 1,
+        "explain": "`forEach` does not wait for the promises its async callback returns. `total` returns `sum` before any delay finishes; the additions happen later and nobody sees them."
+      },
+      {
+        "code": "const wait = <T>(ms: number, v: T) => new Promise<T>(r => setTimeout(() => r(v), ms))\nconst fail = (ms: number) => new Promise<never>((_, rej) => setTimeout(() => rej(new Error('x')), ms))\nconst out: string[] = []\nconst r = Promise.race([fail(5), wait(10, 'b')]).then(v => out.push('race:' + v), () => out.push('race:err'))\nconst a = Promise.any([fail(5), wait(10, 'b')]).then(v => out.push('any:' + v), () => out.push('any:err'))\nPromise.all([r, a]).then(() => console.log(out.join(' ')))",
+        "choices": [
+          "race:b any:b",
+          "race:err any:b",
+          "race:err any:err"
+        ],
+        "answer": 1,
+        "explain": "`race` copies the first input to settle, which is the rejection at 5 ms. `any` ignores rejections until one input fulfils, so it gets `b` at 10 ms."
+      },
+      {
+        "code": "const out: string[] = []\nconst job = (ms: number, ok: boolean) => new Promise<string>((res, rej) =>\n  setTimeout(() => {\n    out.push('done ' + ms)\n    if (ok) res('v' + ms)\n    else rej(new Error('e' + ms))\n  }, ms))\n\nPromise.all([job(20, true), job(5, false)])\n  .catch((e: Error) => out.push('caught ' + e.message))\nsetTimeout(() => console.log(out.join(', ')), 40)",
+        "choices": [
+          "done 5, caught e5",
+          "done 5, done 20, caught e5",
+          "done 5, caught e5, done 20"
+        ],
+        "answer": 2,
+        "explain": "`Promise.all` rejects as soon as the 5 ms job fails, but it cannot cancel anything: the 20 ms job still runs and logs afterwards."
+      }
+    ],
+    "tip": "Before writing any `await`, say out loud which calls depend on which and sketch the lanes or the dependency chain. Then name the semantics you rely on ('`all` is fail-fast and keeps input order', 'the pool stores by index'). Interviewers listen for whether you know what runs concurrently, not just whether the code compiles.",
+    "links": {
+      "problems": [
+        "worker-pool-makespan",
+        "token-bucket-limiter"
+      ],
+      "guides": [
+        "retries-backoff",
+        "queues-async-work",
+        "api-rate-limits"
+      ],
+      "lessons": [
+        "ts-event-loop",
+        "py-concurrency"
+      ]
+    }
+  }
+}

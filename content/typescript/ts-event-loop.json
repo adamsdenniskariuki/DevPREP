@@ -1,0 +1,374 @@
+{
+  "id": "ts-event-loop",
+  "track": "typescript",
+  "title": "The event loop: tasks, microtasks and ordering",
+  "minutes": 45,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "How one JavaScript thread interleaves work: the call stack, run-to-completion, the task and microtask queues, why promise callbacks beat setTimeout(0), microtask starvation, and chunking long work so timers and input still get a turn.",
+  "prerequisites": ["ts-scope-closures"],
+  "prerequisiteNotes": "ts-scope-closures: every callback handed to `setTimeout`, `then` or `queueMicrotask` is a closure. It reads its captured variables when the event loop finally runs it, not when it was scheduled, so knowing when it runs tells you what it sees.",
+  "objectives": [
+    "Explain the call stack, run-to-completion, the task (macrotask) queue and the microtask queue, and the order the event loop serves them.",
+    "Predict the output of snippets that mix synchronous code, promise callbacks, `async`/`await`, `queueMicrotask` and `setTimeout(fn, 0)`.",
+    "Recognise microtask starvation and explain why `await Promise.resolve()` does not let timers, I/O or painting run.",
+    "Split long CPU-bound work into chunks that yield with `setTimeout`, and say when a worker thread is the better answer.",
+    "Describe the Node-specific (`process.nextTick`, `setImmediate`) and browser-specific (rendering, `requestAnimationFrame`) parts at a high level."
+  ],
+  "concepts": [
+    {
+      "title": "One thread, one call stack, run-to-completion",
+      "body": "A JavaScript realm runs your code on **one thread** with **one call stack**. When a callback starts, it runs until the stack is empty again; no timer, click or promise callback can interrupt it halfway. This is **run-to-completion**: between two statements of synchronous code nothing else in your program can change shared variables, so there are no data races on plain objects. The price is that any long synchronous stretch, a 200 ms loop or a huge `JSON.parse`, blocks **everything** else scheduled on that thread until it returns. Asynchrony in JavaScript is not parallelism; it is a queue of callbacks waiting for the stack to empty.",
+      "code": "let counter = 0\nsetTimeout(() => console.log('timer sees', counter), 0)\nfor (let i = 0; i < 1_000_000; i++) counter++\nconsole.log('loop done', counter)\n// loop done 1000000\n// timer sees 1000000   (the timer could not cut into the loop)"
+    },
+    {
+      "title": "Tasks and microtasks: the two queues",
+      "body": "The host (browser or Node) keeps a **task queue** (often called the macrotask queue): timer callbacks, I/O completions, UI events and messages. Separately there is a **microtask queue**: promise reactions (`then`/`catch`/`finally` callbacks, `await` continuations) and `queueMicrotask` callbacks. The loop is: run one task to completion, then **drain the microtask queue completely**, including microtasks queued by microtasks, then (in browsers) maybe render, then take the next task. The initial script is itself a task, so every microtask it queues runs before any `setTimeout(fn, 0)` callback. `setTimeout(fn, 0)` does not mean now; it means 'queue a task once at least the delay has passed and the thread is free'.",
+      "code": "console.log('A')\nsetTimeout(() => console.log('B'), 0)        // task\nPromise.resolve().then(() => console.log('C')) // microtask\nconsole.log('D')\n// A D C B",
+      "diagram": "tsl-loop"
+    },
+    {
+      "title": "Promises and async/await on the queues",
+      "body": "Three facts answer most ordering questions. First, the `new Promise(executor)` executor runs **synchronously** inside the constructor. Second, `then` on an already-settled promise queues its callback as a microtask immediately; on a pending promise it queues it when the promise settles. Third, an `async` function runs synchronously **up to its first** `await`; the rest of the body is a continuation that resumes as a microtask once the awaited value settles, and the call returns a promise straight away. So `await` never blocks the thread: it returns control to the caller, and the caller keeps running synchronously.",
+      "code": "const log: string[] = []\nsetTimeout(() => log.push('timeout'), 0)\nasync function run(): Promise<void> {\n  log.push('run start')        // synchronous part\n  await null                   // rest becomes a microtask\n  log.push('after await')\n}\nrun()\nPromise.resolve().then(() => log.push('then'))\nlog.push('sync end')\nsetTimeout(() => console.log(log.join(', ')), 10)\n// run start, sync end, after await, then, timeout",
+      "diagram": "tsl-order"
+    },
+    {
+      "title": "Microtask starvation",
+      "body": "Because the loop drains the microtask queue **until it is empty** before taking another task, a microtask that keeps queueing microtasks starves everything else: timers never fire, I/O callbacks wait, and a browser cannot paint or handle input. The same happens with an endless `async` loop whose only `await`s are on already-resolved promises. The program is not deadlocked in the classic sense; it is busy forever on one turn. The fix is to make each step a **new task** (`setTimeout`, or `setImmediate` in Node), so the loop can serve other queues between steps.",
+      "code": "let spins = 0\nsetTimeout(() => console.log('timer ran after', spins, 'spins'), 0)\nfunction spin(): void {\n  if (++spins < 100_000) queueMicrotask(spin)  // each microtask queues another\n}\nspin()\n// timer ran after 100000 spins: without the cap it would never run",
+      "diagram": "tsl-starve"
+    },
+    {
+      "title": "Long synchronous work and chunking",
+      "body": "A long loop is one long task: clicks, timers and network callbacks queue up behind it, and in a browser no frame is painted (60 Hz needs a frame about every 16.7 ms). If the work must stay on the main thread, **chunk** it: process a slice, then `await new Promise(r => setTimeout(r, 0))` so the rest continues in a later task. Total CPU time is unchanged (slightly worse), but latency for everything else drops to one chunk. Pick a chunk size that keeps each slice to a few milliseconds. When the work is genuinely heavy, move it off the thread instead: a Web Worker in browsers, `worker_threads` in Node.",
+      "code": "// Blocking: one task holds the thread until every item is done\nfunction sumAll(xs: number[]): number {\n  let s = 0\n  for (const x of xs) s += x\n  return s\n}\n\n// Chunked: each slice runs in its own task; timers and events run in between\nasync function sumChunked(xs: number[], size = 10_000): Promise<number> {\n  let s = 0\n  for (let i = 0; i < xs.length; i += size) {\n    for (let j = i; j < Math.min(i + size, xs.length); j++) s += xs[j]\n    await new Promise<void>(resolve => setTimeout(resolve, 0))\n  }\n  return s\n}",
+      "diagram": "tsl-chunk"
+    },
+    {
+      "title": "Node and browsers: same model, different extras",
+      "body": "Both hosts follow the task-then-drain-microtasks rhythm; the extras differ. **Node** has `process.nextTick`, whose queue is drained before the promise microtask queue, and `setImmediate`, which runs in the 'check' phase after I/O polling; `setTimeout(fn, 0)` is treated as 1 ms, and its order against `setImmediate` from the main module is not guaranteed. **Browsers** may run a rendering step between tasks (`requestAnimationFrame` callbacks, style, layout, paint), clamp nested timers to at least 4 ms after five levels, and throttle timers in background tabs. Interview code should rely only on the portable part: sync, then microtasks, then tasks.",
+      "code": "// Node only (not available in the lab runner):\n// process.nextTick(() => console.log('nextTick'))\n// Promise.resolve().then(() => console.log('then'))\n// -> nextTick, then\n//\n// Browser only:\n// requestAnimationFrame(() => draw())  // just before the next paint"
+    }
+  ],
+  "example": "const yieldToLoop = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))\n\nasync function countWords(lines: string[], linesPerChunk = 500): Promise<number> {\n  let words = 0\n  for (let i = 0; i < lines.length; i++) {\n    words += lines[i].split(/\\s+/).filter(Boolean).length\n    if ((i + 1) % linesPerChunk === 0) await yieldToLoop()  // let timers and events in\n  }\n  return words\n}\n\ncountWords(['the event loop', '', 'runs one task at a time']).then(n => console.log(n))  // 9",
+  "task": "Write `chunkedSums(nums, size)`, an `async` function that sums `nums` in consecutive chunks of `size` (size ≥ 1) and resolves to a log of what happened. Before doing any work it starts a **heartbeat**: a `setTimeout(…, 0)` callback that pushes `'tick'` and re-schedules itself, until the work is finished (it must check a `done` flag **before** pushing). For each chunk push `'sum <total>'`, and between chunks yield to the task queue so the heartbeat gets a turn. With `[1, 2, 3, 4, 5]` and size 2 the result is `['sum 3', 'tick', 'sum 7', 'tick', 'sum 5']`; empty input gives `[]`.",
+  "starter": "async function chunkedSums(nums: number[], size: number): Promise<string[]> {\n  const log: string[] = []\n  let done = false\n  const heartbeat = (): void => {\n    if (done) return\n    log.push('tick')\n    setTimeout(heartbeat, 0)\n  }\n  setTimeout(heartbeat, 0)\n  for (let start = 0; start < nums.length; start += size) {\n    // TODO: this 'yield' never lets the heartbeat run. Why?\n    if (start > 0) await Promise.resolve()\n    let sum = 0\n    for (const n of nums.slice(start, start + size)) sum += n\n    log.push(`sum ${sum}`)\n  }\n  done = true\n  return log\n}\n",
+  "hints": [
+    "`await Promise.resolve()` resumes as a **microtask**, and the loop drains all microtasks before it looks at the timer queue, so the heartbeat waits until every chunk is done.",
+    "Yield with a task instead: `await new Promise<void>(resolve => setTimeout(resolve, 0))`. The heartbeat's timer was queued first, so it runs before your continuation."
+  ],
+  "solution": "async function chunkedSums(nums: number[], size: number): Promise<string[]> {\n  const log: string[] = []\n  let done = false\n  const heartbeat = (): void => {\n    if (done) return\n    log.push('tick')\n    setTimeout(heartbeat, 0)\n  }\n  setTimeout(heartbeat, 0)\n  for (let start = 0; start < nums.length; start += size) {\n    if (start > 0) await new Promise<void>(resolve => setTimeout(resolve, 0))\n    let sum = 0\n    for (const n of nums.slice(start, start + size)) sum += n\n    log.push(`sum ${sum}`)\n  }\n  done = true\n  return log\n}\n\nThe only change from the starter is **how** the loop yields. A resolved-promise `await` resumes in the microtask queue, which the event loop drains before it serves any timer, so all chunks would run back to back in one turn. Awaiting a `setTimeout` puts the continuation behind the heartbeat timer in the FIFO task queue: heartbeat, chunk, heartbeat, chunk. The first chunk runs synchronously in the call, there is no yield after the last chunk, and the pending heartbeat that fires after the work sees `done` and stops, so the log never ends with a stray tick. Each case costs O(n) work plus one task per chunk.",
+  "checklist": [
+    "I yield with a timer (a new task), not with a resolved promise (a microtask).",
+    "The heartbeat checks `done` before pushing, so no tick appears after the last sum.",
+    "Empty input returns `[]` and a single chunk returns one `sum` entry with no tick.",
+    "Chunks are consecutive slices of `size`; the last chunk may be shorter.",
+    "My solution type-checks under `strict` with `Promise<void>` on the yield promise."
+  ],
+  "pitfalls": [
+    "Believing `setTimeout(fn, 0)` runs immediately or before promise callbacks; it waits for the stack to empty and for every queued microtask.",
+    "Wrapping CPU-heavy code in `async` or a `Promise` and expecting it to run in the background; it still runs on the same thread.",
+    "Yielding with `await Promise.resolve()` or `await null` to 'unblock' a loop; that is a microtask, so timers, I/O and painting still wait.",
+    "Writing a recursive `queueMicrotask` or `then` loop that never ends, starving every timer and event.",
+    "Forgetting that the `new Promise` executor and the start of an `async` function run synchronously.",
+    "Relying on Node-only ordering (`setTimeout` vs `setImmediate` from the main module) in code that must be deterministic."
+  ],
+  "walkthrough": [
+    {
+      "title": "Answer the ordering question out loud",
+      "body": "Interviewers love a snippet mixing `console.log`, `setTimeout`, `then` and `async`. Use a fixed procedure and narrate it. **Pass 1:** read the code top to bottom, printing synchronous output and writing each scheduled callback into one of two columns, microtasks or tasks; remember that executors and async bodies up to the first `await` are synchronous. **Pass 2:** drain the microtask column in FIFO order, appending any microtasks those callbacks queue to the end of the same column. **Pass 3:** take the first task, run it, then drain microtasks again; repeat.",
+      "code": "const log: string[] = []\nsetTimeout(() => {\n  log.push('T1')\n  queueMicrotask(() => log.push('M3'))   // drains before T2\n}, 0)\nsetTimeout(() => log.push('T2'), 0)\nPromise.resolve()\n  .then(() => log.push('M1'))\n  .then(() => log.push('M2'))            // queued when M1 finishes\nlog.push('S')\nsetTimeout(() => console.log(log.join(' ')), 10)\n// S M1 M2 T1 M3 T2"
+    },
+    {
+      "title": "Choosing how to yield",
+      "body": "Yielding is about **which queue** your continuation lands in. `await somePromise` that is already resolved resumes as a microtask: cheap, but nothing else gets a turn. `await new Promise(r => setTimeout(r, 0))` resumes as a new task: timers, I/O and (in browsers) a render step can run in between. Hosts add finer tools, such as `setImmediate` in Node or `MessageChannel` and `scheduler.yield()` in some browsers, but `setTimeout` is the portable answer in an interview. If chunking still costs too much, the work belongs in a worker thread.",
+      "code": "const microYield = (): Promise<void> => Promise.resolve()                        // same turn\nconst taskYield = (): Promise<void> => new Promise(r => setTimeout(r, 0))   // next turn"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, start the heartbeat before any work so its timer is first in the task queue. Second, sum the first chunk synchronously, then before each later chunk `await` a `setTimeout` promise; that continuation is queued behind the heartbeat, so the two alternate. Third, set `done = true` after the last chunk and let the heartbeat's guard swallow the pending tick. Say the complexity: O(n) additions and one task per chunk, so latency for other work is bounded by the time of one chunk.",
+      "diagram": "tsl-heartbeat"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Sort jobs by queue",
+      "prompt": "Write `scheduleAll(jobs)` where each job is `[label, kind]` and `kind` is `'sync'`, `'micro'` or `'macro'`. Run each job as its kind says: push the label now, from `queueMicrotask`, or from `setTimeout(…, 0)`. Resolve to the labels in the order they were actually pushed, once every job has run.",
+      "hints": [
+        "Schedule everything in one loop, exactly as described; the event loop does the sorting for you.",
+        "Resolve from one more `setTimeout(…, 0)` queued after the loop: it is the last task in the FIFO queue, so every job has run by then."
+      ],
+      "solution": "type Kind = 'sync' | 'micro' | 'macro'\n\nfunction scheduleAll(jobs: [string, Kind][]): Promise<string[]> {\n  const log: string[] = []\n  for (const [label, kind] of jobs) {\n    if (kind === 'sync') log.push(label)\n    else if (kind === 'micro') queueMicrotask(() => log.push(label))\n    else setTimeout(() => log.push(label), 0)\n  }\n  return new Promise(resolve => setTimeout(() => resolve(log), 0))\n}",
+      "checklist": [
+        "Within each kind, labels keep their input order (both queues are FIFO).",
+        "All sync labels come first, then all micro, then all macro.",
+        "An empty job list resolves to `[]`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Batch updates per microtask",
+      "prompt": "Write `batchedFlushes(ops)`. Each op is either a value to `set`, or `'|'`, which means 'wait for the next task' (`await` a `setTimeout`). `set` adds the value to a pending batch and, if no flush is scheduled, schedules one with `queueMicrotask`. A flush records the pending values with duplicates removed (first occurrence order) and clears the batch. Resolve to the list of recorded batches after the last flush.",
+      "hints": [
+        "Keep a `scheduled` flag: the first `set` in a turn queues the flush, later ones just append. This is how UI libraries batch state updates.",
+        "After the loop, `await Promise.resolve()`: its continuation is queued after the pending flush microtask, so the last batch is recorded before you return."
+      ],
+      "solution": "async function batchedFlushes(ops: string[]): Promise<string[][]> {\n  const flushes: string[][] = []\n  let pending: string[] = []\n  let scheduled = false\n  const flush = (): void => {\n    scheduled = false\n    flushes.push([...new Set(pending)])\n    pending = []\n  }\n  const set = (value: string): void => {\n    pending.push(value)\n    if (!scheduled) {\n      scheduled = true\n      queueMicrotask(flush)\n    }\n  }\n  for (const op of ops) {\n    if (op === '|') await new Promise<void>(resolve => setTimeout(resolve, 0))\n    else set(op)\n  }\n  await Promise.resolve()\n  return flushes\n}",
+      "checklist": [
+        "Values set in the same turn land in one batch; a `'|'` starts a new one.",
+        "Duplicates inside a batch collapse, keeping first-seen order.",
+        "No empty batches are recorded, even for `'|'`-only input."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "In Node, how do `process.nextTick`, `queueMicrotask` and `setImmediate` differ?",
+      "answer": "`process.nextTick` callbacks go to Node's nextTick queue, which is drained before the promise microtask queue whenever the current operation finishes; `queueMicrotask` and promise reactions share the standard microtask queue. Both are drained completely, so both can starve I/O. `setImmediate` schedules a macrotask in the 'check' phase, after I/O polling, so it is the Node-native way to yield. From the main module, `setTimeout(fn, 0)` versus `setImmediate` order is not guaranteed; inside an I/O callback, `setImmediate` runs first."
+    },
+    {
+      "question": "Can wrapping CPU-heavy code in a Promise or an async function make it non-blocking?",
+      "answer": "No. The executor runs synchronously and callbacks run on the same thread, so the work still occupies the stack; it only moves later. Options are chunking with task-level yields (latency stays bounded by one chunk) or moving the work to another thread: a Web Worker in the browser, `worker_threads` in Node, communicating by messages."
+    },
+    {
+      "question": "Why might `setTimeout(fn, 0)` fire after 10 ms or more?",
+      "answer": "The delay is a minimum, not a schedule. The callback waits for the current task, every queued microtask and every task ahead of it. Node treats 0 as 1 ms; browsers clamp nested timers to at least 4 ms after five levels and throttle timers in background tabs heavily. Under load the drift can be large, so never use timers for precise timing."
+    },
+    {
+      "question": "Where does rendering fit into the browser event loop?",
+      "answer": "After a task and its microtask checkpoint, the browser may run a rendering step: `requestAnimationFrame` callbacks, style, layout and paint, typically aligned to the display refresh (about every 16.7 ms at 60 Hz). A task longer than a frame drops frames; a microtask loop prevents rendering entirely. Do visual updates in `requestAnimationFrame`, and keep tasks short."
+    }
+  ],
+  "takeaways": [
+    "One thread, one stack: every callback runs to completion, so long synchronous work blocks everything.",
+    "After each task the loop drains the whole microtask queue, then takes the next task: sync, then microtasks, then `setTimeout(0)`.",
+    "Promise executors and the start of an `async` function are synchronous; `await` continuations are microtasks.",
+    "Microtasks that keep queueing microtasks starve timers, I/O and painting.",
+    "Yield with `setTimeout` (a new task), not `await Promise.resolve()`; move truly heavy work to a worker."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsl-loop",
+        "type": "flow",
+        "title": "Event loop step-through: A D C B",
+        "alt": "Animated flow diagram of the event loop running a four-line snippet. The call stack prints to the console, hands a setTimeout callback to the host timer, which queues it in the task queue, and queues a then callback in the microtask queue. When the stack is empty, the event loop drains the microtask queue first and only then takes one task from the task queue, pushing each callback back onto the stack.",
+        "caption": "Synchronous code first, then every microtask, then one task: the output is A D C B.",
+        "nodes": [
+          {"id": "out", "label": "Console", "kind": "storage", "col": 0, "row": 0, "sub": "A D C B"},
+          {"id": "stack", "label": "Call stack", "kind": "service", "col": 2, "row": 0, "sub": "runs to completion"},
+          {"id": "loop", "label": "Event loop", "kind": "decision", "col": 4, "row": 0, "sub": "stack empty?"},
+          {"id": "micro", "label": "Microtask queue", "kind": "queue", "col": 2, "row": 2, "sub": "drained fully"},
+          {"id": "task", "label": "Task queue", "kind": "queue", "col": 4, "row": 2, "sub": "one per turn"},
+          {"id": "timer", "label": "Host timer", "kind": "external", "col": 0, "row": 4, "sub": "waits >= 0 ms"}
+        ],
+        "edges": [
+          {"from": "stack", "to": "out", "label": "console.log"},
+          {"from": "stack", "to": "timer", "label": "setTimeout(B, 0)"},
+          {"from": "timer", "to": "task", "label": "delay elapsed", "style": "async"},
+          {"from": "stack", "to": "micro", "label": "then(C)", "style": "async"},
+          {"from": "loop", "to": "stack", "label": "push callback"},
+          {"from": "loop", "to": "micro", "label": "1. drain all"},
+          {"from": "loop", "to": "task", "label": "2. take one"}
+        ],
+        "steps": [
+          {"edges": [0], "text": "The script is the first task. `console.log('A')` runs on the stack and prints A at once."},
+          {"edges": [1, 2], "text": "`setTimeout(B, 0)` hands B to the host's timer. When the delay has passed, B is placed in the task queue; it cannot run while the stack is busy."},
+          {"edges": [3], "text": "`Promise.resolve().then(C)`: the promise is already fulfilled, so C goes straight into the microtask queue."},
+          {"edges": [0], "text": "`console.log('D')` is still part of the same synchronous script. Output so far: A D."},
+          {"edges": [5, 4], "text": "The script ends and the stack is empty. The event loop drains the microtask queue first: C runs. Output: A D C."},
+          {"edges": [6, 4], "text": "Only now does the loop take one task: B runs. Output: A D C B. After every task, the microtask queue is drained again before the next one."}
+        ]
+      },
+      {
+        "id": "tsl-order",
+        "type": "sequence",
+        "title": "Ordering with async, then and setTimeout",
+        "alt": "Sequence diagram with four lanes: the script, the microtask queue, the task queue and the log. The script queues a timer task, logs run start synchronously from inside the async function, queues the await continuation and a then callback as microtasks, and logs sync end. Then the microtasks log after await and then in FIFO order, and only afterwards the timer task logs timeout.",
+        "caption": "An async function is synchronous until its first await; its continuation and then callbacks are FIFO microtasks that all beat the timer.",
+        "actors": [
+          {"id": "script", "label": "Script"},
+          {"id": "micro", "label": "Microtasks"},
+          {"id": "tasks", "label": "Tasks"},
+          {"id": "log", "label": "log"}
+        ],
+        "messages": [
+          {"from": "script", "to": "tasks", "label": "setTimeout(timeout, 0)", "style": "async"},
+          {"from": "script", "to": "log", "label": "run(): 'run start'", "note": "The async body runs synchronously up to its first await."},
+          {"from": "script", "to": "micro", "label": "await null: queue resume", "style": "async"},
+          {"from": "script", "to": "micro", "label": "then(): queue callback", "style": "async"},
+          {"from": "script", "to": "log", "label": "'sync end'", "note": "The script task ends; the stack is empty."},
+          {"from": "micro", "to": "log", "label": "resume: 'after await'"},
+          {"from": "micro", "to": "log", "label": "'then'", "note": "FIFO, and the queue is drained completely."},
+          {"from": "tasks", "to": "log", "label": "'timeout'", "note": "The next task runs only once microtasks are empty."}
+        ]
+      },
+      {
+        "id": "tsl-starve",
+        "type": "timeline",
+        "title": "How a microtask loop starves the page",
+        "alt": "Timeline of a starvation incident. A script schedules a timer and starts a loop that re-queues itself with queueMicrotask. The microtask queue never empties, so the timer, I/O callbacks and painting never run and the page freezes. A profiler shows one endless task. Rescheduling each step with setTimeout lets timers and events interleave again.",
+        "caption": "The loop drains microtasks until empty; a self-refilling queue means no other task ever gets a turn.",
+        "events": [
+          {"at": "turn 1", "label": "Script schedules setTimeout(render, 0), then calls step(), which queueMicrotask(step)s", "kind": "trigger"},
+          {"at": "turn 1, drain", "label": "Each step queues the next, so the microtask queue never becomes empty", "kind": "impact"},
+          {"at": "turn 1, forever", "label": "render, I/O callbacks, input and painting never get a turn: the tab freezes", "kind": "impact"},
+          {"at": "debugging", "label": "The profiler shows one task that never ends, full of microtask frames", "kind": "detect"},
+          {"at": "fix", "label": "Reschedule with setTimeout(step, 0) so every step is a separate task", "kind": "mitigate"},
+          {"at": "after fix", "label": "render and events interleave between steps; the total work is unchanged", "kind": "resolve"}
+        ]
+      },
+      {
+        "id": "tsl-chunk",
+        "type": "compare",
+        "title": "One long task versus chunked work",
+        "alt": "Comparison. On the left, a single task processes every item and the click handler and the timers or paint step can only run after it finishes, so both are blocked. On the right, the work is split into chunks; after chunk 1 yields with setTimeout, the click handler runs, then chunk 2, and timers and painting also get turns between chunks.",
+        "caption": "Chunking does not make the work faster; it bounds how long everything else waits to one chunk.",
+        "before": {
+          "label": "One task for all the work",
+          "nodes": [
+            {"id": "big", "label": "All items", "kind": "bad", "col": 0, "row": 0, "sub": "one 300 ms task"},
+            {"id": "click", "label": "Click handler", "kind": "state", "col": 2, "row": 0, "sub": "waits for loop"},
+            {"id": "paint", "label": "Timers / paint", "kind": "bad", "col": 2, "row": 2, "sub": "also blocked"}
+          ],
+          "edges": [
+            {"from": "big", "to": "click", "label": "only after"},
+            {"from": "big", "to": "paint", "label": "only after"}
+          ]
+        },
+        "after": {
+          "label": "Chunks yield with setTimeout(0)",
+          "nodes": [
+            {"id": "c1", "label": "Chunk 1", "kind": "good", "col": 0, "row": 0, "sub": "a few ms"},
+            {"id": "click", "label": "Click handler", "kind": "good", "col": 2, "row": 0, "sub": "runs between"},
+            {"id": "c2", "label": "Chunk 2", "kind": "good", "col": 0, "row": 2, "sub": "next task"},
+            {"id": "paint", "label": "Timers / paint", "kind": "good", "col": 2, "row": 2, "sub": "get turns too"}
+          ],
+          "edges": [
+            {"from": "c1", "to": "click", "label": "yield"},
+            {"from": "click", "to": "c2", "label": "next turn"},
+            {"from": "c2", "to": "paint", "label": "yield"}
+          ]
+        }
+      },
+      {
+        "id": "tsl-heartbeat",
+        "type": "timeline",
+        "title": "chunkedSums([1, 2, 3, 4, 5], 2), task by task",
+        "alt": "Timeline of the core task. The first task queues the heartbeat timer, sums the first chunk and queues a yield timer. The heartbeat and the chunk continuations then alternate as separate tasks, producing sum 3, tick, sum 7, tick, sum 5. A final pending heartbeat sees the done flag and stops.",
+        "caption": "Both timers wait in one FIFO task queue, so heartbeat and chunks take turns.",
+        "events": [
+          {"at": "task 1 (the call)", "label": "Queue heartbeat H1, sum [1, 2] -> 'sum 3', await a timer Y1", "kind": "trigger"},
+          {"at": "task 2", "label": "H1 runs: 'tick', queues H2", "kind": "mitigate"},
+          {"at": "task 3", "label": "Y1 fires; the await continuation (a microtask) sums [3, 4] -> 'sum 7', awaits Y2", "kind": "impact"},
+          {"at": "task 4", "label": "H2 runs: 'tick', queues H3", "kind": "mitigate"},
+          {"at": "task 5", "label": "Y2 fires; the continuation sums [5] -> 'sum 5', sets done and resolves", "kind": "impact"},
+          {"at": "task 6", "label": "H3 sees done and returns without pushing: no trailing tick", "kind": "resolve"}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "chunkedSums",
+        "starter": "async function chunkedSums(nums: number[], size: number): Promise<string[]> {\n  const log: string[] = []\n  let done = false\n  const heartbeat = (): void => {\n    if (done) return\n    log.push('tick')\n    setTimeout(heartbeat, 0)\n  }\n  setTimeout(heartbeat, 0)\n  for (let start = 0; start < nums.length; start += size) {\n    // TODO: this 'yield' never lets the heartbeat run. Why?\n    if (start > 0) await Promise.resolve()\n    let sum = 0\n    for (const n of nums.slice(start, start + size)) sum += n\n    log.push(`sum ${sum}`)\n  }\n  done = true\n  return log\n}\n",
+        "solution": "async function chunkedSums(nums: number[], size: number): Promise<string[]> {\n  const log: string[] = []\n  let done = false\n  const heartbeat = (): void => {\n    if (done) return\n    log.push('tick')\n    setTimeout(heartbeat, 0)\n  }\n  setTimeout(heartbeat, 0)\n  for (let start = 0; start < nums.length; start += size) {\n    if (start > 0) await new Promise<void>(resolve => setTimeout(resolve, 0))\n    let sum = 0\n    for (const n of nums.slice(start, start + size)) sum += n\n    log.push(`sum ${sum}`)\n  }\n  done = true\n  return log\n}\n",
+        "tests": [
+          {"args": [[1, 2, 3, 4, 5], 2], "expected": ["sum 3", "tick", "sum 7", "tick", "sum 5"]},
+          {"args": [[], 3], "expected": []},
+          {"args": [[10, 20], 1], "expected": ["sum 10", "tick", "sum 20"]}
+        ],
+        "hiddenTests": [
+          {"args": [[4], 1], "expected": ["sum 4"]},
+          {"args": [[1, 2], 5], "expected": ["sum 3"]},
+          {"args": [[-1, -2, 3], 1], "expected": ["sum -1", "tick", "sum -2", "tick", "sum 3"]},
+          {"args": [[2, 2, 2, 2], 2], "expected": ["sum 4", "tick", "sum 4"]},
+          {"args": [[0, 0, 0], 3], "expected": ["sum 0"]},
+          {"args": [[5, -5, 1, 1, 7], 2], "expected": ["sum 0", "tick", "sum 2", "tick", "sum 7"]}
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "scheduleAll",
+        "starter": "type Kind = 'sync' | 'micro' | 'macro'\n\nfunction scheduleAll(jobs: [string, Kind][]): Promise<string[]> {\n  const log: string[] = []\n  for (const [label] of jobs) {\n    // TODO: schedule each job on the queue its kind names\n    log.push(label)\n  }\n  return Promise.resolve(log)\n}\n",
+        "solution": "type Kind = 'sync' | 'micro' | 'macro'\n\nfunction scheduleAll(jobs: [string, Kind][]): Promise<string[]> {\n  const log: string[] = []\n  for (const [label, kind] of jobs) {\n    if (kind === 'sync') log.push(label)\n    else if (kind === 'micro') queueMicrotask(() => log.push(label))\n    else setTimeout(() => log.push(label), 0)\n  }\n  return new Promise(resolve => setTimeout(() => resolve(log), 0))\n}\n",
+        "tests": [
+          {"args": [[["a", "macro"], ["b", "sync"], ["c", "micro"]]], "expected": ["b", "c", "a"]},
+          {"args": [[]], "expected": []}
+        ],
+        "hiddenTests": [
+          {"args": [[["only", "micro"]]], "expected": ["only"]},
+          {"args": [[["x", "sync"], ["y", "sync"], ["z", "sync"]]], "expected": ["x", "y", "z"]},
+          {"args": [[["t1", "macro"], ["m1", "micro"], ["s1", "sync"], ["t2", "macro"], ["m2", "micro"], ["s2", "sync"]]], "expected": ["s1", "s2", "m1", "m2", "t1", "t2"]},
+          {"args": [[["dup", "macro"], ["dup", "micro"], ["dup", "sync"]]], "expected": ["dup", "dup", "dup"]},
+          {"args": [[["ü", "macro"], ["é", "micro"], ["日本", "macro"]]], "expected": ["é", "ü", "日本"]}
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "batchedFlushes",
+        "starter": "async function batchedFlushes(ops: string[]): Promise<string[][]> {\n  const flushes: string[][] = []\n  let pending: string[] = []\n  const flush = (): void => {\n    flushes.push([...new Set(pending)])\n    pending = []\n  }\n  const set = (value: string): void => {\n    pending.push(value)\n    flush() // TODO: batch every set in this turn into one microtask flush\n  }\n  for (const op of ops) {\n    if (op === '|') await new Promise<void>(resolve => setTimeout(resolve, 0))\n    else set(op)\n  }\n  return flushes\n}\n",
+        "solution": "async function batchedFlushes(ops: string[]): Promise<string[][]> {\n  const flushes: string[][] = []\n  let pending: string[] = []\n  let scheduled = false\n  const flush = (): void => {\n    scheduled = false\n    flushes.push([...new Set(pending)])\n    pending = []\n  }\n  const set = (value: string): void => {\n    pending.push(value)\n    if (!scheduled) {\n      scheduled = true\n      queueMicrotask(flush)\n    }\n  }\n  for (const op of ops) {\n    if (op === '|') await new Promise<void>(resolve => setTimeout(resolve, 0))\n    else set(op)\n  }\n  await Promise.resolve()\n  return flushes\n}\n",
+        "tests": [
+          {"args": [["a", "b", "|", "c"]], "expected": [["a", "b"], ["c"]]},
+          {"args": [["x", "x", "y"]], "expected": [["x", "y"]]}
+        ],
+        "hiddenTests": [
+          {"args": [[]], "expected": []},
+          {"args": [["|", "|"]], "expected": []},
+          {"args": [["|", "a"]], "expected": [["a"]]},
+          {"args": [["é", "ü", "|", "é"]], "expected": [["é", "ü"], ["é"]]},
+          {"args": [["a", "|", "|", "b", "b", "|"]], "expected": [["a"], ["b"]]},
+          {"args": [["k", "j", "k", "j"]], "expected": [["k", "j"]]}
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const log: string[] = []\nsetTimeout(() => log.push('timeout'), 0)\nPromise.resolve().then(() => log.push('then'))\nlog.push('sync')\nsetTimeout(() => console.log(log.join(' ')), 20)",
+        "choices": ["sync then timeout", "sync timeout then", "timeout then sync"],
+        "answer": 0,
+        "explain": "Synchronous code runs first, then the microtask queue is drained (`then`), and only then is the next task (the timer) taken."
+      },
+      {
+        "code": "const log: string[] = []\nasync function work(): Promise<void> {\n  log.push('A')\n  await null\n  log.push('C')\n}\nwork()\nlog.push('B')\nsetTimeout(() => console.log(log.join(' ')), 20)",
+        "choices": ["B A C", "A C B", "A B C"],
+        "answer": 2,
+        "explain": "An `async` function runs synchronously until its first `await`, so A is logged during the call. The rest resumes as a microtask, after the caller logs B."
+      },
+      {
+        "code": "const log: string[] = []\nconst p = new Promise<string>(resolve => {\n  log.push('executor')\n  resolve('value')\n  log.push('after resolve')\n})\np.then(v => log.push(v))\nlog.push('script end')\nsetTimeout(() => console.log(log.join(', ')), 20)",
+        "choices": ["script end, executor, after resolve, value", "executor, value, after resolve, script end", "executor, after resolve, script end, value"],
+        "answer": 2,
+        "explain": "The executor runs synchronously inside the constructor, and `resolve` does not stop it. The `then` callback is a microtask, so it runs after the script finishes."
+      },
+      {
+        "code": "const log: string[] = []\nsetTimeout(() => {\n  log.push('t1')\n  Promise.resolve().then(() => log.push('micro'))\n}, 0)\nsetTimeout(() => log.push('t2'), 0)\nsetTimeout(() => console.log(log.join(' ')), 20)",
+        "choices": ["t1 t2 micro", "t1 micro t2", "micro t1 t2"],
+        "answer": 1,
+        "explain": "The microtask queue is drained after every task, not once per batch of timers, so the microtask queued by t1 runs before t2."
+      },
+      {
+        "code": "const log: string[] = []\nPromise.resolve()\n  .then(() => log.push('a1'))\n  .then(() => log.push('a2'))\nPromise.resolve()\n  .then(() => log.push('b1'))\n  .then(() => log.push('b2'))\nsetTimeout(() => console.log(log.join(' ')), 20)",
+        "choices": ["a1 a2 b1 b2", "a1 b1 a2 b2", "b1 b2 a1 a2"],
+        "answer": 1,
+        "explain": "Only a1 and b1 are queued at first. a2 is queued when a1 finishes, which puts it behind b1, so the two chains interleave."
+      },
+      {
+        "code": "const log: string[] = []\nconst start = Date.now()\nsetTimeout(() => log.push(Date.now() - start >= 30 ? 'timer late' : 'timer on time'), 0)\nwhile (Date.now() - start < 30) {\n  // busy for 30 ms\n}\nlog.push('loop done')\nsetTimeout(() => console.log(log.join(' | ')), 10)",
+        "choices": ["timer on time | loop done", "loop done | timer on time", "loop done | timer late"],
+        "answer": 2,
+        "explain": "A timer cannot interrupt synchronous code. The 0 ms timer waits for the 30 ms loop to finish, so it runs after `loop done` and at least 30 ms late."
+      }
+    ],
+    "tip": "When given an ordering puzzle, draw three boxes on the whiteboard (call stack, microtasks, tasks) and move each callback between them as you read the code aloud. Then state the rule: 'sync first, drain all microtasks, one task, repeat'. Interviewers mostly want to see that procedure, and it catches the async-body-is-sync and microtask-inside-a-timer traps.",
+    "links": {
+      "problems": ["bounded-buffer-trace", "worker-pool-makespan"],
+      "guides": ["queues-async-work", "communicating-solutions"],
+      "lessons": ["py-concurrency", "queues-fifo-simulation", "design-queues-events"]
+    }
+  }
+}

@@ -1,0 +1,405 @@
+{
+  "id": "ts-generics",
+  "track": "typescript",
+  "title": "Generics and utility types",
+  "minutes": 50,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "Generic functions and how TypeScript infers them, constraints with `extends keyof`, indexed access `T[K]`, default type parameters, typed data structures, the built-in utility types, `satisfies` versus annotation, and the mistakes that leak `any`.",
+  "prerequisites": ["ts-types-basics"],
+  "prerequisiteNotes": "ts-types-basics: structural typing, unions, literal types, narrowing and `unknown` versus `any`. Generics are functions over those types, so you need to read a union and a literal type fluently first.",
+  "objectives": [
+    "Write generic functions whose type parameters are inferred from arguments, and say where each type parameter is inferred from.",
+    "Constrain a type parameter with `extends` and use `K extends keyof T` with `T[K]` to type property access precisely.",
+    "Build a generic data structure (stack, cache) with a class type parameter and a sensible default.",
+    "Choose the right built-in utility type: `Partial`, `Required`, `Readonly`, `Pick`, `Omit`, `Record`, `ReturnType`, `Parameters`, `NonNullable`, `Awaited`.",
+    "Explain when `satisfies` beats a type annotation, and why `as T` and `any` hide bugs because types are erased at runtime.",
+    "Spot an unnecessary type parameter and replace it with a plain parameter type."
+  ],
+  "concepts": [
+    {
+      "title": "Generic functions and inference",
+      "body": "A type parameter is a placeholder the caller fills in. You almost never write it explicitly: TypeScript **infers** it from the arguments at each call site, so `first([1, 2])` gives `T = number` and `first(['a'])` gives `T = string`. The point of a generic is to **relate** types: the return type depends on the argument type. Without the type parameter you would choose between `unknown` (safe but useless to the caller) and `any` (useful but unchecked). When inference has nothing to work from, for example `new Map()` or `useState(null)`-style calls, it falls back to the constraint or `unknown`, and that is when you pass the type explicitly: `new Map<string, number>()`. A `const` type parameter (`<const T>`, TS 5.0) asks for literal inference, so `['a', 'b']` becomes `readonly ['a', 'b']` instead of `string[]`.",
+      "code": "function first<T>(items: readonly T[]): T | undefined {\n  return items[0];\n}\n\nconst n = first([3, 1, 4]);      // n: number | undefined\nconst s = first(['x', 'y']);     // s: string | undefined\n\nfunction pair<A, B>(a: A, b: B): [A, B] {\n  return [a, b];\n}\nconst p = pair('id', 7);         // p: [string, number]\n\nconst counts = new Map<string, number>();  // nothing to infer from: say it\n\nfunction tuple<const T extends readonly unknown[]>(...xs: T): T {\n  return xs;\n}\nconst t = tuple('a', 1);         // t: readonly ['a', 1]"
+    },
+    {
+      "title": "Constraints: extends, keyof and T[K]",
+      "body": "`<T extends Shape>` means \"any type, as long as it is assignable to `Shape`\", which lets the body use `Shape`'s members while the caller keeps their more specific type. `keyof T` is the union of `T`'s property names, and `T[K]` (an **indexed access type**) is the type of property `K`. Together, `<T, K extends keyof T>(obj: T, key: K): T[K]` rejects typos at compile time and returns the exact property type, `number` for `'age'` and `string` for `'name'`. Because `K` is inferred from a string literal it stays the literal `'age'`, not `string`. Note that `keyof` of a type with a string index signature is `string | number`, because numeric keys are converted to strings.",
+      "code": "interface User { id: number; name: string; age: number }\n\nfunction prop<T, K extends keyof T>(obj: T, key: K): T[K] {\n  return obj[key];\n}\n\nconst u: User = { id: 1, name: 'Ada', age: 36 };\nconst age = prop(u, 'age');       // number\nconst name = prop(u, 'name');     // string\n// prop(u, 'agee');               // error: not assignable to 'id' | 'name' | 'age'\n\nfunction longest<T extends { length: number }>(a: T, b: T): T {\n  return b.length > a.length ? b : a;\n}\nlongest('ab', 'abc');             // string\nlongest([1], [2, 3]);             // number[]\n// longest(10, 20);               // error: number has no length",
+      "diagram": "tsg-constraint"
+    },
+    {
+      "title": "Default type parameters and generic data structures",
+      "body": "Classes and interfaces take type parameters too: `class Stack<T>` stores `T[]` and every method shares that `T`, so pushing a string onto a `Stack<number>` is a compile error. A **default** (`<T = string>`) is used when the caller writes the type name without arguments or when inference finds nothing; it is not a constraint, and a default must satisfy any constraint on the same parameter. Parameters with defaults must come after required ones, like function parameters. For keyed structures prefer `Map<K, V>` over a plain object: a `Map` keeps the key's real type (`1` and `'1'` are different keys) and iterates in insertion order, while object keys are always strings.",
+      "code": "class Stack<T> {\n  private readonly items: T[] = [];\n  push(item: T): void { this.items.push(item); }\n  pop(): T | undefined { return this.items.pop(); }\n  peek(): T | undefined { return this.items.at(-1); }\n  get size(): number { return this.items.length; }\n}\n\nconst s = new Stack<number>();\ns.push(4);\n// s.push('4');                   // error: string is not number\n\ninterface ApiResult<T = unknown, E extends Error = Error> {\n  data?: T;\n  error?: E;\n}\nconst raw: ApiResult = {};                     // T = unknown, E = Error\nconst users: ApiResult<string[]> = { data: ['ada'] };"
+    },
+    {
+      "title": "Utility types that reshape an object type",
+      "body": "The built-ins derive new types from one source of truth so they cannot drift. `Partial<T>` makes every property optional (patch payloads); `Required<T>` removes the `?`s; `Readonly<T>` marks properties `readonly` (compile time only, and shallow). `Pick<T, 'a' | 'b'>` keeps listed keys; `Omit<T, 'pw'>` removes them; `Record<K, V>` builds an object type with keys `K` and values `V`, and with a literal union for `K` it forces you to handle every key. Two traps: `Omit`'s key parameter is not checked against `T`, so `Omit<User, 'pasword'>` silently removes nothing; and none of these exist at runtime, so `Omit` never strips a property from an actual object. Under the hood they are **mapped types** (`{ [P in K]: T[P] }`), which you will author in a later advanced lesson.",
+      "code": "interface User { id: number; name: string; email: string; password: string }\n\ntype PublicUser = Pick<User, 'id' | 'name'>;      // { id; name }\ntype NewUser = Omit<User, 'id'>;                   // server assigns id\ntype UserPatch = Partial<Omit<User, 'id'>>;        // any subset, id fixed\ntype Frozen = Readonly<User>;                      // u.name = 'x' is an error\n\ntype Role = 'admin' | 'editor' | 'viewer';\nconst canPublish: Record<Role, boolean> = {\n  admin: true,\n  editor: true,\n  viewer: false,                                   // remove a key: compile error\n};\n\ntype Oops = Omit<User, 'pasword'>;                 // no error, removes nothing",
+      "diagram": "tsg-utility"
+    },
+    {
+      "title": "Deriving types from values: ReturnType, Parameters, NonNullable, Awaited",
+      "body": "Often the value is the source of truth and the type should follow it. `typeof fn` turns a value into its type; `ReturnType<typeof fn>` and `Parameters<typeof fn>` (a tuple) then extract the pieces, which is handy for wrapping a third-party function without re-declaring its types. `NonNullable<T>` removes `null` and `undefined` from a union. `Awaited<T>` unwraps promises recursively, so `Awaited<ReturnType<typeof load>>` is the resolved value of an async function. Reach for these when you would otherwise copy a type by hand; do not use them to obscure a type a reader needs to see.",
+      "code": "async function loadUser(id: number, withPosts = false) {\n  return { id, name: 'Ada', posts: withPosts ? ['hi'] : [] };\n}\n\ntype LoadArgs = Parameters<typeof loadUser>;       // [id: number, withPosts?: boolean]\ntype Pending = ReturnType<typeof loadUser>;        // Promise<{ id; name; posts }>\ntype Loaded = Awaited<Pending>;                    // { id: number; name: string; posts: string[] }\n\ntype MaybeName = string | null | undefined;\ntype Name = NonNullable<MaybeName>;                // string\n\nfunction logged<A extends unknown[], R>(fn: (...args: A) => R) {\n  return (...args: A): R => {\n    console.log('call', args.length);\n    return fn(...args);\n  };\n}\nconst load = logged(loadUser);                     // same parameters and return type"
+    },
+    {
+      "title": "satisfies versus a type annotation",
+      "body": "An annotation `const x: T = value` **replaces** the inferred type with `T`: the value is checked, then forgotten. `const x = value satisfies T` (TS 4.9) **checks** the value against `T` but keeps the precise inferred type. Use an annotation when you want the wider type (a variable you will reassign, a public API boundary). Use `satisfies` for config tables and lookup maps: you still get excess-key and missing-key errors, but literal keys stay known, so a typo such as `routes.hmoe` is a compile error and each value keeps its own type. Combine it with `as const` (`{...} as const satisfies T`) to keep literal values as well.",
+      "code": "type Routes = Record<string, string>;\n\nconst annotated: Routes = { home: '/', about: '/about' };\nannotated.hmoe;                    // compiles: type string, value undefined\n\nconst checked = { home: '/', about: '/about' } satisfies Routes;\n// checked.hmoe;                   // error: property 'hmoe' does not exist\nchecked.about.toUpperCase();       // still a string\n\nconst limits = { free: 10, pro: 100 } as const satisfies Record<'free' | 'pro', number>;\ntype ProLimit = typeof limits.pro; // 100",
+      "diagram": "tsg-satisfies"
+    },
+    {
+      "title": "Types are erased: as T and any leaks",
+      "body": "Generics, annotations, `as` assertions and utility types are **deleted** when TypeScript emits JavaScript. A function such as `parse<T>(s): T { return JSON.parse(s) as T }` therefore promises whatever the caller asks for and checks nothing: `parse<number>('\"42\"')` returns a string typed as `number`. `JSON.parse`, `Response.json()` and `catch (e)` with loose settings give `any`, and `any` spreads: every property and call on it is also `any`, so errors surface far from the cause. Defend the boundary instead: type it as `unknown`, then narrow with a check or a type guard that runs at runtime, and only then hand out the precise type.",
+      "code": "function parseUnsafe<T>(text: string): T {\n  return JSON.parse(text) as T;          // a lie the compiler accepts\n}\n\ninterface Point { x: number; y: number }\n\nfunction isPoint(v: unknown): v is Point {\n  return typeof v === 'object' && v !== null &&\n    typeof (v as Record<string, unknown>).x === 'number' &&\n    typeof (v as Record<string, unknown>).y === 'number';\n}\n\nfunction parsePoint(text: string): Point | undefined {\n  const data: unknown = JSON.parse(text); // stop the any here\n  return isPoint(data) ? data : undefined;\n}\n\nparsePoint('{\"x\":1,\"y\":2}');            // { x: 1, y: 2 }\nparsePoint('{\"x\":\"1\"}');                // undefined, not a fake Point",
+      "diagram": "tsg-erase"
+    }
+  ],
+  "example": "class LruCache<K, V> {\n  private readonly entries = new Map<K, V>();\n\n  constructor(private readonly capacity: number) {}\n\n  get(key: K): V | undefined {\n    if (!this.entries.has(key)) return undefined;\n    const value = this.entries.get(key) as V;\n    this.entries.delete(key);              // move to the newest position\n    this.entries.set(key, value);\n    return value;\n  }\n\n  set(key: K, value: V): void {\n    this.entries.delete(key);\n    this.entries.set(key, value);\n    if (this.entries.size > this.capacity) {\n      const oldest = this.entries.keys().next().value as K;  // Map iterates in insertion order\n      this.entries.delete(oldest);\n    }\n  }\n}\n\nconst cache = new LruCache<string, number>(2);\ncache.set('a', 1);\ncache.set('b', 2);\ncache.get('a');          // 1, and 'a' is now newest\ncache.set('c', 3);       // evicts 'b'\nconsole.log(cache.get('b'), cache.get('c'));  // undefined 3",
+  "task": "Write `groupBy(items, key)`. `items` is an array of objects and `key` is the name of one of their properties. Return the groups as an array of `[keyValue, itemsWithThatValue]` pairs, ordered by the **first appearance** of each key value, with items in their original order. Key values keep their real type: `1` and `'1'` are different groups, and a numeric key comes back as a number, not a string. Type it so the key must be a property of the items and the returned key values have that property's type (`Array<[T[K], T[]]>`).",
+  "starter": "function groupBy<T, K extends keyof T>(items: T[], key: K): Array<[T[K], T[]]> {\n  const groups: Record<string, T[]> = {};\n  for (const item of items) {\n    const name = String(item[key]);\n    (groups[name] ??= []).push(item);\n  }\n  // TODO: object keys are always strings, and integer-like keys are reordered\n  return Object.entries(groups) as unknown as Array<[T[K], T[]]>;\n}\n",
+  "hints": [
+    "A plain object turns every key into a string and lists integer-like keys first in ascending order. Which built-in keeps the key's type and insertion order?",
+    "Use `new Map<T[K], T[]>()`, push each item into `map.get(item[key])` (creating the array on first sight), then return `[...map]`, which is already an array of `[key, group]` pairs."
+  ],
+  "solution": "function groupBy<T, K extends keyof T>(items: readonly T[], key: K): Array<[T[K], T[]]> {\n  const groups = new Map<T[K], T[]>();\n  for (const item of items) {\n    const value = item[key];\n    const bucket = groups.get(value);\n    if (bucket) bucket.push(item);\n    else groups.set(value, [item]);\n  }\n  return [...groups];\n}\n\n`K extends keyof T` rejects a key that is not a property of the items, and `T[K]` gives each group key the property's own type, so grouping by `age` returns `number` keys. A `Map` compares keys with SameValueZero, so `1` and `'1'` stay apart, and it iterates in insertion order, so groups come out in order of first appearance; spreading it yields the `[key, items]` pairs directly. The starter's object stringifies keys and lists integer-like keys first, which breaks both type and order. Each item is touched once, so the work is O(n) and the grouping does not copy the items, only references them. Taking `readonly T[]` documents that the input is not modified.",
+  "checklist": [
+    "The key parameter is `K extends keyof T`, so a misspelt property name is a compile error.",
+    "Group keys keep their type: numbers stay numbers and `1` is separate from `'1'`.",
+    "Groups appear in order of first appearance, including negative and integer-like keys.",
+    "An empty input returns `[]` and no `as` or `any` appears in my solution."
+  ],
+  "pitfalls": [
+    "Adding a type parameter that is used only once, as in `function len<T extends string>(s: T): number`; write `s: string` instead.",
+    "Typing a key as `string` and indexing with `obj[key] as any`, which accepts typos and returns `any` instead of `T[K]`.",
+    "Expecting `Omit` or `Readonly` to change the object at runtime; types are erased, so the password is still there and the property is still writable.",
+    "Misspelling a key in `Omit<User, 'pasword'>`, which compiles because `Omit` does not check its keys against `T`.",
+    "Annotating a lookup table with a wide `Record<string, V>` and losing its literal keys, when `satisfies` would keep them.",
+    "Writing `JSON.parse(text) as T` and trusting it; validate `unknown` at the boundary instead.",
+    "Grouping into a plain object and getting string keys back in a different order from the input."
+  ],
+  "walkthrough": [
+    {
+      "title": "How a call site fills in T and K",
+      "body": "Read a generic call the way the compiler does. For `pluck(users, 'age')` with signature `<T, K extends keyof T>(items: T[], key: K): T[K][]`, the first argument matches `T[]`, so `T = User`. The second argument is a string literal, so `K = 'age'`. The compiler then checks the constraint `'age'` against `keyof User`, and finally substitutes into the return type: `User['age'][]`, which is `number[]`. If you can narrate those four steps in an interview, you can debug almost any inference error message.",
+      "code": "interface User { id: number; name: string; age: number }\n\nfunction pluck<T, K extends keyof T>(items: readonly T[], key: K): T[K][] {\n  return items.map(item => item[key]);\n}\n\nconst users: User[] = [{ id: 1, name: 'Ada', age: 36 }];\nconst ages = pluck(users, 'age');     // number[]\nconst names = pluck(users, 'name');   // string[]",
+      "diagram": "tsg-infer"
+    },
+    {
+      "title": "When a type parameter is not needed",
+      "body": "A type parameter earns its place by appearing **at least twice**: in two parameters, or in a parameter and the return type, so it links them. `function show<T>(x: T): void` links nothing and is just `x: unknown`. `function size<T extends unknown[]>(xs: T): number` is just `xs: readonly unknown[]`. Extra type parameters make signatures harder to read and can make inference worse. The reverse mistake is returning `any` or `unknown` from something that should be generic, which forces every caller to cast. Ask: does the output type depend on the input type? If yes, generic; if no, plain types."
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, write the signature, because it is the interesting part: `<T, K extends keyof T>(items: readonly T[], key: K): Array<[T[K], T[]]>`. Say why each piece is there. Second, pick the container: a `Map<T[K], T[]>` because keys keep their type and order; an object would stringify them. Third, one pass: read `item[key]`, get or create the bucket, push, and return `[...map]`. Mention the cost (O(n) time, one array per distinct key) and that ES2024 adds a built-in `Map.groupBy`, which returns a `Map` with exactly these semantics."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Typed pick",
+      "prompt": "Write `pick(obj, keys)` that returns a new object with only the listed keys copied from `obj`. Type it as `<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Pick<T, K>` so the result type has exactly the picked properties. Keys the object does not actually own are skipped, repeated keys are harmless, and the copy is shallow.",
+      "hints": [
+        "Start from an empty result typed `Pick<T, K>` and copy `obj[key]` for each key; `out[key] = obj[key]` type-checks because both sides are `T[K]`.",
+        "Use `Object.hasOwn(obj, key)` to skip keys the object does not own, including inherited ones such as `toString`."
+      ],
+      "solution": "function pick<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Pick<T, K> {\n  const out = {} as Pick<T, K>;\n  for (const key of keys) {\n    if (Object.hasOwn(obj, key)) out[key] = obj[key];\n  }\n  return out;\n}",
+      "checklist": [
+        "Only listed keys appear in the result, and an empty key list gives `{}`.",
+        "A property whose value is `null` is still copied.",
+        "Nested objects are shared, not cloned, and the input object is not modified."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Merge defaults deeply",
+      "prompt": "Write `mergeDefaults(defaults, overrides)`. Return a new object that starts from `defaults` and applies `overrides`: when both sides hold a plain object, merge recursively; otherwise the override value wins (arrays and `null` replace, they are not merged). Do not mutate either input. Type `overrides` as a deep partial of the defaults' type so callers can pass any nested subset.",
+      "hints": [
+        "Define `type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }` (a preview of mapped and conditional types), keeping arrays whole.",
+        "Do the recursion on `Record<string, unknown>` with an `isPlainObject` type guard, and cast to `T` only once at the public boundary."
+      ],
+      "solution": "type DeepPartial<T> = {\n  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];\n};\n\nfunction isPlainObject(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction mergeRecords(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {\n  const out: Record<string, unknown> = { ...base };\n  for (const [key, value] of Object.entries(patch)) {\n    if (value === undefined) continue;\n    const current = out[key];\n    out[key] = isPlainObject(current) && isPlainObject(value) ? mergeRecords(current, value) : value;\n  }\n  return out;\n}\n\nfunction mergeDefaults<T extends object>(defaults: T, overrides: DeepPartial<T>): T {\n  return mergeRecords({ ...defaults } as Record<string, unknown>, overrides as Record<string, unknown>) as T;\n}",
+      "checklist": [
+        "Nested objects merge key by key; arrays and `null` replace the default.",
+        "Neither input is mutated: every merged level is a fresh object.",
+        "An empty overrides object returns a copy equal to the defaults."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What is the difference between `<T extends object>` and a parameter typed `object`?",
+      "answer": "Both accept only non-primitive values, but the generic remembers which object the caller passed. With `(x: object): object` the caller gets back `object` and loses every property; with `<T extends object>(x: T): T` they get their own type back. Use the constraint when the output type depends on the input; use the plain type when it does not."
+    },
+    {
+      "question": "Why does `Omit<User, 'pasword'>` compile, and how would you make it strict?",
+      "answer": "`Omit` is declared as `Omit<T, K extends keyof any>`, so `K` may be any string, not just keys of `T`; a typo removes nothing. A strict variant is `type StrictOmit<T, K extends keyof T> = Omit<T, K>`, which makes the typo a compile error. `Pick` is already strict because its `K extends keyof T`."
+    },
+    {
+      "question": "When would you choose `satisfies` over a type annotation, and when not?",
+      "answer": "Use `satisfies` when the value's precise inferred type is useful: config tables, route maps, handler registries, where you want literal keys and per-entry value types kept while still checking the shape. Use an annotation when you want the wider type on purpose, such as a variable that will be reassigned or a public export whose type should not change when the literal changes."
+    },
+    {
+      "question": "A teammate writes `function get<T>(url: string): Promise<T>` around `fetch`. What do you say?",
+      "answer": "The `T` appears only in the return type, so it is an unchecked assertion in disguise: callers pick any `T` and nothing verifies the JSON. Return `Promise<unknown>` and validate with a type guard or a schema library at the boundary, or accept a validator parameter `(data: unknown) => data is T`, which makes `T` appear twice and actually checked."
+    }
+  ],
+  "takeaways": [
+    "A type parameter relates types: it should appear at least twice, and callers rarely need to write it because it is inferred.",
+    "`K extends keyof T` plus `T[K]` types property access exactly and turns key typos into compile errors.",
+    "Utility types derive shapes from one source of truth; they are compile-time only, and `Omit` does not check its keys.",
+    "`satisfies` checks a value without widening it; an annotation replaces the inferred type.",
+    "Types are erased, so `as T` and `any` check nothing at runtime; validate `unknown` at the boundary."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsg-infer",
+        "type": "flow",
+        "title": "How pluck(users, 'age') infers T and K",
+        "alt": "Flow diagram of generic inference. The call site pluck(users, 'age') sends its first argument, users of type User[], to infer T = User, and its second argument, the literal 'age', to infer K = 'age'. K is checked against keyof User, which contains id, name and age, and the return type T[K][] resolves to number[].",
+        "caption": "Each type parameter is inferred from the argument it appears in, checked against its constraint, then substituted into the return type.",
+        "nodes": [
+          {"id": "call", "label": "call site", "kind": "client", "col": 0, "row": 0, "sub": "pluck(users,'age')"},
+          {"id": "a1", "label": "users: User[]", "kind": "state", "col": 2, "row": 0, "sub": "matches T[]"},
+          {"id": "a2", "label": "'age'", "kind": "state", "col": 2, "row": 2, "sub": "matches K"},
+          {"id": "t", "label": "T = User", "kind": "good", "col": 4, "row": 0},
+          {"id": "k", "label": "K = 'age'", "kind": "good", "col": 4, "row": 2, "sub": "literal kept"},
+          {"id": "check", "label": "keyof T check", "kind": "decision", "col": 2, "row": 4, "sub": "'id'|'name'|'age'"},
+          {"id": "ret", "label": "T[K][]", "kind": "good", "col": 4, "row": 4, "sub": "= number[]"}
+        ],
+        "edges": [
+          {"from": "call", "to": "a1", "label": "argument 1"},
+          {"from": "call", "to": "a2", "label": "argument 2"},
+          {"from": "a1", "to": "t", "label": "infer"},
+          {"from": "a2", "to": "k", "label": "infer"},
+          {"from": "k", "to": "check", "label": "constraint"},
+          {"from": "check", "to": "ret", "label": "substitute"}
+        ],
+        "steps": [
+          {"edges": [0, 1], "text": "The compiler lines up each argument with the parameter type that mentions a type parameter."},
+          {"edges": [2], "text": "`users` is `User[]` and the parameter is `T[]`, so `T = User`."},
+          {"edges": [3], "text": "`'age'` is a string literal and the parameter is `K`, so `K = 'age'`, not `string`."},
+          {"edges": [4], "text": "The constraint is checked: `'age'` must be one of `keyof User`. A typo such as `'agee'` fails here."},
+          {"edges": [5], "text": "Substitution: `T[K][]` becomes `User['age'][]`, which is `number[]`."}
+        ]
+      },
+      {
+        "id": "tsg-constraint",
+        "type": "compare",
+        "title": "A string key versus K extends keyof T",
+        "alt": "Comparison of two signatures for reading a property. On the left, the key is typed string: a typo like 'agee' compiles, and the body needs an any cast so the result is any. On the right, the key is K extends keyof T: the typo is a compile error and a valid key returns T[K], here number.",
+        "caption": "Constraining the key to keyof T moves typo detection to compile time and returns the exact property type.",
+        "before": {
+          "label": "key: string",
+          "nodes": [
+            {"id": "typo", "label": "get(u, 'agee')", "kind": "client", "col": 0, "row": 0},
+            {"id": "ok", "label": "compiles", "kind": "bad", "col": 2, "row": 0, "sub": "no key check"},
+            {"id": "good", "label": "get(u, 'age')", "kind": "client", "col": 0, "row": 2},
+            {"id": "any", "label": "obj[key] as any", "kind": "bad", "col": 2, "row": 2, "sub": "result is any"}
+          ],
+          "edges": [
+            {"from": "typo", "to": "ok", "label": "accepted"},
+            {"from": "good", "to": "any", "label": "returns"}
+          ]
+        },
+        "after": {
+          "label": "K extends keyof T",
+          "nodes": [
+            {"id": "typo", "label": "get(u, 'agee')", "kind": "client", "col": 0, "row": 0},
+            {"id": "err", "label": "compile error", "kind": "good", "col": 2, "row": 0, "sub": "not a keyof User"},
+            {"id": "good", "label": "get(u, 'age')", "kind": "client", "col": 0, "row": 2},
+            {"id": "tk", "label": "returns T[K]", "kind": "good", "col": 2, "row": 2, "sub": "number"}
+          ],
+          "edges": [
+            {"from": "typo", "to": "err", "label": "rejected"},
+            {"from": "good", "to": "tk", "label": "returns"}
+          ]
+        }
+      },
+      {
+        "id": "tsg-utility",
+        "type": "flow",
+        "title": "Deriving types from one User type",
+        "alt": "Flow diagram with a User type holding id, name, email and password in the middle left. Pick of id and name produces PublicUser for API responses. Omit of id produces NewUser for a create form. Partial produces a patch type for an update call. Readonly produces a frozen view. All four are derived from the single source type.",
+        "caption": "Derive every variant from one source type so a new field is never forgotten; the utilities shape types, not objects.",
+        "nodes": [
+          {"id": "user", "label": "User", "kind": "storage", "col": 0, "row": 2, "sub": "id,name,email,pw"},
+          {"id": "pick", "label": "Pick<User, K>", "kind": "state", "col": 2, "row": 0, "sub": "K = 'id'|'name'"},
+          {"id": "omit", "label": "Omit<User, 'id'>", "kind": "state", "col": 2, "row": 2, "sub": "server sets id"},
+          {"id": "partial", "label": "Partial<User>", "kind": "state", "col": 2, "row": 4, "sub": "all optional"},
+          {"id": "ro", "label": "Readonly<User>", "kind": "state", "col": 0, "row": 4, "sub": "compile-time only"},
+          {"id": "api", "label": "PublicUser", "kind": "good", "col": 4, "row": 0, "sub": "API response"},
+          {"id": "form", "label": "NewUser", "kind": "good", "col": 4, "row": 2, "sub": "create form"},
+          {"id": "patch", "label": "UserPatch", "kind": "good", "col": 4, "row": 4, "sub": "update(id, patch)"}
+        ],
+        "edges": [
+          {"from": "user", "to": "pick", "label": "keep keys"},
+          {"from": "pick", "to": "api"},
+          {"from": "user", "to": "omit", "label": "drop keys"},
+          {"from": "omit", "to": "form"},
+          {"from": "user", "to": "partial", "label": "all optional"},
+          {"from": "partial", "to": "patch"},
+          {"from": "user", "to": "ro", "label": "readonly props"}
+        ],
+        "steps": [
+          {"edges": [0, 1], "text": "`Pick` keeps only the listed keys: the public shape the API returns."},
+          {"edges": [2, 3], "text": "`Omit` removes keys: the create form does not send an id. Its key list is not checked, so spell carefully."},
+          {"edges": [4, 5], "text": "`Partial` makes every property optional: a patch can carry any subset."},
+          {"edges": [6], "text": "`Readonly` blocks assignment in the type checker only; the runtime object is still writable unless you `Object.freeze` it."}
+        ]
+      },
+      {
+        "id": "tsg-satisfies",
+        "type": "compare",
+        "title": "Annotation versus satisfies for a route table",
+        "alt": "Comparison of a route table typed two ways. On the left, an annotation with Record<string, string> widens the keys to string, so the typo routes.hmoe compiles and is undefined at runtime. On the right, satisfies Record<string, string> checks the shape but keeps the keys home and about, so routes.hmoe is a compile error.",
+        "caption": "An annotation replaces the inferred type; satisfies checks against it and keeps the precise type.",
+        "before": {
+          "label": "const routes: Routes = {...}",
+          "nodes": [
+            {"id": "r", "label": "routes", "kind": "client", "col": 0, "row": 0, "sub": "annotated"},
+            {"id": "keys", "label": "keys: string", "kind": "bad", "col": 2, "row": 0, "sub": "literals lost"},
+            {"id": "typo", "label": "routes.hmoe", "kind": "bad", "col": 2, "row": 2, "sub": "undefined at run"}
+          ],
+          "edges": [
+            {"from": "r", "to": "keys", "label": "widened"},
+            {"from": "keys", "to": "typo", "label": "any key ok"}
+          ]
+        },
+        "after": {
+          "label": "{...} satisfies Routes",
+          "nodes": [
+            {"id": "r", "label": "routes", "kind": "client", "col": 0, "row": 0, "sub": "checked"},
+            {"id": "keys", "label": "home | about", "kind": "good", "col": 2, "row": 0, "sub": "literal keys kept"},
+            {"id": "typo", "label": "routes.hmoe", "kind": "good", "col": 2, "row": 2, "sub": "compile error"}
+          ],
+          "edges": [
+            {"from": "r", "to": "keys", "label": "inferred"},
+            {"from": "keys", "to": "typo", "label": "unknown key"}
+          ]
+        }
+      },
+      {
+        "id": "tsg-erase",
+        "type": "sequence",
+        "title": "What happens to parse<number> at runtime",
+        "alt": "Sequence diagram with your code, the type checker, the emitted JavaScript and the runtime. The checker accepts parse<number>('\"42\"') and types the result as number because of the as T assertion. Emission deletes the type argument and the assertion. At runtime JSON.parse returns the string 42, so typeof n is 'string'.",
+        "caption": "Type arguments and assertions vanish on emit; only runtime checks can make a generic result trustworthy.",
+        "actors": [
+          {"id": "code", "label": "Your code"},
+          {"id": "tsc", "label": "Type checker"},
+          {"id": "js", "label": "Emitted JS"},
+          {"id": "rt", "label": "Runtime"}
+        ],
+        "messages": [
+          {"from": "code", "to": "tsc", "label": "parse<number>('\"42\"')"},
+          {"from": "tsc", "to": "code", "label": "n: number", "style": "reply", "note": "`as T` tells the checker to trust the caller's choice of T."},
+          {"from": "tsc", "to": "js", "label": "erase <number> and as T", "note": "Type arguments, annotations and assertions leave no code behind."},
+          {"from": "js", "to": "rt", "label": "JSON.parse('\"42\"')"},
+          {"from": "rt", "to": "js", "label": "'42' (a string)", "style": "reply"},
+          {"from": "code", "to": "rt", "label": "typeof n"},
+          {"from": "rt", "to": "code", "label": "'string'", "style": "reply", "note": "The static type said number; nothing ever checked it."}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "groupBy",
+        "starter": "function groupBy<T, K extends keyof T>(items: T[], key: K): Array<[T[K], T[]]> {\n  const groups: Record<string, T[]> = {};\n  for (const item of items) {\n    const name = String(item[key]);\n    (groups[name] ??= []).push(item);\n  }\n  // TODO: object keys are always strings, and integer-like keys are reordered\n  return Object.entries(groups) as unknown as Array<[T[K], T[]]>;\n}\n",
+        "solution": "function groupBy<T, K extends keyof T>(items: readonly T[], key: K): Array<[T[K], T[]]> {\n  const groups = new Map<T[K], T[]>();\n  for (const item of items) {\n    const value = item[key];\n    const bucket = groups.get(value);\n    if (bucket) bucket.push(item);\n    else groups.set(value, [item]);\n  }\n  return [...groups];\n}\n",
+        "tests": [
+          {"args": [[{"team": "red", "n": 1}, {"team": "blue", "n": 2}, {"team": "red", "n": 3}], "team"], "expected": [["red", [{"team": "red", "n": 1}, {"team": "red", "n": 3}]], ["blue", [{"team": "blue", "n": 2}]]]},
+          {"args": [[{"size": 10, "id": "a"}, {"size": 2, "id": "b"}, {"size": 10, "id": "c"}], "size"], "expected": [[10, [{"size": 10, "id": "a"}, {"size": 10, "id": "c"}]], [2, [{"size": 2, "id": "b"}]]]}
+        ],
+        "hiddenTests": [
+          {"args": [[], "team"], "expected": []},
+          {"args": [[{"k": "x", "v": 1}], "k"], "expected": [["x", [{"k": "x", "v": 1}]]]},
+          {"args": [[{"id": 1, "s": "a"}, {"id": "1", "s": "b"}, {"id": 1, "s": "c"}], "id"], "expected": [[1, [{"id": 1, "s": "a"}, {"id": 1, "s": "c"}]], ["1", [{"id": "1", "s": "b"}]]]},
+          {"args": [[{"t": -1, "i": 0}, {"t": 5, "i": 1}, {"t": -1, "i": 2}, {"t": 0, "i": 3}], "t"], "expected": [[-1, [{"t": -1, "i": 0}, {"t": -1, "i": 2}]], [5, [{"t": 5, "i": 1}]], [0, [{"t": 0, "i": 3}]]]},
+          {"args": [[{"ok": true, "n": 1}, {"ok": null, "n": 2}, {"ok": false, "n": 3}, {"ok": true, "n": 4}], "ok"], "expected": [[true, [{"ok": true, "n": 1}, {"ok": true, "n": 4}]], [null, [{"ok": null, "n": 2}]], [false, [{"ok": false, "n": 3}]]]},
+          {"args": [[{"city": "Zürich", "p": 1}, {"city": "東京", "p": 2}, {"city": "Zürich", "p": 3}], "city"], "expected": [["Zürich", [{"city": "Zürich", "p": 1}, {"city": "Zürich", "p": 3}]], ["東京", [{"city": "東京", "p": 2}]]]},
+          {"args": [[{"g": "a", "meta": {"tags": ["x", "y"]}}, {"g": "a", "meta": {"tags": []}}], "g"], "expected": [["a", [{"g": "a", "meta": {"tags": ["x", "y"]}}, {"g": "a", "meta": {"tags": []}}]]]}
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "pick",
+        "starter": "function pick<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Pick<T, K> {\n  // TODO: copy only the listed keys\n  return { ...obj } as Pick<T, K>;\n}\n",
+        "solution": "function pick<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Pick<T, K> {\n  const out = {} as Pick<T, K>;\n  for (const key of keys) {\n    if (Object.hasOwn(obj, key)) out[key] = obj[key];\n  }\n  return out;\n}\n",
+        "tests": [
+          {"args": [{"id": 7, "name": "Ada", "role": "admin"}, ["id", "name"]], "expected": {"id": 7, "name": "Ada"}},
+          {"args": [{"a": 1, "b": 2}, []], "expected": {}}
+        ],
+        "hiddenTests": [
+          {"args": [{}, []], "expected": {}},
+          {"args": [{"x": 1, "y": 2}, ["x", "x", "y"]], "expected": {"x": 1, "y": 2}},
+          {"args": [{"x": null, "y": -2}, ["x"]], "expected": {"x": null}},
+          {"args": [{"名前": "花子", "age": 30}, ["名前"]], "expected": {"名前": "花子"}},
+          {"args": [{"cfg": {"deep": [1, 2]}, "z": 0}, ["cfg"]], "expected": {"cfg": {"deep": [1, 2]}}},
+          {"args": [{"a": 1}, ["a", "missing"]], "expected": {"a": 1}}
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "mergeDefaults",
+        "starter": "type DeepPartial<T> = {\n  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];\n};\n\nfunction mergeDefaults<T extends object>(defaults: T, overrides: DeepPartial<T>): T {\n  // TODO: this is shallow; nested objects are replaced, not merged\n  return { ...defaults, ...overrides } as T;\n}\n",
+        "solution": "type DeepPartial<T> = {\n  [K in keyof T]?: T[K] extends readonly unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];\n};\n\nfunction isPlainObject(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction mergeRecords(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {\n  const out: Record<string, unknown> = { ...base };\n  for (const [key, value] of Object.entries(patch)) {\n    if (value === undefined) continue;\n    const current = out[key];\n    out[key] = isPlainObject(current) && isPlainObject(value) ? mergeRecords(current, value) : value;\n  }\n  return out;\n}\n\nfunction mergeDefaults<T extends object>(defaults: T, overrides: DeepPartial<T>): T {\n  return mergeRecords({ ...defaults } as Record<string, unknown>, overrides as Record<string, unknown>) as T;\n}\n",
+        "tests": [
+          {"args": [{"theme": "light", "editor": {"tabSize": 2, "wrap": false}}, {"editor": {"wrap": true}}], "expected": {"theme": "light", "editor": {"tabSize": 2, "wrap": true}}},
+          {"args": [{"a": 1}, {}], "expected": {"a": 1}}
+        ],
+        "hiddenTests": [
+          {"args": [{}, {}], "expected": {}},
+          {"args": [{"tags": ["a", "b"], "n": 1}, {"tags": ["c"]}], "expected": {"tags": ["c"], "n": 1}},
+          {"args": [{"proxy": {"host": "x", "port": 80}}, {"proxy": null}], "expected": {"proxy": null}},
+          {"args": [{"p": null, "q": 1}, {"p": {"a": 1}}], "expected": {"p": {"a": 1}, "q": 1}},
+          {"args": [{"a": {"b": {"c": 1, "d": 2}, "e": 3}}, {"a": {"b": {"d": -5}}}], "expected": {"a": {"b": {"c": 1, "d": -5}, "e": 3}}},
+          {"args": [{"ünï": {"ok": true}, "x": "y"}, {"ünï": {"ok": false}}], "expected": {"ünï": {"ok": false}, "x": "y"}}
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "function parse<T>(text: string): T {\n  return JSON.parse(text) as T;\n}\n\nconst n = parse<number>('\"42\"');\nconsole.log(typeof n);",
+        "choices": ["number", "string", "TypeError"],
+        "answer": 1,
+        "explain": "`<number>` and `as T` are erased on emit. `JSON.parse` returns the string `'42'`, and nothing ever checks it against the static type."
+      },
+      {
+        "code": "const user = { id: 1, password: 'hunter2' };\nconst safe: Omit<typeof user, 'password'> = user;\nconsole.log(JSON.stringify(safe));",
+        "choices": ["{\"id\":1}", "{\"id\":1,\"password\":\"hunter2\"}", "{\"id\":1,\"password\":null}"],
+        "answer": 1,
+        "explain": "`Omit` only changes the type. `safe` is the same object as `user`, so the password is still serialised. Copy the fields you want (or destructure out the secret) to actually remove it."
+      },
+      {
+        "code": "const config: Readonly<{ retries: number }> = { retries: 1 };\nconst loose = config as { retries: number };\nloose.retries = 3;\nconsole.log(config.retries);",
+        "choices": ["1", "3", "TypeError"],
+        "answer": 1,
+        "explain": "`Readonly` is a compile-time view of the same object. The assertion gives a writable view, the assignment succeeds at runtime, and both names see 3. Only `Object.freeze` blocks writes at runtime."
+      },
+      {
+        "code": "const byId: Record<number, string> = {};\nbyId[10] = 'ten';\nbyId[2] = 'two';\nbyId[-1] = 'minus';\nconsole.log(Object.keys(byId).join(','));",
+        "choices": ["10,2,-1", "-1,2,10", "2,10,-1"],
+        "answer": 2,
+        "explain": "Object keys are strings, and integer-like keys (array indices) are listed first in ascending order; `'-1'` is not an array index, so it keeps insertion order after them. `Record<number, ...>` does not change that."
+      },
+      {
+        "code": "const counts = new Map<string | number, number>();\nfor (const key of [1, '1', 1]) counts.set(key, (counts.get(key) ?? 0) + 1);\nconsole.log(counts.size, counts.get(1));",
+        "choices": ["1 3", "2 2", "2 1"],
+        "answer": 1,
+        "explain": "A `Map` compares keys with SameValueZero, so the number `1` and the string `'1'` are different keys. A plain object would have merged them into one string key."
+      }
+    ],
+    "tip": "Write the signature first and talk through it before any body: \"T is inferred from the items, K must be a key of T, and the return uses T[K] so the caller gets the property's real type.\" Then say one sentence about runtime: types are erased, so anything coming from JSON is `unknown` until a check proves otherwise.",
+    "links": {
+      "problems": ["group-by-letters", "lru-cache", "time-versioned-store"],
+      "guides": ["clean-code", "edge-case-checklist"],
+      "lessons": ["py-typing", "py-collections", "hash-map-complements"]
+    }
+  }
+}

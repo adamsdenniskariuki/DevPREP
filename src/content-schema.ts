@@ -4,9 +4,9 @@ import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
-export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python']
+export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript']
 /** Language tracks and the lab language their lessons run. */
-export const LANGUAGE_TRACK_LANG: Partial<Record<Track, 'py' | 'ts'>> = { python: 'py' }
+export const LANGUAGE_TRACK_LANG: Partial<Record<Track, 'py' | 'ts'>> = { python: 'py', typescript: 'ts' }
 
 type Rec = Record<string, unknown>
 const isRec = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value)
