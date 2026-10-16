@@ -1,0 +1,1080 @@
+{
+  "id": "py-performance-memory",
+  "track": "python",
+  "title": "Performance and memory in Python",
+  "minutes": 45,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "Measure before optimising, know what each built-in operation really costs, stop repeating work, and reason about object memory, references and garbage collection.",
+  "prerequisites": [
+    "py-collections"
+  ],
+  "prerequisiteNotes": "You should know how dict, set, deque and Counter work and their average costs (py-collections). Generators and caching are covered in py-sequences-unpacking and py-functions-closures; here we use them as performance tools.",
+  "objectives": [
+    "Measure before changing code: `timeit` for small snippets, `cProfile` for where time goes, `tracemalloc` for where memory goes.",
+    "State the Big-O cost of common list, dict, set, str and slice operations and spot a hidden linear step inside a loop.",
+    "Rewrite quadratic duplicate, pair and window logic as single passes with sets, dicts and Counters.",
+    "Explain reference counting, the cycle collector, shallow `sys.getsizeof`, copying costs and when `__slots__` helps.",
+    "Discuss optimisation in an interview in the right order: correct, then complexity, then measurement, then micro-tuning or NumPy."
+  ],
+  "concepts": [
+    {
+      "title": "Measure first: timeit, cProfile, tracemalloc",
+      "body": "Intuition about Python speed is often wrong, so measure. `timeit` runs a small snippet many times and reports the total; compare two versions on the same input, never single runs. `cProfile` counts calls and time per function across a whole program; sort by `cumtime` and look at the top few rows. `tracemalloc` records which lines allocated memory and the **peak** while tracing. Always keep the slow, correct version as a test oracle for the fast one.",
+      "code": "import timeit, cProfile, tracemalloc\n\nsetup = 'items = list(range(10_000)); s = set(items)'\nprint(timeit.timeit('9_999 in items', setup=setup, number=1_000))\nprint(timeit.timeit('9_999 in s', setup=setup, number=1_000))\n\ncProfile.run('sorted(range(100_000), key=str)', sort='cumtime')\n\ntracemalloc.start()\ndata = [str(n) for n in range(100_000)]\ncurrent, peak = tracemalloc.get_traced_memory()  # bytes\ntracemalloc.stop()",
+      "diagram": "pyp-loop"
+    },
+    {
+      "title": "What the built-ins really cost",
+      "body": "`x in list`, `list.index`, `list.count`, `list.remove`, `list.insert(0, x)` and `x in d.values()` are all **O(n)**. `x in set`, `x in dict`, `d[k]` and `set.add` are O(1) on average; `list.append` and `list.pop()` are amortised O(1); `len()` is O(1). Slicing `items[i:j]` copies, so it is O(j - i). `sorted` is O(n log n). Any O(n) operation inside a loop over n items makes the whole thing O(n²), which is the most common hidden cost in interview code.",
+      "code": "banned = ['spam', 'scam', 'junk']        # O(len) per lookup\nbanned_set = set(banned)                  # build once: O(len)\nwords = ['hi', 'spam', 'ok']\nclean = [w for w in words if w not in banned_set]  # O(1) average each\n\n# Hidden quadratic: count() rescans the list for every element\nfreq_slow = {w: words.count(w) for w in words}\nfrom collections import Counter\nfreq = Counter(words)                     # one pass",
+      "diagram": "pyp-costs"
+    },
+    {
+      "title": "Do the work once: hoisting, precomputing, caching",
+      "body": "Move work that does not change out of the loop (**hoisting**): build the set, compile the regex, compute `len` or `sorted` once. **Precompute** a lookup when you will query many times: an index dict, prefix sums, a Counter. **Cache** pure functions with repeated arguments using `functools.cache` (see py-functions-closures). For strings, collect parts in a list and finish with `''.join(parts)`; repeated `s += piece` can copy everything built so far each time (see py-strings).",
+      "code": "import re\n\ndef count_valid(lines, allowed):\n    allowed = set(allowed)                 # hoisted out of the loop\n    pattern = re.compile(r'^[a-z]+$')       # compiled once\n    return sum(1 for line in lines\n               if pattern.match(line) and line in allowed)\n\nprint(count_valid(['ok', 'NO', 'hi'], ['ok', 'hi']))  # 2"
+    },
+    {
+      "title": "Generators keep memory flat",
+      "body": "A list comprehension materialises all n results; a generator expression yields one at a time, so a pipeline of generators uses O(1) extra memory however long the input. Pass generators straight into consumers like `sum`, `max`, `any`, `''.join` or `Counter`. Iterate a file object instead of calling `readlines()`. The price: a generator can be consumed only once and has no `len` or indexing (the protocol itself is in py-sequences-unpacking).",
+      "code": "def total_bytes(lines):\n    sizes = (int(line.split()[1]) for line in lines if line.strip())\n    return sum(sizes)          # one value alive at a time\n\nlog = ['a.txt 120', '', 'b.txt 30']\nprint(total_bytes(log))        # 150\n# with open('huge.log') as f: total_bytes(f)   # streams the file",
+      "diagram": "pyp-pipeline"
+    },
+    {
+      "title": "Objects, references and garbage collection",
+      "body": "Every Python value is a heap object with a header (type pointer and reference count), so a list of ints stores pointers to separate int objects. CPython frees an object the moment its **reference count** reaches 0; a separate **cycle collector** finds groups of objects that only reference each other. `del x` removes one name, not the object. `sys.getrefcount(x)` reports one extra (its own argument), and some built-in objects report meaningless huge numbers in recent CPython, so treat it as a debugging hint. Memory that stays high after `del` usually means another reference survives: a cache, a global list, a closure or a stored traceback.",
+      "code": "import gc, sys\n\nclass Node:\n    def __init__(self):\n        self.peer = None\n\na, b = Node(), Node()\na.peer, b.peer = b, a     # a reference cycle\nprint(sys.getrefcount(a)) # includes the argument's own reference\ndel a, b                  # counts stay above 0: the cycle keeps them alive\ngc.collect()              # the cycle collector frees them",
+      "diagram": "pyp-refs"
+    },
+    {
+      "title": "Sizes, copies and __slots__",
+      "body": "`sys.getsizeof` is **shallow**: for a list it counts the header and pointer array, not the elements, so measure real usage with `tracemalloc`. Copies cost time and memory: `items[1:]`, `list(x)`, `x.copy()` and `dict(d)` are O(n) shallow copies, and `copy.deepcopy` walks the whole object graph. Recursing on `items[1:]` quietly turns O(n) into O(n²); pass an index instead. For millions of small objects, `__slots__` (or `@dataclass(slots=True)`) drops the per-instance `__dict__` and saves memory; measure the gain, which varies across CPython versions.",
+      "code": "import sys\n\ndef total_slow(items):              # O(n^2): each slice copies\n    return 0 if not items else items[0] + total_slow(items[1:])\n\ndef total(items, i=0):              # O(n): pass an index\n    return 0 if i == len(items) else items[i] + total(items, i + 1)\n\nprint(total([1, 2, 3]))                       # 6\nprint(sys.getsizeof([1, 2]) == sys.getsizeof(['x' * 1000, 'y']))  # True: shallow"
+    },
+    {
+      "title": "Locals, NumPy and C: the last mile",
+      "body": "Local variable access is a fast array slot, while globals and built-ins need dict lookups, and `obj.attr` is a lookup each time. Moving a hot loop into a function, or binding `append = out.append`, gives a small constant-factor gain, never a better Big-O; mention it only after the algorithm is right. For numeric work on large arrays, NumPy runs the loop in compiled code over packed machine values, which is far faster and smaller than a list of int objects. Beyond that: built-ins and the standard library (written in C), Cython or a C extension, and `multiprocessing` for CPU-bound parallel work.",
+      "code": "def squares_loop(n):\n    out = []\n    append = out.append         # minor: avoids an attribute lookup per item\n    for i in range(n):\n        append(i * i)\n    return out\n\ndef squares(n):\n    return [i * i for i in range(n)]   # clearer and usually as fast\n\n# import numpy as np\n# np.arange(n) ** 2                    # vectorised: the loop runs in C"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "From nested loops to one count",
+      "body": "Equal pairs look like a pair problem (compare every i with every j > i) but are really a counting problem. If a value appears c times, it forms `c * (c - 1) // 2` pairs. So count once with a Counter and sum the formula over the counts: O(n) time and O(k) memory for k distinct values. Keep the nested-loop version only as a test oracle on small inputs.",
+      "diagram": "pyp-pairs"
+    },
+    {
+      "title": "Sliding a window without rebuilding it",
+      "body": "Rebuilding `set(items[i:i + k])` for every window costs O(k) per window, O(n·k) in total. Instead keep a Counter of the current window: add the entering item, decrement the leaving item and delete its key when the count hits 0, so `len(counts)` is always the number of distinct items. Each step is O(1) on average, O(n) overall. Deleting zero counts matters: a Counter keeps keys with count 0, and they would inflate `len`."
+    },
+    {
+      "title": "Talking about optimisation in the room",
+      "body": "Say the brute force and its cost first, then improve the algorithm, then state time and **memory** precisely. If the interviewer pushes on scale, talk about streaming with generators, measuring with cProfile and tracemalloc, and only then about NumPy, C or parallelism. Never claim a speed-up you have not measured; say how you would measure it.",
+      "diagram": "pyp-talk"
+    }
+  ],
+  "example": "from collections import Counter\n\ndef has_rearranged_copy(words):\n    # Do any two words use exactly the same letters?\n    seen = set()\n    for w in words:\n        key = ''.join(sorted(w))   # O(L log L) per word, computed once\n        if key in seen:            # O(1) average\n            return True\n        seen.add(key)\n    return False\n\nprint(has_rearranged_copy(['tea', 'cat', 'eat']))  # True\nprint(has_rearranged_copy(['a', 'b']))           # False",
+  "task": "Write `count_matching_pairs(items)` for a list or a string. Return how many index pairs (i, j) with i < j have `items[i] == items[j]`. The input can hold tens of thousands of items, so a nested loop over all pairs is too slow: aim for O(n). Return 0 for an empty or single-item input.",
+  "starter": "def count_matching_pairs(items):\n    # Count pairs i < j with items[i] == items[j], in O(n)\n    ...",
+  "hints": [
+    "You never need to know which pairs, only how many: if a value appears c times, how many pairs does it form among itself?",
+    "`collections.Counter(items)` counts every value in one pass; then sum `c * (c - 1) // 2` over `counts.values()`."
+  ],
+  "solution": "from collections import Counter\n\ndef count_matching_pairs(items):\n    counts = Counter(items)\n    return sum(c * (c - 1) // 2 for c in counts.values())\n\nA value that appears c times forms c choose 2 pairs, so the question reduces to counting. Counter makes one pass, O(n) time on average and O(k) extra memory for k distinct values; summing over the counts is O(k). It works for strings and lists because both are iterables of hashable items. An equivalent one-pass form adds `seen[x]` to the total before incrementing `seen[x]`, which also extends to 'pairs within a stream' without a second pass.",
+  "checklist": [
+    "My solution makes one pass over the input, with no `in`, `count` or slice inside the loop.",
+    "I return 0 for empty and single-item input without special cases breaking.",
+    "I can state time O(n) and extra memory O(k) for k distinct values.",
+    "I kept the brute force in mind as a test oracle for small inputs."
+  ],
+  "pitfalls": [
+    "Calling `items.count(x)` or `x in some_list` inside a loop: each is O(n), so the loop is O(n²).",
+    "Recursing on `items[1:]` or copying a list per step: every slice is an O(n) copy.",
+    "Trusting `sys.getsizeof` for a container's total memory: it ignores the elements.",
+    "Optimising by guesswork (micro-tweaks, local aliases) before fixing the algorithm or measuring.",
+    "Consuming a generator twice and silently getting an empty second pass.",
+    "Leaving zero-count keys in a sliding-window Counter, so `len(counts)` overstates the distinct values."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Dedupe, keep the order",
+      "prompt": "Write `dedupe(items)` that returns a list of the distinct items in order of first appearance. Items are hashable; the input may be a list or a string. Aim for O(n).",
+      "hints": [
+        "`sorted(set(items))` loses the original order, and checking `x not in result` on a list is O(n) per item.",
+        "Dict keys are unique and keep insertion order: `dict.fromkeys(items)`."
+      ],
+      "solution": "def dedupe(items):\n    return list(dict.fromkeys(items))",
+      "checklist": [
+        "The first occurrence decides the position.",
+        "One pass, no list membership test in a loop."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Fewest and most distinct per window",
+      "prompt": "Write `window_distinct_range(items, k)` that looks at every contiguous window of exactly `k` items (k >= 1) and returns `[fewest, most]`: the smallest and largest number of distinct values in any window. Return `[]` when there is no window (k > len(items)). Inputs can be long with large k, so do not rebuild a set per window.",
+      "hints": [
+        "Keep a Counter for the current window; moving right adds one item and removes one.",
+        "When a count drops to 0, delete the key so `len(counts)` stays the distinct count."
+      ],
+      "solution": "from collections import Counter\n\ndef window_distinct_range(items, k):\n    if k > len(items):\n        return []\n    counts = Counter(items[:k])\n    fewest = most = len(counts)\n    for i in range(k, len(items)):\n        leaving = items[i - k]\n        counts[leaving] -= 1\n        if counts[leaving] == 0:\n            del counts[leaving]\n        counts[items[i]] += 1\n        fewest = min(fewest, len(counts))\n        most = max(most, len(counts))\n    return [fewest, most]",
+      "checklist": [
+        "The last window is included (there are len - k + 1 windows).",
+        "Zero counts are deleted.",
+        "O(n) time overall, O(k) memory."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your solution is correct but too slow on 10 million rows. What do you do, in order?",
+      "answer": "Measure first: `cProfile` to find where time goes, on a representative input. Fix the algorithm or data structure (a set instead of a list scan, a dict index, sorting once). Push loops into built-ins and the standard library, which run in C. For numeric arrays, vectorise with NumPy. If it is still CPU-bound, use `multiprocessing` to use more cores, or move the hot spot to Cython or a C extension. Re-measure after each step."
+    },
+    {
+      "question": "Memory keeps growing even though you `del` the big list. Why?",
+      "answer": "`del` removes one name; the object lives while anything else references it: another variable, a cache such as `functools.cache`, a module-level list, a closure, or an exception traceback that holds frames. Objects in reference cycles wait for the cycle collector. CPython may also keep freed memory in its own allocator rather than return it to the OS. Use `tracemalloc` snapshots taken before and after and compare them to find the allocating lines."
+    },
+    {
+      "question": "Roughly how much memory does a list of one million ints use, and how would you shrink it?",
+      "answer": "The list itself is a header plus one 8-byte pointer per item on a 64-bit build (about 8 MB, as `sys.getsizeof` reports). Each distinct int is also a separate object of about 28 bytes, which getsizeof on the list does not include. `array.array('q')` or a NumPy int64 array stores raw 8-byte values instead, with no per-item objects. If you only need to iterate once, a generator avoids storing them at all."
+    }
+  ],
+  "takeaways": [
+    "Correct first, then Big-O, then measure; micro-optimisations come last.",
+    "`in`, `count`, `index`, `remove` on a list and `in d.values()` are O(n): build a set or dict once.",
+    "Count instead of comparing pairs; slide a Counter instead of rebuilding a window.",
+    "Slices and copies are O(n); `sys.getsizeof` is shallow; `tracemalloc` shows real usage.",
+    "Objects die when their last reference goes; cycles wait for the cycle collector."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyp-loop",
+        "type": "flow",
+        "title": "Measure, fix, re-measure",
+        "alt": "Flow diagram of the optimisation loop. A correct version is measured with timeit or cProfile. A decision asks whether it is fast enough: yes leads to ship it; no leads to finding the hotspot, fixing the algorithm and measuring again.",
+        "caption": "Optimisation is a loop that starts from a correct, tested version and is driven by measurements, not guesses.",
+        "nodes": [
+          {
+            "id": "correct",
+            "label": "Correct version",
+            "kind": "good",
+            "col": 0,
+            "row": 2,
+            "sub": "tests pass"
+          },
+          {
+            "id": "measure",
+            "label": "Measure",
+            "kind": "service",
+            "col": 1,
+            "row": 2,
+            "sub": "timeit, cProfile"
+          },
+          {
+            "id": "check",
+            "label": "Fast enough?",
+            "kind": "decision",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "ship",
+            "label": "Ship it",
+            "kind": "good",
+            "col": 3,
+            "row": 2,
+            "sub": "keep it simple"
+          },
+          {
+            "id": "hot",
+            "label": "Find hotspot",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "top cumtime rows"
+          },
+          {
+            "id": "fix",
+            "label": "Fix algorithm",
+            "kind": "worker",
+            "col": 1,
+            "row": 0,
+            "sub": "Big-O first"
+          }
+        ],
+        "edges": [
+          {
+            "from": "correct",
+            "to": "measure",
+            "label": "baseline"
+          },
+          {
+            "from": "measure",
+            "to": "check"
+          },
+          {
+            "from": "check",
+            "to": "ship",
+            "label": "yes"
+          },
+          {
+            "from": "check",
+            "to": "hot",
+            "label": "no"
+          },
+          {
+            "from": "hot",
+            "to": "fix"
+          },
+          {
+            "from": "fix",
+            "to": "measure",
+            "label": "re-measure"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "Start from a version you trust and keep its tests: every later change must still pass them."
+          },
+          {
+            "edges": [
+              1,
+              2
+            ],
+            "text": "Measure against a target. If it is already fast enough, stop: simpler code wins."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "Otherwise profile. `cProfile` sorted by cumulative time points at the few functions that matter."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "Change the algorithm or data structure first, then measure again to prove the change helped."
+          }
+        ]
+      },
+      {
+        "id": "pyp-costs",
+        "type": "bars",
+        "title": "Steps per operation at n = 1024",
+        "alt": "Bar chart of step counts for one operation on a 1024-item container. x in list, x in d.values(), list.insert(0, x) and the slice items[1:] each take about 1024 steps; x in set, x in dict and list.append take 1.",
+        "caption": "Each bar is the operation's Big-O class evaluated at n = 1024, not a timing. The highlighted linear bars become quadratic inside a loop.",
+        "unit": "steps (n = 1024)",
+        "bars": [
+          {
+            "label": "x in list",
+            "value": 1024,
+            "highlight": true
+          },
+          {
+            "label": "x in d.values()",
+            "value": 1024,
+            "highlight": true
+          },
+          {
+            "label": "list.insert(0, x)",
+            "value": 1024,
+            "highlight": true
+          },
+          {
+            "label": "items[1:]",
+            "value": 1023,
+            "highlight": true
+          },
+          {
+            "label": "x in set (avg)",
+            "value": 1
+          },
+          {
+            "label": "x in dict (avg)",
+            "value": 1
+          },
+          {
+            "label": "list.append (amort.)",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "id": "pyp-pipeline",
+        "type": "compare",
+        "title": "Materialised lists versus a streaming pipeline",
+        "alt": "Side-by-side comparison. With lists, all lines are read into memory, then all parsed numbers are stored in a second list before sum runs. With generators, a file iterator yields one line, a generator yields one number, and sum consumes it, so only one item is alive at a time.",
+        "caption": "Each list stage holds all n items at once; a generator stage holds one. Same O(n) time, O(n) versus O(1) extra memory.",
+        "before": {
+          "label": "Lists: O(n) memory per stage",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "readlines()",
+              "kind": "bad",
+              "col": 0,
+              "row": 0,
+              "sub": "n strings"
+            },
+            {
+              "id": "parse",
+              "label": "[int(x) ...]",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "n ints"
+            },
+            {
+              "id": "sum",
+              "label": "sum()",
+              "kind": "state",
+              "col": 2,
+              "row": 0
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "parse"
+            },
+            {
+              "from": "parse",
+              "to": "sum"
+            }
+          ]
+        },
+        "after": {
+          "label": "Generators: O(1) memory",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "file iterator",
+              "kind": "good",
+              "col": 0,
+              "row": 0,
+              "sub": "one line"
+            },
+            {
+              "id": "parse",
+              "label": "(int(x) ...)",
+              "kind": "good",
+              "col": 1,
+              "row": 0,
+              "sub": "one int"
+            },
+            {
+              "id": "sum",
+              "label": "sum()",
+              "kind": "state",
+              "col": 2,
+              "row": 0
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "parse"
+            },
+            {
+              "from": "parse",
+              "to": "sum"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyp-refs",
+        "type": "flow",
+        "title": "Reference counting and the cycle collector",
+        "alt": "Flow diagram. Names a and b both reference one list object, which is freed as soon as both names are deleted. Below, three objects p, q and r reference each other in a loop with no names pointing at them; a cycle GC node finds and frees that island.",
+        "caption": "Most objects die the moment their last reference goes. Only reference cycles wait for the cycle collector.",
+        "nodes": [
+          {
+            "id": "na",
+            "label": "name a",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "nb",
+            "label": "name b",
+            "kind": "state",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "list",
+            "label": "list object",
+            "kind": "storage",
+            "col": 2,
+            "row": 0,
+            "sub": "2 references"
+          },
+          {
+            "id": "freed",
+            "label": "Freed now",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "count hits 0"
+          },
+          {
+            "id": "p",
+            "label": "object p",
+            "kind": "storage",
+            "col": 2,
+            "row": 3
+          },
+          {
+            "id": "q",
+            "label": "object q",
+            "kind": "storage",
+            "col": 4,
+            "row": 3
+          },
+          {
+            "id": "r",
+            "label": "object r",
+            "kind": "storage",
+            "col": 3,
+            "row": 5
+          },
+          {
+            "id": "gc",
+            "label": "Cycle GC",
+            "kind": "worker",
+            "col": 0,
+            "row": 4,
+            "sub": "runs periodically"
+          }
+        ],
+        "edges": [
+          {
+            "from": "na",
+            "to": "list",
+            "label": "a = [...]"
+          },
+          {
+            "from": "nb",
+            "to": "list",
+            "label": "b = a"
+          },
+          {
+            "from": "list",
+            "to": "freed",
+            "label": "del a, b"
+          },
+          {
+            "from": "p",
+            "to": "q",
+            "label": "p.next"
+          },
+          {
+            "from": "q",
+            "to": "r",
+            "label": "q.next"
+          },
+          {
+            "from": "r",
+            "to": "p",
+            "label": "r.next"
+          },
+          {
+            "from": "gc",
+            "to": "p",
+            "label": "unreachable",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Every name, list slot, attribute or closure cell that points at an object adds one to its reference count."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`del` removes a name, not the object. When the last reference goes, the count reaches 0 and CPython frees the object immediately."
+          },
+          {
+            "edges": [
+              3,
+              4,
+              5
+            ],
+            "text": "Objects in a loop keep each other's counts above 0 even when no name can reach them, so reference counting alone never frees them."
+          },
+          {
+            "edges": [
+              6
+            ],
+            "text": "The cyclic garbage collector periodically finds such unreachable islands and frees them. `gc.collect()` forces a pass."
+          }
+        ]
+      },
+      {
+        "id": "pyp-pairs",
+        "type": "compare",
+        "title": "Counting equal pairs: nested loops versus one count",
+        "alt": "Side-by-side comparison. The nested-loop version runs an outer loop over i and an inner loop over j greater than i, checking a[i] == a[j] about n squared over two times. The counting version passes once through the items into a Counter and applies c times c minus 1 over 2 per distinct value.",
+        "caption": "Pairs of equal values are a counting problem: one O(n) pass replaces n(n-1)/2 comparisons.",
+        "before": {
+          "label": "Nested loops: O(n²)",
+          "nodes": [
+            {
+              "id": "outer",
+              "label": "for i",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "inner",
+              "label": "for j > i",
+              "kind": "state",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "cmp",
+              "label": "a[i] == a[j]?",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "n(n-1)/2 checks"
+            }
+          ],
+          "edges": [
+            {
+              "from": "outer",
+              "to": "inner"
+            },
+            {
+              "from": "inner",
+              "to": "cmp"
+            }
+          ]
+        },
+        "after": {
+          "label": "Count once: O(n)",
+          "nodes": [
+            {
+              "id": "items",
+              "label": "each item",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "counter",
+              "label": "Counter",
+              "kind": "cache",
+              "col": 1,
+              "row": 0,
+              "sub": "value -> count"
+            },
+            {
+              "id": "pairs",
+              "label": "c*(c-1)//2",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "per value"
+            }
+          ],
+          "edges": [
+            {
+              "from": "items",
+              "to": "counter"
+            },
+            {
+              "from": "counter",
+              "to": "pairs"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyp-talk",
+        "type": "sequence",
+        "title": "Discussing optimisation in the room",
+        "alt": "Sequence diagram between you, the interviewer and your code. You state the brute force and its O(n squared) cost, the interviewer asks for better, you write an O(n) version and run the tests, then state time and memory and answer a scale question by streaming and measuring.",
+        "caption": "Lead with a correct baseline and its cost, then improve the algorithm, then talk about memory and measurement.",
+        "actors": [
+          {
+            "id": "you",
+            "label": "You"
+          },
+          {
+            "id": "int",
+            "label": "Interviewer"
+          },
+          {
+            "id": "code",
+            "label": "Your code"
+          }
+        ],
+        "messages": [
+          {
+            "from": "you",
+            "to": "int",
+            "label": "Brute force is O(n²)",
+            "note": "Name the baseline and its cost before writing it."
+          },
+          {
+            "from": "int",
+            "to": "you",
+            "label": "Can you do better?",
+            "style": "reply"
+          },
+          {
+            "from": "you",
+            "to": "code",
+            "label": "One pass with a Counter",
+            "note": "Trade O(n) extra memory for O(n) time."
+          },
+          {
+            "from": "code",
+            "to": "you",
+            "label": "tests pass",
+            "style": "reply",
+            "note": "Re-run the same examples, including empty and duplicates."
+          },
+          {
+            "from": "you",
+            "to": "int",
+            "label": "O(n) time, O(k) memory",
+            "note": "k is the number of distinct values: be precise about memory."
+          },
+          {
+            "from": "int",
+            "to": "you",
+            "label": "And a billion rows?",
+            "style": "reply"
+          },
+          {
+            "from": "you",
+            "to": "int",
+            "label": "Stream it, then measure",
+            "note": "Generators keep memory flat; profile before reaching for NumPy or C."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "count_matching_pairs",
+        "starter": "def count_matching_pairs(items):\n    # Correct idea? Fast? Fix both: count pairs i < j with items[i] == items[j].\n    count = 0\n    for a in items:\n        for b in items:\n            if a == b:\n                count += 1\n    return count\n",
+        "solution": "from collections import Counter\n\ndef count_matching_pairs(items):\n    counts = Counter(items)\n    return sum(c * (c - 1) // 2 for c in counts.values())\n",
+        "tests": [
+          {
+            "args": [
+              [
+                1,
+                2,
+                1,
+                1
+              ]
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              "abca"
+            ],
+            "expected": 1
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                7
+              ]
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3,
+                4,
+                5
+              ]
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                -1,
+                -1,
+                -1,
+                -1
+              ]
+            ],
+            "expected": 6
+          },
+          {
+            "args": [
+              "ééé e"
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              [
+                "x",
+                "y",
+                "x",
+                "y",
+                "x"
+              ]
+            ],
+            "expected": 4
+          },
+          {
+            "args": [
+              "qo64xr4c3frtc038bc8ia9d4zi5vo0fw80yttmq2d0abw4omornh793gs9y8v4j2ufm20h2biqi3kiyfh35diivuqvg9333drz86em8tc33xi83yxxaz0oxjammhfl0chpu5ardnwh9gzo18d2zxpnqvskqp1yxsx174518qeitgqrvjtky34nl9siwfqiy8ewzqvl0wlommtux74k98ar6pdhiz95vx6s74gtr5axo5pbzfnu3gvth0vbus0v96266pbilws2jitfmj22xce8ud85ieg3a8eaz1po45pjb4fypgx417sfp92zg2l7gu9ngtxzq5volop071r45uhgbvma7kmtugs3xd8b54nabt7hr7pp7sdlrf0wwqwbwnntgkq4zo83z7q1yhqdlun8hejexze7n2ixeyryn3rnsbu8lrw76rkjh7oz4caadisykge5mt0o3hnupmp6jb4r4by5kfud4mpqd1ktqhmti3gq9ylk6b2wclf79cyubnb3tdwl5s6u3syuph1zlyz3vap5fukem0k71p4be4cj5h955m19r1e6ohs6j9atx51kvxeq9okzcglm9u9kszhmbve0zelvlj1vp8yxqu9ogpdfmj1x4da7p3dllsoo4uet2qmmaq481fmezpkx02qpc95j88kokxqwewkfj8o9k2j8knqa2noziawow9h3o85xhlxxni79sfxyled1875zyaw66ci5cnck7i8wx5zxtlcuiojata1wc3ar4kxph4zxh6m1xrs6jd49nc5d61vacvxoslc5xo20mlfywf0qauc35km2xn4gb6ith0bnat8lqsaos2pmn1dcr4b9814ss3xib0jhb3ash7xfb8jqt12s100ld6ng2zyrauwx0c0p7livcfoykax7np54um0in58gjxaluryj9ep47uai0hc9u7ht6ecgj5c952g3flnsmnjdh6aelireop9rauqfskiyw43gx97iufkwotfxvngu3ntwkl4j4ptzc3zxn0s39b00ajqhzzxcuaoeerotula0xovk588xneykqv714f62h9zjn1azxrd4vbsqfh8qtoziold829tm91alzy0mszttbumnqa7sla710qmoh9wic1s5afsm83v1wc5rgznw9nhort8nu2sgw620xrmnb0v6ea8mrtaqcoq0zvbnvgk2svo8u2cw3skqdqkbq3k7aseq63si2cpec0p6fp0jyevq188sxmelkk4gbh3u29355ai6b8fb7vk37zh8ddgd8zyza2clrk635tzcy6gwnemberjvk467gutv8228q8x0uf8wpf8hg8frutu8o4b77ssgzny3hylgv382ygz44k533p5145c4lx5ed4kqu5xbwu4dz4tb2ugfx99w0elobmxpd23d85rl927z3vxsubd35cyip32ar6rlzshw3r5iiv7ryuklknwbhj30xhuxva96vnvvjrveocmgd9hjs8lrjoh4qrpfa51k6ds293vlqtgsunqmztfr2nkbjexe0ozyjmqwfmzi4vf5nglywrbu3nnhsl88emdui1yr7hwnqtplz92of11i8czel0ffu3ti32rygq9jo8qmqhvqg88u77ge3cth6cbca2y4ydjpjno5sxadba15abt1ss00phpyjgfjulqmuv53y874lbohnpjrq9mtvo52jdipqulfd7te2ycxtx8gaoekcm7ogcrydwmow5de0vibmg3nnbi7xpywmcs1sudf5xcmzdms7gait1pqbjqj2bqfpipgwc1mnl8wv3gavq2rb2d9ppoubqbgn1i9rqop305u5u6yivhmlj4ax5jtujkh2kao9bd5apwo3f5tixgrlaigc880rlfghnyl2rdabkx27xtnuoza1lb6xuqfs1y7476kqnkwuebc0s18rjqycsmhgyjai6dkgbac63yezib2mxazvj8ta206do45mdegvclfldqaa8l4h0suw3qqkj4bll0c3pz4jdfwrfpjs5x6mvqs4fc0swwdyg1ahy4izryispnpo1ykgpxlxs9pc9x0mm0pg9v7r9kagmbnxftpmbd4b1y73oq1c294tmivf0mxrfmbxbp3qn5j077fhc9q4lnauvu6wq35ef4nkarto92sy5f6muz07qnh1byc42pbcegh43buu005bkjev0oizpt7tfr5hiy4dxj37z9gm82wpvzsyqoimbpuu1lh2uie57tn8pohu2yyz66w9rybzrektxng83ayxl53fh1i0hh86y5i3zehmu92oav9psq0zi4w0cgbg6qg8a4m0fefjzpplofqzxas9a66ji8ls4bn7bfstqs3z73fzkbt8j5uiu3h5eimigtxqo14olhsxxfhuic0emcxaieh50erwlg6xiv2bno98edrv4qdck7j2wo6rtjoofzu44wtld3fa0w9oh1qn06b830kz8e1tzbxgnez6uw7fa9r3y491sw1qhszhpf649gy3enb3qnbxmrwzlknco5ofalay6t2rz1n3hvsuyls2wo2sahhzcfy36mzosl700zb3h0spday1lm0a0apu18xu6th1hrw6hehjx0lnc2hqcly5nwcd7telmn30wfgx89f0638si8tt1vzuor65ptmv9kzmyk51xh7kr3608pymlyh4q33prif7fjz1i3tu3ur1hqpotlgqo2mni3r0a2eodxl7hb21mkpevceaejf3dx4v3cl4x1jfeijzqq6dbeubxrx4atjrsplxqtfplwadru6xem2ytpz00lq51ss52ni36vkdxbzzz8udkzngd86uj7d9srde2anffuwa2iy0q5krkbnnuw4wbsuxaggc5v48auu6nwvk5wy4jsvw911p3qln4wvdma2meyon026v46lvsez5xbxjcqqt1ecg1rv5k3opagfp67k3wbrgmdwetj0mlcllbhsuz9fqkyl777tzy5jw5waoyfhmlzg079w3wbefzj6c0lr8jdzqiwbj0b0ylazli39yyar52w1vgyefeqzw7s62zn4k83vhcamy5ezrqsxzc92tvp24j5hlqufae3cjfv3ce6q1y8clro2tzm2t77j4hlrz8imjlazixfkzusgahxob9p2rht7fx8lv1rtpu24ukhxuz82z34afitxmd0jf9eyianttpowbenl95fr3kzyaprhuagpjdg0lyea0ygpl42s3uyxq1ci3vy4009umyy8apjgh251ckm6jx8xsxw3dj0rzgibjwz67cn30lgq8ar323f3qd2yme2rrdgijmde7ruvxx5uapcjh6ofe83hq7va4wiovg9ku583sxgql5mp16ytynrtjyllq06dk32k564t26wydbkr52rld91a7ch8umd5hmqqi2r7xqa6ur879ulbzmrsgkbrrpygayeaz70nbthaw3cb5rpehn73wnbed1f6jml3vacz32auryg9htm0tnhn6gcto7dvli13uxj5txx2od6ua6i8dzycr8es0zc36rk9pktv2nye26cfq4upkyi19mzv1rz5s5us6a5e0b4elt22vbthmxtwua1qsqfjmrlujrwmp6ke1xiskysafna81xdos9kokxrhjcmnsva936utiqzaw8e8u6ivheuvrgsyqwmpdj9p6lqp7uabsxdu1qayvd8yhvuycrtstt20thgk16ou6mywbxak35mjsijjev3oet5g63yuz7unkpyg2552reecferayp31y8xn9q979sviqlxwgsh1xpi3ub4vifizwxoqke47jm93yfm50izbo5jlysgqtsciohra94xd9kuiqtrr22btgz8q5tcfzp1d6zlx2wx7squbd7tqvwo42mbe9nryh6k6b4c4l9bsntjy74biltv6sb21tt3rthabmv5nx35nm5nbo83vqwswwll7ds1y5oyym4zavz4thleicwexdi2ed0xgljcawnxlt84ppko7whyjcgvkmyyo3d6opai1e9j2fzislfgvky9tm64029k5aocbu2su0egf2oxjavhmbbsq80jhfa8jzfmt3ri0ojrlo3yy4grprwiku6g2z1tl8xu903nl085kkk5wzb1e7agtujhd5b8bvvphx1ozbvmki5erggcuwtyvlw4tlo443runiyd3531paj9i9pkhs00j0j9dnuymc5rh0d5qqpr3ck5cothjtf96aravooqbbw5x2n52bb865sqvwdqcm3ae7udt6jwhbkj5sylkalzybuqxt3oobbyk7sm4ftr672efiyws1i5fg2bf4biywwzkjyb0mysrhd600a4anqiovxamr8xoh1r2h7mqf5vh86rk3ueqoi6f5m20wedlzbyiznkkz6rilo4gxrd0xhs3w50mya2g5xeg0rwv4q57isayowro041n60wghoj7bv98wj734s5clx0zrlhizis9ukuut61o56bhkd9wa1m59zcyikjuxoaf0vd4nfop7165i46u2o1ayfcxqa43q5re0kqa20702pcrkl18w6uj0dc7yxtrexzfecogl7j6wdy2xnj8x68847qwdsls2l58fmtpjo03zqv8t3s904tg1scop8e45keea3ff5m9z6rg3cz7bp565a1mym1693nq5nm2p0prvycxhz7t5kpaudsic69d9ktsl6ogqx6691q6koe2p1fviipy4rqdq8b5ancncncphllyht0x9kf2jjjf8b0kl3c9szawpa8l1tjyklyzmelzreywaoun225zflv23udecxjhmt30t23h7ujy390lxs50fhqe0vr4y56thz4bcoqhc6ld7rb3i1kcn38w1a7ufle8ax49csoy0pph78jppxbe938jf2xlm63idujq1e0u846l9uueqh5s0ub58zgs9fcxdmeev7bns1tmu43k9vffrukrlpgtuctn0px4e6p1ce5nya7w6t4q0p4gq8i2fp38ln3dyngyghqyxcod9ycfheqm35hnay2iwlckfqysoxddfzi1hmsfzdqus26dp08rsphatr78g724btwl0xkmvjpkc18xiik4zllzkr2tw1b9n8a5o4vvriyv9dv02zb4fch7z5kgkdnqyrxgzq93owic6zkp5aj0yz090of17uj4bygf3vfiu0w3ndzanw4wmgeq9ya0jkh6wacmyjw3dawffdqb8itsk10q8fv02v19vp8gia5bljblsx4eol6rtdd4nty26z29udlacs5yqddx8je57ss6jsalgy0lh94hrx2osicj0qle5buphnmg36q1xdc7xs4eb5jyqrzvzx7xhn0pmahztciw3ymuks1wzdxnyfiuya8mddvn1xwhx8dxf5fevls7duwzci3rvtvlxr7wkl3av4cdfmfx23cquiicc5xrxbdh5bhjqpvs77u7s6k1ibmaqbyoqepavn5b2k9iexgdp170u452p0t3x4tcqb20j87e63dmidlll3k45gjiclhgv2xoszpcr003mu8f0lyaybgv5ehznd7ycvy3z28b8zgulnv8x6cq6bkkx64qdlzxv576dsv5zzh71l4e53ei7ivwf5eekqr8u38wc2xdqq2xtcnttk51zoaia5bcfh68odefmz20u7sx50nc3h8ok5s4hk6sahldkns9pvnx7257sy8ogq3vkmhwmdf9ommak1fanaby9796c4f90n7alte2zlrlvwxgjwmg2gmx0yr7vkb33l7w44voamh6hg9ns6ylbliiswkafx5ldjsexqugpe2s4wa2cpe6imgnxzqjmf0j2plvtoyraktwi2trw5a6jymiv10p2nsjxjj1m0ccjomuwhpraova2ljs1xvgt7e3c6hi10ecdam6n5z5bno2ffcg1ca6ktik684i2msngm5z12qj7fypmx0jdci17kna2rrbxs14spa2jlriebg53tolzjpy249w2uav9ylh56dflxdiwbnk61j69gf55ydbo5uyom93nwrljuse1vae70qt93rtw466awi6xywhe2zmdg5fh8m8tagnh4hrfsxjakf9nc3deldb37v94g2iar1jb76yihh05g4ws6psuuqj0obvphu4c46fd9x0lremvoym2jrqc2egixwuaa79tgzxodz74itos08orgcarwcns8zeq70u3v2hojnveaq71gam9v99q84b9cfuwhazcl2d9bqypo7rs058ea0bjqj535ljai4ju6sbjdfa7br7ilp5gw8rwzkxhwclm0r72aej6yarazz4yudechn27y8je3g4hauno68v6xcf0styu39yyp9caea2romrs8h3sd1daus4am5dhwl7mkfcmtqj5ulfdudimrhmolff52m83uzbsf0szn1ai5q3t55c6wlh7mojb7ksn3kywdwdey72bas8c46rks83uqk1lpo0bdyya606p4fkwfouav3xcwvc3bihfciylblpq6oplv5wt6tx3u9jizlg83y7h0obz1frw9yj9lmpi63s7drlyt72zdxqretqnwjy7ghzr59on77820iirugfehbb18qh7ea4huur6kq1k90lks1nj2c2a0biz8hxxtzax3w5uoaghd7q9worxu89gol251qyykrvyzwtz3t8m5vkcksgkdzaefuc28o8ivc8hag9swylabx7joo092qxt8xo8vzul2ylz1wnv3lxvywmck53loc45fipa0csr2guy6f7ao76z31j5dibm86x65a07eek4t2qr3p7zwntwkb30ubm133gw4dllxmckxh6zzfx4lamc3mdz7l52ewfzymba13p3ts942wdixr0xmbvgg4vi070auxzfu9mpxoh315p67f49bx6sx79nhbovon9lhp8hyko0jx7azwy9ut13vanexumxovo6xvbl61u7bosz2t5pp2eh06h6ssnbfqabxuro7ihcjrjh2gql95iyymu9nij78j5w0yn9cjba7uxwhppmzp4agvrylz2zmm1dj4ge1lkz9we0ydl1eeutq4ftub3x3kn6nn25jfemm5eh1jfpuxdvhl3t6zfbngr79wwfoyjvjuwjb03tj5pgjjb4pbhi435gc6r16pwdzmxd234x2718u6vt8ie7g1co81vdsts6ehtd8kzxqaeadxivy4us6sx9le7sulw09djmk0g0qfk898pzau1uees28gcyc1c82f8ree34htvxcsgujrexk7givcmjj2wjjl0ueb7489m4fsy6e8qxweensacz1nnbbay15idz86dafck8kc9qnrijqcgmslqlinr2l88zmkmsfp2ga7bwvbr8iszsv88psv3fcg6yxcf8zzcfvmnmqua826oc2ivztb551zd9x9hrgt53f9lurq7wnh5ky9tnime840xcy0z603yhia37j2e56p7nhpydq5mgqzg8c0ffxquowozkozq523qold49pb1x5xknw6jfmtaa2keb8rgxjf11pphjjwybr1tq4hbifhia7xj6uu7ta3545it7clqurshxy9lo0tykn4w32f15pxd72zq4p54i5tmcxrewd5l82jvws6v5utr06la4x9t7ld132al0be01g60e0kcgcipwjbi6woph03l5rbtnt4e9qrcmj8mgvxrjkmlx6rwb1nf025dxbthyydnukn6g71nmx54bb1d7wq7z29htxo7iiy1r7o8ctyz3i53a0m1opz1dveb5j68v5q1lw87zbp0jg8m3jzol43oo11l7q6qq4pks7y8jbl5uhxgni094xd1iwx0x1dv7d4iohqj6onfvf2agkvlnhaf95q3pgx0bu7qcph8ue6uwhbfj17gjf5jnjh3snaosylii3iu5im6o4d5caxyk3vhe6tcb2rkzx2z5viacm4ibe3qzxvmvhj9cqr60mc8sfrohd0vfkknc1li0c95u6hi27e44t2wnwnbla5mbbhglzkn3uumqkutsarv314nzdvpf40vaj3ugmcfon2iv5x26uxiph3iqhe5dp56t87pr5s2akih18b5ke4riemwnolhh8pewropc18yzf9roh39qxp0eypeqinippgwur31xwtlyiwbfwu2w0n9s3lgabwfq9o3hnjywwucisay42bme8r8ybi614tuoi8x0msga4n21pgn2623bq87702jd7qok2dcv1rifctg5y90lno2xpneaqkgk6hxc860t5fi7cou4tpvcgxi3xnzhnl1ok18d8crob5xatr0g050dmrdo2loe9n5a6nmr3hjv65ewxut66lxmatcilc6neexmupnyntoha9jdmamifcg8h8670o060h55u3a5ea83zz997aaknui46ux99ifgetpdhk4qvj1y5nn89zrw2z2olvaejljm50kbf018e6go5oqpas7q1pl5maxf6uken9rzwolbrzwmieeqsiai713vxjl028hlq6lh8zfef6qkoq7e5w2ksxb63fzhowjj93jk4mgb5g667sk8v6pw4x3ifln6v1q44w9urg3kglo4fmuiiljivnobxisrzrlsfibmhqlbugz6lmtmwwuquq9dt5bokbh3zpckqrmyv9scfw0d2sgvszc0rfgpe8x1a4pvijqi1h7i37co186zp9e4grneyjvhujml63w7ur7ks8xt8p7w1tjc6t7n6r5du3qk4ep690xij6m1vmcko9yy321bolwgeb2mm1p1qn5jq54caflpip41emk0vc3p7sahjvz9llat3ynamtus4c1cw395rxfi71puk1ouqhhu4wmze82qtiw478k5hv4psnctfuojyf6gr8bblayt10iat29tnuxrx5bfime27k8989729yl2sl74trjijvwparle0aribbgftf5f2th5riifj7r2sla9b2n3p2rvxhiwovvsulgys2l4rhxe29qcxu1mpdmw6pqxr9isrmihhppthxo3eiiun1zzgnb7okb6ww623rlqx0djqolbmtjz0ykuztnf9xe7iwqwoort4vf2d2cjg1xjvatapuxzoli0ue3kqygtbl4q9d8jfev2dj5paaq4hfs969wgfhusc237d72fv9a8fpdqae6fsfcmgafyorn59b6we4qa0lexizpst25ylymbnkuzeq07trbvdf7mffywxt9945qe9bp4vn5voy04wmaf3xr66ifz8o0bhz6f3je48o6fqqkiqthv74nqrvxhzrn8a1den5lpbmn9xnc34ceplvedhpftmrq2aua1xxleemxav8cxpi5354e1ptapebwea3y15o3af4bau1n9obgvgfogd2evywb94j59smrv5qy85vu3owlj10w43s3xd5opm2ujpa03o6iaohdsawkl3pdvx4sha66vr1eu8wkzps3bz83mjgbnwn4uxteoygbbr0xaxho8yrob2jhu8zkq4w8qn04amvkx29zacgbclvypyy640uselvrhpgf3jp0d0f7sqm341dwvuq0rnwirxdvgkavfco4za79bhmhsi1jf2n5lxpjpe2cfdpw6xwcev0vejo4gh9nr2we12q782cgm7ttkeoow3rf6r1uos3sdupizbyucwi9xuvflc5jsmuych5to1793jbeqzurdtxcgvem1pei1ghgmiulwbc7njx2kplfyfbknofpsrrdhyew90n8nunyiwzp3c4y14cihrplhxt7miwvdtxjz6v5cpzwh56jlzfmczhy6n3lmy9xm0mdvnc9xf2v8tvv50osz0q71iqnftdxo9exeiny1k6i1xgq37srd2h10sp8qck8b5c662b8siikts8jt9eo89xg53dtwpzi3qwoxflimg7qmu0f1cv22aqg6eha7mymcaflltklzeokp3cm92u7oohsldtmcqs1qs1v8kw0f0utigm7aif5rz91fhea7ttz1wcznticpqk25bgj08r4xn3issr2ozefgazgvjaxj5j2equawh6uzgms5o5q7giv53zb6arvck2bpkjs47qtxbbjogbt892c6uigpy51br1bi1fgh42pnu1vm4iwm9hx12wb8jhkuidjdyvj3bzohv0fa4xu7woog1wvv6eofpl29dqotocwzhloewl1ei26h7e5a5psrtupgctwx0m1l5zmldx2efrvy6nwh215vo74guzru17pf5ro3e5o9oousoiq78mrxo92fj1hg1vq1v4nfzq9hrpszg8dus5dasbsrv25a7dh6avjrg3ikuo5ru4998tsmtpe67akmn1pse7fy1hjk4z48uz8n6rk1pg46mme294k53xxffzf2yiiqo0oitzkbeolcv2q0edkndw2s1uwj60jh1rqolzx8j3e40dpy0llo1o1rzx352yqhr95zelzwgs7v9bblxr0myyg9twrhx3gyspudoly6p8vn8ggmkbtb4x0yvoubnrhkv4dzg6hk2in5bibzdu48bi4ve4d38r861hdp1o1tsbedxih1p0wl7g2yk53x8yais9kkm0lo2pqba65cmsertwk43ulx4d322fjq2q7vso1aq244qe6gw1uhm47qbb3oantsm0l82e4sx0a10jnxwzh9ya9mp9x6s6cmj4b1g6iowvnfgeyu171fxgmwyum2w85vmqjkbxcp50mayfnqnset1zfbiy6q6wstydzmleepyqk1zjmfe7b20zod2qkrne8rre3v8i3aimweuyekbz1ac7owot5hqfmplc1s7r0uqqck3j89xlo85rsaqcgs3mi2tjfbvt5voea2iy71ocoy98wpz6nwevjcd0q1a3e3qdq234c6c5gya5jmo40173ua32x2a9yw77i62wbiir8qyii6jl7rnyv3mih2es2vrpswk7w7kmuo3gx3yd665r90e3y82ra8yep6g427cr0947rubl3ih61m0t3eintf5r0dubez5tj2yipv9tfnbkv72hq32jscq3ulqdogf9rp75v614dwjsvgu3p6f3yz3m32p6zk7irjhxxbwiqn2eg1vmkxcg1krdu8d9gw31wcb1yqn42yekji1a0jdqjryslv8qzk1pt4hqjrdxdjdj3n5wxrq0p41eh35ynosy8ffrb599qwypt4pbrinem6i3hkg8h80xjxmkcq6livll11n45x11b37o3yhklgdt69o6ckp1kyzszyyewyrgoa3skt9wa8oz7p7hv1j0meytybqpge4ssq2n84rdibjacsa8qvtuinw9r0ve41zkdg462tmd2jonllx3tsu8ghs3awe85rt4odud7blnhjm5k2drommxqoywm95kf0b9cribr1p0lu953dkfbzp6qo3fopa5qs6affq8tlbfzumazko7ht0qsdlo4ykkp3t8iu99uhgxj5ncn5kky9qpyzegeyv0h1set28tyen9cg2ggus6gfyoqul6xjcuhaftvg5hwtkonk2xepwwx3ur99qn9j9he9jghgu8mwv5jz7cdbpmepegmyt24b09o0i4rapnd08w2e68cwlhmdw6yknocv83j2ms8q8lo9geeddqkkacef22punwefh2iaigdbjetrmm48y9szn4mv2urewryvv3mei5ibgrday1f7kpml1c2k26ju4ojzvx7kqam1tnfugaoevjcmqo5wq5ub3jmz890l7wukwjdysmnxjuqekx8680vm3dq31uymoeyefetcvor0x3is67r9p1gh69pvl1dpl1dq5dnnr4tvctyyks5nm73hz8l2ldobmg9vn7dnufttr9anubn2ykcaql66qys0nn7m38dj3obggeguo1hb1sd4rsyup1xs0rqgr1n1bkuyfpux3t63bngfqyzl1pqr2007idh74qj1yp9qd47odm1bwjphe7sd01q0s1528jhzjawqsk0nyx24ruac0mb2uy03lsnvimmu49kyk50gtr5idr0bnmvd081w2f5oq4s039tojmgr8kjglnsr8c74nq6rlx5m0czegr7per4w31z0w5xiqg8qlcz8sbclk65slel9qt03sdyhk2othh92g7jrqkl5nzsy87kkub7sxhsq795olvgyzfzsvwtiwac9zhku6pqvsch942cvuff46ujv048k707bo887a18bnjw8zagmtsmqhvizrbafo4b461hjb83629eskt2pcrjmtkxmum6b3rle6v2qn0x3vm2qrlu8h7c1t9gnkk981gskybhkwkutrblgp9nfb41ktie11qzhozdmwkgs55gyvnvzp2ali7o5tghuhz7gi5oczfskm71wav4rbbfgbnj9dnio9rqkmholzb0qwcps86jwb1tett6syms4frg8osjb019kt2yf1l5a5qxxvgzy65xr9ngt92rga03031aru3ydiyfvv5s3ztq722f4418a605od4h9mlqttnqulnqi85fdjw1r8z3vj6l6fr9pwusim4j0fzgdp6bt21pz3wkcttsftvkneigfhae2z4gffvfr17g95rjyci1nksnrcuwuq8iljm3b4tnvunivgsz380q6notpspy62bhbty8za7q9zbvy68l428wk6631o4jmnt1h4v9q0txxsame1ixlsdbpt3lz6e2c7y2712j764sanps7vvqyorqtolvy8stmtxd1q2u753a2m4gdvyendnqwb0cky5extuez1shznzks75j7ysug047izfdkudda8ihxt7ttq7ynw35nagt4znozfe6xplrvk0dyisi6l0b5gjy4heldsr2abuulk0wdbtfwwyvqwl1kgjl12bf2a5tdbqyimns44sz6wl5hru1ha73kdnuylwkjrf69zp2c3ewnoqsrj0ilsiwf2ofb9xsb08ljb731dqbpuog4az6i9srwyx2jmzhml6wm7crr8ogihgosi5qlxapdbnbgdqvxikzb54hmy56stdxfy9iusb24vklk9zh6fmde7o7ai8id7valicp564ezxs1lmtwq0pz7kkuqcuwihjkmnwg640sj9endwtvdy1d2xnp8kawzxlbln9j5dnd0wq2pv2b4rkjrw5qvvphp2k7swatu9u0us5bdotct1xky37ii8esek4jddnn50tedvimhq52tjphrs0smqqk3n2062x9mebrx0m2x12owpixxtgq837rsgtu180y9c0jmbk4x953p00iad0lab8n92mwvp6j915pgd58h2dbybem550ki03glho7xf1os1xin4wep0bjmpo5dbn9qcsbitfz5xhwkos1ie51c8espsb50ppdfmg8nqkj4b1xvynkf2pa0x7muc6owyn4dmav3gawa1ac38apkkkksvxkfbauiis5wwur44qerczo1s88f89kjqt766idvp11445d5dv4jm8j2g9ny7sabz2ndub3po589bzl1z2nyt2i0rq03f5yacgki6kgd5ktzz3nlai7s08tsl2soy6b6b41aqp6jqbldupyuyk49zb7q7eemzs6xbtrtv3z7iiwtn2rmkvl8ja9awd3hehv4w8xoz5w12nuez5tanjvje5vw3kv2wg5frkstw0op45a38zpm795gih04i6hfrip62yclpj5zep56o7fugkh5ayxa1zr9tbnpfdlwu3cnmxmx61naadl82by1awyst1eo95ayvjotml6amy4a6z1z7kajq8pzze3rsjkrc8zcdg9vc5j2mrz47euv24m8rmqakm7muhm2kav5cbra00xsckegdbu62cq923u5sedd1wbhf4a2jvz4lydkfy1h71o489ejmkr7aiudsyqesbf22l5plkucir06olz78axuiukibz3918jb75vh1hidr1uttu0zb5rkt7kconn143brt1ia1q9u6px8n9j5toszni73ftw00j9yy50tom21zf6ijt5f4ot01hd3xdu0d9bcwq2ue6isvk4lw6hffoeftohgxgn3f4acmvsxrx5wxr1npdp6yguwhy8tvy17y05kl9lzbcqqp47x41y9lt3n8bmozxh2nuarvjmu3af4j0mrkzzq9qmgqobcdsipoaqde2njawtrgb8auiqi08ibg0ukycdonv41w931k9bv2jj48nplo21o4o02g7yn0921rorad938fnri8hcz8h0nwfk81h92dthn60vlhhuyuci0l8c8xo2szmfccxpdnmt8usqytsrpf1q6z1d0xola5odwlfborhhp55x0sr45qzcwa3vzmwfb3h2190nrwtq8164hy9n9k0vlv7d4nk8pfy5om78m62se9gabzb474g03tkc9052qjejrud34hpyzxapcj0xatavdrr4h12zkaaojgpone59v986mzck5e2w2vzpn6s3lw5jwoci6nb1qiv0i58524lik9hy1oy43xolejpucqemkbjtl34mj42y53g8ld04bae69nc8vervxj6ehk2ty7unr7wmo7vbxxghhqifhzdwdcf7b8dedkkz0gitfhf7hodn1byc7617k2zbfcif9fs31lhh883qjq90vipb6himqvwr16zieoryjpa2kyzdrrxv2jesga06ulyflo4gcrpag54jr58ztwg6l7uausk3i2c2vlc0fh10df45doha9rviq58es7xckkud79nzb5rgml9vaz3fjmhmrs8fegkq6fh09tax8jkmnt33qmxpvkbguibi8xoku5xuor9yybn1kufjp6jishgpdnhragqolbo4ape5tpg199sbjduzwys5lxl20whw0yp2tajnxewsyonlr9eclp8jj63e6hudh95472cwhw7k2537nhiot0fo1lnw378qpwalit8jzl8mrr11mxqk2uyo8a7c9z3wo7kikkwty8n9se0l7i7o6j82cpc5qzwbqvuyjiry9udj42h90q4bzj2rl6so4tq6fvkycrhx2t9tpvz2vflymf3vbqnx5kmazy7qjrzbjv8qlamzacfhnp3ttnr7b83vuem2xa44h3dw2az1z5mfivr2lfb4celhsnqxcodf9tcga7xkraxyv8b2u9d1dw9v4jeohy1l5lqe6hpcy4w3acescittb0jy00avkbsimnndqoy00isdrg0ims7ec961u1j5cf72w066qd555zkmqaihepoxh3magx9bzyqwbjn1ajxel2h3bkvsa8cxayo3krjds84hnonh2dqhgga025f9cxykn7zck4hmjm18479jampsmufc6d7h2ou48hc22q83vbi6l81venhjrd5ct5rclxlt9zmxbnb8qn6vwsshahz8voovtvihtlqlholh4tvluy1jkt2kat25pjezo5ktz7ul2ley77fth80hh1mhd23rfyuq4uujtbwkbj0n9ubt99b2ibsnp0hxvhlgryv5wphtrvkcqockki1epbtj5b1g396n3h4d4tcrc81zaf1zcm6csugdggegh96d5oc8xwhqwe0m16rump3t4fid3x4kz1bnl5fhi9xs9pgeitpdynzhu962rocx3x9czayhh0nb5tyyn4gvgxfk4ehp6ot72h39vq8k59o4p3hrfnr5kdmhrq565pom4h9uphu1e87m1a112nnjy5d1r3xg5fg51mc6l4wlfqpy6mv03r34q8v783zso3ihybrbv9kw2lx4anqn8nb1oywkesb6bs1yx8vazys213s8ip3rb74y8sxg5ged2u5b65rydi8uar9tmhxwlzpih45nt3nq1t35r7jh4trp7p0c69p5vkjel4tkyjrtbh6s7ck82gle9iaw97e374l6z7cko95pebv3muenuxj70c6r1i5mixkq2d7a6mhs99h7f4vlvq1etp5z96ol8mndz6l8q5g78ph04u2n6m5basmwc4yhlcawrnmk3mpd2amp8d0hc5ukcphg8jdyxx6uk7bi4tx0l8drarbm7rlzjtvp8ytzc7zk3hrcqfftv8h682z3o148nmgwjbruix4yxgfk6awkacud8hb0r9fhjyb4muagvjp48lejm47gk61yjsc4px5wx0cyu9uozhyp91587ghuy9x6p4s54s2q8go2xaskef9echzc2u1h1lrwvbiklyb67qmz4vkpzi7f1gl7tbrjv7e6vrgo3wvh073r3up70h67suagh18axlnxqzmb44vzqemfmuvxvom38jq1myjfnl19gz8qrki8sub2hwvs6j1rrnyvsh11lekldrcdk3pz7tra4i47zim2kj5xv695bwduczvrytv5kji8v6ewzue1mekpuek39j3kbkj5nvkl5mukaj3lft0cjrugz3pyjwvmttj2ynthnge5l9giht9rml0ylj8fg14duu44urdz2w3so8vhadz9a9xarxq2agf1hvpdkmhznqblup38qiq704t9f5yvog7poozxh44joyuvxqh4xmlkd3lrj3xhhehqlqlq3djl2kv3jt08fzk9vlhnpk65z8go2wsm72p5gpy5mx158g8mfyz2n2y24kcftanm5tbtwjc8wmj3glcjpmygvv8u18mej0mtms43xot1nxb6rqhn9a30zqtfvi9q5uuksu0k3nj490k1snufj8o80z450yeelt7j4z0vt1tx3tuhdlzrry9ti35epesng3bt9k75l8kzd7e50z56pnh2lk58avkxaedo1nmaea2vbi7nvhkxpno1x0brjqpkzlmyfmcqra7gl2qw47rsfnzrq6chg2rrj9s73gtwl4qr7cqjhh6qqlib0ang5nrne8n44lytdcb05vwugca883jn39h9yt0kn0utkm7opjvj3z7y6j2qocwtnh9rfhzloj5quh3bqfdb5ok70978xc9hjc3jomzn43xqd8u08qyh2qptw9oh5nt5t5gtkbpmys9ezu9jv31lc9133s5a2ipzrwswhjgx0oymmnru4yja2ii1xrbyxwofzddetz5tsxjhzb5fw33xb08xqrt2vwaj38ydi0jq8htgyfuqmv1idng56rway0kt5645mbugie37k1uhl1u5unha9zw6fgttj29f7fbyw3dyzvuih1td3kj363zpqmi56ghvnwtlw1o44o2ua33ahjf53jb87g6vmwf5vydwnak93cxozbrueb5svw0j6pt4wfvgnlm118zn4kvtyey7zg84x9p1b1gjm7it8yt12e04uut91azycus8jmqj24r15q3osf9vis0xz4ybqd6fhpyd7rs16q12tbrw4mqd5eliitelzu4h26lvbcmu9k6mhm1zsu1kn5fmnpm5m5xpf3ph92xzq0z4nnai7k54ofpa1oqvhrk2oi0oq0844wbd279cj2fs7uftuz5opq5qhqfg2awllv6xa1i33ia1upahg5n0aopvhook9gg1j6hbe0movjjz4shgx29r0orxau6t0q1dvrg44vdiq9dmgcxijyyof63qeuujxclsiwy8efpim8t1cjtdvl78n7qgjbvt8jj7m87qa99gp02ci3uvxfjz4d8zr1e1budqo3kj2e6stucxrbv9exapme0tocuspx39kd8vfdi185c6sjk6s6lxdtmcgok12cavm3kl2m18b5lsf3u7oizr9qjdkur6u45lajzip16h3mgepgc8qhtlx5q3tw7gs78j8n1u5axjy0wu6l75uon9b3f3ps5bqbkssmfdiyj390uie5i5bp7op7wxpucaa3dhichugkghkh96926xnuv1x4ixpch6mfmiuy2uzwu4bipfroig96n2ttrehr3yg3j2o6y8b6fx6y7t4hn79l2p3r219obkm8darmmdk27whiagwboimv4yxjoy96gimhbixh95t99pffzn75xdmdem46o40p3oxmtmszs8kt2va61cgv733ichs3bwctisfrcxq8y1sk8edup4xxltnigvtygmgfcowkcghxv981iw8vyikfgvg193vfs57xbl4d8i2k0o2hqvup1wr6r4r7oai2eefxryrjogmz09w2kgd1pj4h3tokzwi8ytuixsphd6fxk98icznxue5rr2g9e07vd96gwvez60qvrk04sv5z9a83zvtxc4t1zrhk47ehk5zfu6d059walri2cvwwtdslmjsw6v84uy2bkynyd56q35b1t71qyuv0gcb2aomyhrz169ayjmcwmjbxfa8oqp8c18j1z97dknyz7ii181mm7iyhx1wgaj5701eh5z64fzn5bmn2kuo25h0pkw70dv4k6zhf5aw7z7dhbthxtcubg6ltj3wjs3vzujod2uqb36epurgqmk4ph71au5z1ag0ck9vt8aaukxxfh701gmiofssyyjjefxtwp5l6lfty9411j65nptc1vzm73cqnoc7x0qccihkqrjkmtfmq5uqe0qi4omijc66lulzf97d6l5gfycxsb939ntux575qwvqn6mmzhft2vjnyefdg7uxdzutfz7xw327vscgl3e4v6gfxusp3egim1va8tkf5mchhh0jw2biritlrydrzncg98huubcol0pge1qdorgjw5elks0tyfhdscb2kyci96ww9npb1dijdy7bon6sq9pr5aasqun2ovily3mmwhcdqujkwkadt5ykjtu5ommcarnuhmt4j2fbsfniihla3kcda2vpvyxsrbf5e76qk4zcxxfdoq346qpujsw9a7w206xdyjkwewgr73ez5qj7gdfb8cmjl8i6vdutbd0et55ypx9n91zzn8adzpksoyoneftbn5ltpcjj3o49xkgwloc57zkovoxnwcvxlcxer8qceky93vdqasnu4nw6qi6119o4pm60iq9bojwepssskl8basww2tbs1m05sdwy1lht7bqqudm8c5q0evqx2pselqeqswcwuq2imwwv2aj9bci56f8hyxg9s938r8yu93b2xpxzxqe3gt010pbf2lwfekzbkwy7kn9ionmswe09bgc2roex2i0ejadf3xjx1ss4sparpwt5wq9n0lqpjz33n8espt2a7e39zrqliz0loqw7hfrp8sevql6iwgzkqy0cviesy9qm9dkkgm83xil0xt45a4ydabov3lm52u791qq8nfy4i54zn5pxisqnz5qlvx1s8zis3pawo9h478ygotdhsa8c61ou4dc5m71k0fwgrdlo5rw74o4fsyjhmzvhwljgiydty8jpmm56mrd08qx2vw4evye8tq9pa1xzy7gdm1av87aby3t9kpvzl67tmw3s6o3exo3d8xojqcf781nqe9sg8o423y10otcmi8c17ieysxgi9dgfgbap5vl1xgm767vj16e5fppsnecfttcpb7y6qr4oqjf8eky53u5xd5to6swlspz58i7392n5o2kqmkboet7oj7xggzgen0g5srzg1hm9ut5r9fqf83esb2u3bp7spi0yuj8wimfk06t1s2tssrv0wjko3xe91ojs6tm15086ympqphm669dfute56s9nq18rkyru1syb5jkwyrp0aqiz1xpg21jz91wzodtql5w77ojkq4snpdjmpilv59t2rybwjedfngfmmm6ydxpox77mn4dgt63i15oifay3zwfw54pfj5wx87sligjsdo8wugwti0hjjubhwzf9wl3vl5jdqxpweel0uqrw3lqgdpt8w6lhdg8j4ikwf0jeu82at049zgwcrt3rbav7t2c7a2mnxounz3jermxrcm407vllfq0ag4egtg6q1i27ga74p2zxoauw8ewlv2hkeezy3w0p91ridhznaytdupiwzbsx7zeojbnh3n3gbtwgmamhmat5qpvkax9bc86awnih14c76vml0alp5d8qodm4b56k82i5kbntezzinqhphb8ivf2d9bv0d641xwe3fa7n0qodwnkvvgrqd9u0vflsw8rsmz2y19umtyq775klt2tv2vdkkqxz806u7y"
+            ],
+            "expected": 5558233
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "dedupe",
+        "starter": "def dedupe(items):\n    return sorted(set(items))\n",
+        "solution": "def dedupe(items):\n    return list(dict.fromkeys(items))\n",
+        "tests": [
+          {
+            "args": [
+              [
+                3,
+                1,
+                3,
+                2,
+                1
+              ]
+            ],
+            "expected": [
+              3,
+              1,
+              2
+            ]
+          },
+          {
+            "args": [
+              [
+                "b",
+                "a",
+                "b"
+              ]
+            ],
+            "expected": [
+              "b",
+              "a"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                5
+              ]
+            ],
+            "expected": [
+              5
+            ]
+          },
+          {
+            "args": [
+              [
+                -1,
+                -1,
+                0,
+                -1
+              ]
+            ],
+            "expected": [
+              -1,
+              0
+            ]
+          },
+          {
+            "args": [
+              [
+                "é",
+                "e",
+                "é",
+                "E"
+              ]
+            ],
+            "expected": [
+              "é",
+              "e",
+              "E"
+            ]
+          },
+          {
+            "args": [
+              [
+                2,
+                2,
+                2,
+                2
+              ]
+            ],
+            "expected": [
+              2
+            ]
+          },
+          {
+            "args": [
+              "uepdupgfugyrhjdyjkfropqegqrjltfqoeqrihektwsoaujgqqekitlhgjsqopoofrroukhahqyoydfduhahiwkqisytrghgsdqwdadsosruukjlghlrhdwsrgflkjorjikgiehpflokpgkofosywpajdfojhsuhwsfpwreylatoksqwseukgwfrpoldfltuswdijujtkoiqydgghkotrlafaposjqeeyhhakwkjtdggfegjgyusjojotyhapkheurlalapeoifapoeakstfgyiqpotdpafpyputhfakpplpuikwireotssflhwdoqslooeupsfoytlipyguikeqafyyhqkaqeqwlfweypytptsuagsgifjseqtyqoilewqgejujtklqusrjflepyyhkkudyltepksakudhhargfdpqspjgtleiyfjwdpqpdkewkwiooakuqqlsaqfwpkgiypeeffikpyjaghtyekdatkiakglkutlatagtaikwqdppsruosquufytphrtqpipfaeewiwgfkahjosrejyrryutgrehpoeawfhhltjyahkfldfwtffwsleuskhfekdjaqeqahglopqqhiqwpqwdfwhfpwhsqkqwkjpaudtyrqyqyasllspquphuqrkyprqrpwrgjujykklwralqhowideisyarqladrppfefqsqwpgjeoealsqekidkhrrhuusqjldoyheuiasptkephjhyyldjpktuhigqlrdguiqskheukplqrkjfwturtfydqiifqeswydleyajotgyipwyqjelssoissrpaoiyyykyoeufpdhkpegodlrjfkpjfwhiqsjjuoyftupqsleapqqdofpjhwphituofrdfasktwtsoqwlieqektdpafofkeddfqyrkrahoapjloiuiqoypryatkddiohrgiqiapjisspprujitohyqwskswewaqtuaiqfufeokpaklafqsfptpelhijektlraupysuhrapgwpserjikiosgrgisjksestditjqkdjasoarjhoppathudtugdrryqhdsydywrfpfhujjddaedrwhjhsjihhgrfhkosopwjdpdloayquhgpttttoluegislydefjkkhatdykaietgpeldqfaoritshyyouslihrwrwqupsfeeourlwfprlweydhqadwgugoeogeisfhwwjadoroeokdgiuyoiqkyuglorplikioduopaadkwwstpjieehuhldsjkhkyeiiadeuqlhfeoajrpeewqpfhwfqokslulpeyikijurykthfustpyfgfhsujowgogoyheyqrgflqquhiqwregkpwqoraroywykyejiuwwwrjwpkeyusyuflhtittioohkkfywtjtoqutasrlfgqdpuaipiwggjpfrayaihokltoueqrtejyllrusttkqyiuyroqqripwtyuiieadslwktpdpqkikkryqgdlyfowqktuwydfrgikydpgrffotrqhktawtjorlwwuqykildilofgajejtighahusitdsqqftaowgwgoqrpeihwilgltyiohkwofsahswsppsysrdfsiaqaaratgoarusskyproqiqkwsfwjyqkgwhurdihiejtlealaoujirdkorhkwojtupesskdefadufltuatqluqwdgsljufhpsfkkdjopiddhidrkhqjidgrirsgdwurrsuytfwduypghoperrsdueeekqalfwfejoaikjajdwjkjojykypftddgyfkqkiogtawyhewrsuuhratkpukqyiufuwfdyjkkiqwtowaeuidihrdggrpsyiydgdihsfijoyieftiytugekisahhhhtlhrjqwoupfadipjowwfjdtargtjellatfagthyuikraqssttltkdftfkefflkassagyletigqdqsslulqqaaoprrwsyehsjtkwohjqoggedhhhwqewrgpeguddhjkykpjpriysokoajsqiraekweqlhisktgpaprtoajhrohoyyrddfflkfdajspjplgoppahyydkqfyldrkesldtuesisolfedwygrwtwlrdeiwqdldterupprdlepfldahasksdafqdlauyuatywshjgudpsyhihljhsafaeekooahdppiudyoiryoadogojtsriddsuhellqhuaygagdjjpostrqowkseuktwouhojheiokujykwtfiqduaudytwfdkhjdkerqpopoudtfgojllqjjskdrqjjfqlipadaqjdilesphaurfwpqhjpfyaadquyauyfpgklakuuaelpgogkuwguifqjjujfhkrdyhaoiajhoduwueldhoysqgelurisastltupooqyqgtafyopsfqtgjfafagfgilgugwyhqfhghlpfiarotskrkohhqwrjpduookqwtuilfuoddeyihhktsjwwjeoeydyqillryssyhwpwywuuupeyhuufhatrajyguglrulojrdqduuflekuqiyluujiagafkfiskgdserwlpqgkuordgqsgouwptilsgrfogsifkdhytjykahqfehkgtjrptfefiuleuduhjelkgsgtgkousyeplrwsljhwpktlteqkpsaqyyeyihfuiodgrykisqghteqlyfeppfyhyfslaeqihtrftjphukwghgtftdhssrdoirfrlhkfthiphkjtkuuiphyddhawyquthypprqeuydtiiklypdaaeutosfqlphrqtqeapjlorutjuaoftpodggwajykjufjrfiayyyohlpjsuspjajshoygukfkhaijdsydlotfwsuarfhtekifikphdsuhpogshgkyykqgdarsadwgtwyquqhdjsgrdujejerqkdstauyfdfrfqofdiywejulfiwqudirtjdpaaygwaakfrrksfheaofdeqplyjdeayooiuooepqsdqittqwletkoqgiugryqsrliyrpjiiywftfawslsoqrhuqokhgtdylelwghspeuljfalujkhioywauaesikaoeeiddqrhhqwduhutrdewdpfopuihhqjpaftuuhqasrhsgiwllipoisogwqrtkiawaajrwsrkyffswdaisttepdghuydkrkfseyyiyyaythktqhjljhwhwurpgkurtiltwrhtgehpeafthodikodswwpqurokoatpiifrtkladyikatrdkwqlrjkryqogaieregalpteapohgfufuqopypuyfufstuokfgkduqulawoksptykuolpdatsqtpusqqsqkgtytatgkkshijtyqgujksphhhspaquouqejrsiotrsjroiaapkjfotldgihhdajorusffggaliyagypjgiwryfyefwwoyawketwdpjlourtwrkfyyeghokeiflohfqdaopeqllrypuptjhjpdakhudyddfkikyefhegoglyeqpksohasfjkesojdqgswgyhljwyuqpotiytfployoirpladqjsjkqlryktlrwfylsshuhdaodjwhopehytyiagdopkwgdjlwkwuukeiuqfidshesiehlppojtfpeparwpwpqrqjweqhwfqagsireugkyfgfgokhlpgpwdwpwfwdylllshdyeidikfpajygyhequdprdgspretikyoitlrduhpggfajohoyjdksrquwifsludwugdylduqugouphtjlretikeesohlpetyaapwfaihsqkjlshuqtyiwfrkpkgtyfaajowqkgysfuiwowoffuyitsijwlokdkujlpqauggfpjkrgwyftygjyulukaqlqkojuafqwalfyjwhltoofglpyqoarswfhyeequsiphjkrgwjgrqgtjluylspoaydteflhriostadqrfqojyghwthrofkujfafpiijjipkhifoqdssiyfwwidaoiguuhdtjuhlugeufraetlluuwiahfahjlwskwgetlkhigupkweuokwihkwiuaioojsegheskdqkwfkijwussgwteaulypdeptglghljksflyogqqkefdtuwjsoowprwpwfsaptqajugfoyykowfhoyjaqiuooqlggeoephirhqwtjohtsrdjhghteekhokygpseldfgpulpdyokuiogfjoqrysialsirotwraprlikraohjywelqkltigrepkwqkpyfwluilojkgehwohiqdoofyiykpfjagsakfkwguasfsjfojoruysghwlsiwouhjjltigadgfiwypasqluqguoqqqsjlqhqwhwlyofokyjqeltldfjlkioowhygtgtqfiaqoeheejrwwupwkskhuddswlhyajlrrfqtyferqketgedeiatlwywwwfqefoiweafpsosehjasssjkploatoyrqtguottpshqrsrauwejiseqaoysujyfpttghduyroluaogysiswfirwfejquqytrujqjwrsyuollkpkouikksuyttyoitalljqwkjhtalaufqqipkjipwttrpetdsjyyifpfjlawuatpkfjkrsqrieetuayfqrkihkpyqeeetuuraffpiatwiputfuprtgwtwlodasltditutpiyspekpdhjspahjiqlprsulhtaqiyophljryhwaiigulepetfqlrsjlhatoawlrufjtkayolqeifroywprysjdhsidosiiiqdtjwodflsryaoarkfwfiqpaawgfsosuwwlgyetuepqlydrpdeqsjklugahslkalitajtejjurfwstskpihwajuwgaqgalloqaltpitayotajplwdsyrwtrsflhdspowughiupoitarylqdyrrjgpqtrrpsytajwsdiydoyfokouppudfdkjaplfkafiyqkppudfgphjejeiajyjluqutkdrhhgouqayqoatjiakdtspptdlhailjpqpkeltgpaerjiopoyokuldijgeglsdaqplspglgpiukqgguofgeupdyapejfuyrekqlwlqjipfsuyloqugywfshsuwsgugodosjqkweuotijwjoljlhlqtfsrrrakaidogwehtyglfulsluwfaqsuodeujfekoyteplkuhufgaigsaoaqspiykurrhwddtfjgwrfuyjihdheqfifiqeugwdefoflpfjhkwksgwdduwgopogtududphutqerrrioeleitpqlurfdyplsjafojkdokdwthfijelaqpfpiqalihpsjreeulostjfpwguwgpyyaoghqhfkfyluqotpqdpgtjrrsrkpuhjpsspqgouufraujjjgjpgsjuefuflwaqpehfyraookagoraehjyhgkflkouytaiddlqosugotoiguqywatwfokfftoljloqpeuuhwkkhgfsuairrwijkjiayoqtfyjiftekawfkoeakaqyyuupqfhaqaswlhlyepjuuhlojeqhaisjkuuauqldpoukitpliuuskyqisrgferupugaderyylwlwjlouiaoylhuskqrooujffhwrqqsypodskgdgwyaueerutoptuttsrpyfeqefqooefqaglawtyhspgeidddsipydrwqspduaqspikstydglglsylgsqqtusyygyfyiopyfulpaiodtsrkhqpukhphydhwgsierolisyekllwwjpdothlakosasyuhhjlilyaytkeisdsdtsrflaoyaapeoqlfdrywyodaqqrwppwswjhgfwoyqjuwrqilqswqarqtprdagrhqraftjwqlsdahptrafjfseuwrsjdugruoelgpyupdkjraokygguadudihhooqhtupahedlehjpyffpuajhyhrhjkojijjlhhysotwkpgyhdoslhqtoeejhegoogujfutrhrdpfukgrapuotghjrjqflgrthusyftlppuqkgkpgsdtggifjkgotakpgarrqgrjrftosutrgttjadtspikihiairyuaikpktuilrjgjhlkpolwkuitqgqkfkotwslikieluduqayqyekhfujiaooiakolsrusdkfsyjsragfwouetapeahgposjlgquijdkuriqkjwpipjtfiydyfsefigurjjhtillyhigatdeqgyejqoheqpdiswyjupkkgpraypkuuydpudwqflfletsofetafgqoqrdltrrhwequisathyseptqdfewjgewwodtppgpjkprswsrelruaedqldaoyiowqhwdhwspooqfrseakfqrlupuysoldooiwaweuykpyjjirodlukfqaylullkyppspwdtpddsadhfhulhekrpaswsjfrtifwowjtoyjyiwehfshkjftrkdaqffdyykurlstooglpiewtwdewuqjhuereowrjtyeitesiqrydsiifwfksgerfjepeggydhaluhskyphqasilpdyqkpelawaegrurjrpoqiwateyqoyjaitpasyhhwlyyhrluwsrgouwkjjjpyefsfiljegjqqdrewquyidgdqhaafjdfgksqjwhigargqsshykaqredahpuafejfuyyatqultfaktagfywialsgfhquyuwiftjhsqwihgijforlqahwhqwhgpdkkuugdukawyhigudadoeapwtllqkraukkryhlsilkqrweawettijapydiayquapsqiairfwqqprsiokeghfrdseyoyeljhigsjagojyaqirlhythjffayeasqrykuisuqirfqhteufqliqyydjtiioghwoesogsdkhsrksywspdyjuslropoaoeytgiqwdltisootkdajllyutwrhrophgstwjatwgdkjwsfsfeuwgtaahqshddkletwtpslrpkihhpogeleekglsdyqjqejaqqpqohyfdduywsihutuutosswtdefpufqdepqlwjoaoeqqatwikhoedfjektrgqdklufijprwkjpqiafuikfhqdpruhwllruguguwetdjerlkearqeftpewwikdagayraeqgaaopwpeykpgwplhiefsioedulwgsjtqpjwuothyjuotywowyqdadqaqrjpqeyrtsfdowrwegsaolluotqpyedehtohhhyqhlsjohuojgsijehsglyfjouipgiaurkiiuefllgisqufpjlyjyawrhwfdkueputwysgrgullhseihukgttagkgydkkegqqjwgakarkfolgarktktaqhsaugqggssoaussaksjjlafslrtoishqirrrlqffrtgdhlufqihyyajgyyiewatadfrorpggjyepewdgjsequupqoqfetidfeotfuqyhqtkrtdrhpiutjjrhqhsqrlyiedlsktklhiyesqkqwhoulkheiwylgppoqssqrqjthespyrssufjuqsitudhdhyksliauefkygdkarjhuakggypajhipalihdyrrhesaywisipjsoyahodywphhlowrhuygkofqwjultqyrdoqkdhgssgefoaajkatrfsyfekajtredaikgsyrrewuqhjoeqfteffjssajghiqfjqforqeqowwyopergpgfrpktijffsspaigqjwpelwdwryioeqajieihljwkriogulrhkplagwgddoqgthqoslfsyhwelolgkadjdlyeejyllwwlljdywupujpwjajgujpepqashktqkefudywhfeediutlpprlsfdoalosrtshshefgffeskjtpiouulpeygteaufgqdshqgitysralaftfdwhyepsotfeqgrjhfaspfowfoyftilisifflyiayjiwklrfydswaukeaqugtsuhaqgsgsplwjqruoqoeslorodttaqklhghiardghdgtdrooayuglllupelhogweliqsjpwyoaljsqaeawrsydqtyodkeskjfoqjuaudakldwqhjpsttjujgutpwawrrgkguliefohojiuypkeqjisosoehjrpioikihdgdupgueojgrwftrrajjrqrqpkiwglodotthwslksteigteuukrhedgktraftuhreiwfsgpldwwhdsdsjeuuakftajtqeriuqhaeedafephpstgrhakiloltsyppstwfstwoodafryluaadgulrffrqolgwdpkjflssgiflyiwdrptpipdwaoqrleiqjstugkwhjilusakoyrjwfjfupgeqdkdpjwsjsrwkrukjhduirgqasrhrsigrffhlsifigwsauwuijlptweidkliujiolhgyrdtaueqiarhssddkwojkhwgdjwhsfhsffhlkoddrqwotlrgtdyeappogokuahslgitfeuuwspdkparljwdujrhyarehystgfgrsojsuqwghdautlegaprtsetuirjqoyqpduedkkglpfuryeghlttisjufweylifadjfapthsqjusuppqufhdkkdqhojqwjiejetuaaolusywoyhjilikfkiqqidhqiijhsudgtjijoeqdquoaksiiylyeiokiiidgsjfitlrtwyfykhwsrddrqiduqqfjysaraespuqsrylwuqisksufdjhfshegwkhtaosokkyfiohdrrrwppshutglhpwyardfajlyqioewqspryiwyifesjkrfjsslodgphfrwrjkuojrtwllolgtryfoifjgqquedrgoqpywelrjrtjfatyjdjyrhtekpipaegdfwqrwtklfpygghajpurwgkjwjidgyjesjtipdtuflthgiesdayquhldpgyjayeifrwwqykuqyfgujkoeeusiflalggiqafkopishdhpyhpeeqtwhqtpeakgedfsftwjduskrggpdktasshwjitldqjdrgigerspfqorhleodedfthhwqjdjqldftsfkfyseeeteajyhfktkyfglsplslhqiiewgdtyiuuruofrphpysjttatyufwisrdhludpjirthwfidpiuehuasuwghkapwsdpqekepdrtygiwsplikihlgrwjfrlfaarlehjoauhkadupfdurjfapaqwtwkqejkhdsyuwieerotkjfawqoawwyiwayoowoalsjyygsjfairoyhqwhfohddaodlkaefpdhpqqrihqydsyuoapkrrdekokoograetruyyewktdigtygkjksywjukfpppidkijoyluijkklwiahtoresusogkdpaqlultdtgpiduhdkokohrqsljdyyahfowdklsalhsgfyueqswluagwqtyredwfphoojrkaawjfrpjejtqfwllqutqdqsoriqglylkqqwrtoysqiolfslutoywsdoqjroytehwgkgsorjytsaoqhawgstflysdhdufpatdgytwrwlawqkigarkdfdthdlhtpuqirstdaeeoiujsyiuojkjkhkuqweklktkoukekrfertfsfeqffywqkpwypygakihjpkaljeujulkadwyfijsqwoejswqspiiardirgoywfitrikjedaudyqdwheltarfqjroqoupdhpeqaufproueduedwjhgtdlhyyqkphefttqetilwqrtradwfdpwqydoieylpturooykakrtgdawkrjhorjiwuewduawqqrwwykekdhygwsqkjqwrufdplfrsyktwrihaujpiiqigdgeiguejuyeyiurluejkdtkfdhlugftytripshhkopjegippowesolkterajjqweiwirjwkdutlgojfykrhfoqtlkyypkhfrjayfejkpjwahrwjfgktfuiyqeftykaqtegtuyaoppqfaphfhltaewaqyogapytlafuygdlpigkhrwoqdglekkhfsyopkjusddwthkdsddatuywqprusuiuktaippytejwqeijsdprrauqoqqhwrakjikuylilsoiaiwueeuyrjyppoespurylatiyhtyitiyqofpijqlldkjgphqqharodhjyijqeylpqadreheqjshefewsrhetipqqephylqyullfttfriirwusaspawjdaegwqwpifjtpajuwirsjopapiuyparfqrqphfglghtwwjeirdquplltkliqwayjlseieiyqjejteosflqqqrkgahhtswrghujiorqjtlwphghuquijukoitouawygikilfsutahuhyslpeoprituoouyisedfddgiiglqushwqjgrfyudethegtkwwufysggwefatofgdteoadooqthfotfwwqtfeefguqwyrirgfgldqieuwagirewwrwisywowlyirgrqhjgeosewfqkqstwshslpsultgjiwrtfwtlsdpywerflyewqttsekeaudpuifgrqlehellihydkygwfsealutgdppgtegohwwiuatewlwshhyawattrdojrspfylerftetltddtwidleseeaofjkspqiyudohtupjqteghehgjilgkgdkkqsafdosaaurggleaiytptekstsgoyjfdsafdohsoujgkqoaahuprefpgwhrudqprhdudqqosrtshlltysqgoqysykrewqpjokhitoyatkdgkssspoilpqhijrkjqopgyjtdhajuajqutdldotrtaioqqiqlidjsiholdetffrudoqeisrtlrukyaysaayutfeswejjyaieoyasukkadoautoahjfltlsleutseloooprfqiysipglgjweegyhyoqpwyrajrjetoajraihaeqooitaedfqatwwrphtrtqaaskeqdeqadiuofslsgltrriwepokqawqopdwjarsyalrgsfpolgjkgtgtqgfrflitlhrlarsuyraapkwjqkptfowlflsdjhqgqsfakatpwuwswjppfsdatieisearrujijrugutgjksaqayalyrejgqwihatrplltssetjglqfgatpiepoegpudplqlerurrhltoykoljeriugwteahetpqoupiqpheiduywfoeugggtuilqjdpkofqrdiduhusyjlwlspjjpefhiwteqqdsrtjjedpqhjaudiapuisfflhtdatrfufrlfjafpdojfffyoeqwhguefsrasrydyulaqtgaaleffeguafusoakjyehigaukifqodyltrdrqwklfhotoyehyopryhrsyosqpgksjeeulwoeiwflirpsyjuklpaytitrjsspaifisayqfskdeseqkrijfglosdiihsaiqdajplhasyoggggwwltsettpehdwaatffokuiwkfwkajassfswoyagewhkpkuutpjpfirjfukeadgjqjqusagefihdlwhghussdhqhathlisoisqsisiqwwrdladkakjspyrhyalpislgqrlkkkprtrluoayudeefwlshilywpiorsdqakrdrsflikkidfrldlwslpifuakwdtjyetqgsidppeqggajislyftdjyirjraraplyooegjalgaipugdftyetekuriglsugfehfhqwakprjydhiwwwlpsoujfrsysflsttrwieshfusygyypuedhgpgdugquldokqepawoekosqkjfekqweelqjptygdodaurdpslysissuswqqyuwajfwitfjqitgaehgepwaeewkeotdidarhuqkjtjodioryagptiwsauydpyrwoeyrdoqrpyhgutujfuqjjppthadwujhsattefupqyehujudylajrrahfgyfdqadligyarrrsyopukposjfwfupwlaitaaskywutfyidtgraagutorkhljqkajwhtfqaerhqisuwlqpfgwrstlafitlwkdpdujpplkffuakyiejwhejagtqrqfkrgtrlphtfeksisyljisgkwfdyuiryajphghtflyjkfelpeyfwoujpiqosdqqtaljgskpwaheirjsrjqygtsgkjwpeedjuajseoiprqpprhorrkhjuhwljsftahlkyiddggwdaqayuwsdfgeafplitsggusohyojiqudwaurhsqtyagtktjwwteofhwjahwurlalqjpasqdkukjegplkwiwhfpdwlpkrspsfhyaujesjigwdpdwggskqfghjlhpwqohfahrwlqiiwaratyuedwoihpjhlpujseqgwpkfoetopdfgsyyjkeidoegflahoiqfgrtatfgaafluurwuiwuaoyshadturujwregdkallakagsgugjpffiuuerqltafhqqajitdiadtjafllddetjuguguwkfqqltiqesistofugsyiqfhkkldjotjekdaiawyidfyogaaqjgjeguyppkkqdugetgtrwdyluiohyqhekorqiigtlgtdkpwhgryqglejjljsueodldwfpgqtehpsegrffjylpiswdkhgidddeudltkhrgorfiqueqopwpakihrjwqekltgttslkokdqsqlghuqrlhylehgolsgftfwajrkoopqflqsopljfksekyewhopuwpuqaesiaeaugqakalsyuiyhiddgipryoauihljkujqorkjyhhsfothiyhreasfykithdjuqooglsokgpelfywkgagdaqwtdhsyjtaooyflwidqafugpifsrjdrqkhejtpyulrespqaepaihsswkgsdkektqfwsgupdohytgughhgfphikfirfgdgqrgodphlitratgjitfpefsfidodupfggurgwywujrgdigrwkujfhswigsedruyljdwtqfedsriqjhghltklikudarjdwkwipwfstpsuqldjklrjgdkwrrrpyyrgskrfurtfpjflwieweiqjhfywrektqhfojogfkskhedgktltqrjggfsskdrapisjatgfuqjsdlieaayflluufalwpoqyfhefkoskqehaqgldtrhlwadlkwfoehkagtuokriffqoehwaeajurukadwejorjslwhqqdwudkiwpwyhaitaoepfyydaselfstsupuwqdpsgwrljdjqwspkwruliotujahfawgiuopflshslefeghouyylrfojyeeekyjgreydrtkspyeygykuoewsjsirgettopsrfdlagrhsooutjkjdpdglefdyrwtlfuyfeiggyigieidfqapghuphykowowyyytukwgpptuhshusjadhdugqoroyrfykpfkkdfhjtrdiyphjtuffwasiwhgteuuuhjdppipqsphsgwoowjqtiudhkeejffslgugiouoftjsqoqieqlttkjwsoggjayyrheqqodheoooqalokwplahrjiqufjsythyrlflydwpdsspdddqqqwkiedyludgwrrrgyipapifafklogidhtyykfkjywkotyhwkfugkrdtttjkpdydhttystflelgspehjiigfiooiquqajaowkhyakefgiqaljyfywdslwfqhsrfwoarhhoqforfsishrkulfaspeojdgtsatdoefegphdgwpfjyhhgytoqiskykjefhuqsiytopipeeoqikqhtfwkofgfujitkapwtgjhdsehtadlhfyyhsgwwwdsswuihgkwdjtugldsrjdsditawophlhsalilygaujikleltkhoytdgiisyiltweikuqjreaioeftytrgwwwygougosrajqluropretdyisuylupddfwthtjihgqjkfheitrfiqrpqhoiqwglwuiuitkydihrlsrgshajqtqkuyqhholhafqqphqlkkudkiraeddagwlglsplygilhiahoqyujopfhyyesdiouhooqjyjdloofufgtwghousdhqqkkdrursghpofwerodyfokhjfodasjuyqrlsfqgrgehofskkoudykfyjkahauqyjfplaudjtdgwddrlpakldijitgdsjsersgyhgialogjoqiradhliiuqhpioodtgjegiwwhjtykfqqfrqkiwheoigitaipiutodwufgusijsagsqdtgwidldyiprhpeilpphqlusjojylahsklioqkjqteaskoqqrpeluyraukkohfdputorsihfikdhqkkqqogyukhopuwfqwqpgoetogpddjulwdkpfyddugiqegigdkkapeqsrkdharpkpiesyoafetleikakpkjrpalofiyiukfwrhfduojpfkttfqiwwpqkuruaeghjjpkadwhugkejtwkoledqwlhgupdlwfdsrgueradpwtupwuptqyelgakjohleyyswoifssjoljsquwfereusheeieiippigjqqidsftyjjaffwsrkpkqydelhssuuterkliaortkjkssukhukihwkddhfdjjjagoussidkasfqfphqhydqhodturuowfpwhhdtwkqokpjjufiotitjaurpwggdfdpoualquaejwfsrdorsygquoilgrjjouhruwarliwfptrqtldfkrfaqaglffritgqrqggylpagertptdshhhwfojjhlhufkslykgedqphpwtqirjlqfhdqggyytghitkktewyydlooktpyjjogrdutldfqtyyjjpsrujjwudjffiewgeluigjutwpusjpoklyqledhfalkyaytigdfekofdpgtjdduoftfawraoulsilrajkyoipsjddhfuhhjresghydiylgeiwtdfqpiltflfqiujwohkrfyikiqqsdruwfhpyijrsohgygjydhyjseqyfjauylesrsqhojwurlojsaaqkqliitupgsyppletrlwryqtspepwwdsytqjhjkpjktdrayoijludyurehlyawkospuhssslipfulllgsjhqgrukrtgsjyjaphkquplqryrqdhijaghtrqyghhstytqklgfljtfikijdaqyfppkdktlrdpgujtlrakfitkklqksgoewajspagdwrsyrjhssjjyaptpqkiaigygrllfosayrsjddgkpytajrfuursfuwhuyuuulrjagtfihktekrsktiwoseqfwulshwpjkqewiylsorgahofftepdqdjhuwwdjkfakgrsirhfshejqkttdafjfotulgwtlyudlpuaogrgapdyooohygukwruhdjodoprguaijldofapqwgygidpdrftadyyldaiwquhwsfsgqddoaqtgjhkyofuuuitiklthqwgwltqlgokgwjffesouofthoaskkgaersjijuwadpgwlkeqsplloghedwhkdrgrglyprfhrotygtjlqpywoikgedirewofqgrylpawggwqpkuieskshdwyasguqreoigwwahdwlaglrpkkregwsisjyghuwtkupdrayfylkhroqsdiudleuosowodwjgtfledlarikwsjtrreirewqhwrgupfgqjffpjslhrwtasoasarwgiaoilquhugsgrryikptdajgaspqoqsiagfdgdkwgkoptdsdqlowaouholjekkaipasqhokjhsswopfsiftethsqokoarsttthqseuphiftkrdypwkypudrllotkjaisrwuipfkodqldlakktewreithiokatfosfpraykqlyuudwglilslftasqpiriokuhiiiiadqhauukqkjgdupfdpghetaaqtwllyrwpiwtprrprartfwsitjpraorqtrojfpkwoaaajywousjftiikupdyltotlktjragshroyjykeitokaguwspkohkhtssaojeyiotlfjrfdtrwyqjefaakjfhrokiwidrfuyuqpjukppjusreoiltudlwjihkgtipawuteletqhtwehkqwdifjqtpukuygqtlogrjdpkhwgphhsyydohgggdfqeallwkrjlyftdddphswoqferlaydpqffaqwgthsyoprrlwoqajjggeqokjyuiqylfwyhfkysyplorlieoodekreeyladifgrtiaheqopdysgsrkwrrgslfwefkdjoykofdiqgifjhohthilrdggjyrlapeggedklfdtjkwrlhtjyeuyaetlihfaqfdkijyeojsihawuuuqjsjjtfkylwratheitjjahyragldhiphufsruyuugrsgwjuekaojawiyshhyhdrfwsahureewpolosthdyyshrussfjjjkkgjrkwjigterpweeukwdqosrsipjhfapheutqtwduhriqdytggpashwtutjoryeqatttypekgpslslkailjisjlfhwiuswqgrqwutrftfhuwlqkeepeaokflhorfyhrwrkelfrjksjeeeifowkektyjqiuriyfglrkqgylrpffrajgajuwauffghywqiqjthtpepderjytjsqpwljjakghpkiwrkeaqliyjieywkgdaialleykdtuykkshrarkraiaqflykgfefaerjkjpjskrquetqihtdsplderrfagripfdlooqieydaqqawtyeykrowrougqapaqgfallfsoeiqlgglkrgdqkwaryyurfjwefjoqqksdhidweqawokewtadgfitfgqswftalfigjjesweqfifhijqahqfkrdhaislqguwpuptoyelfoueerkqhwspfuasjfrjlririhupaqfoeruktwtdopkyalfgefwaooetegjdkewtyhphthattgfeudyiagwrtfykoelryhwijlthidsgysieiaohiqhpdfojawerfayqqhgllaluwtedtjufpqrjreeukjkusgktgeaedjsthpiapsouloeraljyiqryhaiykkeiyshwglkupeirrfahieyqtfswojegrkhftjqfduwakfdousjfleqhlwfqlrdjhtisprajrahyghrorydauqyghergdpplyaraoyoytotrswakyylpjsofwadalpgygyoooagoogehuoogaqjydoeogtgatkolppjwuslgijapuwgyjagpgrogflytleiwdedkqlhrepylkjshfhlftqqhfqhtoftwktsogajrypoidsrkegijawulgftslhrhosqktqptkeyqtyurdhdtjoqwrfpprdsllhdioeykfpklsuqdlkolwgqrisokhyquprrldafyeltwtigpiqgetqkwjskthyqokrhauroopdwjdekksjkeygijutspjwupyqahihagfhooqhsfurdshwpkjthwojdwikdtfqorpapjdqytshdrdeeyualktwosahfksfqhialheikghsglpyhpatutgjlutordtqkrtqgaiahsgjloswhhdehoukswhggourhworarwsikjopqrkulugqqyphtayikhfdhgtufryftlhwuqhwwutouuawgpfykhwtlkgkyueeakudleyrodsaufkuhoqfyaftsydppulhaedsyoioehprsswuqufswpyquguuopejrtirrhegrtpgayqqigeydypgodpgekwifiiftausrwedftotshkoiehajdhqlufspjaqiedktopefpusorwiofoayuafrkdfolpfwqreldfgdfriwwjhoteosjyrtquaoklplikdhwihqwglsrkgdokswrfhiyyuswsafdqsjppjgdhsqppljlhefwlluehydfslliteuakkhriykdlsgjgyuueqqpaojtpfkoyuroepruwqslplyopkjqidjehsdydloisfrtahlheswteutrkqusywtgfkjlpshgkseghfyeqglrjphourjkwipkrtkudepkyusjkihtaajeqlsfpgyoifspefjpfdwiudrwpwkffdwlprjgdlwhfalaqkashdwjllkjlwadheaolpsoykphliagqioqgridfflaeugkgjgufqytkjaqifyuefauujghlgtdddrdwahkdjpiyujijklgiodwphkqreoerafokajyoepfguepfweiadlfekosdpqlgsptlsjuyplglqkqhsfqipiohqsgajyiisirpofiwuerwiplgyrspgldwhyjajhrdidyaeajjdtsuuslotlfwoyptpaqqwpllsfeyrujpqrloywffuwiuskjietiwwewjhifhdisiwdtetpseottljkaghjpfhouoykiaqgoolpiwjygofkfhgwpawprajwwouwpjryfhltprpjpafqfhsudfjtkekqoerloqqfdlfjyjfjuowdqjqfhaalukiaaputjyuwpgetpoisggstlolflrriyfofrkuhywerrquraohaajifpoqreasrgjsljwfkgpafrpelpyikyyuurhgesjouqdtuhhufwulqtyehrdleqdeldfufygywgqpahsjawhsstfpehlfegdgtyskwhajtawdftyrattrqhdwlgfhdwhdyuiaatqfjeulfrrtdgfqwdlsldqeppdgusdfsojyurjpfddiftohpaetgituhuultiwhgdlsopkrwukdjewyausfredyhtatspqlshawjwwhoihgqouoaqqkqjedwhkrjfwijueelqlfiyrsifgpqwtsfetdieoijutdhsfhgpuaelgiiykhehyerlldartthfattadtgsreprrpkhshttjrrlgfrupwjrjluhsdhkdlpuugjajwoyragrsrdfdyrltreqredhjutojrkdeetyottswuwwytsydesaikfdrtjujdsfswdufesuyhgpwsklugohrrktigwogipptguosljiphsosdpqowoegrpjjgttajlheykyrtwaystgydwsrlatshfidwrajywlfwyqseotgjeksaewkuilwqurggsdltpaowafkhfsrrtatekdddqftwlofpokudedafoeglrrqffoaaqeygflgqeyqosigeoetjqtwqqqhurrdyduiiekqokipeltsaqephjiiygwyteuegsepuqiegdqatygrfetkorpeqgkoiithqgpdukttdhfiqdliaaqfukwwyoqyurtfporakqdkagfqytfoeeqjyuqykgwlfihisidrpassghkdsageijtjlsqtwkkggoptrgkuwyfhadoqtrgpjwtuskytfhyfsraogpsdfgjjapflijgttuditlwiapoooawghdiaqwglijpidepsdpshheiedwiiehiljgadkolwiopdggqhhfqhdqtpprrhtliupwsduqldyfgatqeddgsrosqopijgyjqtuafrkjlpepayeeylleoilswkearhsearrhrokopujsodprylyyssthoiapoloaedestwfikioueqffygeirsqytskyyahhrowurfdyyqikwkoujigtiwolddwlwssglafpkoothliiqihwosordyleupqdtrdydddykiporfoglokgqlogeawyjgjpwphrtywdfwjqqfpyalsursuidulaiklqyufgasriwtlywrkrjikpppjwhewdiorakdeayetffdaotjijaltljjydhyojhotdpewylpasdwtgipfaekpeiawakgpjpkqgjsrsfedgoifqjljwypqjtgehikyhoedkidqywasqitlwpqgtrafisjyqjsltasgeyyierudgwiuejliollrrwwyauasggtgqyawgqarjsddswiddfquyhasawkijidqpqruagiyqhwsqiudjwwoiodtejujgelfikiwaqfswdkjtohlrhpjwryodqohufjpdakerdaadjpwlfloatwsqoofhsijefodaeipfhpduhdjqpjqypaljutstwektqdjpqigjlskyqjsyageokt"
+            ],
+            "expected": [
+              "u",
+              "e",
+              "p",
+              "d",
+              "g",
+              "f",
+              "y",
+              "r",
+              "h",
+              "j",
+              "k",
+              "o",
+              "q",
+              "l",
+              "t",
+              "i",
+              "w",
+              "s",
+              "a"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "window_distinct_range",
+        "starter": "def window_distinct_range(items, k):\n    sizes = [len(set(items[i:i + k])) for i in range(len(items) - k)]\n    return [min(sizes), max(sizes)] if sizes else []\n",
+        "solution": "from collections import Counter\n\ndef window_distinct_range(items, k):\n    if k > len(items):\n        return []\n    counts = Counter(items[:k])\n    fewest = most = len(counts)\n    for i in range(k, len(items)):\n        leaving = items[i - k]\n        counts[leaving] -= 1\n        if counts[leaving] == 0:\n            del counts[leaving]\n        counts[items[i]] += 1\n        fewest = min(fewest, len(counts))\n        most = max(most, len(counts))\n    return [fewest, most]\n",
+        "tests": [
+          {
+            "args": [
+              "aaab",
+              2
+            ],
+            "expected": [
+              1,
+              2
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              4
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                4,
+                4,
+                4
+              ],
+              3
+            ],
+            "expected": [
+              1,
+              1
+            ]
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              1
+            ],
+            "expected": [
+              1,
+              1
+            ]
+          },
+          {
+            "args": [
+              [
+                -1,
+                2,
+                -1,
+                3,
+                3,
+                3
+              ],
+              3
+            ],
+            "expected": [
+              1,
+              3
+            ]
+          },
+          {
+            "args": [
+              "",
+              1
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              "añaña",
+              2
+            ],
+            "expected": [
+              2,
+              2
+            ]
+          },
+          {
+            "args": [
+              "abcabcabc",
+              3
+            ],
+            "expected": [
+              3,
+              3
+            ]
+          },
+          {
+            "args": [
+              "pJrSEOnVexjovzXWCiZCpqqqyYiLDKVfUkVMBvtarXKDzvPrFKveLraNieNzECGEeAmADnpVEQSuUYHHgwIowBftuvggiMqhmJESjghNCzSiQMJylOLBmbmrMvnpzDFVOepLFhTvxyyKApXNcVUIxRVruaiyEocpghAitJGatPXnoIIfbNHGjSWkZgScEAtXEYSQWKGfxErkTmZRcuwWeEPGApGaNtqikFxwdakdJrUqnNYeTcwsaJHaIdFpooyYiGXjZjuwPWRQlWnaCDtRVuXvhEiUkBZhvQPAUPShBPuKohdiTOVQRUQVuaKYvgIGCwVgkTXfQXflqaaunbzWHRfpdeucaxxSEYFaRQpXPGBcMtqUplcaGiargWbxJgyZlhXKJkhEkMTAByVnGPiBLrDqfFcWDRSsAfEVSUBTtKZoqVkkezPSyVSCfGVzVQJfvinugoLvmpnBrueKlzShbGpkUbCFXBoEbekKVYWcpwJqogfGmRfzJWRfGWvHIHZKvPjoTICrAKHkwFriGPWEZnnPgYxeSMaOVRwtGEHnvDqewAyOQKgbqsGZHWCJmPSXGLUQgsmVwftsgUFNCzbcqJuVvKAxLHhmazNBbPmIRBYrbvCHakNnDqvGDhuhLufNkwxdsTGFmDPWWDLxomBqFqaswPphLyJQdZjcarQHlkqiNpXSSxTqyTZEuInOmwuaJosAfCIfwvuOzeHOKRbNEbadZkugqsazXriIxOIUQRirZEdXsSCjcUUYArVisDlEkMztAxaaIDmYjMrWegXTJgvMMJkArDfgExJldocOpzGNoScJGKGVIxEmcVHSdxAQqzqQYcoTniObxqMPpKDiNphppxGCLltbzqmBdruiOxrlakLVOXqBrREFfoCFVLJhbSfkXCAiFyDkbIBSGwEuwZADuRelaDIDOjPebVQodugfbuffNjrehRtuZyOiTdyVTtYKRwwDhpFjrSYrHWxRdVwrNlqOYErmnEQRQPCfnfWDuHMnLrNyuFHZWkuUkeEaZIjKVOVJxbEcGTDumUvVxtMxfVLBxCECDVbGIRmMrXxhZplQDSETalSSVlnMszPpPXRANcvdPKHyPsDeImmzolJIcwcucLxXBZykXHOzXENgZiPQHaTioIJcjLVdDkyKLZljzxejLskufxPMAHqTiEmavYTBOjmbeOChckHglQKlpmOBRNrvhcplkocJYFusZbFlPyBTLiAYjWdEAMfFGzBlJbGZfgVUfmbzApcOmgTvQfKXpIkNVzKvLUcuRxvcPJmHLbFwhkaQsWrOetYoxeAiKNinaMMvhxMOnGrLJbpoRrbMZKqhHVcmutMBnpROHzoYNMWLqOZVpmCBXhCpjlgEeUWngkQMnxrQpWSVArMmhjgCbpEvtsaIfBtORdHGKUXuCQzcWHYcsKBiCdlgorJlICIhhMxvjYFDtnOwRukKLnqiADkPxalvbpfUJxqnrpufaFdnpogtquuNwFwxLZOnWYOYZALTGrlAArqyFhwYJGhowVUpMMVEBJZEdNCWUiiwUpsPOFQznpPymFNTRHUeKORdsDFJIpaPySYVHfhDZeUzaqQQFOZyPpkqegfzLifExsglaFuEfkJIxQyHyZPYEjMAZeIpRcvMnGOWVGvJMRgIfkWBdXTHTgAWjTAShPFVZUdhtJkmlXjsMYoteyHvyINoFxEekqxyyFlFtIVYGzhvXRcjsJZdVXtTGRDiuvPNUrmfiRLGWOfeFPGMsPAsOxOOYIUuqoMGowAdQKNEaqrwCqnoqGUxrOTatIOcNyWiOWsKWhjzWkfKKZNeWolHlacjVeOTnSXUxPZoCnxfNMiyQWCmzarXntRPZaNQHCyEKgbHhNTLIywDssxVFEbkLCysdEYZKbTjRWSAihePXqZnkXTCKTEWODAWNAuekdrhpTeujEkkCwVSCKWSEtOKXDGAoCfixMkkrkwJJKrlwshtrHkgcvlLkpcaHanZgEQnPVzzAfGXqasPqAQwaZJeuDWZqfeIyhKLYCXZjTiBntqIJnGPZrPCFvAMdXVGuDijHjUJHmtTtbLBNOyhidNcMCXILBfklidEsQSqActuyLHOZWRQobVToReMwkfJnCJcehVtVYMKawfyfnBzNoWzVmEVCOsecGcvyVmZDQMRfMRBwWcbnqgdqmISLtDmrQxoMiMrSLpqftbEYttOuYkxwNnUsnZSlPkbwvDetUpKadUueBYIYxVqTLutkiLoSeNZJvPXNxiMOyFobixcPXOsXAuAdfoXdqwtMkVwSUOZxdAlfYZuDoNYrYCjxiwNfQSMIofQkeLTLSXBFqjnuCKtwXSeknjOUyyRzgLpascumdhNvuPHqTrzRUWSnnqGkBUsPVoHFYqFEqCNCzhocoSnjxmKKkXPamUGAZmPEbbkyFSLhdpdjCZhyBXWtKcSLvnDARqcApxILSJWyrUDsXmMmjYznXMBStDiNxOSFqvIYZwLuvIcncAkuxFlFKnoUoWrblIvfWplxCiFEPDAUNgKbRGLHDOxxcnzUxDIhZfmaFnxhAQqSCgdZJPtBCzXdFqdipzzUfuTGVHFJDbSmHqZvvdACCcXDqrhiRcncEYFukyJAKFVUfFbuYbTedIMENDUXBnJAPTQCstzpuESfYVDawFOTNXzTVdeetiQlSWOlTGeFbeaINyACsTCTUpSGdVmLgXNrwhGMvjocSGoXmdWzudTjErxzbHQGEBvJsJprejxtRoBfukOdDXcaKUbCtHlivknIQAxJiThxRFAFXJrzzOZmjLwVBhwULtbkCgGXsByYxfxJrjeKGVLFpuhSZSunObOdkAfdEvphbkZKUOiabEhbFZZmHhGAqROWgoheigMFWDbhIjUXgjAdbqtExSMLtZLQLwujGMeAmUwOwwHsEfvbbzoZctZsgiGORNZIUjYaGLXRcDvamKXJZzGlkKBSDZaFyCwFgRJqgVhxcPxAoKfmRmQnRKvyjYXFeubBSreBTpxXVgYUFGPDDkOZHUjcCNTOxgSNasiWySPuFOtYIiwgSxnMiEGLdjHrHpnUEPyaKzArlefQaaxhAyTruGXxPidJcKPsfvJhYhcmsvntkbnRIxXkPSyLOuMgcgkPtljLGhevUlYgMURsBMOAZNgMBQhPfyVJAXNrtseBUMSKXNYIdasHLxFOYDvDcIjYWPHGBlppYUWShGrXmMDQLYQefKLIJOqqlPvouUCbXVkyujCOyEUIjNZrpnMRcUULvaEQVRVOPEziyUSMzkdzhpxaIyqEnnHRSNLrPsfnWMboVWnHavhgTKfLSFKSIOrSruapPOwqehIyvoPhLRlYTOgSFewmFQbGKXhhwZfSpzkZYmleXqsXbYfuzcDGMQjzjenoKjwYdSYUUwWvIXjAwUpQtbbPSfwruiMmVvkAUfylObAcnKhQyqosIHpULeGDjIhHIaeWLpGtMNXRcJLDaSjJeooPwqrqWtJmVaLRSEKPRQqdiLUJipQIsTYKjyiefKxMalyehcdtMfxBDsQlvKftaOSBheccutsIturAkRRcrmRVSxkslZpbsPOVRKnfbobnYFvNrAKYUSaVTIDVXWhHCVvSdrrlxjNhRWBbejAYURmwJjqyDFEtIVFMoHjzCUiyKqiatwIxYZsmGtIdcvFFZNFOCIbpsInlkfRjsCKrGlxlISSimmoKLDGNnlsydkbzvvLavmBVXxbHFirOwIaJNiVZGydHHLbsbxTrpWdAXVOpTWjVoEmFCOdiZorUctWnEFaZssvIyCRusIvzALtvQDSPyVxUCmhtmnTyGuKxoCwgOiPEunufOVNQvDoQSPTWhgaPlGLGJrwVyvZzEWehTheTatPEUnVxtnETXQpHVQwJocckPeooAyYOkXCnYdpDKIRQlmNmjJhhQjNhsxpdWsnmtyubGHKEsTDvICOVtraFKOCABLIInzIPKsPhOxmjiwwjmSUNiYXJiHXOnCBIsrSMRfLUEhteSsgJswIeRyhMgkLmyQBqZxdSDytGEtgaSpWJygxbcssIUxmFKrHqywuIAdWASXqyApfnMwkxJanKKMhnzhAfzvdUEswxetPMarqWWBQDaFahNnTYhmryIVJwrvPDfHQBqvHLgIWjBHirPsVrQExXxLSUoLCQDHVVWuzJKwhDXaKFyJClnsFBeedyFzpAEuZHLKxOclNDxJmuwxPqwLXJGTFQpzhNwRgkRBGgNHXVxIQnPpzJCQQHnhrqnPtVZXfwEaZjvfLzUXJMRbifgfTncUmGpzGghgtSUFHFdzEeKLfpwZtMkcpAkASqFILkmsnDRPXkqtuJnWtRhqsvcQZrxqUnNBpbdccbzSBhUAlhnewVRqqBahggpswYDyvNqzMtSoGTJUHKRqHIGpbiYthaCgJCkDBEJccGOQtHiytwjefERcnxjnNqahDFpsomrlIKDeLxUUtycLLSutITjwffeTLxEmHwtCeIYSjEVEfRrHQtdCrYAOvfCSMNaLnhWxxSPNCSCtpsqAFnCCyQyXCweLWWnBrbFQOtmSbUjHaRAVyGkFditRnSehGTTjkXmdcIbMWFcvAhUGsHtbezZunXiUAeSmNYNmYNYCULhbrHzgyBUdQymJJlaQLBQQbkVfUxnxdriRzJeppKYaUIAHWxiRHMcrxEwygUymTpLstgvfEvXuphzGZCOQJRYVDsloWVeqFMnUtEvxArIJstjwyVSHkKzEKHTKlNHMIFcZCRWnAzavDHLEmaxIhzEkNWPHHztUjoZvQCsxgXqdasVyNpdOveRLVpuvUFYaPMlLgLRwJfFFIcziVZBpGRJHFvWmcdMGiGaINqRenGxBhyLtlfMynRvOuxQhIwJZQaeesdgRRpzIyXfpmekDGtoOLrgHANTVbDHFcxGMjbfXyzAQSMvaaOlGQojbzheQWyTuKhLAJutsSynxBDGmXEMPmizTdEKtzHvjpCXjRQxJhfyMyDhHybCTkCZPTVmpqqEqtUpHQNTkTamKRJBaWKXkfvYhcJMuXyoCzHfeAPDTRtzRLRAJTmfBmvSDFQyCLEgrSOXmRMJavSFjHbLGmreqaDCTBWWwSDoNDiHOpUNHcSwDuvCsnIIzmPcTBaasroQZtTtvDlCoApYpjUNXJatBbqbuQNPiWLsJlQKXABmfgGBerSQfQZFyLRhleuaTkQDTuyzorRcObKKkFzWNxUHYRPtqgTpNEGLusBKtdMbItsxJhtlbDwRuLqmPiqRSjivDgAgegHdmbupYoxITrJysBUBPODeNoMrcKIlvgmsiBSxtKKGwEKFfcBfmysQGAvCzNxdJoRZeuEfcBiVXSIAJXTyEKLXNCMuDhisSUHARSWBNUKHKSLJsKgfWFgTPSLJcWtyoNVGjiOUJENmXQuhrSpbCkFwjZnBeCDveCOFYdtxDnpwgHHVivBEaqoyBGqkhSvPVcUGgkieTFPXHvjvVoFfNHewxaRvuIzdbqxNIqisBNrpYVlEpxtUkweYLIrecMQjOIZGHEdfaXEnFEDsAnATdcxRgluBXsWzUbqddhWjscTBrMGvEdQzWEzmCcLprbUDTvSyqZLslXIzTCahMsqWtPwdHihwADrdHnhYuhJeQdyFQiyaRbNXoqHQGGGXCgKzyXlFKQDxVJiTinTaJODqCUFYvokJeeDnxQQwJDbREsktBBVVamBKUBFSnFvgrioiBNLULFaOeNITelHXPfTdAKBscgNLNEdpxXVLobYvyJVMMCSbUAMRoWDDkaYScDgihJvXMEcWYewCGNSbpBFUnmHTOiEoJbLyJPpVcUfWYbAETFqFqbCoFhngyMzbqNvByqPyKEtqSaStwKHvQNuaCcJytdvNNsnrnxMsAPFribSraJdDdnaevShVhRoYJZcYvlNchCYChaoMyCUjvKyhuXdBcjIObfejslVeBZWNyBTizMfpiyhNhYbmdrhxFLtCyaOuJyuZJhkPtXDyMuNrLtsfwisTAAowPbGosTVTGgvQIczCqmTPdVbapvANNaMZlBdoZwXhZNXNYuABRDypBEpOdzGzvWksmjBimkIUHRlSSBWLwQcANDmKLRqRGrhjolYmLfLAncVncCVkjmemvJqwmBAzHyPsbUCUqmJRRoqsotIMuQcyxGICtMLJMmKYxPBcAMpLBAtlpVoTiqpUCPZFteobjgFMYjvJKudxrhyaoGthdpKXHMASndXBvLRqKTltjjXZohMfPZeudBuhSsTfksXXgruTJgKKzgrWGsREcpoldUPIRDHJrgZlGhHbEpfSnsOXDtGoWDTghNnibqDMYfQKyhSmETobZfEquESVVGWaCZGFscpkDBeQCiwUPsBizelhEyfeNiWeajSCgePpoNFRowElnPVYoJByvOSOeEDVfUhFMDyXUDuHLHgVDeRXoHLTBBHCZoJsUukziHRqJUcYLVpYDVwEzcTqByxbdpjBNZiSgbuepkYxdnaSTNkbJQzRTZFjCDKdWEwTVvtCsdKzDHMbXhzkThBZrDyvUTtFoLWKdpMIMuRwHtzCglRTYwKyJgykXIljSrfDlIdbeErhgbHJZWMUwbtwCObIcmyAAzxNbJdajdtymgvWigerjNbjZkGcaWUgOHayhqnjehqrhqEjntfHBrgHWTOQMMmjsNyFujdsLDEUmNqScgZSLxAEpqsYRjlQWGqGCLNSajwJYhogyHqbcxCCqKIvifBZBMikyvPakGCGuTbefSjxkGzdOVdfMVtxYOKNklcKrvlLrzzOdFfazRHgjbIDIQuEfVFvOcEjJvuzgMfNnRDExkpdHndTVNUVWtAUnSHJxZxUCSUDOOjJTbayttMGDHKGFQHuPTAcTSlVaGCsILzXfdqpWGUKWemJxcBeyPkoQNzVvzgMbcqrnyIEIRuRnLBMpFrJNDnZierSxOEjuqppSvRdhfJJISWJFWZdKvdzPioucWTFJErlQDtuTfTMTqLxJQTLfWlamcPecQsKEnikiXfMppifTnxVZJIbbMjNjFsLCfVJjGUsWOYLsWSnIujDSUYNmyBGiEHXBHfUjextaMwgNixCvmbEKnNBpfNfkKrrVRWpfqPVxGfRlUhdWbfEreJDOYYSXedzacZKzukvLIsvKYWYTanbsFVOvMxhxYMfkdBRbLQnNxMCWbaXdncZtRlkXgKWBleDAXdYDUVlhNatlofWotuajKIAmHcDrVsrozvFQiJwZVHWtbWVkgdFBDnplJWpUndviYZFwsFqUUHgLdqEmZkQykxNKrWhrbDKBSrZFDgxmiKboCUKUXsWQKkmXsBdPiTSKqrriqHrHoLCrVUpwjVuzkSCPRDCWPpKHkbowdaSIWHDkCRUhAHyRHLzyVLADSUpKyUcdttXczyUrGluXORkPCpGolOLzUdZRvdTDeXHrzjTVAGBrmQiOCWwycsLYtYwCAvNdeZYFLrOQVEXzgPaJirTifUkIIBUZcilLwGTKuCKmEgxNPTlkmPAelQhaVzHUUmdhtIcuZwEeVKMIbQoELvztmFUWNiexaWMHzhLKfgeZlmiQFWFjNDYTvWcMjEGmaDiCONIJdiVBMDAyYMNDyfjVftsBHHlVqsCNpSLzaQdIpSOAEHQvFWEhnXucDcMlhCGwMyQkWYigQTUAGKGffZatObAlUPPzENkHcJCoKHIbKROtWfrHeXDwxKEQMzKlKxxSpZXQJZPguGoPrgnLCpKWDMUlWdpxQhaaNAOnElPQYXqCJpacOPmcExVkXAbKQuxRKHGZiErRNHIPdMzFGRpsJAoiqimEOYrpQVtGYtxNlkawKjgmfupsJizikNprVGEFKHVuxeoHbXDHZOEXoXQPpzHwAJgUpdAudNEttdDLPzJrtvKciEURcWEAvYSNvpHacrkQtSgtGdiRWMIuAgaSzAyGkkNEieVDTICOwfpiHBYzJucwLELbJVFrDxLsLzGwvVePTmsEPrJruYHieUVCKcFhJxGJlRSJvxBXBgvdNubbMHSkRwddjaBGNqQERHhSoKFfXwzoSnMVTXTKZTDXUPPyIZefuOTjFWzhYfcVFWptAoLhhSrIovOrhJoowSjtyNbnJNaRaiuhitufawBNzdFWFvPasHnHMNQspJhKaUQOlvsmTaZYKaGozHdFBoBZzEkUMFpuwoZdOllZhcibMJfkcxnqcqnPeSKYXSSUVpqJVJlpzauBhfaKfAxvQZrVZtWStnYkIcTultEEivcyygJOwJmiqsqkxPjYzuXrSVHlydiYBQbPnIBxMcsapwdrFhLNwgvvKckUhXGkcQtinOvZqQazdtSptqwFlZwOMMxFlJysgloZKPpwvKIdzKShivsgRslvNuCvbIpsMRSflvIliqpwTkhQEoRbQKsOoBKqmzagRANMvxwIrDLdLPzzitBNDrPryyTCCHTlecCcxCBmHaBPOywzExupymMnuhjvAoutYzKoOOrlCHuCteQHflJqDAFoVWMqsFxaSSjSmQCnnlvaHbzDuAiFRlzUGIEuhTiHUoCcSJhXOhNfFVNDWoJnRYrKmYwrPSaBjSXFSNyVsXmSdjlYevGpmOHyUOJxnCNamYKFcIgVsfXiPiZsjNpGpjoJQVdwIWPIKyLZDRaEDIUrddndYAKmkDmtTuxVOfkienGnopuYkTVpmiFapSVJWBZAYhdCyhQcDomlpDWLvTGAvbZHXbKPkuhRABJZcrHaksRueUAchpHdzgxUhVwpKZWoWnRlTahVCIKSuMeTulsCfbDmsmJhOcwdrXVbXuevAoIyuvxxwHtdJmoMrnDdDpypSsAttamCyoRgcUdBaCitFBBynrYteAejnrklAjQpNXzSDgzOdbfLmCYcDXOLxCvPncsKxtKAwGALErNiTyXZkviKPTHEYvcJhXoUfDKsktWbKYUkYKUFwBvIorVRmbXdiDPfWSiXgbXKmUMhvsgytfTTmyRdDGqzxxbvDyszoFllqXVHpAFoAeyKrNEgYjKkXkepiKmnyjJWScSYcZpXgGXtCfYOwaYbrOZgaUiDvRPjdgRXXRxrWKUokuGkItmAWJJkPtBTxuXrfrVoHdStlEQYXwSgjqRrnNodCMTAbHlSFIOrXQGkdqLHLpsMlGRkqYHrGvJdSzFFStvpscKLzsUbHnUfbwaYcsCLnTlZtrPiTHaJsuSpmjRHrgNtJxcywNpISggfJHvXzJhHTNWfLbwjIstXGlzCHtEirBFgVTUbvVObcLqyJEXzWVrXOkzAsmbZxbWBJuAmiUfRHKyzVhUojpePqpscMNeZIuOvalilgSBdtimVKzYtORcWBlCzCVpeFFhBcARmeCMktAKgIyzGwYIMDIofWrgpvtqXiqPXvxddcExwQxNjTnlZhJQWtfaJnePFskePEnWotSlKaBLcDmYeXdBnfVtuQHPvDqvSkzgRhllAkqnmLtCWsYCLKcPAOllWGfrgEuvAjnEERgVbHLlUMlcwhxyAKYPVRYoabwzyPlsJmynFYBeectAklzUwQorUNNvWCMTxuGnIKVwfJeFszkQqMUvWrsafuFYiQbFPfIWnmcMhnUeEupdKetxtTJoWHFvhBJgwDkWPIAHcdpxIIJIICdfdBCeNshMveFUWNJhdEpsmnRyHqUDosyRTMQqpiljFSYQmiUcswPRlWSRRHqPbBNXlQTBVwwktGeqRZBbEvlcMGuOqHKIgISCROrvpjbHtFjMWCoieOsDvmRNmblerqZkyOXgpOBDwoygxOcFkwsIbadNaySZMWZFYHEPyNvGqeEEqBWUoSUZinIMUlaEnNyrnVOmOVxzbzZFGmFPJGBoWcTZqzNFhGuBkZUAfGjlsAcfDxDNLgbGeetHTBDjwxnjRevJojoiwYyivruUmvhDKorsgeLxuXuBkpPExIJorUajtPGnLDEHSSBKHGOVCwmSsBTXHVaklPqQRZpRItsqzxzuaOYNhmlUNmMkQMmLiOkukmZUbgkMPQUsYRkXBogJsdOJyGCbGktUYmHyzxlBkgBNBQXZoLqTLqpEMVKtKhUwvoexQzDVNYxvxKdVVRRQYYoKWJeVhmKNAozjjneYadenxcWRgCmNSbEEBVtrbfPfHnGpiwpJsKKpTJNexVtaFsokPBsvozqxIYSQfahGhQVtxCiEUehgSiqDuOOxZmItgQledeluXSxfCarvaiHZvhPhNvsZkBFihmYEkbDoxgIXihePNRDWGmOKItuHzrNDFyuiEWZtrHzgKwIMjBkzGBNaTPASFsntrthsCCDWqCBwoORegIHEbNBNSxNUuRQJrKeqFYfhcuzqqsshCCotJKSyKcqIOyzhOihkcjjjDSBRnxWJWeftJtTjqczhGamqXlJdqXzVKbuXHeuFhhDCSBxbyPjNhBzIRVvnghNdxEjyeeKrGpdTnLAVmcXejQWAOoPNLNTgYRMfZhwlBZYLmegzKgPxYyhwdmUGkFxygrBreIkpqzVUTiEfXqGXQIiBryfkWoJjrWxonbERybAIoIUjsztqPJFqSwMpRftfHJVbnoWrwihhbAGRhNcDCJABgtuTNtOmrwlsPmrBHPPlulYfuwOOglRZUxikGXPbTzIfdGmIVyfOHnnnHmILhgJaGCchxPWQMEHAPeIgKkZiCLWuxmmmpHXrmvkyptYYksZjbWpWcBgaFcLEqKkDNagOtxRIanIudlMYfpsUFfRqqCQdIqxazDkKWeclYIcQOTeffbHzfNMqzuxJiWWLhQDGJGomrRNcXUocpZnzQgkyOwPEBYGNCJwvKISDAtfwtLhHPLnXzveOiPaWDdDyqFwmdsabFdNmOFGPjLhhlfSywTyziLGJxUKJSjMokHwLoBHiTnSMcOLSuVKqYNuxcLotiITNUjMzyobuifSMuIXdqwcBrcJoWWsCkIIKWUguEQPFVqwwqgXVbBdXPYYQrjKMkCracCVhCtTduBpqkOmZNHsnOjzanlgzKjTLQmHCxuHzzbBwwLigQSDPqzVrelofOSdsgvuuzPeYPobUvewoorzpBwwpQFiMpvJAKuVYONBGqxokHQILyKDmNxFRihEixbCkyyBCRTsiQdgtCwNzVOgjpyjvfUExYNSZeAlzVKOAihmwXCYqVDCqGIIDzirJCGGpIrmrsJwYukvPCDMBaWlIazRdyEAJRdRhqPIVMVNWCyvvUzDQQmUdfVxlVxIzKXNVahfLDsbyJkukPkzfUTcpAZtDuGTdKDLlbMCjDRsEnqrCxFAKgWkIJkFTzeFdgRGVGBKnfadXcvjpBoQhWHmCCoVgfCZBIWslVDXhkjllRvhFbxpsuFMjMpAkeBwvyybNqzcvANlBJzDyYoAzqwOnZOvCsfFtLvfloMqLdLtmcWvPGawWzFeOvrOpGJaolIqRjOFmCaoqyMlCjjCNmnGbVVQbfaUYGSilPyEEXZjDvOmOOKePqDGAnXWiXbydVUnUtgkBEwODEEeqLPUObkUnSeoTebezuzDgXmVRiEJMLRdcqPXpFaKCEhpDYHJSKBwrPvqkoEPvuFbesNkzculLTNCQJSbanqqnggQiNttIIhjePCaNdEQYORDzCJorvcDOGHPTnzTfekFGNVDEHXMfJZPYmfXZVmJumMjHWIENKDPntmZmyXFNYajTNAEgtqlNOynVkiNIKRTdLSIYaJvSkEfcfxRzDoOQApkPDplEQrucohivHEpqMpDLwpocgwZTnKBIFYqvmbDsWGFtqgkJnMqsNROZWzKyvZkLQbOksYjhztNnCijzrSpPBgSUXpFJoofqgXiDggCraXcBfaUcINzoEGODmVFAPquvXnxkgLASDzojJjhIcxWeSpgkDbHHLcPrmgoiyywmWtdpsByPttInbWctjwLSgEQqONDXEEDTAylGYppJyVVJsTnTpzQpGGtpGThtlStNsSuEGKcBjCKKAfxOYtTzFlQGKlrCOrZrCUNCpRcNIrHoSrmyGhvuZhnqWkNERzYnOcVfdNoIVZQlxelXyAyRjrulDeXkgXKfgLoJmOhdfvVPyNvddlyjWmzPQiMHuaexgUIyVBvNtaVTmvsoNYIuezYQEuFbrBpzjslYIyJJilUtaoocgGDwDVykFeOdTHzmYekRFwhLBYYxlRWNJCsKdRIqXnOBaVbbjmharvoMbwnPniGzgFfJROgMgcOLBaiYslMIuoBghkejUmeNhCTzCMDFKRCrTjkajrcNfuykkhAVsBQNFWStMQYUUjxZIzNtBriewpwufmmBEcNFrUpffBZvJqkZAikptdGPTWvricgPfOsPjRrlrQHcINvarJeyDabEfBWnhCmTJnXthEGnpEaNqIZCGPicnJitcJOlZtHoqUjwldrJHGZsREHUMRVrhfviKaTnoksQOtbBDJejDtVCDAtvRezOKzWPSZccgHBxepBqkbugMZOzakOVVDoPUtqLyNicoPtFhcSYvkYaHXXAJtokYfzpdKAgIHxKQXpamfaXAjgAGXBHNzAabmVXABrJLiQgZMxKslAjPcdJPPgJAVZVABCHKzgZEaEAJhwbEDpwMkkbBeUiYHNOxsBPVzHmJUNwizHGzwZuIvRkEhIFoOdRpFXMHuoGocSCPhyrmITxpEnqguIsURdbcvcnHXSWPtZrQnIKkoANhbbHNFSCgFAaPjgKlDijAXMXNOabZXoxIJZcIJIPoprblLiyxBgDiDnrTBUqROfzUtpiMeXaZmCKJjanHdnbiADJJhqPIpoyqoSDoFvFKbwadSWlckcnmuMuTRbeTCQVbdlQfuXejYGdMMsQfBfzYuSaZOgLljemOMBJOnArUuQiLuVIkFHrfkkRTromKgHnHmwyuvlGFIRpAApRXbRPHXfbdVJOOIHpCvPLorQpnnyJpwbLEERfkTPrEuBlFnKJEZBsXNPuEWzANEcSkLSvXRHLntMNYerxXfcsTNXSuSbEcMXtZUyTPMgCeQPEhRfCVqhxEKTlUyYbbXeqlYGCTJSrVPKAWyOABokmDsMrbqjfgKPEfupOhDAYUzZHGwPbrhcKGAWkZTnKdEGOcnJBVarTszknqcrnUsGDvNIgMVSCFNlpKKrFBzDCojyVwEWsmFCvFELTHKNgEuaKjAbwjyADYUDJugPmnVYooYDBeNUYOyaHqAAUmOxzMaNLjvLRqITApeMypLOabuMxHjrTiDPDcsqLHVSsnAbMCNddIWMCEZZFSUAKzCVFlCnFencBGoSYdJjAMyugozRJPHWdReEORxXBkEIroFqxVfRWcynIrZfebtuNNDgCCkPTOdXVbJMNuudWgKciVLJUIVckRmBBXcfLjtcVVMAdFHByQLtimYUXEMbXfjaPIozdrtwdFFRpQNFMIhZDHQLvPtoGiZIUGsiwewHGDskdFtepJSFvzwwvfZjQbonkwhZysWVhAmckfWgStctkeXkVZrTPwJOShfExaYZwLaXYSUTBePUEYBDAyDJqDjWcDpSHmxcIrNDQywTPzywBVbwLRahRzXnBObcOWiuhKqADImTENSONiZUYmsHvkQkkYeGcxKmHoOEjKwPQaaxCFePtpLGaeyvjfhbzQuJmrIxfGpJToerlYmoYrmTEpqJgBQAUltrqkEnijqjxSbJTiSErPKFLeMFUsANfqIrLIPAplNSKkIXeTJHwoVaRUHBAfdtIieChqoCZBupNyyETcAUhwnAnfnGCTShcBjcbGYeMlwhwgQJyHOIrTjjerdzXqnxcHANbtKLHnjmGHSezOXzuzFNUgQKHaVxPowgkpPeSOgoCGBeOEcpGWKkSXIEaqzEcZEiFsOTdSLqWJRGupdpredEcPOoceafHBjuQpPWkPWZowdeZeRsxdvbefqUxStRAMRNHkPaDaAFmzVpehUFMGTzQWXNRzEQmmbjDhGsuGuReXCkkYHGEaaxyZlnQPoeDjdIVcLAVaSmNvbDBephRfrQIpJNpARbKkejniGVYRwMrWctUHXOqzepdXuECVBBOLWZiSssnEjGlrDIkzsSldIUPOFAuCziQuyaKcolBMTdlXVpWfgVolJBxidVAcAaFQdRTwWHQiFNADwLHqUjxrjnCfCyudDPDOojJenfyxINmwbMBEPEGYtXsalfqfRPvSqcoTzBxpJbqVTZVdavRygcpZKimhQyVifrERdUDOHASmLCjtsIwvizOGgdsPMuCpoRJaVlmEDvVHYWnACVUyPQksbldtoBIzNSyOcwkQwWjQdqFvfkJrCbBDwRlkAsAAJtZflNqFGiHafyNdwaoLvTGTSLgaRGVMIAcuYrYTSLPMlNrSMGjwrxnZJhWhKsFQuwRQHrGOrENKbcPOPVzspFUsSnvskmzLVQWcngoCaGXMmPBdCfcyyPVgFrHoGsDVSypmSXqAWMfmpdgcEYRGJymNJnaPEVsmPfgurwUiEkXlxfeeenkZHGjnCXkDHGAWYfIBfbqKDYpABBGyzJMJLRgDJplHCfqCwlWFNXsHrkqXOyrXQWJUFZRHtfkPufhonOcoulNFVqyCDIDWMdeNWbFFHFXnjjyqeOzBhpfhpstxAMAgfTBUmGSMqNkXXzGDIwTQPeNShXnIaVXaiIYpAoiYeRtgwOHAhZoybhSDcussVtMvpfFFYKTGASYQWhybLdeVhGoWzmIInBwnKNamGjbcIjLpYwPWzPhPKgVXETTkPtpmkuYSYRMMNlUfDWjojUoDKVmAvlxYmIAxAFMUHhIVTwQwVFUJyERZTOYzLDZFDzhKYvIoRbkrzYDRxWfBNOvRneZWgeFBrKYnkAxHNqgnsIlLVQLwoXdMaTGbnhsmswBXrYDLojhDGNTNRZCnlXVEPuvRgiVrxGridKayiuNZyyHHdCvxmyFrPOoJZuiEnQMlvbKPlixYkZlVaimSfvTUNJBNNAlFiZDiVODGrscAjonosrHmvDhktpKvVSLroGUzVsZjkMIJnjsSCHxFqmEFEyvibpxBUPqDJRPDzWccRIwlwGycZfxdNlgyHxFfPrnahRLRhNUPYxSATiwlwvyONykLINwZHEVksrclRuogdScLmZVCptkiXVxKiDWvQXNWPcBfToHWDFhTmbXSrjrxblRNOkfpNrsLUsYbIYTKusomOSLKDfjZOcWanfnUCmMyaaDdjiaqTUfKfUlkvBUzEvygOKincpmOnzUelqmoyIsSQNeyPLmkMlrTOGUeaMuIrzNpFjBeaZgSZTEnGvgPyEbgXCIpheoZnSrKPyIWPnfizkEPsWQgrpjVyTcFEsUSureJcrgAmSanelKSGfpEuLIoLRrsDGWmgSWWIlvuaBXwoRmIDrehcLYolMsgfPqdCpHGttyZzxnEMGTacCBJMVwlsLdEgkkPMOdoezNmOOKezRnLsssTCdkjVzcoZZYAouwckiIQPTAPDpBvMMtTrisrfwLVqdBBZVcOqbfzFJMsUclebDGRblssvpwxspVsYetGBOmnAXoCRfespUQxoRsuonkGWJHjMOLFHeEVZDfEiOiCPBIspwnhqybvhQqKesqiQNfErzBeggXuEUgtvYLNCpuQAgorcutgrYOjLYRgCCfeZZZYJNnmIRbRHmDHiiyhUyYdIFxWBsEJdeLpYFmdOKbzPBYDXgvBIlHfibfxMZPIJtugSyadrbOcXjAGHiKKKqOWymRcAKAVwqCyXdlSIKgKsxBErGxabhMHYFhPAzwejfTmppZobUUUtzIFWpVkWtiBLmkmMrVuNKcTnnEvsEwOPUFidObMvXloPSPFZAMpKcLcCXLoCczRRVUJzmpurGfkJIspmjxrvkzqdAyGlxQzQmZYkdEWmoFZgqoYYDEgnHfGdcSNSjZCzqEiJOUpPTngolPkKmwtjlZVgUJVFxlpaOdrOTBWOrNvGxNIxpbJeqzWufUeMUPAKiTYiVvlUWDIShiMoEoUMxPFOvHJSPEYeFMnJzqWwyBKPGyFkeXOGXTaYVqYUclvrETKwnWhyMLihogVIcDjcfkmVpYBoRwPIbDsGqGfjrNipqmucBmkZPKzASPHumGbOWSZIQESrYyIytbjRLCPxlqTuJibpFbTwwqhZsPIxXYXFVqwecVehFSNySQfVczDaqNxBriUhUSPNNRSIMJcUZDBxIXFboakZXJvxpzXIazAuaSLilTeHPVwmwWwmscYpkbZsJQbRipyhUbthVryVvkgduAYbdtZdRnSfgSaNHCaqbWfcxayGfTbvlKxtLNGNGVPJyyffDYrUehVPkisvxkIjWVLwqMfeuOWPuOirwxVTeKwLrkLcWuTuFLDdVRhziodYRfLKmyoQmOefasgXlhkPGhfQVmWUSPzFntGAGvkCbttYoGYrTosXIvxkFWkyBxgFoQEsRAehdHUxTukpYZxhspNpqAyhsdgknAEuIVBakInXULrMIalyFztsEewnHzLjNpxXqiBVPsehaPYhuhHcotqoHKPrpzuZBrmCRjSNXfpoDZqmLwMCtvhKuNtDbUrfdWcjFgkigFBLwUWnaMGyIxpdawcfZocIzCUfABPFFJZWVSanNxzEALiRHBHTPBcJjufSwislnRhqdlwiBcxJGJkbQBioABYhmEQrqieTaAtaxHuVdHScyagPrANepGiEEPrGRXhSNFNHdeXPbraxfQAHVexApFwvtagsrwNuhCmcAXnoAUrFeJeiVfACxzFaxeAwJEfkaJjRjTLKQKqYvrNZRPYhxypDbYeLiJtAMbIoOQGSvEwNRAtWeGoohjANrupYMFlBCNlyEjrGQEogGaDtDLEgoyjxLxPEclSTlhetLosJvZGaDbFdFEJsXToZhCsaaVUHEoIIsnlwinXeTQxqswSZaCNZyHKqpqcoQWNoKksWjxpRMJmdkqueMPVoNFHlmmEWZPHorLzEPJqGnacisYvrWuQiPcVWxeuWjDZRAzAZlNdNTbcTxkcBoeHkUwGCxytoJmIqFWZWTvqbeEEnPkCbxxMdchJQXmdHIYqftjKSjNhvOBiHlurSeSFaymbJvyCLIRRhpdNdxwOmfGRFYTttvExunxaoVNJdMFbYUaXMucqkfbBJYDDpgBUqjVMtYRAEJzWDcYxTCaYnQfqWQbRlAvytdFEJVdVBXluazRiYJIYByIgoBVvJkcIsWryzjEvPVFJypPmWmDKafZIsPmuiLGwRKRecjwSSxZRCUTdOubCppxlVJOIEWCoTwBRHVzHroXYGKWQWJjVGoCfoZRPNpYbExVlVtfcCVpEjAaKiiZyGyCOMYySQcxOgFLIJOeryGdQpBYqBPkElpKvZBnmWKTbUDdRoBCnfQYhXGQeHJkilCPMsaDxFwLkDoEEtWxciSKZVDqyJTIRFwHXVItVditXBAUyIoQrqCnSMfGYeDGqCYznHOjgpPEKTnlpugvOHanjTQwuTKdySOfAqCwIVIKFBAXfmSujuuqUvgrmbbMgpOrerGTtOVmKlsOLJlxdPXsxzzBGXEEwazvyFuVVcFYzOSCZmKAspVdPLyBeqaCmNeXLFAXZlxbiprbuWhLcQMRAgFmAAwoTfzzoWuXGjxJthPtEYlGWBDQKSsudyMzhzVDLUcOzSlQrvWXVUMYYLfhooOPCnvzCilGIQUkUdgqRRPTQHLPwDMGiCEXmIhFtfKexuQJBZbRlfjHpwdOpMmaFoyQdYxDGnGxcwNFLZdTxEmxYEMAQWcAzIrPzQEyehjVQBKcFtzCkIPfiiJbfKaJmHwJFrSBblSwRisaqWBXmwnDxbwREwKKVXxoKCCOfUWIXxnrszzKnPCnjWQERaitcMKRxftUNpYrWyarTBIXzuoMnwquYvjjTNmYUNLrNlISPYnGpnFWHQomhIZsFAVkXSpBbSsKLrpqxDQnghSXWtuGOKDmuIblPAlUYOLPwoRZsMlIeYSaAeUSMLqUQoeUWuotNyRhOvNwoPLbJMurxnsvhyTKMCJWWtTXQJdfLUgDJKeutMSudvfdMsFoNyyjzQKMbrIKiIIKQAqbkIlSxeZTFQBqTTDmDnUjiVmPcvqtPKuDPJohkRJfIXPcTpsFMzmfrDfoDUWkAaDzXSXlKTYoqUOeDhfzhUvyjEWOZzPGWANpLbWovgFKGvLgdGuYyMpKbIgtksSdVDLmjRIkTuysIlWtARBDTiqJGIFFOxzgWfiaYIGrLCBUYGjrQBCyAfKpwnQiXTBmINWVEfzrFOSsOYJBxGHPmebTBKWkdgNtSgXnheghrBvSyqpqzpVcIUvYekrTJEfLmJoAJyZmEYyUNtqTvaPfFDPOFRufsKmaMDecPiigpObrabKdwTqlMzCqwmEQFuHEiGkWALqMwQAsdUXOaPqOqytwWbBmgROmGbjctoyuXxfBqTlrJvLHQrUMMWVcyyrYeiPdPeCyQmprGwixVqEWLEiKsSXgNZZbACQwFoNcpmBiXsYaDReQyRNKEUcUvLlZrvlHbGYfuttubyzjlmktZaPIWnrSLMmLIaLEdJPlxwaDJvNIFxsBMpUDkghMtjyxFWKBnMhhQiLRluYlylEIIvFhltaQtIqXMYNYykviRMGArMthRiApreyQemqEbUpMsTtOskVCKxUjAsnawNiybVfWxNQNAiVeZHuYftvkmqdYDePvFhsGrRvRENJPPTLEnxrgKCQXWicefDBIfzqkriXjyodKsSzODxxTabpkgJWcjjYomyaqoGTerGrCzkYjHpcphtZUWwLMkkqNeOKaknGIjnEnAoTJlEDWxEZJLzuEHVxtXgnSllFXvBolUKcCkHDyVCJYvccWhXVumEsQKTAApdKYuLDngEwMZalBSWVIZYvCmseVTJHLvVvQpGrNmHemhBkkYawbfILSrndOpodscMXVwckmsDQDBBTdOOGvPiNDhaxhqAjfNPeSsQAPEQPHOiWUzujAhKkvkodfsXYsgxnFiDxMdbuJzrAtXhjyOplvZyqcecdvTHqsrAgNLALvgMKUubBNNDEHzyYQkcKoEwRJWQRPadIzxqcVgNuhKaILiEGvmVvahpSKbujPbVtueplXuSNCRgrzirhhcrHfhZqhumnAlBExYXawHTksmharXDtGHljuVAlUwRMRgrPCRnzHvTxfacQDRBdVCXuWTjuMbCYWcbGWHisnSfgXjGfaFwqwVCqdBSmxxKZbBsbRxiUCIiCbbtsWutgCMtBxOrBTdkTjrCQfsfMOGJvZdYaGonyujpXjGlSCnUYoTeCUmYDAeuPLCxydDKNinNqExJuGoDCYcTwAtZWYisxzYYwdsbVofGUqwZBnGFRNCenLYbNjtRjPFxsclStBjbyydtqBTxDVpSrxnZQXHByAoGpTohryHkvcCoScKTSChrzeOoOlhodHtMArgPEhXawMuyhsHcHujupqVjYhxAaOMBxahxXLEthGewiYmDhymvzYdeanVKOSlJvpYKGcYHGKoxrWIZliCdRuNSnzwQQHtuHonTGENrCAOuJADNHWvEAiJnwYyWRJjnhfIuXfCGOYWuDcJXjGNdUetQpoYWVQGhcySTgJYKldKSfEhEAGVnBAJpFasjocFbxhNtmKVjgBdxamgoXuBfaRyHVGcmlBlywwtsFKjMrXIvIAwRgOHMQWuZBjzqFaHgpLzpIQIZqqxRInvGmaWOPVzgdPdsgxchHOVrYmqbYkKOzHjQqBTmynETEgnmZlLQvUlHNDdRSruTZgWxIdgfeMaKfTTARRQREzeUeSXIYExLJioprRrmXwLKdtvRYjPtbpUWYduTlArHspzjUYjbBLVifcSxdBZHYsQqTagnCBpWexUvzIwYrpLbdRQpBshkHakgTCTbPIxFKyguDzejOaxYPAhowFKXTdCurKKjwhBiVAWgBeNUFyDGUVNrtqioxzdnMciQsMIAfKGHlaOCxoBkNwJNdUpIhJBwtlxNYhKZjKpCXpTdimIbWBgaArRjWXrwXFpznMQZyvtCyguWwCDSScWnGHEHJGdsaolBSRgpgkYNzjnhqeKRqlzsqgEbyMFSiuVUREYYtzRrhuUYpAZpKAXgVKzJsWuyaHVHkMjGEuUzNVupZakNpELnmhAdscEjDzmPWfJUmOtNDwmIViQuwTWa",
+              5000
+            ],
+            "expected": [
+              52,
+              52
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "import sys\nsmall = [0, 1]\nbig = ['x' * 100_000, list(range(100_000))]\nprint(sys.getsizeof(small) == sys.getsizeof(big))",
+        "choices": [
+          "True",
+          "False"
+        ],
+        "answer": 0,
+        "explain": "`sys.getsizeof` is shallow: for a list it counts the list header and its two pointer slots, never the objects they point to. Both lists hold two references, so they report the same size."
+      },
+      {
+        "code": "squares = (n * n for n in range(4))\nprint(sum(squares), sum(squares))",
+        "choices": [
+          "14 14",
+          "14 0",
+          "0 14"
+        ],
+        "answer": 1,
+        "explain": "A generator holds no data, only its paused position. The first `sum` exhausts it (0 + 1 + 4 + 9), so the second sees nothing. Use a list if you need two passes."
+      },
+      {
+        "code": "class Point:\n    __slots__ = ('x', 'y')\n    def __init__(self, x, y):\n        self.x, self.y = x, y\n\np = Point(1, 2)\ntry:\n    p.z = 3\n    outcome = 'set'\nexcept AttributeError:\n    outcome = 'AttributeError'\nprint(outcome, hasattr(p, '__dict__'))",
+        "choices": [
+          "set True",
+          "AttributeError False",
+          "AttributeError True",
+          "set False"
+        ],
+        "answer": 1,
+        "explain": "With `__slots__` the instance gets fixed storage for `x` and `y` and no per-instance `__dict__`, so assigning an undeclared attribute raises AttributeError."
+      },
+      {
+        "code": "a = [[1], [2]]\nb = a[:]\na[0].append(9)\na.append([3])\nprint(len(b), b[0])",
+        "choices": [
+          "3 [1, 9]",
+          "2 [1]",
+          "2 [1, 9]"
+        ],
+        "answer": 2,
+        "explain": "A slice copies the outer list (O(n) work) but not the inner lists. Appending to `a` does not touch `b`, but `b[0]` is the same inner list as `a[0]`."
+      },
+      {
+        "code": "d = {'a': 1, 'b': 2}\nprint(1 in d, 'a' in d, 1 in d.values())",
+        "choices": [
+          "True True True",
+          "False True True",
+          "False True False"
+        ],
+        "answer": 1,
+        "explain": "`in` on a dict tests keys with a hash lookup, O(1) on average. `in d.values()` is a linear scan, O(n): fine once, quadratic inside a loop."
+      }
+    ],
+    "tip": "When asked to optimise, say the brute force and its Big-O out loud first, then name the specific O(n) step inside the loop you will remove (\"`x in list` here is linear; a set makes it O(1) on average\"). State memory as well as time, and say how you would measure rather than guessing at speed-ups.",
+    "links": {
+      "problems": [
+        "count-pair-sums",
+        "has-nearby-duplicate",
+        "longest-distinct-stretch",
+        "anagram-windows"
+      ],
+      "guides": [
+        "complexity-reasoning",
+        "communicating-solutions",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "sliding-window-distinct",
+        "hash-map-complements",
+        "py-collections",
+        "py-functions-closures",
+        "py-oop-dataclasses",
+        "py-sequences-unpacking"
+      ]
+    }
+  }
+}

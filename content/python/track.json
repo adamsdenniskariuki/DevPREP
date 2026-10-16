@@ -11,7 +11,15 @@
     "py-sorting-keys",
     "py-functions-closures",
     "py-oop-dataclasses",
-    "py-errors-exceptions"
+    "py-errors-exceptions",
+    "py-iterators-generators",
+    "py-decorators",
+    "py-context-managers",
+    "py-typing",
+    "py-modules-testing",
+    "py-concurrency",
+    "py-performance-memory",
+    "py-gotchas-idioms"
   ],
   "placement": [
     {
@@ -258,6 +266,213 @@
       "explain": "KeyError subclasses LookupError and the first matching clause wins, so the KeyError handler can never run.",
       "lessons": [
         "py-errors-exceptions"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "squares = (n * n for n in [1, 2, 3])\nprint(sum(squares), sum(squares))",
+      "choices": [
+        "`14 14`",
+        "`14 0`",
+        "`14` then `TypeError`"
+      ],
+      "answer": 1,
+      "explain": "A generator expression is a one-shot iterator. The first sum drains it, and the second sees no items and returns 0, with no error.",
+      "lessons": [
+        "py-iterators-generators"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "it = iter([1, 2, 3, 4, 5])\nprint(list(zip(it, it)))",
+      "choices": [
+        "`[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]`",
+        "`[(1, 2), (3, 4)]`",
+        "`[(1, 2), (3, 4), (5,)]`"
+      ],
+      "answer": 1,
+      "explain": "Both zip arguments are the same iterator, so each tuple takes two consecutive items. zip stops when it cannot fill a tuple, so 5 is dropped.",
+      "lessons": [
+        "py-iterators-generators"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "def repeat(n):\n    def decorate(f):\n        def wrapper():\n            return [f() for _ in range(n)]\n        return wrapper\n    return decorate\n\n@repeat\ndef one():\n    return 1\n\nprint(one.__name__)",
+      "choices": [
+        "`one`",
+        "`wrapper`",
+        "`decorate`",
+        "`TypeError`"
+      ],
+      "answer": 2,
+      "explain": "Without parentheses, `repeat(one)` runs, so `n` is the function and `one` is bound to `decorate`. Nothing fails until it is called.",
+      "lessons": [
+        "py-decorators"
+      ]
+    },
+    {
+      "question": "In what order do the two `print` calls run?",
+      "code": "def tag(t):\n    def deco(f):\n        print('wrap', t)\n        return f\n    return deco\n\n@tag('top')\n@tag('bottom')\ndef f(): pass",
+      "choices": [
+        "`wrap top` then `wrap bottom`",
+        "`wrap bottom` then `wrap top`",
+        "Nothing prints until `f()` is called"
+      ],
+      "answer": 1,
+      "explain": "Decorators apply bottom up at definition time: `f = tag('top')(tag('bottom')(f))`.",
+      "lessons": [
+        "py-decorators"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "from contextlib import contextmanager\n@contextmanager\ndef tag():\n    print('<')\n    yield\n    print('>')\ntry:\n    with tag():\n        raise KeyError\nexcept KeyError:\n    print('caught')",
+      "choices": [
+        "`<`, `>`, `caught`",
+        "`<`, `caught`",
+        "`<`, `caught`, `>`"
+      ],
+      "answer": 1,
+      "explain": "The KeyError is thrown in at `yield` and nothing catches it there, so the line after `yield` never runs. Wrapping `yield` in try/finally fixes it.",
+      "lessons": [
+        "py-context-managers"
+      ]
+    },
+    {
+      "question": "`__exit__` ends with `return self.log` (a non-empty list). The `with` body raises ValueError. What happens?",
+      "choices": [
+        "The ValueError propagates",
+        "The ValueError is silently suppressed",
+        "`TypeError`: `__exit__` must return bool"
+      ],
+      "answer": 1,
+      "explain": "Any truthy return value from `__exit__` suppresses the exception. Return False or None unless suppressing is the point.",
+      "lessons": [
+        "py-context-managers"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "from typing import cast\nx = cast(int, '42')\nprint(type(x).__name__)",
+      "choices": [
+        "`int`",
+        "`str`",
+        "`TypeError`"
+      ],
+      "answer": 1,
+      "explain": "`cast` returns its argument unchanged; it only informs the type checker.",
+      "lessons": [
+        "py-typing"
+      ]
+    },
+    {
+      "question": "What does `isinstance([1, 2], list[int])` do at runtime?",
+      "choices": [
+        "Returns `True`",
+        "Returns `False`",
+        "Raises `TypeError`"
+      ],
+      "answer": 2,
+      "explain": "Parameterised generics are for annotations only; `isinstance` rejects them. Check `isinstance(x, list)` and then the items.",
+      "lessons": [
+        "py-typing"
+      ]
+    },
+    {
+      "question": "`orders.py` has `from clock import now`. A test sets `clock.now = fake`. What does `orders` call?",
+      "choices": [
+        "`fake`",
+        "the original `now`",
+        "raises `AttributeError`"
+      ],
+      "answer": 1,
+      "explain": "The `from` import bound `orders.now` to the original function at import time; patch `orders.now` instead.",
+      "lessons": [
+        "py-modules-testing"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "try:\n    assert (1 == 2, 'oops')\n    print('passed')\nexcept AssertionError:\n    print('failed')",
+      "choices": [
+        "`failed`",
+        "`passed`",
+        "`oops`"
+      ],
+      "answer": 1,
+      "explain": "A non-empty tuple is always truthy, so the assert can never fail (CPython emits a SyntaxWarning).",
+      "lessons": [
+        "py-modules-testing"
+      ]
+    },
+    {
+      "question": "Four threads each run a pure-Python CPU-bound loop on CPython's default (GIL) build. Compared with running the loops one after another, the threaded version is:",
+      "choices": [
+        "About 4x faster",
+        "About the same or slower",
+        "Faster only on Windows"
+      ],
+      "answer": 1,
+      "explain": "The GIL lets only one thread execute bytecode at a time, so CPU-bound threads don't run in parallel and switching adds overhead. Use processes or native code instead.",
+      "lessons": [
+        "py-concurrency"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "async def job():\n    print('ran')\n    return 1\n\nc = job()\nprint(type(c).__name__)",
+      "choices": [
+        "`ran` then `coroutine`",
+        "`coroutine`",
+        "`1`",
+        "`ran` then `int`"
+      ],
+      "answer": 1,
+      "explain": "Calling an `async def` function only creates a coroutine object. Its body runs only when it is awaited or scheduled as a task.",
+      "lessons": [
+        "py-concurrency"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "import sys\nprint(sys.getsizeof([0, 1]) == sys.getsizeof(['x' * 100_000, list(range(100_000))]))",
+      "choices": [
+        "`True`",
+        "`False`"
+      ],
+      "answer": 0,
+      "explain": "`getsizeof` is shallow: both lists hold two pointers, and the size of the objects they point to is not counted.",
+      "lessons": [
+        "py-performance-memory"
+      ]
+    },
+    {
+      "question": "Inside a loop over n words, which check keeps the loop O(n) overall?",
+      "choices": [
+        "`w in banned_list`",
+        "`banned_list.count(w) > 0`",
+        "`w in banned_set`",
+        "`w in banned_dict.values()`"
+      ],
+      "answer": 2,
+      "explain": "Set membership is O(1) on average. The other three scan linearly, which makes the loop O(n^2).",
+      "lessons": [
+        "py-performance-memory"
+      ]
+    },
+    {
+      "question": "What does `print([] or 'none', 3 and 0, [2, 1].sort() or 'ok')` print?",
+      "choices": [
+        "`False False ok`",
+        "`none 0 ok`",
+        "`none 0 [1, 2]`",
+        "`none False None`"
+      ],
+      "answer": 1,
+      "explain": "`or` and `and` return one of their operands, not a bool. `sort()` returns None, so `or` falls through to 'ok'.",
+      "lessons": [
+        "py-gotchas-idioms"
       ]
     }
   ]

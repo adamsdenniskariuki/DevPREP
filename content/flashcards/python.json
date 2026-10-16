@@ -265,6 +265,246 @@
       "front": "Why shouldn't `assert` validate caller input?",
       "back": "`python -O` strips every assert, so the check disappears. Use asserts for internal invariants; use `if ...: raise ValueError(...)` or an error result for input.",
       "level": "se"
+    },
+    {
+      "id": "python-iterable-vs-iterator",
+      "front": "What is the difference between an iterable and an iterator in Python?",
+      "back": "An iterable returns a new iterator from `iter()` each time (list, dict, str, range), so it can be looped many times. An iterator has `__next__`, returns itself from `iter()`, and works for one pass only. A second pass over an exhausted iterator is silently empty.",
+      "level": "se"
+    },
+    {
+      "id": "python-generator-lazy-body",
+      "front": "When does the body of a generator function start running?",
+      "back": "Not when you call it. The call only creates a generator object. The body runs on the first `next()`, so prints, validation and other side effects are delayed until then. To validate eagerly, do it in an ordinary wrapper function that then returns the generator.",
+      "level": "se"
+    },
+    {
+      "id": "python-generator-states",
+      "front": "Name a generator's four states and what moves it between them.",
+      "back": "GEN_CREATED (just called), GEN_RUNNING (inside next/send), GEN_SUSPENDED (paused at a yield with its locals kept) and GEN_CLOSED (after return, an exception or close()). `inspect.getgeneratorstate(g)` reports the current state.",
+      "level": "sse"
+    },
+    {
+      "id": "python-yield-from-return",
+      "front": "What does `result = yield from sub()` assign to `result`?",
+      "back": "The sub-generator's return value, which is carried on StopIteration.value. `yield from` first re-yields every item `sub` produces, and also forwards send/throw to it.",
+      "level": "sse"
+    },
+    {
+      "id": "python-mutate-while-iterating",
+      "front": "What goes wrong if you remove from a list, or delete dict keys, while looping over it?",
+      "back": "A list iterator walks by index, so removing an item shifts the rest left and the next item is skipped. A dict or set raises `RuntimeError: ... changed size during iteration`. Build a new collection with a comprehension, or loop over a snapshot such as `list(d)` or `xs[:]`.",
+      "level": "se"
+    },
+    {
+      "id": "python-decorator-desugar",
+      "front": "What does `@deco` above `def f` mean, and when does it run?",
+      "back": "`f = deco(f)`, run once right after the function object is created (import time for module-level code), not on each call.",
+      "level": "se"
+    },
+    {
+      "id": "python-functools-wraps",
+      "front": "What does `functools.wraps(func)` do to a wrapper?",
+      "back": "Copies metadata such as `__name__`, `__qualname__`, `__doc__`, `__module__` and `__annotations__`, merges `__dict__` and sets `__wrapped__` to the original. Behaviour is unchanged.",
+      "level": "se"
+    },
+    {
+      "id": "python-decorator-with-args",
+      "front": "Why does a decorator with arguments need three nested functions?",
+      "back": "`@repeat(3)` is `f = repeat(3)(f)`: the outer takes options and returns a decorator, the middle takes the function, the inner runs per call.",
+      "level": "se"
+    },
+    {
+      "id": "python-decorator-stacking",
+      "front": "With `@a` above `@b` on `def f`, which wraps first and which runs first?",
+      "back": "`f = a(b(f))`: `b` wraps first (nearest `def`), but `a` is outermost so its wrapper runs first on each call and finishes last.",
+      "level": "se"
+    },
+    {
+      "id": "python-testable-decorators",
+      "front": "How do you unit-test a retry/backoff/rate-limit decorator without sleeping?",
+      "back": "Inject the clock, the sleep and the exception types as decorator arguments; tests pass a fake clock they advance by hand and assert on the attempts.",
+      "level": "sse"
+    },
+    {
+      "id": "python-with-as-binding",
+      "front": "In `with cm as x:`, what is bound to `x`?",
+      "back": "The return value of `cm.__enter__()`, not `cm` itself. Many managers return `self`, but if `__enter__` returns nothing, `x` is None.",
+      "level": "se"
+    },
+    {
+      "id": "python-exit-return-suppresses",
+      "front": "What does the return value of `__exit__` control?",
+      "back": "A truthy value suppresses the exception from the block and execution continues after the `with`. False or None (including no return) lets it propagate. A string like 'logged' is truthy, so it swallows the error by accident.",
+      "level": "sse"
+    },
+    {
+      "id": "python-contextmanager-finally",
+      "front": "Why wrap `yield` in try/finally inside a `@contextmanager` function?",
+      "back": "An exception in the `with` body is thrown into the generator at the `yield` line. Cleanup written after a bare `yield` is skipped; `finally` runs it either way.",
+      "level": "sse"
+    },
+    {
+      "id": "python-exitstack-order",
+      "front": "In what order does `ExitStack` run its cleanups, and why use it?",
+      "back": "Last-in, first-out. Use it for a number of resources known only at run time: if opening the Nth one fails, the ones already opened are still closed.",
+      "level": "sse"
+    },
+    {
+      "id": "python-suppress-scope",
+      "front": "With `with suppress(KeyError):` around three statements, what happens if the second one raises KeyError?",
+      "back": "The third statement is skipped. `suppress` ends the whole block at the first matching error, and execution resumes after the `with`. Keep the block to one statement.",
+      "level": "sse"
+    },
+    {
+      "id": "python-hints-not-enforced",
+      "front": "Does CPython check arguments against type hints at call time?",
+      "back": "No. Annotations are stored, but calls are never checked against them. Tools such as mypy or pyright check them before runtime. Untrusted input still needs runtime validation.",
+      "level": "sse"
+    },
+    {
+      "id": "python-optional-meaning",
+      "front": "What does `Optional[int]` mean, and what is its modern spelling?",
+      "back": "'May be None', not 'may be omitted'; only a default value makes an argument omittable. Since 3.10 you can write `int | None`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-protocol-vs-abc",
+      "front": "Protocol vs ABC: what is the core difference?",
+      "back": "An ABC is nominal: a class must inherit from it or be registered. A Protocol is structural: any class with matching members fits, including third-party classes. A `@runtime_checkable` `isinstance` check only tests that the attributes exist.",
+      "level": "sse"
+    },
+    {
+      "id": "python-any-vs-object",
+      "front": "`Any` vs `object` as a parameter type?",
+      "back": "Both accept any value. `Any` turns checking off, so every operation is allowed. `object` allows almost nothing until you narrow it with `isinstance`, so it is the safe choice for 'accepts anything'.",
+      "level": "sse"
+    },
+    {
+      "id": "python-list-invariance",
+      "front": "Why is a `list[int]` rejected where `list[float]` is expected?",
+      "back": "Lists are mutable and therefore invariant: the callee could add a float to the caller's list of ints. If the function only reads, type the parameter as `Sequence[float]`, which is covariant.",
+      "level": "sse"
+    },
+    {
+      "id": "python-import-cache",
+      "front": "What does a second `import shop` do?",
+      "back": "It finds 'shop' in `sys.modules` and binds the cached module object. No module code runs again; every importer shares the same object.",
+      "level": "se"
+    },
+    {
+      "id": "python-from-import-binding",
+      "front": "After `from flags import enabled`, `flags.enabled = True` runs. What is `enabled`?",
+      "back": "Still the old value. A `from` import copies the reference at import time; only `flags.enabled` (attribute lookup) sees the rebinding.",
+      "level": "se"
+    },
+    {
+      "id": "python-patch-where-used",
+      "front": "`orders.py` does `from clock import now`. Which name do you patch in a test?",
+      "back": "`orders.now`: the name where it is looked up. Patching `clock.now` has no effect on orders.",
+      "level": "se"
+    },
+    {
+      "id": "python-circular-import-fix",
+      "front": "'cannot import name X from partially initialized module': cause and best fix?",
+      "back": "A circular import: the other module sees a half-run module. Best fix: move shared code to a third module. Alternatives: `import a` and use `a.X` inside functions, a function-local import, or `if TYPE_CHECKING:`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-yield-fixture",
+      "front": "In a pytest `yield` fixture, when does the code after `yield` run?",
+      "back": "After the test finishes, whether it passed or failed. It is the teardown. Fixtures are cached per scope (function by default, or class, module, package, session).",
+      "level": "se"
+    },
+    {
+      "id": "python-gil-what-it-protects",
+      "front": "What does CPython's GIL serialise, and when is it released?",
+      "back": "Only one thread executes Python bytecode at a time. The GIL is released around blocking I/O and inside many C extensions, and a CPU-bound holder is asked to drop it every switch interval (5 ms by default). So threads speed up I/O-bound work, not pure-Python CPU work.",
+      "level": "sse"
+    },
+    {
+      "id": "python-plus-equals-race",
+      "front": "Is `counter += 1` thread-safe in CPython because of the GIL?",
+      "back": "No. It is load, add, store; a thread switch between the load and the store can lose an update. Guard it with `with lock:`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-process-pool-costs",
+      "front": "Why can ProcessPoolExecutor be slower than a plain loop?",
+      "back": "Every function, argument and result is pickled and sent between processes, and starting workers takes time. Tiny tasks are dominated by that overhead. Functions must be picklable (module-level, not lambdas). Use bigger tasks or `chunksize`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-blocking-in-coroutine",
+      "front": "What happens if a coroutine calls `time.sleep(2)` or a blocking HTTP client?",
+      "back": "The event loop's thread blocks, so every task stalls. Use `await asyncio.sleep(2)` or an async client, or move blocking calls off the loop with `await asyncio.to_thread(fn, ...)`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-asyncio-bounded-fanout",
+      "front": "How do you run 10,000 async requests with at most 50 in flight and a 5 s timeout each?",
+      "back": "Create one `asyncio.Semaphore(50)`. Wrap each call in `async with sem:` and a timeout (`asyncio.timeout(5)` in 3.11+, or `asyncio.wait_for`). Create the tasks and `await asyncio.gather(*tasks, return_exceptions=True)`.",
+      "level": "sse"
+    },
+    {
+      "id": "python-getsizeof-shallow",
+      "front": "What does `sys.getsizeof(a_list)` measure?",
+      "back": "Only the list header and its pointer array. It leaves out the objects the list points to. Use `tracemalloc` for real memory usage.",
+      "level": "sse"
+    },
+    {
+      "id": "python-hidden-linear-ops",
+      "front": "Name operations that silently make a loop quadratic.",
+      "back": "`x in list`, `list.count`/`index`/`remove`, `list.insert(0, x)`, `x in d.values()`, and slicing `items[i:j]` (a copy) are all O(n). Build a set or dict once instead.",
+      "level": "se"
+    },
+    {
+      "id": "python-refcount-vs-cycle-gc",
+      "front": "When does CPython free an object?",
+      "back": "As soon as its reference count reaches 0. Objects in reference cycles stay alive until the cycle collector finds them (`gc.collect()` forces a pass). `del` removes a name, not the object.",
+      "level": "sse"
+    },
+    {
+      "id": "python-count-equal-pairs",
+      "front": "How do you count pairs i < j with equal values in O(n)?",
+      "back": "Count each value with `Counter` and sum `c * (c - 1) // 2` over the counts. Time is O(n), extra memory is O(k) for k distinct values.",
+      "level": "se"
+    },
+    {
+      "id": "python-optimise-order",
+      "front": "In what order should you optimise Python code?",
+      "back": "Make it correct and tested, fix the Big-O, then measure with cProfile/tracemalloc. After that use built-ins, NumPy, multiprocessing or C. Micro-tweaks like local aliases come last.",
+      "level": "sse"
+    },
+    {
+      "id": "python-late-binding-loop",
+      "front": "What does `[f() for f in [lambda: i for i in range(3)]]` return, and how do you fix it?",
+      "back": "[2, 2, 2]. Closures look `i` up when called, after the loop ends. Freeze each value with `lambda i=i: i` or `functools.partial`.",
+      "level": "se"
+    },
+    {
+      "id": "python-chained-equality",
+      "front": "What is `0 == 0 == 1`, and why?",
+      "back": "False. Chained comparisons mean `0 == 0 and 0 == 1`, not `(0 == 0) == 1` (which is True because True == 1).",
+      "level": "se"
+    },
+    {
+      "id": "python-most-common-ties",
+      "front": "Can `Counter.most_common(k)` break ties alphabetically?",
+      "back": "No. Equal counts keep first-seen order. For alphabetical ties use `sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))[:k]`, or `heapq.nsmallest` with the same key.",
+      "level": "se"
+    },
+    {
+      "id": "python-recursion-limit",
+      "front": "Why is `sys.setrecursionlimit` a poor fix for a deep DFS?",
+      "back": "It only moves the ceiling (default 1000). Deep recursion can still exhaust the C stack and crash the process instead of raising RecursionError. Use an explicit stack or a deque.",
+      "level": "sse"
+    },
+    {
+      "id": "python-round-half-even",
+      "front": "What do `round(2.5)` and `round(3.5)` return?",
+      "back": "2 and 4. Python's `round` sends exact .5 ties to the even integer (banker's rounding).",
+      "level": "se"
     }
   ]
 }

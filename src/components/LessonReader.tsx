@@ -52,7 +52,7 @@ export default function LessonReader({ lesson, lab, labError, sectionId, select,
         <h3>What you will be able to explain</h3>
         <ul className="objectives">{lesson.objectives.map(item => <li key={item}>{rich(item)}</li>)}</ul>
         <h3>Before you start</h3>
-        <p>{lesson.prerequisiteNotes}</p>
+        <p>{rich(lesson.prerequisiteNotes)}</p>
         {lesson.prerequisites.length > 0 && <div className="prerequisite-list">{lesson.prerequisites.map(id => {
           const prerequisite = lessons.find(item => item.id === id)!
           return <button key={id} onClick={() => openLesson(prerequisite)}>{prerequisite.title}</button>

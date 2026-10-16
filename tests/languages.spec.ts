@@ -140,7 +140,7 @@ for (const width of [360, 768, 1440]) {
 }
 
 test('every language lesson draws each of its diagrams exactly once at 360px', async ({ page }) => {
-  test.setTimeout(240_000)
+  test.setTimeout(480_000)
   await page.setViewportSize({ width: 360, height: 800 })
   for (const lesson of lessons) {
     await openLesson(page, lesson)

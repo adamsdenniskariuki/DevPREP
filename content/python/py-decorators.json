@@ -1,0 +1,1513 @@
+{
+  "id": "py-decorators",
+  "track": "python",
+  "title": "Decorators: wrapping behaviour",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "senior"
+  ],
+  "summary": "How `@` rebinds a function to a wrapper, how to write wrappers that keep the original's identity, decorators with arguments, stacking order, stateful decorators you can test, and when not to reach for one.",
+  "prerequisites": [
+    "py-functions-closures"
+  ],
+  "prerequisiteNotes": "You need closures and `nonlocal` from py-functions-closures: every decorator here is a function that returns an inner function holding state in its closure.",
+  "objectives": [
+    "Rewrite any `@decorator` line as the plain assignment it stands for and say when it runs.",
+    "Write a generic wrapper with `*args`/`**kwargs` that returns the result and keeps metadata via `functools.wraps`.",
+    "Build a decorator that takes arguments (three nested levels) and predict the order of stacked decorators.",
+    "Write stateful decorators (counter, memo, retry, rate limit) whose time and failure sources are injected, so tests stay deterministic.",
+    "Recognise the built-in decorators and judge when a decorator hides too much and a plain call or context manager is better."
+  ],
+  "concepts": [
+    {
+      "title": "Functions are objects; `@` is assignment sugar",
+      "body": "A `def` statement creates a function object and binds a name to it. Because functions are values, another function can take one and return a different one. `@deco` on the line above `def f` means exactly `f = deco(f)`, executed **once**, right after the function object is created, which for module-level code is import time. The name `f` now refers to whatever `deco` returned: usually a wrapper that closes over the original, sometimes the original itself after registering it somewhere.",
+      "code": "def shout(func):\n    def wrapper(name):\n        return func(name).upper()\n    return wrapper\n\ndef greet(name):\n    return 'hi ' + name\n\nloud = shout(greet)      # the manual form\nprint(loud('ada'))       # HI ADA\n\n@shout                   # same as: welcome = shout(welcome)\ndef welcome(name):\n    return 'welcome ' + name\n\nprint(welcome('ada'))    # WELCOME ADA",
+      "diagram": "pyd-sugar"
+    },
+    {
+      "title": "A generic wrapper: forward everything, return the result",
+      "body": "A reusable decorator cannot know the signature it will wrap, so the wrapper takes `*args, **kwargs` and forwards them unchanged with `func(*args, **kwargs)`. That also makes it work on methods: `self` simply arrives as `args[0]`. The shape is always **before, call, after, return**. Forgetting `return result` is the classic bug: every decorated call then returns `None`. If the after-step must run even when the call raises (timing, releasing a lock), put it in `finally`.",
+      "code": "import functools\n\ndef log_calls(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        print('call', func.__name__, args, kwargs)\n        result = func(*args, **kwargs)\n        print('done', func.__name__, '->', result)\n        return result\n    return wrapper\n\n@log_calls\ndef area(w, h=1):\n    return w * h\n\narea(3, h=4)\n# call area (3,) {'h': 4}\n# done area -> 12",
+      "diagram": "pyd-call"
+    },
+    {
+      "title": "`functools.wraps` keeps the wrapped function's identity",
+      "body": "Without help, the decorated name points at a function called `wrapper` with no docstring. `@functools.wraps(func)` on the wrapper copies attributes such as `__module__`, `__name__`, `__qualname__`, `__doc__` and `__annotations__` from the original, merges its `__dict__`, and sets `wrapper.__wrapped__ = func`. `inspect.signature` follows `__wrapped__`, so `help()` and tooling show the real parameters, and tests can call `f.__wrapped__` to reach the undecorated original. It changes metadata only; the wrapper still runs on every call. Treat it as mandatory for any decorator that returns a new function.",
+      "code": "import functools\n\ndef plain(func):\n    def wrapper(*args, **kwargs):\n        return func(*args, **kwargs)\n    return wrapper\n\ndef kept(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        return func(*args, **kwargs)\n    return wrapper\n\n@plain\ndef total(xs):\n    \"\"\"Sum xs.\"\"\"\n    return sum(xs)\n\n@kept\ndef mean(xs):\n    \"\"\"Average of xs.\"\"\"\n    return sum(xs) / len(xs)\n\nprint(total.__name__, total.__doc__)  # wrapper None\nprint(mean.__name__, mean.__doc__)    # mean Average of xs.\nprint(mean.__wrapped__([2, 4]))       # 3.0, the original",
+      "diagram": "pyd-wraps"
+    },
+    {
+      "title": "Decorators with arguments: three levels",
+      "body": "`@repeat(3)` is two calls: `repeat(3)` runs first and must **return a decorator**, which is then applied, so it means `ping = repeat(3)(ping)`. That gives three nested functions: the outer takes the options, the middle takes the function, the inner runs on every call. Levels one and two run once at definition time; only level three runs per call. Writing `@repeat` without the parentheses is a quiet bug: the function is passed as `times`, the name becomes the middle function `decorate`, and nothing fails until the first call.",
+      "code": "import functools\n\ndef repeat(times):                    # level 1: options\n    def decorate(func):               # level 2: the function\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs): # level 3: each call\n            return [func(*args, **kwargs) for _ in range(times)]\n        return wrapper\n    return decorate\n\n@repeat(3)\ndef ping():\n    return 'pong'\n\nprint(ping())   # ['pong', 'pong', 'pong']",
+      "diagram": "pyd-levels"
+    },
+    {
+      "title": "Stacking: bottom applies first, top runs first",
+      "body": "Stacked decorators are applied **bottom up**: the one nearest `def` wraps the original, the next wraps that wrapper, so `@a` over `@b` means `f = a(b(f))`. At call time the outermost (top) wrapper runs its before-code first and its after-code last. The decorator expressions themselves (`tag('b')`, `tag('i')`) are evaluated top down before the function is created. Order changes behaviour: `@timed` above `@retry` measures all attempts together; below it, each attempt separately. A cache above an auth check would skip the check on cache hits.",
+      "code": "def tag(name):\n    def decorate(func):\n        def wrapper():\n            return f'<{name}>{func()}</{name}>'\n        return wrapper\n    return decorate\n\n@tag('b')\n@tag('i')\ndef word():\n    return 'hi'\n\nprint(word())   # <b><i>hi</i></b>",
+      "diagram": "pyd-stack"
+    },
+    {
+      "title": "Stateful decorators: counters, memos, retries, rate limits",
+      "body": "State created in the decorator body (a dict, a deque, a `nonlocal` counter, or an attribute set on the wrapper) is made **once per decorated function** and shared by all of its calls. A hand-written memo is what `functools.cache` and `lru_cache` already do (see py-functions-closures), so in real code use the stdlib. For anything involving failure or time, inject the source: `retry` should take the exception types to retry, cap attempts and re-raise the last error; a rate limiter or backoff should take `clock` (and `sleep`) as parameters so a test can drive time by hand instead of waiting. Only retry operations that are safe to repeat.",
+      "code": "import functools\n\ndef count_calls(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        wrapper.calls += 1\n        return func(*args, **kwargs)\n    wrapper.calls = 0\n    return wrapper\n\ndef memo(func):\n    seen = {}\n    @functools.wraps(func)\n    def wrapper(n):\n        if n not in seen:\n            seen[n] = func(n)\n        return seen[n]\n    return wrapper\n\n@count_calls\ndef square(n):\n    return n * n\n\n@memo\ndef double(n):\n    print('computing', n)\n    return 2 * n\n\nsquare(2); square(3)\nprint(square.calls)        # 2\ndouble(5); double(5)       # prints 'computing 5' once"
+    },
+    {
+      "title": "Class decorators and the built-in method decorators",
+      "body": "A **class decorator** receives the class object after its body has run and returns a class, often the same one after registering or augmenting it; `@dataclass` is the famous example. `@property`, `@classmethod` and `@staticmethod` are ordinary decorators too: `area = property(area)` replaces the function with a descriptor object that changes how attribute access behaves (details in py-oop-dataclasses). One trap: `@lru_cache` on a method includes `self` in the cache key, so the cache keeps every instance it has seen alive; for a per-instance computed value use `functools.cached_property`.",
+      "code": "REGISTRY = {}\n\ndef register(cls):          # class decorator\n    REGISTRY[cls.__name__] = cls\n    return cls\n\n@register\nclass Square:\n    def __init__(self, side):\n        self.side = side\n\n    @property               # area = property(area)\n    def area(self):\n        return self.side ** 2\n\n    @classmethod            # unit = classmethod(unit)\n    def unit(cls):\n        return cls(1)\n\n    @staticmethod           # kind = staticmethod(kind)\n    def kind():\n        return 'polygon'\n\nprint(list(REGISTRY), Square.unit().area, Square.kind())\n# ['Square'] 1 polygon"
+    },
+    {
+      "title": "When a decorator is the wrong tool",
+      "body": "Decorators fit **cross-cutting** behaviour that is identical across many functions and leaves each function's contract intact: logging, timing, caching, permission checks, retries, registration. Reach for something else when the decorator is used once (inline the code), when it silently changes what callers pass or get back (the `def` line no longer tells the truth), when behaviour needs per-call settings (pass an argument), or when only part of a function needs the behaviour (a `with` block scopes it to those lines). Every layer also adds a frame to tracebacks and one more thing to read when debugging.",
+      "diagram": "pyd-wrong"
+    }
+  ],
+  "example": "import functools\n\ndef retry(times, on=ValueError):\n    def decorate(func):\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            for attempt in range(1, times + 1):\n                try:\n                    return func(*args, **kwargs)\n                except on:\n                    if attempt == times:\n                        raise\n        return wrapper\n    return decorate\n\nanswers = iter([ValueError('busy'), ValueError('busy'), 'ok'])\n\n@retry(3)\ndef fetch():\n    item = next(answers)\n    if isinstance(item, Exception):\n        raise item\n    return item\n\nprint(fetch(), fetch.__name__)   # ok fetch",
+  "task": "Write the decorator factory `retry(times, on=ValueError)`. A function decorated with `@retry(times)` is attempted up to `times` times (assume `times >= 1`); it retries only when the call raises an exception of type `on`, returns the first successful result immediately, and re-raises the last error when every attempt fails. Any other exception propagates at once. The wrapper must keep the original `__name__` and docstring. The driver `run_with_retry(outcomes, times)` is provided: it decorates a flaky `fetch` that consumes `outcomes` in order (`'fail'` raises ValueError, `'crash'` raises KeyError, running out counts as `'fail'`, anything else is returned) and reports `{'name', 'calls', 'result'}`.",
+  "starter": "import functools\n\ndef retry(times, on=ValueError):\n    def decorate(func):\n        def wrapper(*args, **kwargs):\n            # TODO: try up to `times` times, retrying only on `on`;\n            # re-raise the last error. Keep func's metadata.\n            return func(*args, **kwargs)\n        return wrapper\n    return decorate\n\n# The driver is done: it builds a flaky fetch and reports what happened.\ndef run_with_retry(outcomes, times):\n    remaining = iter(outcomes)\n    calls = 0\n\n    @retry(times)\n    def fetch():\n        nonlocal calls\n        calls += 1\n        outcome = next(remaining, 'fail')\n        if outcome == 'fail':\n            raise ValueError('transient')\n        if outcome == 'crash':\n            raise KeyError('fatal')\n        return outcome\n\n    try:\n        result = fetch()\n    except ValueError:\n        result = 'gave up'\n    except KeyError:\n        result = 'crashed'\n    return {'name': fetch.__name__, 'calls': calls, 'result': result}\n",
+  "hints": [
+    "Loop with `for attempt in range(1, times + 1):` and put `return func(*args, **kwargs)` inside a `try`; a success leaves the loop by returning.",
+    "In `except on:` re-raise with a bare `raise` only when `attempt == times`; add `@functools.wraps(func)` above the wrapper so `fetch.__name__` stays `'fetch'`."
+  ],
+  "solution": "def retry(times, on=ValueError):\n    def decorate(func):\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            for attempt in range(1, times + 1):\n                try:\n                    return func(*args, **kwargs)\n                except on:\n                    if attempt == times:\n                        raise\n        return wrapper\n    return decorate\n\nThree levels: `retry(times)` captures the options, `decorate(func)` captures the function, `wrapper` runs per call. Returning inside the `try` ends the loop on the first success, so a falsy result such as 0 or None is still returned correctly. `except on:` catches only the listed type, so a KeyError escapes on the first attempt. The bare `raise` on the final attempt re-raises the original exception with its traceback instead of hiding it. `functools.wraps` keeps the name, docstring and `__wrapped__`. At most `times` calls; no extra state lives between calls.",
+  "checklist": [
+    "I return the wrapped call's result, including falsy results like 0 or None.",
+    "I retry only the exception type given by `on`; other errors escape on the first attempt.",
+    "After the last failed attempt I re-raise the original error with a bare `raise`.",
+    "My wrapper uses `@functools.wraps(func)` and forwards `*args, **kwargs`."
+  ],
+  "pitfalls": [
+    "Forgetting `return` in the wrapper, so every decorated call returns None.",
+    "Forgetting `return wrapper` in the decorator, so the decorated name becomes None.",
+    "Writing `@retry` instead of `@retry(3)`: the function is passed as `times` and the name becomes the inner decorator.",
+    "Skipping `functools.wraps`, so logs, `help()` and name-based registries all see `wrapper`.",
+    "Retrying on bare `Exception`, which retries bugs like TypeError and hides them behind delays.",
+    "Calling `time.time()` or `time.sleep()` directly inside a decorator, which makes tests slow and flaky; inject the clock.",
+    "Assuming decorators apply top down; the one nearest `def` wraps first."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace one retried call",
+      "body": "With outcomes `['fail', 'fail', 42]` and `times=3`, `fetch()` enters the wrapper. Attempt 1 raises ValueError; `attempt != times`, so the `except` falls through and the loop continues. Attempt 2 is the same. Attempt 3 returns 42 and the `return` inside `try` exits the wrapper straight away. Had attempt 3 failed too, `attempt == times` would trigger the bare `raise` and the driver would report `'gave up'`. The body ran three times, which is exactly what `calls` counts.",
+      "diagram": "pyd-retry"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First write the skeleton of three functions and get `@retry(3)` to run without changing behaviour. Then add `functools.wraps` and check the name. Finally add the loop: try, return on success, and decide inside `except on:` whether this was the last attempt. Test the edges aloud: success on the first try, every attempt failing, a non-retryable error, and a falsy success value."
+    },
+    {
+      "title": "Make time a parameter",
+      "body": "The stretch rate limiter takes `clock` as an argument. Production passes `time.monotonic`; the test passes a closure over a variable it moves forward by hand. The same trick works for backoff (inject `sleep` and assert on the delays it was asked for) and for timeouts. Saying this in an interview signals you have tested time-based code before."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Count calls without losing the docstring",
+      "prompt": "Finish `count_calls(func)`: the wrapper increments an attribute `calls` on itself every time it runs, forwards all arguments, returns the result and keeps the original name and docstring. The driver `tally(pairs)` decorates an `add(a, b)` function, calls it once per `[a, b]` pair and returns `{'results', 'calls', 'doc'}`.",
+      "hints": [
+        "Inside the wrapper, `wrapper.calls += 1` works because `wrapper` is looked up when the call runs, by which time the attribute exists.",
+        "`@functools.wraps(func)` copies `__doc__`, so `add.__doc__` stays 'Return a + b.'."
+      ],
+      "solution": "def count_calls(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        wrapper.calls += 1\n        return func(*args, **kwargs)\n    wrapper.calls = 0\n    return wrapper",
+      "checklist": [
+        "The count starts at 0 and rises once per call.",
+        "The docstring survives decoration.",
+        "Results are returned unchanged, including strings."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A sliding-window rate limiter with an injected clock",
+      "prompt": "Finish `rate_limit(limit, window, clock)`: the decorated function may run at most `limit` times in any `window` time units. On each call read `now = clock()`; a previous call at time `t` still counts while `t > now - window`. If the window is full, return `'blocked'` without calling the function (blocked calls do not count). The driver `rate_limited(requests, limit, window)` feeds `[time, payload]` pairs in non-decreasing time order through a fake clock and returns the list of outputs.",
+      "hints": [
+        "Keep accepted timestamps in a `deque` created in `decorate`, so each decorated function has its own window.",
+        "Before deciding, pop from the left while `recent[0] <= now - window`; then the deque holds only calls that still count."
+      ],
+      "solution": "def rate_limit(limit, window, clock):\n    def decorate(func):\n        recent = deque()\n\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            now = clock()\n            while recent and recent[0] <= now - window:\n                recent.popleft()\n            if len(recent) >= limit:\n                return 'blocked'\n            recent.append(now)\n            return func(*args, **kwargs)\n        return wrapper\n    return decorate",
+      "checklist": [
+        "I read the time only through the injected `clock`.",
+        "Expired timestamps are evicted before the limit check.",
+        "Blocked calls are not recorded.",
+        "Each pop is paid for by one append, so a call is amortised O(1)."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How do you write a decorator that works both as `@retry` and `@retry(times=5)`?",
+      "answer": "Make the function optional and the options keyword-only: `def retry(func=None, *, times=3)`. If `func` is None you were called with options, so return `functools.partial(retry, times=times)` (or a `decorate` closure); otherwise build and return the wrapper directly. Keeping the options keyword-only makes the two forms unambiguous: the only positional argument is ever the function."
+    },
+    {
+      "question": "Why does `functools.wraps` matter beyond a pretty name?",
+      "answer": "Anything that identifies functions by metadata sees the wrapper otherwise: logs and metrics keyed by `__name__`, web frameworks that register handlers by name, `help()` and `inspect.signature` (which follow `__wrapped__`), and `pickle`, which finds a function by module and qualified name. `__wrapped__` also lets tests call the undecorated function directly."
+    },
+    {
+      "question": "You decorate a method with a function-based decorator. How does `self` reach the original?",
+      "answer": "The wrapper is a plain function stored on the class, so attribute lookup on an instance binds it like any method and passes the instance as the first positional argument. `*args` captures it and forwards it, so the original receives `self`. A decorator written as a class with `__call__` does not bind this way unless it also implements `__get__`, which is a common surprise."
+    },
+    {
+      "question": "Is the call counter in `count_calls` safe to use from several threads?",
+      "answer": "No. `wrapper.calls += 1` is a read, an add and a write, and threads can interleave between them and lose increments. Guard shared decorator state with a `threading.Lock` created alongside it, or use a thread-safe structure. The same applies to a hand-rolled memo or rate limiter."
+    }
+  ],
+  "takeaways": [
+    "`@deco` over `def f` is `f = deco(f)`, run once at definition time.",
+    "Wrappers take `*args, **kwargs`, forward them and return the result.",
+    "Always add `@functools.wraps(func)` to keep name, docstring and `__wrapped__`.",
+    "A decorator with arguments is three levels: options, function, call.",
+    "Stacked decorators apply bottom up and run top down.",
+    "Inject clocks, sleeps and exception types so stateful decorators are testable."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyd-sugar",
+        "type": "flow",
+        "title": "What `@shout` does to the name",
+        "alt": "Flow diagram. The original function object is passed to shout, which returns a new wrapper function. The name welcome is rebound to the wrapper, and the wrapper calls the original through its closure.",
+        "caption": "After decoration the name points at the wrapper; the original is reachable only through the wrapper's closure.",
+        "nodes": [
+          {
+            "id": "orig",
+            "label": "original func",
+            "kind": "storage",
+            "col": 0,
+            "row": 0,
+            "sub": "def welcome(...)"
+          },
+          {
+            "id": "deco",
+            "label": "shout(func)",
+            "kind": "worker",
+            "col": 2,
+            "row": 0,
+            "sub": "runs once"
+          },
+          {
+            "id": "wrap",
+            "label": "wrapper",
+            "kind": "good",
+            "col": 2,
+            "row": 3,
+            "sub": "closure: func"
+          },
+          {
+            "id": "name",
+            "label": "name welcome",
+            "kind": "state",
+            "col": 0,
+            "row": 3
+          }
+        ],
+        "edges": [
+          {
+            "from": "orig",
+            "to": "deco",
+            "label": "passed in"
+          },
+          {
+            "from": "deco",
+            "to": "wrap",
+            "label": "returns"
+          },
+          {
+            "from": "name",
+            "to": "wrap",
+            "label": "welcome = ..."
+          },
+          {
+            "from": "wrap",
+            "to": "orig",
+            "label": "calls func",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`def welcome` creates a function object, and `@shout` immediately passes it to `shout`."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "`shout` defines `wrapper` and returns it. This happens once, at definition time."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "The name `welcome` is bound to the returned wrapper: `welcome = shout(welcome)`."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "On every call the wrapper runs and calls the original through the `func` variable in its closure."
+          }
+        ]
+      },
+      {
+        "id": "pyd-call",
+        "type": "sequence",
+        "title": "One call through `log_calls`",
+        "alt": "Sequence diagram. The caller calls area(3, h=4), which actually runs the wrapper. The wrapper prints a call line, forwards the arguments to the original area, receives 12, prints a done line and returns 12 to the caller.",
+        "caption": "Before, call, after, return. The wrapper must hand the result back or the caller gets None.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "wrap",
+            "label": "wrapper"
+          },
+          {
+            "id": "out",
+            "label": "stdout"
+          },
+          {
+            "id": "orig",
+            "label": "original area"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "wrap",
+            "label": "area(3, h=4)",
+            "note": "args is (3,) and kwargs is {'h': 4}."
+          },
+          {
+            "from": "wrap",
+            "to": "out",
+            "label": "print('call', ...)"
+          },
+          {
+            "from": "wrap",
+            "to": "orig",
+            "label": "func(*args, **kwargs)",
+            "note": "The same arguments are unpacked again, so any signature works."
+          },
+          {
+            "from": "orig",
+            "to": "wrap",
+            "label": "12",
+            "style": "reply"
+          },
+          {
+            "from": "wrap",
+            "to": "out",
+            "label": "print('done', ...)"
+          },
+          {
+            "from": "wrap",
+            "to": "caller",
+            "label": "return result",
+            "style": "reply",
+            "note": "Drop this return and every decorated call yields None."
+          }
+        ]
+      },
+      {
+        "id": "pyd-wraps",
+        "type": "compare",
+        "title": "Without and with `functools.wraps`",
+        "alt": "Side-by-side comparison. Without wraps, the name total points at a wrapper whose name is wrapper and whose docstring is None. With wraps, the name mean points at a wrapper that reports the name mean, carries the docstring, and links to the original through __wrapped__.",
+        "caption": "wraps changes no behaviour; it copies identity onto the wrapper and leaves a `__wrapped__` link to the original.",
+        "before": {
+          "label": "Plain wrapper: identity lost",
+          "nodes": [
+            {
+              "id": "n",
+              "label": "name total",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "w",
+              "label": "wrapper",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "__name__ wrapper"
+            },
+            {
+              "id": "o",
+              "label": "original",
+              "kind": "storage",
+              "col": 2,
+              "row": 2,
+              "sub": "only via closure"
+            }
+          ],
+          "edges": [
+            {
+              "from": "n",
+              "to": "w"
+            },
+            {
+              "from": "w",
+              "to": "o",
+              "label": "closure"
+            }
+          ]
+        },
+        "after": {
+          "label": "@functools.wraps(func)",
+          "nodes": [
+            {
+              "id": "n",
+              "label": "name mean",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "w",
+              "label": "wrapper",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "__name__ mean"
+            },
+            {
+              "id": "o",
+              "label": "original",
+              "kind": "storage",
+              "col": 2,
+              "row": 2,
+              "sub": "doc, annotations"
+            }
+          ],
+          "edges": [
+            {
+              "from": "n",
+              "to": "w"
+            },
+            {
+              "from": "w",
+              "to": "o",
+              "label": "__wrapped__"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyd-levels",
+        "type": "flow",
+        "title": "The three levels of `@retry(3)`",
+        "alt": "Flow diagram of a decorator with arguments. The expression retry(3) runs first and returns decorate. decorate receives fetch and returns wrapper. The name fetch is bound to wrapper, which is the only level that runs on every call.",
+        "caption": "Levels one and two run once at definition time; only the innermost function runs per call.",
+        "nodes": [
+          {
+            "id": "at",
+            "label": "@retry(3)",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "l1",
+            "label": "retry(3)",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "L1: once at def"
+          },
+          {
+            "id": "l2",
+            "label": "decorate(fetch)",
+            "kind": "worker",
+            "col": 2,
+            "row": 2,
+            "sub": "L2: once at def"
+          },
+          {
+            "id": "l3",
+            "label": "wrapper",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "L3: every call"
+          },
+          {
+            "id": "name",
+            "label": "name fetch",
+            "kind": "state",
+            "col": 0,
+            "row": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "at",
+            "to": "l1",
+            "label": "evaluate"
+          },
+          {
+            "from": "l1",
+            "to": "l2",
+            "label": "returns decorate"
+          },
+          {
+            "from": "l2",
+            "to": "l3",
+            "label": "returns wrapper"
+          },
+          {
+            "from": "name",
+            "to": "l3",
+            "label": "fetch = ..."
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "The expression after `@` is evaluated first: `retry(3)` runs and captures `times` in a closure."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "It returns `decorate`, which Python now calls with the freshly created `fetch` function."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`decorate` builds `wrapper`, closing over both `times` and `func`, and returns it."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "`fetch` is rebound to `wrapper`. From now on only level three runs, once per call."
+          }
+        ]
+      },
+      {
+        "id": "pyd-stack",
+        "type": "sequence",
+        "title": "Calling a function with two stacked decorators",
+        "alt": "Sequence diagram. The caller calls word, which is the outer b wrapper. It calls the inner i wrapper, which calls the original word body. The body returns hi, the inner wrapper returns it wrapped in i tags, and the outer wrapper wraps that in b tags.",
+        "caption": "The top decorator is the outermost wrapper: first in, last out.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "b",
+            "label": "outer: tag('b')"
+          },
+          {
+            "id": "i",
+            "label": "inner: tag('i')"
+          },
+          {
+            "id": "body",
+            "label": "word body"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "b",
+            "label": "word()",
+            "note": "word = tag('b')(tag('i')(word)), so the name holds the outer wrapper."
+          },
+          {
+            "from": "b",
+            "to": "i",
+            "label": "func()"
+          },
+          {
+            "from": "i",
+            "to": "body",
+            "label": "func()"
+          },
+          {
+            "from": "body",
+            "to": "i",
+            "label": "'hi'",
+            "style": "reply"
+          },
+          {
+            "from": "i",
+            "to": "b",
+            "label": "'<i>hi</i>'",
+            "style": "reply"
+          },
+          {
+            "from": "b",
+            "to": "caller",
+            "label": "'<b><i>hi</i></b>'",
+            "style": "reply",
+            "note": "The outer wrapper finishes last, so its tags are outermost."
+          }
+        ]
+      },
+      {
+        "id": "pyd-retry",
+        "type": "timeline",
+        "title": "Retry with outcomes fail, fail, 42",
+        "alt": "Timeline of one retried call. fetch is called, attempts one and two raise ValueError and are caught, attempt three returns 42 which the wrapper returns at once. A final note shows that a third failure would be re-raised.",
+        "caption": "A success returns from inside the loop; only a failure on the last attempt escapes.",
+        "events": [
+          {
+            "at": "call",
+            "label": "fetch() enters the wrapper; attempt = 1",
+            "kind": "trigger"
+          },
+          {
+            "at": "attempt 1",
+            "label": "Body raises ValueError; except on: catches it, attempt < times",
+            "kind": "impact"
+          },
+          {
+            "at": "attempt 2",
+            "label": "Raises again; loop continues",
+            "kind": "impact"
+          },
+          {
+            "at": "attempt 3",
+            "label": "Body returns 42; return inside try exits the wrapper",
+            "kind": "resolve"
+          },
+          {
+            "at": "if 3 had failed",
+            "label": "attempt == times, so bare raise re-throws the last ValueError",
+            "kind": "detect"
+          }
+        ]
+      },
+      {
+        "id": "pyd-wrong",
+        "type": "compare",
+        "title": "A decorator that hides an argument",
+        "alt": "Side-by-side comparison. On the left, callers write save(user) but a with_conn decorator secretly injects a connection, so the real signature is save(conn, user). On the right, the caller opens the connection in a with block and passes it explicitly to save(conn, user).",
+        "caption": "If a decorator changes what callers pass or get back, make the dependency explicit instead.",
+        "before": {
+          "label": "Hidden: decorator injects conn",
+          "nodes": [
+            {
+              "id": "c",
+              "label": "save(user)",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "call site"
+            },
+            {
+              "id": "d",
+              "label": "@with_conn",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "adds an argument"
+            },
+            {
+              "id": "f",
+              "label": "save(conn, user)",
+              "kind": "service",
+              "col": 2,
+              "row": 2,
+              "sub": "real signature"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c",
+              "to": "d",
+              "label": "calls"
+            },
+            {
+              "from": "d",
+              "to": "f",
+              "label": "injects conn"
+            }
+          ]
+        },
+        "after": {
+          "label": "Explicit: with block and argument",
+          "nodes": [
+            {
+              "id": "c",
+              "label": "with connect()",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "as conn"
+            },
+            {
+              "id": "f",
+              "label": "save(conn, user)",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "honest signature"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c",
+              "to": "f",
+              "label": "passes conn"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "run_with_retry",
+        "starter": "import functools\n\ndef retry(times, on=ValueError):\n    def decorate(func):\n        def wrapper(*args, **kwargs):\n            # TODO: try up to `times` times, retrying only on `on`;\n            # re-raise the last error. Keep func's metadata.\n            return func(*args, **kwargs)\n        return wrapper\n    return decorate\n\n# The driver is done: it builds a flaky fetch and reports what happened.\ndef run_with_retry(outcomes, times):\n    remaining = iter(outcomes)\n    calls = 0\n\n    @retry(times)\n    def fetch():\n        nonlocal calls\n        calls += 1\n        outcome = next(remaining, 'fail')\n        if outcome == 'fail':\n            raise ValueError('transient')\n        if outcome == 'crash':\n            raise KeyError('fatal')\n        return outcome\n\n    try:\n        result = fetch()\n    except ValueError:\n        result = 'gave up'\n    except KeyError:\n        result = 'crashed'\n    return {'name': fetch.__name__, 'calls': calls, 'result': result}\n",
+        "solution": "import functools\n\ndef retry(times, on=ValueError):\n    def decorate(func):\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            for attempt in range(1, times + 1):\n                try:\n                    return func(*args, **kwargs)\n                except on:\n                    if attempt == times:\n                        raise\n        return wrapper\n    return decorate\n\ndef run_with_retry(outcomes, times):\n    remaining = iter(outcomes)\n    calls = 0\n\n    @retry(times)\n    def fetch():\n        nonlocal calls\n        calls += 1\n        outcome = next(remaining, 'fail')\n        if outcome == 'fail':\n            raise ValueError('transient')\n        if outcome == 'crash':\n            raise KeyError('fatal')\n        return outcome\n\n    try:\n        result = fetch()\n    except ValueError:\n        result = 'gave up'\n    except KeyError:\n        result = 'crashed'\n    return {'name': fetch.__name__, 'calls': calls, 'result': result}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "fail",
+                "fail",
+                42
+              ],
+              3
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 3,
+              "result": 42
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                "fail",
+                "fail",
+                1
+              ],
+              3
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 3,
+              "result": "gave up"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                5
+              ],
+              1
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 1,
+              "result": 5
+            }
+          },
+          {
+            "args": [
+              [],
+              2
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 2,
+              "result": "gave up"
+            }
+          },
+          {
+            "args": [
+              [
+                "crash",
+                1
+              ],
+              3
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 1,
+              "result": "crashed"
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                "crash",
+                7
+              ],
+              5
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 2,
+              "result": "crashed"
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                "fail",
+                0
+              ],
+              10
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 10,
+              "result": 0
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                null
+              ],
+              3
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 2,
+              "result": null
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                "héllo ✓"
+              ],
+              2
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 2,
+              "result": "héllo ✓"
+            }
+          },
+          {
+            "args": [
+              [
+                "fail",
+                "fail"
+              ],
+              1
+            ],
+            "expected": {
+              "name": "fetch",
+              "calls": 1,
+              "result": "gave up"
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "tally",
+        "starter": "import functools\n\ndef count_calls(func):\n    def wrapper(*args, **kwargs):\n        # TODO: count this call and keep func's name and docstring\n        return func(*args, **kwargs)\n    wrapper.calls = 0\n    return wrapper\n\ndef tally(pairs):\n    @count_calls\n    def add(a, b):\n        \"\"\"Return a + b.\"\"\"\n        return a + b\n\n    results = [add(a, b) for a, b in pairs]\n    return {'results': results, 'calls': add.calls, 'doc': add.__doc__}\n",
+        "solution": "import functools\n\ndef count_calls(func):\n    @functools.wraps(func)\n    def wrapper(*args, **kwargs):\n        wrapper.calls += 1\n        return func(*args, **kwargs)\n    wrapper.calls = 0\n    return wrapper\n\ndef tally(pairs):\n    @count_calls\n    def add(a, b):\n        \"\"\"Return a + b.\"\"\"\n        return a + b\n\n    results = [add(a, b) for a, b in pairs]\n    return {'results': results, 'calls': add.calls, 'doc': add.__doc__}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  1,
+                  2
+                ],
+                [
+                  3,
+                  4
+                ]
+              ]
+            ],
+            "expected": {
+              "results": [
+                3,
+                7
+              ],
+              "calls": 2,
+              "doc": "Return a + b."
+            }
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "results": [],
+              "calls": 0,
+              "doc": "Return a + b."
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [
+                  5,
+                  5
+                ]
+              ]
+            ],
+            "expected": {
+              "results": [
+                10
+              ],
+              "calls": 1,
+              "doc": "Return a + b."
+            }
+          },
+          {
+            "args": [
+              [
+                [
+                  -3,
+                  1
+                ],
+                [
+                  -3,
+                  1
+                ],
+                [
+                  0,
+                  0
+                ]
+              ]
+            ],
+            "expected": {
+              "results": [
+                -2,
+                -2,
+                0
+              ],
+              "calls": 3,
+              "doc": "Return a + b."
+            }
+          },
+          {
+            "args": [
+              [
+                [
+                  "ab",
+                  "c"
+                ],
+                [
+                  "é",
+                  "✓"
+                ]
+              ]
+            ],
+            "expected": {
+              "results": [
+                "abc",
+                "é✓"
+              ],
+              "calls": 2,
+              "doc": "Return a + b."
+            }
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  0
+                ],
+                [
+                  1,
+                  1
+                ],
+                [
+                  2,
+                  2
+                ],
+                [
+                  3,
+                  3
+                ],
+                [
+                  4,
+                  4
+                ],
+                [
+                  5,
+                  5
+                ],
+                [
+                  6,
+                  6
+                ],
+                [
+                  7,
+                  7
+                ],
+                [
+                  8,
+                  8
+                ],
+                [
+                  9,
+                  9
+                ],
+                [
+                  10,
+                  10
+                ],
+                [
+                  11,
+                  11
+                ],
+                [
+                  12,
+                  12
+                ],
+                [
+                  13,
+                  13
+                ],
+                [
+                  14,
+                  14
+                ],
+                [
+                  15,
+                  15
+                ],
+                [
+                  16,
+                  16
+                ],
+                [
+                  17,
+                  17
+                ],
+                [
+                  18,
+                  18
+                ],
+                [
+                  19,
+                  19
+                ],
+                [
+                  20,
+                  20
+                ],
+                [
+                  21,
+                  21
+                ],
+                [
+                  22,
+                  22
+                ],
+                [
+                  23,
+                  23
+                ],
+                [
+                  24,
+                  24
+                ],
+                [
+                  25,
+                  25
+                ],
+                [
+                  26,
+                  26
+                ],
+                [
+                  27,
+                  27
+                ],
+                [
+                  28,
+                  28
+                ],
+                [
+                  29,
+                  29
+                ],
+                [
+                  30,
+                  30
+                ],
+                [
+                  31,
+                  31
+                ],
+                [
+                  32,
+                  32
+                ],
+                [
+                  33,
+                  33
+                ],
+                [
+                  34,
+                  34
+                ],
+                [
+                  35,
+                  35
+                ],
+                [
+                  36,
+                  36
+                ],
+                [
+                  37,
+                  37
+                ],
+                [
+                  38,
+                  38
+                ],
+                [
+                  39,
+                  39
+                ],
+                [
+                  40,
+                  40
+                ],
+                [
+                  41,
+                  41
+                ],
+                [
+                  42,
+                  42
+                ],
+                [
+                  43,
+                  43
+                ],
+                [
+                  44,
+                  44
+                ],
+                [
+                  45,
+                  45
+                ],
+                [
+                  46,
+                  46
+                ],
+                [
+                  47,
+                  47
+                ],
+                [
+                  48,
+                  48
+                ],
+                [
+                  49,
+                  49
+                ]
+              ]
+            ],
+            "expected": {
+              "results": [
+                0,
+                2,
+                4,
+                6,
+                8,
+                10,
+                12,
+                14,
+                16,
+                18,
+                20,
+                22,
+                24,
+                26,
+                28,
+                30,
+                32,
+                34,
+                36,
+                38,
+                40,
+                42,
+                44,
+                46,
+                48,
+                50,
+                52,
+                54,
+                56,
+                58,
+                60,
+                62,
+                64,
+                66,
+                68,
+                70,
+                72,
+                74,
+                76,
+                78,
+                80,
+                82,
+                84,
+                86,
+                88,
+                90,
+                92,
+                94,
+                96,
+                98
+              ],
+              "calls": 50,
+              "doc": "Return a + b."
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "rate_limited",
+        "starter": "import functools\nfrom collections import deque\n\ndef rate_limit(limit, window, clock):\n    def decorate(func):\n        recent = deque()\n\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            # TODO: drop timestamps older than the window, block when full\n            return func(*args, **kwargs)\n        return wrapper\n    return decorate\n\n# The driver is done: a fake clock that the loop moves forward.\ndef rate_limited(requests, limit, window):\n    now = 0\n\n    def clock():\n        return now\n\n    @rate_limit(limit, window, clock)\n    def handle(payload):\n        return payload\n\n    out = []\n    for at, payload in requests:\n        now = at\n        out.append(handle(payload))\n    return out\n",
+        "solution": "import functools\nfrom collections import deque\n\ndef rate_limit(limit, window, clock):\n    def decorate(func):\n        recent = deque()\n\n        @functools.wraps(func)\n        def wrapper(*args, **kwargs):\n            now = clock()\n            while recent and recent[0] <= now - window:\n                recent.popleft()\n            if len(recent) >= limit:\n                return 'blocked'\n            recent.append(now)\n            return func(*args, **kwargs)\n        return wrapper\n    return decorate\n\ndef rate_limited(requests, limit, window):\n    now = 0\n\n    def clock():\n        return now\n\n    @rate_limit(limit, window, clock)\n    def handle(payload):\n        return payload\n\n    out = []\n    for at, payload in requests:\n        now = at\n        out.append(handle(payload))\n    return out\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  0,
+                  "a"
+                ],
+                [
+                  1,
+                  "b"
+                ],
+                [
+                  2,
+                  "c"
+                ],
+                [
+                  10,
+                  "d"
+                ]
+              ],
+              2,
+              10
+            ],
+            "expected": [
+              "a",
+              "b",
+              "blocked",
+              "d"
+            ]
+          },
+          {
+            "args": [
+              [],
+              3,
+              5
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [
+                  0,
+                  "x"
+                ],
+                [
+                  0,
+                  "y"
+                ],
+                [
+                  1,
+                  "z"
+                ]
+              ],
+              1,
+              1
+            ],
+            "expected": [
+              "x",
+              "blocked",
+              "z"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  5,
+                  "a"
+                ],
+                [
+                  5,
+                  "b"
+                ],
+                [
+                  5,
+                  "c"
+                ],
+                [
+                  5,
+                  "d"
+                ]
+              ],
+              2,
+              3
+            ],
+            "expected": [
+              "a",
+              "b",
+              "blocked",
+              "blocked"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  "a"
+                ],
+                [
+                  1,
+                  "b"
+                ],
+                [
+                  2,
+                  "c"
+                ]
+              ],
+              1,
+              2
+            ],
+            "expected": [
+              "a",
+              "blocked",
+              "c"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  "é"
+                ],
+                [
+                  100,
+                  "✓"
+                ]
+              ],
+              1,
+              1000
+            ],
+            "expected": [
+              "é",
+              "blocked"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  -5,
+                  "a"
+                ],
+                [
+                  -1,
+                  "b"
+                ]
+              ],
+              1,
+              3
+            ],
+            "expected": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  0
+                ],
+                [
+                  1,
+                  1
+                ],
+                [
+                  2,
+                  2
+                ],
+                [
+                  3,
+                  3
+                ],
+                [
+                  4,
+                  4
+                ],
+                [
+                  5,
+                  5
+                ]
+              ],
+              3,
+              2
+            ],
+            "expected": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  0,
+                  1
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  1,
+                  3
+                ],
+                [
+                  3,
+                  4
+                ]
+              ],
+              2,
+              3
+            ],
+            "expected": [
+              1,
+              2,
+              "blocked",
+              4
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "log = []\n\ndef deco(name):\n    log.append('make ' + name)\n    def wrap(f):\n        log.append('wrap ' + name)\n        return f\n    return wrap\n\n@deco('top')\n@deco('bottom')\ndef f():\n    pass\n\nprint(', '.join(log))",
+        "choices": [
+          "make top, wrap top, make bottom, wrap bottom",
+          "make bottom, wrap bottom, make top, wrap top",
+          "make top, make bottom, wrap bottom, wrap top"
+        ],
+        "answer": 2,
+        "explain": "The decorator expressions `deco('top')` and `deco('bottom')` are evaluated top down first; then the resulting decorators are applied bottom up, nearest to `def` first."
+      },
+      {
+        "code": "def plain(func):\n    def wrapper(*args):\n        return func(*args)\n    return wrapper\n\n@plain\ndef total(xs):\n    \"\"\"Sum xs.\"\"\"\n    return sum(xs)\n\nprint(total.__name__, total.__doc__)",
+        "choices": [
+          "total Sum xs.",
+          "wrapper None",
+          "wrapper Sum xs."
+        ],
+        "answer": 1,
+        "explain": "Without `functools.wraps` the name `total` refers to the inner function, which is called `wrapper` and has no docstring."
+      },
+      {
+        "code": "def shout(func):\n    def wrapper(*args):\n        func(*args).upper()\n    return wrapper\n\n@shout\ndef greet(name):\n    return 'hi ' + name\n\nprint(greet('bo'))",
+        "choices": [
+          "HI BO",
+          "hi bo",
+          "None"
+        ],
+        "answer": 2,
+        "explain": "The wrapper computes the upper-cased string but never returns it, so every call through the wrapper returns None."
+      },
+      {
+        "code": "def repeat(n):\n    def decorate(f):\n        def wrapper():\n            return [f() for _ in range(n)]\n        return wrapper\n    return decorate\n\n@repeat\ndef one():\n    return 1\n\nprint(one.__name__)",
+        "choices": [
+          "one",
+          "wrapper",
+          "decorate"
+        ],
+        "answer": 2,
+        "explain": "`@repeat` without parentheses calls `repeat(one)`, so `n` is the function and the name `one` is bound to the returned `decorate`. Nothing fails until you call it."
+      },
+      {
+        "code": "count = 0\n\ndef register(f):\n    global count\n    count += 1\n    return f\n\n@register\ndef task():\n    return 'done'\n\ntask(); task(); task()\nprint(count)",
+        "choices": [
+          "0",
+          "1",
+          "3",
+          "4"
+        ],
+        "answer": 1,
+        "explain": "The decorator runs once, when `def task` executes. It returns the original function, so the three calls never touch `register` again."
+      }
+    ],
+    "tip": "When you write a decorator in an interview, first say the desugared form out loud (`f = retry(3)(f)`), then write the three levels top down and add `@functools.wraps` before anything else. Mention that you would inject the clock or sleep so the decorator can be unit tested without waiting.",
+    "links": {
+      "problems": [
+        "lru-cache",
+        "token-bucket-limiter",
+        "hit-counter-window"
+      ],
+      "guides": [
+        "api-rate-limits",
+        "testing-your-code",
+        "clean-code"
+      ],
+      "lessons": [
+        "py-functions-closures",
+        "py-oop-dataclasses",
+        "py-errors-exceptions"
+      ]
+    }
+  }
+}

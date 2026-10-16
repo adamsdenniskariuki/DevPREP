@@ -1,0 +1,2464 @@
+{
+  "id": "py-modules-testing",
+  "track": "python",
+  "title": "Modules, packaging and pytest-style tests",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "What `import` really does, how packages and relative imports fit together, why circular imports break, and how to write small, honest pytest-style tests, including live in an interview.",
+  "prerequisites": [
+    "py-errors-exceptions"
+  ],
+  "prerequisiteNotes": "You should be comfortable raising and catching specific exceptions (py-errors-exceptions), because half of testing is checking that the right error is raised. Closures and decorators from py-functions-closures help with fixtures.",
+  "objectives": [
+    "Explain the import system: the `sys.modules` cache, one execution per module, and what `if __name__ == \"__main__\":` guards.",
+    "Lay out a package with `__init__.py`, choose between absolute and relative imports, and diagnose and fix a circular import.",
+    "Predict the `from x import y` binding gotcha and patch a dependency where it is looked up, not where it is defined.",
+    "Write pytest-style tests with plain `assert`, fixtures, `parametrize` and `pytest.raises`, structured as arrange-act-assert.",
+    "Make code testable by injecting time, randomness and I/O instead of monkeypatching globals."
+  ],
+  "concepts": [
+    {
+      "title": "What `import` actually does",
+      "body": "`import shop` first looks up `'shop'` in the dict `sys.modules`. On a hit it just binds the cached module object to a name; nothing runs. On a miss Python finds the source via `sys.path`, creates an empty module object, **stores it in `sys.modules` before running it**, executes the file's top-level code once, then binds the name. So module-level code is a one-time side effect per process, every importer shares the same module object, and mutable module globals act as process-wide singletons. `importlib.reload(mod)` re-runs the body into the same object; names other modules copied out earlier keep their old values.",
+      "code": "import sys\nimport json\nimport json as again       # cache hit: no code runs\nprint(again is json)       # True\nprint('json' in sys.modules)  # True\n\n# module-level code runs once per process:\n# counter.py ->  print('loading'); hits = 0\n# import counter; import counter   -> prints 'loading' once",
+      "diagram": "pyu-import"
+    },
+    {
+      "title": "`__name__` and the main guard",
+      "body": "Every module has a `__name__`: its import name (`'shop.cart'`) when imported, or `'__main__'` when run as a script. `if __name__ == \"__main__\":` keeps CLI or demo code from running when tests import the file. A subtle corollary: if `cart.py` is run as a script **and** imported by name somewhere else, it is executed twice as two distinct modules (`__main__` and `cart`), each with its own globals. Prefer `python -m shop.cart`, which runs the module inside its package so relative imports work.",
+      "code": "def main():\n    print(total([3, 4]))\n\ndef total(prices):\n    return sum(prices)\n\nif __name__ == \"__main__\":   # False when 'import cart'\n    main()"
+    },
+    {
+      "title": "Packages, `__init__.py`, absolute and relative imports",
+      "body": "A **package** is a directory of modules. A regular package has `__init__.py`, which runs the first time any part of the package is imported and is a good place to re-export the public API; without it you get an implicit namespace package. **Absolute** imports (`from shop.pricing import total`) name the full path and work from anywhere. **Relative** imports (`from .pricing import total`, `from .. import util`) resolve against the current module's package, so they only work when the file is imported as part of a package. Running `python shop/cart.py` directly fails with \"attempted relative import with no known parent package\". Tests should use absolute imports of the installed package; the `src/` layout prevents accidentally importing the working copy instead.",
+      "code": "# src/shop/__init__.py\nfrom .cart import Cart            # re-export: 'from shop import Cart'\n__all__ = ['Cart']\n\n# src/shop/cart.py\nfrom .pricing import total        # relative: inside the package\n\n# tests/test_cart.py\nfrom shop.cart import Cart        # absolute: like any user would",
+      "diagram": "pyu-layout"
+    },
+    {
+      "title": "Circular imports: symptoms and fixes",
+      "body": "If `a.py` imports `b` and `b.py` imports `a`, the second import finds `a` already in `sys.modules` but only **partially initialised**: its body stopped at the `import b` line. `from a import helper` then fails with `ImportError: cannot import name 'helper' from partially initialized module 'a' (most likely due to a circular import)`, and `a.helper` at module level gives an `AttributeError`. Fixes, best first: move the shared code into a third module both import; import the module (`import a`) and use `a.helper` only inside functions, so the lookup happens at call time; move the import inside the function that needs it; or for type hints only, guard with `if TYPE_CHECKING:`.",
+      "code": "# a.py\nimport b\ndef helper():\n    return 42\n\n# b.py (broken): runs while a is half-built\nfrom a import helper   # ImportError\n\n# b.py (fixed): look the name up at call time\nimport a\ndef use():\n    return a.helper()",
+      "diagram": "pyu-circular"
+    },
+    {
+      "title": "`from x import y` copies the reference",
+      "body": "`from flags import enabled` creates a new name `enabled` in **your** module, bound to whatever object `flags.enabled` referred to at that moment. If `flags` later rebinds `enabled = True` (or a test patches `flags.enabled`), your name still points at the old object. `import flags` and reading `flags.enabled` does an attribute lookup every time and sees the change. This is why mocks must patch the name **where it is looked up**: if `orders.py` did `from clock import now`, patch `orders.now`, not `clock.now`. Mutating a shared mutable object is visible either way; only rebinding is lost.",
+      "code": "# flags.py:  enabled = False\nfrom flags import enabled\nimport flags\n\nflags.enabled = True\nprint(enabled)         # False: your copy of the old reference\nprint(flags.enabled)   # True: attribute lookup at use time",
+      "diagram": "pyu-from"
+    },
+    {
+      "title": "Virtual environments and `pyproject.toml`",
+      "body": "A **virtual environment** (`python -m venv .venv`) is a private `site-packages` plus a `python` executable, so each project gets its own dependency versions; activating it just puts its `bin`/`Scripts` first on `PATH`. `pyproject.toml` is the single project file: `[build-system]` says how to build, `[project]` holds name, version, `requires-python` and dependency **ranges**, optional extras such as `dev = [\"pytest\"]`, and `[tool.*]` tables configure tools like pytest and ruff. `pip install -e .` installs your package in editable mode so tests import it like a user would. Libraries declare loose ranges; applications also commit a **lock file** with exact pins for reproducible deploys.",
+      "code": "[project]\nname = \"shop\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\ndependencies = [\"requests>=2.31\"]\n\n[project.optional-dependencies]\ndev = [\"pytest>=8\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]"
+    },
+    {
+      "title": "pytest essentials: plain `assert`, `raises`, `approx`",
+      "body": "pytest collects files named `test_*.py` (or `*_test.py`), functions named `test_*`, and `Test*` classes without `__init__`. A test is a function that passes if it returns without raising. Use plain `assert`: pytest rewrites assertions in test modules so a failure prints both sides of the comparison. `with pytest.raises(ValueError, match=\"out of range\"):` passes only if that type (or a subclass) is raised inside the block, and `match` is a regex searched in the message. Compare floats with `pytest.approx`. Useful flags: `-x` stop at first failure, `-k name` select, `--lf` rerun last failures.",
+      "code": "import pytest\nfrom shop.ages import parse_age\n\ndef test_parses_plain_number():\n    assert parse_age('42') == 42\n\ndef test_rejects_out_of_range():\n    with pytest.raises(ValueError, match='out of range'):\n        parse_age('200')\n\ndef test_mean():\n    assert mean([0.1, 0.2]) == pytest.approx(0.15)"
+    },
+    {
+      "title": "Fixtures and parametrize",
+      "body": "A **fixture** is a function decorated with `@pytest.fixture`; a test asks for it by naming it as a parameter, and pytest calls it and passes the result. Code before `yield` is setup, code after is teardown and runs even when the test fails. Fixtures can depend on other fixtures, are cached per **scope** (`function` by default, or `class`, `module`, `package`, `session`), and shared ones live in `conftest.py`. Built-ins worth naming: `tmp_path`, `monkeypatch`, `capsys`. `@pytest.mark.parametrize` turns one test body into a table of cases, each reported separately; give them `ids` so failures read well.",
+      "code": "import pytest\n\n@pytest.fixture\ndef store(tmp_path):\n    s = Store(tmp_path / 'db.json')   # setup\n    yield s\n    s.close()                          # teardown\n\n@pytest.mark.parametrize('title, slug', [\n    ('Hello World', 'hello-world'),\n    ('  Many   Spaces ', 'many-spaces'),\n    ('', ''),\n], ids=['basic', 'spaces', 'empty'])\ndef test_slug(title, slug):\n    assert make_slug(title) == slug",
+      "diagram": "pyu-fixtures"
+    }
+  ],
+  "example": "import pytest\n\ndef split_bill(total_cents, people):\n    if people <= 0:\n        raise ValueError('people must be positive')\n    share, extra = divmod(total_cents, people)\n    return [share + 1] * extra + [share] * (people - extra)\n\n@pytest.mark.parametrize('total, people, expected', [\n    (900, 3, [300, 300, 300]),   # happy path\n    (1000, 3, [334, 333, 333]),  # remainder goes somewhere\n    (0, 2, [0, 0]),              # zero\n    (5, 1, [5]),                 # single\n])\ndef test_split_bill(total, people, expected):\n    result = split_bill(total, people)       # act\n    assert result == expected                # assert\n    assert sum(result) == total              # invariant: no cent lost\n\ndef test_rejects_no_people():\n    with pytest.raises(ValueError, match='positive'):\n        split_bill(100, 0)",
+  "task": "There is no pytest in the browser, so build the heart of one. `REGISTRY` maps names to three small functions. Write `run_cases(func_name, cases)` where each case is a dict with `name` and `args`, plus either `expected` (the call must return a value equal to it) or `raises` (the call must raise an exception whose class, **or any base class**, has that name, like `pytest.raises`). An unexpected exception or a missing exception is a failure, never a crash of the runner. Return `{\"passed\": count, \"failed\": [names in input order]}`, or `None` if `func_name` is not registered.",
+  "starter": "def _parse_age(text):\n    value = int(text)\n    if not 0 <= value <= 150:\n        raise ValueError(f\"age out of range: {value}\")\n    return value\n\n\ndef _slug(title):\n    return \"-\".join(title.lower().split())\n\n\ndef _mean(nums):\n    return sum(nums) / len(nums)\n\n\nREGISTRY = {\"parse_age\": _parse_age, \"slug\": _slug, \"mean\": _mean}\n\n\ndef run_cases(func_name, cases):\n    # Each case: {\"name\", \"args\", \"expected\"} or {\"name\", \"args\", \"raises\"}.\n    # Return {\"passed\": count, \"failed\": [names in input order]}.\n    fn = REGISTRY[func_name]\n    failed = [c[\"name\"] for c in cases if fn(*c[\"args\"]) != c.get(\"expected\")]\n    return {\"passed\": len(cases) - len(failed), \"failed\": failed}\n",
+  "hints": [
+    "Put each call inside `try`/`except Exception as error`, and decide pass or fail separately for the 'returned' and the 'raised' branches; a small helper `_case_passes(fn, case)` keeps the loop a one-line comprehension.",
+    "`type(error).__mro__` lists the class and all its bases, so `ZeroDivisionError` matches `'ArithmeticError'` and `'Exception'` as well, which is exactly how `pytest.raises` treats subclasses."
+  ],
+  "solution": "def _raised_as(error, wanted):\n    return any(cls.__name__ == wanted for cls in type(error).__mro__)\n\n\ndef _case_passes(fn, case):\n    try:\n        result = fn(*case['args'])\n    except Exception as error:\n        return 'raises' in case and _raised_as(error, case['raises'])\n    return 'raises' not in case and result == case['expected']\n\n\ndef run_cases(func_name, cases):\n    fn = REGISTRY.get(func_name)\n    if fn is None:\n        return None\n    failed = [case['name'] for case in cases if not _case_passes(fn, case)]\n    return {'passed': len(cases) - len(failed), 'failed': failed}\n\nThe runner isolates every case: an exception from the code under test is data, not a crash, which is exactly what pytest does per test. Catching `Exception` (not a bare `except`) is right here because this is a boundary that must keep going. Matching on the MRO gives `pytest.raises` semantics, where a subclass counts. Checking `'raises' in case` rather than `case.get('expected')` keeps `expected: None` a legal expectation. One call per case: O(total work of the cases).",
+  "checklist": [
+    "A case that raises when a value was expected fails; it does not crash the runner.",
+    "A `raises` case fails if nothing is raised or a different, unrelated type is raised.",
+    "Subclasses match: `ZeroDivisionError` satisfies `raises: \"ArithmeticError\"`.",
+    "Failed names come back in input order, and an unknown function gives `None`.",
+    "I catch `Exception`, not everything, so Ctrl-C still stops the run."
+  ],
+  "pitfalls": [
+    "Patching `clock.now` when the code under test did `from clock import now`; patch the name where it is looked up (`orders.now`).",
+    "Writing `assert (x == 1, 'message')`: a non-empty tuple is always truthy, so the assert can never fail.",
+    "Putting work at module top level (network calls, reading config, `print`), so merely importing the module in a test has side effects.",
+    "Running a package file directly (`python shop/cart.py`) and hitting 'no known parent package'; use `python -m shop.cart`.",
+    "Fixing a circular import by reordering lines until it happens to work, instead of moving shared code into its own module.",
+    "Tests that depend on each other's order or on shared mutable module state; each test should arrange its own world.",
+    "`pytest.raises` blocks that wrap several statements, so the test passes because the wrong line raised."
+  ],
+  "walkthrough": [
+    {
+      "title": "Make the code testable first",
+      "body": "Code that calls `time.time()`, `random.random()` or opens files deep inside is hard to test: you must monkeypatch a global, and patching the wrong name silently does nothing. Instead take the dependency as a parameter with a production default (`now=None` then `now = time.time()` if missing, `rng=random`, a `clock` or `repo` object). The test passes a fixed value or a fake and asserts on plain return values. Keep monkeypatching for code you do not own. A fake (a tiny working implementation, such as an in-memory repository) usually beats a mock that only records calls, because it tests behaviour rather than the exact call sequence.",
+      "diagram": "pyu-inject"
+    },
+    {
+      "title": "Arrange, act, assert",
+      "body": "Structure every test in three blocks. **Arrange** builds inputs and fakes. **Act** is one call to the thing under test. **Assert** checks the outcome, ideally one behaviour per test, named after it (`test_rejects_age_over_150`). If the arrange block grows, move it into a fixture; if you need several acts, you probably have several tests. Assert on results and observable state, not on private helpers, so refactors do not break the suite."
+    },
+    {
+      "title": "Writing tests live in an interview",
+      "body": "When asked to test your solution, list cases out loud before coding them: one **happy path**, then edges from the input type (empty, single element, duplicates, negatives, zero, unicode, very large), then **error cases** that should raise. Write them as a `parametrize` table or a list of `(args, expected)` tuples with a loop of asserts; that is fast to type and easy to extend. Run them, and when one fails read it as information: is the test wrong or the code? Mention what you would add with more time (property-based tests with Hypothesis, a fake for I/O)."
+    },
+    {
+      "title": "Solve the core task",
+      "body": "Split the work into a predicate and a loop. `_case_passes` runs one case under `try`: on a normal return the case passes only if it did not expect an exception and the result equals `expected`; on an exception it passes only if it expected one whose name is in the MRO. Then `run_cases` is a comprehension that collects failing names and derives the pass count, with an early `None` for an unknown function."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Inject the clock",
+      "prompt": "Write `count_recent(timestamps, window, now=None)` that counts timestamps `t` with `now - window < t <= now`. When `now` is omitted use `time.time()`, but when the caller passes `now`, use it so tests are deterministic. Future timestamps do not count.",
+      "hints": [
+        "The starter's bug is that it ignores the injected `now`; only fall back to `time.time()` when `now is None`.",
+        "The window is half-open: a timestamp exactly `window` seconds old is excluded, one exactly at `now` is included."
+      ],
+      "solution": "import time\n\ndef count_recent(timestamps, window, now=None):\n    if now is None:\n        now = time.time()\n    start = now - window\n    return sum(1 for t in timestamps if start < t <= now)",
+      "checklist": [
+        "I use `is None`, so `now=0` is respected.",
+        "Boundaries: `t == now - window` excluded, `t == now` included.",
+        "Duplicates are each counted."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Fixture setup and teardown order",
+      "prompt": "Simulate pytest fixtures. `fixtures` maps a name to `{\"deps\": [...], \"scope\": \"function\" | \"session\"}`; `tests` is a list of `{\"name\", \"uses\"}`. Write `fixture_log(fixtures, tests)` returning the event log. For each test, set up each used fixture (dependencies first, depth-first in list order, each at most once per test, session fixtures at most once overall), log `run <test>`, then tear down that test's function-scoped fixtures in reverse setup order. After all tests, tear down session fixtures in reverse setup order. Events are `\"setup x\"`, `\"run t\"`, `\"teardown x\"`.",
+      "hints": [
+        "Keep two ordered lists of fixtures already set up: one reset per test, one for the whole session. A recursive `ensure(name)` checks the right list, ensures deps, then logs setup.",
+        "Teardown is the reverse of setup, like nested `with` blocks or the code after `yield`: `reversed(test_ready)` after each test, `reversed(session_ready)` at the end."
+      ],
+      "solution": "def fixture_log(fixtures, tests):\n    log = []\n    session_ready = []\n\n    for test in tests:\n        test_ready = []\n\n        def ensure(name):\n            spec = fixtures[name]\n            ready = session_ready if spec[\"scope\"] == \"session\" else test_ready\n            if name in ready:\n                return\n            for dep in spec[\"deps\"]:\n                ensure(dep)\n            log.append(f\"setup {name}\")\n            ready.append(name)\n\n        for name in test[\"uses\"]:\n            ensure(name)\n        log.append(f\"run {test['name']}\")\n        log.extend(f\"teardown {name}\" for name in reversed(test_ready))\n\n    log.extend(f\"teardown {name}\" for name in reversed(session_ready))\n    return log",
+      "checklist": [
+        "A shared dependency (diamond) is set up once per test.",
+        "A session fixture is set up once and torn down after the last test.",
+        "Teardown order is the exact reverse of setup order.",
+        "No tests gives an empty log."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How would you test a function that calls `datetime.now()` or `random.random()`?",
+      "answer": "Preferably change the design: accept `now` or an `rng` (a `random.Random(seed)` instance) as a parameter with a production default, so the test passes a fixed value and asserts on plain output. If the code cannot change, use `monkeypatch.setattr` on the name in the module under test (for `from datetime import datetime`, patch that module's `datetime`), or a library such as freezegun. For randomness, also assert invariants (output is a permutation, values in range) rather than exact sequences."
+    },
+    {
+      "question": "`monkeypatch`, `unittest.mock.patch` or dependency injection: when do you use which?",
+      "answer": "Injection first for your own code: no patching, explicit seams, and fakes that test behaviour. `monkeypatch` (pytest) is a simple, auto-undone setattr/setenv for globals, env vars and attributes you do not control. `mock.patch` adds `MagicMock` objects that record calls and support `assert_called_once_with`, which is useful at true boundaries (an HTTP client) but couples tests to call details. With either patch tool, target the name where it is looked up: `patch('orders.now')` if orders did `from clock import now`."
+    },
+    {
+      "question": "You get 'cannot import name X from partially initialized module'. How do you fix it properly?",
+      "answer": "It is a cycle: module A imports B while A is still executing, and B wants a name A has not defined yet. The structural fix is to extract what both need into a third module so the dependency graph is acyclic. Short-term options are `import a` plus `a.X` inside functions (lookup deferred to call time), a function-local import, or `if TYPE_CHECKING:` when the import exists only for type hints. Reordering lines works by accident and breaks on the next edit."
+    },
+    {
+      "question": "What belongs in `pyproject.toml` versus a lock file?",
+      "answer": "`pyproject.toml` declares the project: metadata, `requires-python`, direct dependencies as compatible **ranges**, optional extras like `dev`, and tool config. A lock file (from uv, Poetry or pip-tools) records the exact resolved versions of the whole dependency tree, ideally with hashes, so CI and production install the same thing. Libraries publish ranges so they can coexist with other packages; applications commit the lock file."
+    },
+    {
+      "question": "Why does pytest show `assert 3 == 4` with both values when plain Python just says `AssertionError`?",
+      "answer": "pytest rewrites the `assert` statements in test modules (and `conftest.py`) at import time, using an import hook, to capture intermediate values and print a diff on failure. That is why helper modules outside tests need `pytest.register_assert_rewrite` to get the same output, and why you should not run tests with `python -O`, which strips `assert` statements."
+    }
+  ],
+  "takeaways": [
+    "`import` checks `sys.modules` first; a module's body runs once per process and every importer shares the object.",
+    "`from x import y` copies a reference at import time; patch and read names where they are looked up.",
+    "Circular imports see a half-built module; break the cycle by extracting shared code.",
+    "Use absolute imports in tests, relative imports inside packages, and `python -m` to run package modules.",
+    "pytest tests are plain functions with plain `assert`; fixtures handle setup and teardown, `parametrize` handles tables, `pytest.raises` handles errors.",
+    "Inject clocks, randomness and I/O so tests need no patching; arrange, act, assert."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyu-import",
+        "type": "flow",
+        "title": "What happens on import shop",
+        "alt": "Flowchart of an import. The statement checks sys.modules. If the module is cached, the cached object is bound to a name. Otherwise Python finds the spec on sys.path, creates an empty module, stores it in sys.modules, runs the module body once, and binds the name.",
+        "caption": "The cache is checked first and filled before the body runs. That ordering is why a module runs once and why circular imports see a half-built module.",
+        "nodes": [
+          {
+            "id": "imp",
+            "label": "import shop",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "check",
+            "label": "in sys.modules?",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "hit",
+            "label": "cached module",
+            "kind": "good",
+            "col": 2,
+            "row": 1,
+            "sub": "nothing runs"
+          },
+          {
+            "id": "find",
+            "label": "find spec",
+            "kind": "service",
+            "col": 0,
+            "row": 2,
+            "sub": "search sys.path"
+          },
+          {
+            "id": "create",
+            "label": "new module",
+            "kind": "state",
+            "col": 0,
+            "row": 3,
+            "sub": "empty namespace"
+          },
+          {
+            "id": "cache",
+            "label": "cache it first",
+            "kind": "cache",
+            "col": 0,
+            "row": 4,
+            "sub": "sys.modules[name]"
+          },
+          {
+            "id": "run",
+            "label": "run module body",
+            "kind": "worker",
+            "col": 0,
+            "row": 5,
+            "sub": "top to bottom once"
+          },
+          {
+            "id": "bind",
+            "label": "bind name",
+            "kind": "state",
+            "col": 2,
+            "row": 5,
+            "sub": "in importer scope"
+          }
+        ],
+        "edges": [
+          {
+            "from": "imp",
+            "to": "check"
+          },
+          {
+            "from": "check",
+            "to": "hit",
+            "label": "yes"
+          },
+          {
+            "from": "check",
+            "to": "find",
+            "label": "no"
+          },
+          {
+            "from": "find",
+            "to": "create"
+          },
+          {
+            "from": "create",
+            "to": "cache"
+          },
+          {
+            "from": "cache",
+            "to": "run"
+          },
+          {
+            "from": "run",
+            "to": "bind"
+          },
+          {
+            "from": "hit",
+            "to": "bind",
+            "style": "reply"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              7
+            ],
+            "text": "Second and later imports hit the cache: the existing module object is bound to the name and no module code runs."
+          },
+          {
+            "edges": [
+              2,
+              3,
+              4
+            ],
+            "text": "First import: find the source on `sys.path`, create an empty module, and register it in `sys.modules` before running anything."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "Execute the file's top-level code once, then bind the name in the importing module. Errors here remove the half-built entry from the cache."
+          }
+        ]
+      },
+      {
+        "id": "pyu-layout",
+        "type": "flow",
+        "title": "A small src-layout project",
+        "alt": "Project layout diagram. pyproject.toml installs the shop package in editable mode. shop/__init__.py runs first, then shop/cart.py, which imports shop/pricing.py with a relative import. tests/test_cart.py imports shop.cart with an absolute import. Running cart.py directly as a script makes the relative import fail.",
+        "caption": "Inside the package use relative imports; tests and users use absolute imports of the installed package. Run modules with python -m, not by file path.",
+        "nodes": [
+          {
+            "id": "toml",
+            "label": "pyproject.toml",
+            "kind": "storage",
+            "col": 0,
+            "row": 0,
+            "sub": "name, deps, tools"
+          },
+          {
+            "id": "init",
+            "label": "shop/__init__.py",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "runs first"
+          },
+          {
+            "id": "cart",
+            "label": "shop/cart.py",
+            "kind": "service",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "pricing",
+            "label": "shop/pricing.py",
+            "kind": "service",
+            "col": 4,
+            "row": 2
+          },
+          {
+            "id": "test",
+            "label": "test_cart.py",
+            "kind": "client",
+            "col": 2,
+            "row": 4,
+            "sub": "in tests/"
+          },
+          {
+            "id": "script",
+            "label": "python cart.py",
+            "kind": "bad",
+            "col": 4,
+            "row": 4,
+            "sub": "no parent package"
+          }
+        ],
+        "edges": [
+          {
+            "from": "toml",
+            "to": "init",
+            "label": "pip install -e ."
+          },
+          {
+            "from": "init",
+            "to": "cart",
+            "label": "package import"
+          },
+          {
+            "from": "cart",
+            "to": "pricing",
+            "label": "from .pricing"
+          },
+          {
+            "from": "test",
+            "to": "cart",
+            "label": "from shop.cart"
+          },
+          {
+            "from": "script",
+            "to": "cart",
+            "label": "relative import fails",
+            "style": "fail"
+          }
+        ]
+      },
+      {
+        "id": "pyu-circular",
+        "type": "sequence",
+        "title": "A circular import, step by step",
+        "alt": "Sequence diagram with main, a.py, b.py and sys.modules. main imports a; a is registered in sys.modules empty and starts running; its first line imports b; b looks up a in sys.modules and gets the partially initialised module; b's from a import helper fails because helper is not defined yet.",
+        "caption": "b sees a only up to the line that imported b. Any name a defines later does not exist yet.",
+        "actors": [
+          {
+            "id": "main",
+            "label": "main"
+          },
+          {
+            "id": "a",
+            "label": "a.py"
+          },
+          {
+            "id": "b",
+            "label": "b.py"
+          },
+          {
+            "id": "mods",
+            "label": "sys.modules"
+          }
+        ],
+        "messages": [
+          {
+            "from": "main",
+            "to": "a",
+            "label": "import a",
+            "note": "a is not cached, so Python starts loading it."
+          },
+          {
+            "from": "a",
+            "to": "mods",
+            "label": "register empty a",
+            "note": "The module object is cached before its body runs."
+          },
+          {
+            "from": "a",
+            "to": "b",
+            "label": "line 1: import b",
+            "note": "a pauses at this line; helper is not defined yet."
+          },
+          {
+            "from": "b",
+            "to": "mods",
+            "label": "look up 'a'"
+          },
+          {
+            "from": "mods",
+            "to": "b",
+            "label": "partially initialised a",
+            "style": "reply",
+            "note": "No reload loop: the cache returns the half-built module."
+          },
+          {
+            "from": "b",
+            "to": "a",
+            "label": "from a import helper",
+            "style": "fail",
+            "note": "ImportError: cannot import name 'helper' from partially initialized module 'a'."
+          }
+        ]
+      },
+      {
+        "id": "pyu-from",
+        "type": "compare",
+        "title": "from-import versus attribute lookup",
+        "alt": "Comparison. Left: after from flags import enabled, the local name enabled still points at False while flags.enabled was rebound to True. Right: with import flags, the name flags points at the module and the attribute lookup flags.enabled finds True at call time.",
+        "caption": "from-import copies the reference once. Module attribute lookup sees rebinding, which is also why patches must target the importing module.",
+        "before": {
+          "label": "from flags import enabled",
+          "nodes": [
+            {
+              "id": "attr",
+              "label": "flags.enabled",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "local",
+              "label": "your enabled",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "t",
+              "label": "True",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "f",
+              "label": "False",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "stale copy"
+            }
+          ],
+          "edges": [
+            {
+              "from": "attr",
+              "to": "t",
+              "label": "rebound later"
+            },
+            {
+              "from": "local",
+              "to": "f",
+              "label": "bound at import"
+            }
+          ]
+        },
+        "after": {
+          "label": "import flags; flags.enabled",
+          "nodes": [
+            {
+              "id": "name",
+              "label": "name flags",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "mod",
+              "label": "module flags",
+              "kind": "storage",
+              "col": 2,
+              "row": 0,
+              "sub": "shared object"
+            },
+            {
+              "id": "t",
+              "label": "True",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "found at use time"
+            }
+          ],
+          "edges": [
+            {
+              "from": "name",
+              "to": "mod"
+            },
+            {
+              "from": "mod",
+              "to": "t",
+              "label": ".enabled"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyu-fixtures",
+        "type": "sequence",
+        "title": "How pytest runs a yield fixture",
+        "alt": "Sequence diagram with pytest, a store fixture and test_save. pytest runs the fixture up to yield and receives the store, calls test_save with it, gets pass or fail, then resumes the fixture after yield so teardown runs either way.",
+        "caption": "Setup is the code before yield and teardown the code after it. Teardown runs whether the test passed or failed.",
+        "actors": [
+          {
+            "id": "pytest",
+            "label": "pytest"
+          },
+          {
+            "id": "fx",
+            "label": "store fixture"
+          },
+          {
+            "id": "test",
+            "label": "test_save"
+          }
+        ],
+        "messages": [
+          {
+            "from": "pytest",
+            "to": "fx",
+            "label": "run until yield",
+            "note": "Setup: build the object, maybe using tmp_path."
+          },
+          {
+            "from": "fx",
+            "to": "pytest",
+            "label": "yield store",
+            "style": "reply"
+          },
+          {
+            "from": "pytest",
+            "to": "test",
+            "label": "test_save(store=store)",
+            "note": "Matched by parameter name."
+          },
+          {
+            "from": "test",
+            "to": "pytest",
+            "label": "returns or raises",
+            "style": "reply",
+            "note": "Any exception, including a failed assert, marks the test failed."
+          },
+          {
+            "from": "pytest",
+            "to": "fx",
+            "label": "resume after yield",
+            "note": "Teardown runs for passed and failed tests alike."
+          },
+          {
+            "from": "fx",
+            "to": "pytest",
+            "label": "closed",
+            "style": "reply"
+          }
+        ]
+      },
+      {
+        "id": "pyu-inject",
+        "type": "compare",
+        "title": "Hidden clock versus injected clock",
+        "alt": "Comparison. Left: the test calls is_expired, which reaches out to time.time and the real wall clock, so the result is flaky. Right: the test chooses now = 1000 and passes it to is_expired(now), a pure function; in production the caller passes time.time() in.",
+        "caption": "Pass the dependency in. The test controls it directly and production supplies the real one at the edge.",
+        "before": {
+          "label": "Hidden dependency",
+          "nodes": [
+            {
+              "id": "test",
+              "label": "test",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "fn",
+              "label": "is_expired()",
+              "kind": "service",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "clock",
+              "label": "time.time()",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "real clock: flaky"
+            }
+          ],
+          "edges": [
+            {
+              "from": "test",
+              "to": "fn",
+              "label": "calls"
+            },
+            {
+              "from": "fn",
+              "to": "clock",
+              "label": "reaches out"
+            }
+          ]
+        },
+        "after": {
+          "label": "Injected dependency",
+          "nodes": [
+            {
+              "id": "test",
+              "label": "test",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "fake",
+              "label": "now = 1000",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "chosen by test"
+            },
+            {
+              "id": "fn",
+              "label": "is_expired(now)",
+              "kind": "service",
+              "col": 0,
+              "row": 2,
+              "sub": "pure function"
+            },
+            {
+              "id": "real",
+              "label": "time.time()",
+              "kind": "external",
+              "col": 2,
+              "row": 2,
+              "sub": "only at the edge"
+            }
+          ],
+          "edges": [
+            {
+              "from": "fake",
+              "to": "test",
+              "label": "arrange"
+            },
+            {
+              "from": "test",
+              "to": "fn",
+              "label": "act, assert"
+            },
+            {
+              "from": "real",
+              "to": "fn",
+              "label": "prod passes in"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "run_cases",
+        "starter": "def _parse_age(text):\n    value = int(text)\n    if not 0 <= value <= 150:\n        raise ValueError(f\"age out of range: {value}\")\n    return value\n\n\ndef _slug(title):\n    return \"-\".join(title.lower().split())\n\n\ndef _mean(nums):\n    return sum(nums) / len(nums)\n\n\nREGISTRY = {\"parse_age\": _parse_age, \"slug\": _slug, \"mean\": _mean}\n\n\ndef run_cases(func_name, cases):\n    # Each case: {\"name\", \"args\", \"expected\"} or {\"name\", \"args\", \"raises\"}.\n    # Return {\"passed\": count, \"failed\": [names in input order]}.\n    fn = REGISTRY[func_name]\n    failed = [c[\"name\"] for c in cases if fn(*c[\"args\"]) != c.get(\"expected\")]\n    return {\"passed\": len(cases) - len(failed), \"failed\": failed}\n",
+        "solution": "def _parse_age(text):\n    value = int(text)\n    if not 0 <= value <= 150:\n        raise ValueError(f\"age out of range: {value}\")\n    return value\n\n\ndef _slug(title):\n    return \"-\".join(title.lower().split())\n\n\ndef _mean(nums):\n    return sum(nums) / len(nums)\n\n\nREGISTRY = {\"parse_age\": _parse_age, \"slug\": _slug, \"mean\": _mean}\n\n\ndef _raised_as(error, wanted):\n    return any(cls.__name__ == wanted for cls in type(error).__mro__)\n\n\ndef _case_passes(fn, case):\n    try:\n        result = fn(*case[\"args\"])\n    except Exception as error:\n        return \"raises\" in case and _raised_as(error, case[\"raises\"])\n    return \"raises\" not in case and result == case[\"expected\"]\n\n\ndef run_cases(func_name, cases):\n    fn = REGISTRY.get(func_name)\n    if fn is None:\n        return None\n    failed = [case[\"name\"] for case in cases if not _case_passes(fn, case)]\n    return {\"passed\": len(cases) - len(failed), \"failed\": failed}\n",
+        "tests": [
+          {
+            "args": [
+              "slug",
+              [
+                {
+                  "name": "basic",
+                  "args": [
+                    "Hello World"
+                  ],
+                  "expected": "hello-world"
+                },
+                {
+                  "name": "spaces",
+                  "args": [
+                    "  Many   Spaces "
+                  ],
+                  "expected": "many-spaces"
+                },
+                {
+                  "name": "wrong",
+                  "args": [
+                    "A B"
+                  ],
+                  "expected": "a_b"
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 2,
+              "failed": [
+                "wrong"
+              ]
+            }
+          },
+          {
+            "args": [
+              "parse_age",
+              [
+                {
+                  "name": "ok",
+                  "args": [
+                    "42"
+                  ],
+                  "expected": 42
+                },
+                {
+                  "name": "too-old",
+                  "args": [
+                    "200"
+                  ],
+                  "raises": "ValueError"
+                },
+                {
+                  "name": "not-a-number",
+                  "args": [
+                    "abc"
+                  ],
+                  "raises": "ValueError"
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 3,
+              "failed": []
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              "slug",
+              []
+            ],
+            "expected": {
+              "passed": 0,
+              "failed": []
+            }
+          },
+          {
+            "args": [
+              "upper",
+              [
+                {
+                  "name": "x",
+                  "args": [
+                    "a"
+                  ],
+                  "expected": "A"
+                }
+              ]
+            ],
+            "expected": null
+          },
+          {
+            "args": [
+              "mean",
+              [
+                {
+                  "name": "avg",
+                  "args": [
+                    [
+                      1,
+                      2
+                    ]
+                  ],
+                  "expected": 1.5
+                },
+                {
+                  "name": "empty",
+                  "args": [
+                    []
+                  ],
+                  "raises": "ArithmeticError"
+                },
+                {
+                  "name": "empty-wrong-type",
+                  "args": [
+                    []
+                  ],
+                  "raises": "ValueError"
+                },
+                {
+                  "name": "unexpected-error",
+                  "args": [
+                    []
+                  ],
+                  "expected": 0
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 2,
+              "failed": [
+                "empty-wrong-type",
+                "unexpected-error"
+              ]
+            }
+          },
+          {
+            "args": [
+              "parse_age",
+              [
+                {
+                  "name": "should-raise",
+                  "args": [
+                    "30"
+                  ],
+                  "raises": "ValueError"
+                },
+                {
+                  "name": "negative",
+                  "args": [
+                    "-1"
+                  ],
+                  "raises": "Exception"
+                },
+                {
+                  "name": "padded",
+                  "args": [
+                    " 7 "
+                  ],
+                  "expected": 7
+                },
+                {
+                  "name": "edge-150",
+                  "args": [
+                    "150"
+                  ],
+                  "expected": 150
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 3,
+              "failed": [
+                "should-raise"
+              ]
+            }
+          },
+          {
+            "args": [
+              "slug",
+              [
+                {
+                  "name": "unicode",
+                  "args": [
+                    "Café Menu"
+                  ],
+                  "expected": "café-menu"
+                },
+                {
+                  "name": "empty",
+                  "args": [
+                    ""
+                  ],
+                  "expected": ""
+                },
+                {
+                  "name": "dup",
+                  "args": [
+                    "a a"
+                  ],
+                  "expected": "a-a"
+                },
+                {
+                  "name": "dup",
+                  "args": [
+                    "a a"
+                  ],
+                  "expected": "aa"
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 3,
+              "failed": [
+                "dup"
+              ]
+            }
+          },
+          {
+            "args": [
+              "mean",
+              [
+                {
+                  "name": "neg",
+                  "args": [
+                    [
+                      -4,
+                      4,
+                      -6
+                    ]
+                  ],
+                  "expected": -2
+                },
+                {
+                  "name": "wrong-arity",
+                  "args": [
+                    [
+                      1
+                    ],
+                    [
+                      2
+                    ]
+                  ],
+                  "raises": "TypeError"
+                }
+              ]
+            ],
+            "expected": {
+              "passed": 2,
+              "failed": []
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "count_recent",
+        "starter": "import time\n\n\ndef count_recent(timestamps, window, now=None):\n    # Count timestamps t with now - window < t <= now.\n    now = time.time()\n    return sum(1 for t in timestamps if now - window < t <= now)\n",
+        "solution": "import time\n\n\ndef count_recent(timestamps, window, now=None):\n    if now is None:\n        now = time.time()\n    start = now - window\n    return sum(1 for t in timestamps if start < t <= now)\n",
+        "tests": [
+          {
+            "args": [
+              [
+                100,
+                150,
+                190,
+                200
+              ],
+              60,
+              200
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              [
+                5,
+                9
+              ],
+              10,
+              10
+            ],
+            "expected": 2
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              60,
+              200
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                140,
+                141
+              ],
+              60,
+              200
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              [
+                200,
+                201,
+                500
+              ],
+              60,
+              200
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              [
+                7,
+                7,
+                7
+              ],
+              1,
+              7
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              [
+                -5,
+                -1,
+                0
+              ],
+              3,
+              0
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                0,
+                1,
+                2
+              ],
+              0,
+              1
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                0,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                13,
+                14,
+                15,
+                16,
+                17,
+                18,
+                19,
+                20,
+                21,
+                22,
+                23,
+                24,
+                25,
+                26,
+                27,
+                28,
+                29,
+                30,
+                31,
+                32,
+                33,
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55,
+                56,
+                57,
+                58,
+                59,
+                60,
+                61,
+                62,
+                63,
+                64,
+                65,
+                66,
+                67,
+                68,
+                69,
+                70,
+                71,
+                72,
+                73,
+                74,
+                75,
+                76,
+                77,
+                78,
+                79,
+                80,
+                81,
+                82,
+                83,
+                84,
+                85,
+                86,
+                87,
+                88,
+                89,
+                90,
+                91,
+                92,
+                93,
+                94,
+                95,
+                96,
+                97,
+                98,
+                99,
+                100,
+                101,
+                102,
+                103,
+                104,
+                105,
+                106,
+                107,
+                108,
+                109,
+                110,
+                111,
+                112,
+                113,
+                114,
+                115,
+                116,
+                117,
+                118,
+                119,
+                120,
+                121,
+                122,
+                123,
+                124,
+                125,
+                126,
+                127,
+                128,
+                129,
+                130,
+                131,
+                132,
+                133,
+                134,
+                135,
+                136,
+                137,
+                138,
+                139,
+                140,
+                141,
+                142,
+                143,
+                144,
+                145,
+                146,
+                147,
+                148,
+                149,
+                150,
+                151,
+                152,
+                153,
+                154,
+                155,
+                156,
+                157,
+                158,
+                159,
+                160,
+                161,
+                162,
+                163,
+                164,
+                165,
+                166,
+                167,
+                168,
+                169,
+                170,
+                171,
+                172,
+                173,
+                174,
+                175,
+                176,
+                177,
+                178,
+                179,
+                180,
+                181,
+                182,
+                183,
+                184,
+                185,
+                186,
+                187,
+                188,
+                189,
+                190,
+                191,
+                192,
+                193,
+                194,
+                195,
+                196,
+                197,
+                198,
+                199,
+                200,
+                201,
+                202,
+                203,
+                204,
+                205,
+                206,
+                207,
+                208,
+                209,
+                210,
+                211,
+                212,
+                213,
+                214,
+                215,
+                216,
+                217,
+                218,
+                219,
+                220,
+                221,
+                222,
+                223,
+                224,
+                225,
+                226,
+                227,
+                228,
+                229,
+                230,
+                231,
+                232,
+                233,
+                234,
+                235,
+                236,
+                237,
+                238,
+                239,
+                240,
+                241,
+                242,
+                243,
+                244,
+                245,
+                246,
+                247,
+                248,
+                249,
+                250,
+                251,
+                252,
+                253,
+                254,
+                255,
+                256,
+                257,
+                258,
+                259,
+                260,
+                261,
+                262,
+                263,
+                264,
+                265,
+                266,
+                267,
+                268,
+                269,
+                270,
+                271,
+                272,
+                273,
+                274,
+                275,
+                276,
+                277,
+                278,
+                279,
+                280,
+                281,
+                282,
+                283,
+                284,
+                285,
+                286,
+                287,
+                288,
+                289,
+                290,
+                291,
+                292,
+                293,
+                294,
+                295,
+                296,
+                297,
+                298,
+                299,
+                300,
+                301,
+                302,
+                303,
+                304,
+                305,
+                306,
+                307,
+                308,
+                309,
+                310,
+                311,
+                312,
+                313,
+                314,
+                315,
+                316,
+                317,
+                318,
+                319,
+                320,
+                321,
+                322,
+                323,
+                324,
+                325,
+                326,
+                327,
+                328,
+                329,
+                330,
+                331,
+                332,
+                333,
+                334,
+                335,
+                336,
+                337,
+                338,
+                339,
+                340,
+                341,
+                342,
+                343,
+                344,
+                345,
+                346,
+                347,
+                348,
+                349,
+                350,
+                351,
+                352,
+                353,
+                354,
+                355,
+                356,
+                357,
+                358,
+                359,
+                360,
+                361,
+                362,
+                363,
+                364,
+                365,
+                366,
+                367,
+                368,
+                369,
+                370,
+                371,
+                372,
+                373,
+                374,
+                375,
+                376,
+                377,
+                378,
+                379,
+                380,
+                381,
+                382,
+                383,
+                384,
+                385,
+                386,
+                387,
+                388,
+                389,
+                390,
+                391,
+                392,
+                393,
+                394,
+                395,
+                396,
+                397,
+                398,
+                399,
+                400,
+                401,
+                402,
+                403,
+                404,
+                405,
+                406,
+                407,
+                408,
+                409,
+                410,
+                411,
+                412,
+                413,
+                414,
+                415,
+                416,
+                417,
+                418,
+                419,
+                420,
+                421,
+                422,
+                423,
+                424,
+                425,
+                426,
+                427,
+                428,
+                429,
+                430,
+                431,
+                432,
+                433,
+                434,
+                435,
+                436,
+                437,
+                438,
+                439,
+                440,
+                441,
+                442,
+                443,
+                444,
+                445,
+                446,
+                447,
+                448,
+                449,
+                450,
+                451,
+                452,
+                453,
+                454,
+                455,
+                456,
+                457,
+                458,
+                459,
+                460,
+                461,
+                462,
+                463,
+                464,
+                465,
+                466,
+                467,
+                468,
+                469,
+                470,
+                471,
+                472,
+                473,
+                474,
+                475,
+                476,
+                477,
+                478,
+                479,
+                480,
+                481,
+                482,
+                483,
+                484,
+                485,
+                486,
+                487,
+                488,
+                489,
+                490,
+                491,
+                492,
+                493,
+                494,
+                495,
+                496,
+                497,
+                498,
+                499,
+                500,
+                501,
+                502,
+                503,
+                504,
+                505,
+                506,
+                507,
+                508,
+                509,
+                510,
+                511,
+                512,
+                513,
+                514,
+                515,
+                516,
+                517,
+                518,
+                519,
+                520,
+                521,
+                522,
+                523,
+                524,
+                525,
+                526,
+                527,
+                528,
+                529,
+                530,
+                531,
+                532,
+                533,
+                534,
+                535,
+                536,
+                537,
+                538,
+                539,
+                540,
+                541,
+                542,
+                543,
+                544,
+                545,
+                546,
+                547,
+                548,
+                549,
+                550,
+                551,
+                552,
+                553,
+                554,
+                555,
+                556,
+                557,
+                558,
+                559,
+                560,
+                561,
+                562,
+                563,
+                564,
+                565,
+                566,
+                567,
+                568,
+                569,
+                570,
+                571,
+                572,
+                573,
+                574,
+                575,
+                576,
+                577,
+                578,
+                579,
+                580,
+                581,
+                582,
+                583,
+                584,
+                585,
+                586,
+                587,
+                588,
+                589,
+                590,
+                591,
+                592,
+                593,
+                594,
+                595,
+                596,
+                597,
+                598,
+                599,
+                600,
+                601,
+                602,
+                603,
+                604,
+                605,
+                606,
+                607,
+                608,
+                609,
+                610,
+                611,
+                612,
+                613,
+                614,
+                615,
+                616,
+                617,
+                618,
+                619,
+                620,
+                621,
+                622,
+                623,
+                624,
+                625,
+                626,
+                627,
+                628,
+                629,
+                630,
+                631,
+                632,
+                633,
+                634,
+                635,
+                636,
+                637,
+                638,
+                639,
+                640,
+                641,
+                642,
+                643,
+                644,
+                645,
+                646,
+                647,
+                648,
+                649,
+                650,
+                651,
+                652,
+                653,
+                654,
+                655,
+                656,
+                657,
+                658,
+                659,
+                660,
+                661,
+                662,
+                663,
+                664,
+                665,
+                666,
+                667,
+                668,
+                669,
+                670,
+                671,
+                672,
+                673,
+                674,
+                675,
+                676,
+                677,
+                678,
+                679,
+                680,
+                681,
+                682,
+                683,
+                684,
+                685,
+                686,
+                687,
+                688,
+                689,
+                690,
+                691,
+                692,
+                693,
+                694,
+                695,
+                696,
+                697,
+                698,
+                699,
+                700,
+                701,
+                702,
+                703,
+                704,
+                705,
+                706,
+                707,
+                708,
+                709,
+                710,
+                711,
+                712,
+                713,
+                714,
+                715,
+                716,
+                717,
+                718,
+                719,
+                720,
+                721,
+                722,
+                723,
+                724,
+                725,
+                726,
+                727,
+                728,
+                729,
+                730,
+                731,
+                732,
+                733,
+                734,
+                735,
+                736,
+                737,
+                738,
+                739,
+                740,
+                741,
+                742,
+                743,
+                744,
+                745,
+                746,
+                747,
+                748,
+                749,
+                750,
+                751,
+                752,
+                753,
+                754,
+                755,
+                756,
+                757,
+                758,
+                759,
+                760,
+                761,
+                762,
+                763,
+                764,
+                765,
+                766,
+                767,
+                768,
+                769,
+                770,
+                771,
+                772,
+                773,
+                774,
+                775,
+                776,
+                777,
+                778,
+                779,
+                780,
+                781,
+                782,
+                783,
+                784,
+                785,
+                786,
+                787,
+                788,
+                789,
+                790,
+                791,
+                792,
+                793,
+                794,
+                795,
+                796,
+                797,
+                798,
+                799,
+                800,
+                801,
+                802,
+                803,
+                804,
+                805,
+                806,
+                807,
+                808,
+                809,
+                810,
+                811,
+                812,
+                813,
+                814,
+                815,
+                816,
+                817,
+                818,
+                819,
+                820,
+                821,
+                822,
+                823,
+                824,
+                825,
+                826,
+                827,
+                828,
+                829,
+                830,
+                831,
+                832,
+                833,
+                834,
+                835,
+                836,
+                837,
+                838,
+                839,
+                840,
+                841,
+                842,
+                843,
+                844,
+                845,
+                846,
+                847,
+                848,
+                849,
+                850,
+                851,
+                852,
+                853,
+                854,
+                855,
+                856,
+                857,
+                858,
+                859,
+                860,
+                861,
+                862,
+                863,
+                864,
+                865,
+                866,
+                867,
+                868,
+                869,
+                870,
+                871,
+                872,
+                873,
+                874,
+                875,
+                876,
+                877,
+                878,
+                879,
+                880,
+                881,
+                882,
+                883,
+                884,
+                885,
+                886,
+                887,
+                888,
+                889,
+                890,
+                891,
+                892,
+                893,
+                894,
+                895,
+                896,
+                897,
+                898,
+                899,
+                900,
+                901,
+                902,
+                903,
+                904,
+                905,
+                906,
+                907,
+                908,
+                909,
+                910,
+                911,
+                912,
+                913,
+                914,
+                915,
+                916,
+                917,
+                918,
+                919,
+                920,
+                921,
+                922,
+                923,
+                924,
+                925,
+                926,
+                927,
+                928,
+                929,
+                930,
+                931,
+                932,
+                933,
+                934,
+                935,
+                936,
+                937,
+                938,
+                939,
+                940,
+                941,
+                942,
+                943,
+                944,
+                945,
+                946,
+                947,
+                948,
+                949,
+                950,
+                951,
+                952,
+                953,
+                954,
+                955,
+                956,
+                957,
+                958,
+                959,
+                960,
+                961,
+                962,
+                963,
+                964,
+                965,
+                966,
+                967,
+                968,
+                969,
+                970,
+                971,
+                972,
+                973,
+                974,
+                975,
+                976,
+                977,
+                978,
+                979,
+                980,
+                981,
+                982,
+                983,
+                984,
+                985,
+                986,
+                987,
+                988,
+                989,
+                990,
+                991,
+                992,
+                993,
+                994,
+                995,
+                996,
+                997,
+                998,
+                999
+              ],
+              100,
+              999
+            ],
+            "expected": 100
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "fixture_log",
+        "starter": "def fixture_log(fixtures, tests):\n    # fixtures: {name: {\"deps\": [...], \"scope\": \"function\" | \"session\"}}\n    # tests: [{\"name\": ..., \"uses\": [...]}]\n    log = []\n    for test in tests:\n        for name in test[\"uses\"]:\n            log.append(f\"setup {name}\")\n        log.append(f\"run {test['name']}\")\n        for name in test[\"uses\"]:\n            log.append(f\"teardown {name}\")\n    return log\n",
+        "solution": "def fixture_log(fixtures, tests):\n    log = []\n    session_ready = []\n\n    for test in tests:\n        test_ready = []\n\n        def ensure(name):\n            spec = fixtures[name]\n            ready = session_ready if spec[\"scope\"] == \"session\" else test_ready\n            if name in ready:\n                return\n            for dep in spec[\"deps\"]:\n                ensure(dep)\n            log.append(f\"setup {name}\")\n            ready.append(name)\n\n        for name in test[\"uses\"]:\n            ensure(name)\n        log.append(f\"run {test['name']}\")\n        log.extend(f\"teardown {name}\" for name in reversed(test_ready))\n\n    log.extend(f\"teardown {name}\" for name in reversed(session_ready))\n    return log\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "db": {
+                  "deps": [],
+                  "scope": "function"
+                },
+                "user": {
+                  "deps": [
+                    "db"
+                  ],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "test_login",
+                  "uses": [
+                    "user"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "setup db",
+              "setup user",
+              "run test_login",
+              "teardown user",
+              "teardown db"
+            ]
+          },
+          {
+            "args": [
+              {
+                "db": {
+                  "deps": [],
+                  "scope": "session"
+                },
+                "tx": {
+                  "deps": [
+                    "db"
+                  ],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "t1",
+                  "uses": [
+                    "tx"
+                  ]
+                },
+                {
+                  "name": "t2",
+                  "uses": [
+                    "tx"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "setup db",
+              "setup tx",
+              "run t1",
+              "teardown tx",
+              "setup tx",
+              "run t2",
+              "teardown tx",
+              "teardown db"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "db": {
+                  "deps": [],
+                  "scope": "function"
+                }
+              },
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "db": {
+                  "deps": [],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "t",
+                  "uses": []
+                }
+              ]
+            ],
+            "expected": [
+              "run t"
+            ]
+          },
+          {
+            "args": [
+              {
+                "config": {
+                  "deps": [],
+                  "scope": "function"
+                },
+                "db": {
+                  "deps": [
+                    "config"
+                  ],
+                  "scope": "function"
+                },
+                "cache": {
+                  "deps": [
+                    "config"
+                  ],
+                  "scope": "function"
+                },
+                "app": {
+                  "deps": [
+                    "db",
+                    "cache"
+                  ],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "t",
+                  "uses": [
+                    "app"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "setup config",
+              "setup db",
+              "setup cache",
+              "setup app",
+              "run t",
+              "teardown app",
+              "teardown cache",
+              "teardown db",
+              "teardown config"
+            ]
+          },
+          {
+            "args": [
+              {
+                "config": {
+                  "deps": [],
+                  "scope": "function"
+                },
+                "db": {
+                  "deps": [
+                    "config"
+                  ],
+                  "scope": "function"
+                },
+                "cache": {
+                  "deps": [
+                    "config"
+                  ],
+                  "scope": "function"
+                },
+                "app": {
+                  "deps": [
+                    "db",
+                    "cache"
+                  ],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "t",
+                  "uses": [
+                    "db",
+                    "config",
+                    "db"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "setup config",
+              "setup db",
+              "run t",
+              "teardown db",
+              "teardown config"
+            ]
+          },
+          {
+            "args": [
+              {
+                "db": {
+                  "deps": [],
+                  "scope": "session"
+                },
+                "tx": {
+                  "deps": [
+                    "db"
+                  ],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "t1",
+                  "uses": []
+                },
+                {
+                  "name": "t2",
+                  "uses": [
+                    "db"
+                  ]
+                },
+                {
+                  "name": "t3",
+                  "uses": [
+                    "tx",
+                    "db"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "run t1",
+              "setup db",
+              "run t2",
+              "setup tx",
+              "run t3",
+              "teardown tx",
+              "teardown db"
+            ]
+          },
+          {
+            "args": [
+              {
+                "cfg": {
+                  "deps": [],
+                  "scope": "session"
+                },
+                "srv": {
+                  "deps": [
+                    "cfg"
+                  ],
+                  "scope": "session"
+                },
+                "req": {
+                  "deps": [
+                    "srv"
+                  ],
+                  "scope": "function"
+                },
+                "tmp": {
+                  "deps": [],
+                  "scope": "function"
+                }
+              },
+              [
+                {
+                  "name": "a",
+                  "uses": [
+                    "tmp",
+                    "req"
+                  ]
+                },
+                {
+                  "name": "b",
+                  "uses": [
+                    "req"
+                  ]
+                }
+              ]
+            ],
+            "expected": [
+              "setup tmp",
+              "setup cfg",
+              "setup srv",
+              "setup req",
+              "run a",
+              "teardown req",
+              "teardown tmp",
+              "setup req",
+              "run b",
+              "teardown req",
+              "teardown srv",
+              "teardown cfg"
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "import sys, types\nm = types.ModuleType('pyu_config')\nm.retries = 3\nsys.modules['pyu_config'] = m\n\nimport pyu_config\npyu_config.retries = 5\nimport pyu_config as again\nprint(again.retries, again is pyu_config)",
+        "choices": [
+          "3 False",
+          "5 True",
+          "3 True",
+          "5 False"
+        ],
+        "answer": 1,
+        "explain": "The second import is a `sys.modules` cache hit, so it returns the same module object. The change made through the first name is visible through the second: modules are process-wide singletons."
+      },
+      {
+        "code": "import sys, types\nm = types.ModuleType('pyu_flags')\nm.enabled = False\nsys.modules['pyu_flags'] = m\n\nfrom pyu_flags import enabled\nimport pyu_flags\npyu_flags.enabled = True\nprint(enabled, pyu_flags.enabled)",
+        "choices": [
+          "True True",
+          "False True",
+          "False False"
+        ],
+        "answer": 1,
+        "explain": "`from ... import enabled` bound a local name to the object `False` at import time. Rebinding the module attribute later does not touch that local name; only the attribute lookup sees `True`."
+      },
+      {
+        "code": "import sys, types\nclock = types.ModuleType('pyu_clock')\nclock.now = lambda: 100\nsys.modules['pyu_clock'] = clock\n\nfrom pyu_clock import now\n\ndef stamp():\n    return now()\n\nclock.now = lambda: 999   # the 'patch'\nprint(stamp())",
+        "choices": [
+          "999",
+          "100",
+          "AttributeError"
+        ],
+        "answer": 1,
+        "explain": "`stamp` looks up `now` in its own module's globals, which still holds the original function. Patching the source module misses it; patch the name where it is used."
+      },
+      {
+        "code": "try:\n    assert (1 + 1 == 3, 'math is broken')\n    print('passed')\nexcept AssertionError:\n    print('failed')",
+        "choices": [
+          "failed",
+          "passed",
+          "math is broken"
+        ],
+        "answer": 1,
+        "explain": "The parentheses make a two-item tuple, and a non-empty tuple is always truthy, so the assert can never fail. CPython emits a SyntaxWarning for this. Write `assert cond, 'message'`."
+      },
+      {
+        "code": "def check(fn, wanted):\n    try:\n        fn()\n    except wanted:\n        return 'raised'\n    return 'no error'\n\nprint(check(lambda: 1 / 0, ArithmeticError), check(lambda: int('7'), ValueError))",
+        "choices": [
+          "raised raised",
+          "no error no error",
+          "raised no error",
+          "no error raised"
+        ],
+        "answer": 2,
+        "explain": "`ZeroDivisionError` subclasses `ArithmeticError`, so the first matches, like `pytest.raises(ArithmeticError)`. `int('7')` succeeds, so the second reports no error, which `pytest.raises` would turn into a test failure."
+      }
+    ],
+    "tip": "When asked to test your code, say the case list out loud first (happy path, empty, single, duplicates, negatives, error), then type it as a parametrize-style table of (input, expected) rows with one loop of asserts. If the function touches time or randomness, add a parameter for it before writing the test.",
+    "links": {
+      "problems": [
+        "hit-counter-window",
+        "token-bucket-limiter",
+        "build-order"
+      ],
+      "guides": [
+        "testing-your-code",
+        "testing-strategy",
+        "edge-case-checklist",
+        "clean-code"
+      ],
+      "lessons": [
+        "py-errors-exceptions",
+        "py-functions-closures",
+        "py-oop-dataclasses"
+      ]
+    }
+  }
+}

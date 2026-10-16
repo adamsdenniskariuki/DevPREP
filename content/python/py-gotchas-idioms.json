@@ -1,0 +1,1095 @@
+{
+  "id": "py-gotchas-idioms",
+  "track": "python",
+  "title": "Interview gotchas and an idioms cheat sheet",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "The capstone of the Python track: one cheat sheet of the idioms that shorten coding-round answers, a gallery of the gotchas interviewers love, and a mixed review that ties the earlier lessons together.",
+  "prerequisites": [
+    "py-sorting-keys",
+    "py-functions-closures"
+  ],
+  "prerequisiteNotes": "This lesson reviews rather than re-teaches. Most entries point back to py-basics, py-sequences-unpacking, py-collections, py-sorting-keys or py-functions-closures; revisit those if an item here is new to you.",
+  "objectives": [
+    "Reach for the right idiom or container (Counter, defaultdict, deque, heapq, bisect, key tuples) the moment a problem shape appears.",
+    "Predict the output of the classic gotchas: mutable defaults, late binding, aliasing, chained comparisons, and/or operands, float rounding.",
+    "Replace deep recursion with an explicit stack or queue and explain why raising the recursion limit is not a fix.",
+    "Solve counting, grouping and grid-search tasks in a few idiomatic lines with correct tie-breaks."
+  ],
+  "concepts": [
+    {
+      "title": "Cheat sheet: loops, lookups and arithmetic",
+      "body": "Loop with `enumerate(xs)` for index and value, `zip(a, b)` for parallel walks (`strict=True`, 3.10+, raises on unequal lengths) and `itertools.pairwise(xs)` (3.10+) for neighbours. Read with `d.get(k, 0)`; build with `d.setdefault(k, []).append(v)`. Use `any`/`all` with a generator for early-exit checks, `''.join(parts)` instead of `+=` in a loop, `a, b = b, a` to swap, `q, r = divmod(a, b)` for both halves of a division, `-(-a // b)` for ceiling division of ints, and `float('inf')` as a starting minimum. `for ... else` runs the `else` only when the loop did not `break`; the walrus `:=` (3.8+) binds inside a condition. Prefer a comprehension when you build one collection; use a plain loop when there are side effects or several outputs. Details: py-sequences-unpacking and py-collections.",
+      "code": "import itertools, math\nnums = [3, 8, 4, 9]\nprint(max(b - a for a, b in itertools.pairwise(nums)))  # 5\nprint(divmod(17, 5), -(-17 // 5))                      # (3, 2) 4\nprint(any(n > 8 for n in nums), all(n > 2 for n in nums))  # True True\nprint(math.isclose(0.1 + 0.2, 0.3))                     # True\nfor n in nums:\n    if n % 7 == 0:\n        break\nelse:\n    print('no multiple of 7')\nwhile (chunk := nums[:2]):\n    nums = nums[2:]\n    print(chunk)"
+    },
+    {
+      "title": "Cheat sheet: pick the container from the problem shape",
+      "body": "Most coding rounds reduce to a handful of shapes. **Counting**: `Counter(xs)`, then `most_common(k)` (ties keep first-seen order). **Grouping**: `defaultdict(list)` or `setdefault`. **FIFO / BFS**: `deque` with `append` and `popleft`, both O(1). **Top k**: `heapq.nlargest(k, xs, key=...)` in O(n log k). **Search a sorted list**: `bisect_left` / `bisect_right` in O(log n). **Custom order**: `sorted(xs, key=lambda x: (-x.score, x.name))`, using a negated number for descending on one field. Membership tests belong in a `set`, not a list. Details: py-collections and py-sorting-keys.",
+      "code": "from collections import Counter, defaultdict, deque\nimport heapq, bisect\nwords = ['ox', 'bee', 'ox', 'cat', 'bee', 'ox']\nprint(Counter(words).most_common(2))     # [('ox', 3), ('bee', 2)]\nby_len = defaultdict(list)\nfor w in words:\n    by_len[len(w)].append(w)\nprint(dict(by_len))                      # {2: ['ox', 'ox', 'ox'], 3: ['bee', 'cat', 'bee']}\nprint(heapq.nlargest(2, [5, 1, 9, 7]))   # [9, 7]\nprint(bisect.bisect_left([1, 3, 3, 8], 3))  # 1",
+      "diagram": "pyz-picker"
+    },
+    {
+      "title": "Recursion depth: prefer iteration",
+      "body": "CPython caps Python-level recursion (the default limit is 1000; check with `sys.getrecursionlimit()`) and raises `RecursionError` beyond it. A DFS over a 100 x 100 grid or a 5,000-node linked chain can blow that limit. `sys.setrecursionlimit(10**6)` only moves the ceiling: each frame still costs memory, and very deep recursion can still exhaust the underlying C stack and crash the process instead of raising. In an interview, write the DFS with an explicit list as a stack (or BFS with a deque), or say aloud that the recursive version is limited by depth and offer the iterative one. `functools.cache` on a deep recursive DP has the same depth problem; a bottom-up table avoids it.",
+      "code": "import sys\nprint(sys.getrecursionlimit())  # 1000 by default in CPython\n\ndef count_reachable(graph, start):\n    stack, seen = [start], {start}\n    while stack:\n        node = stack.pop()\n        for nxt in graph.get(node, []):\n            if nxt not in seen:\n                seen.add(nxt)\n                stack.append(nxt)\n    return len(seen)\n\nchain = {i: [i + 1] for i in range(10_000)}\nprint(count_reachable(chain, 0))  # 10001, no recursion"
+    },
+    {
+      "title": "Gotcha gallery: names, mutation and copies",
+      "body": "**Mutable defaults**: `def f(x, acc=[])` shares one list across calls because defaults are evaluated once; use `acc=None` (py-functions-closures). **Late binding**: closures look a variable up when called, so `[lambda: i for i in range(3)]` all return 2. **Shallow copies**: `xs.copy()`, `list(xs)`, `xs[:]` and `dict(d)` copy the outer container only; nested lists are still shared (`copy.deepcopy` copies all levels). **`[[0] * n] * m`** repeats one row object m times, so writing one cell changes a whole column; build rows with a comprehension. **Mutating while iterating**: removing from a list you are looping over skips the element after each removal, and changing a dict's size during iteration raises `RuntimeError`; loop over a copy or build a new collection (py-basics, py-sequences-unpacking).",
+      "code": "grid = [[0] * 3] * 2\ngrid[0][0] = 9\nprint(grid)          # [[9, 0, 0], [9, 0, 0]]: one row, two references\ngrid = [[0] * 3 for _ in range(2)]\ngrid[0][0] = 9\nprint(grid)          # [[9, 0, 0], [0, 0, 0]]\n\nnums = [1, 2, 2, 3]\nnums = [n for n in nums if n != 2]  # filter into a new list\nprint(nums)          # [1, 3]",
+      "diagram": "pyz-alias"
+    },
+    {
+      "title": "Gotcha gallery: operators and values",
+      "body": "**`is` vs `==`**: `is` checks identity. Small ints and some strings may be cached or interned, but that is a CPython implementation detail; use `==` for values and `is` only for `None` and sentinels (`x is 5` even triggers a `SyntaxWarning`, 3.8+). **Division**: `/` always returns a float, `//` floors toward negative infinity, and `0.1 + 0.2 != 0.3`; compare floats with `math.isclose`. `round` uses banker's rounding, so `round(2.5) == 2`. **Chained comparisons**: `1 < x < 3` means `1 < x and x < 3` with `x` evaluated once, so `a == b == c` is `a == b and b == c`, not `(a == b) == c`. **`and`/`or` return an operand**, not a bool: `name or 'anon'`. **`list.sort()` returns None**; use `sorted()` for a new list. **Dicts keep insertion order** (a language guarantee since 3.7); sets do not.",
+      "code": "print(0 == 0 == 1, (0 == 0) == 1)  # False True\nprint([] or 'empty', 3 and 0)       # empty 0\nprint(round(2.5), round(3.5))       # 2 4\nprint(-7 // 2, int(-7 / 2))         # -4 -3\nxs = [3, 1, 2]\nprint(xs.sort(), xs)                # None [1, 2, 3]"
+    }
+  ],
+  "example": "from collections import Counter\n\ndef first_unique(text):\n    counts = Counter(text)\n    return next((i for i, ch in enumerate(text) if counts[ch] == 1), -1)\n\nprint(first_unique('swiss'))  # 1 ('w')\nprint(first_unique('aabb'))   # -1\n# Counter, enumerate and next(generator, default): three idioms, two lines.",
+  "task": "Write `rank_tags(tags, k)` for a list of raw tag strings from a blogging tool. Normalise each tag by stripping surrounding whitespace and lower-casing it, and ignore tags that become empty. Return the `k` most frequent tags as a list of `[tag, count]` pairs, ordered by count (highest first) and then alphabetically for ties. If there are fewer than `k` distinct tags, return them all; `k` may be 0.",
+  "starter": "def rank_tags(tags, k):\n    # Normalise, count, sort by (count desc, tag asc), keep k.\n    ...",
+  "hints": [
+    "A generator expression inside `Counter(...)` normalises and counts in one pass; `counts.pop('', None)` drops the blank tag without raising if it is absent.",
+    "Sort `counts.items()` with `key=lambda item: (-item[1], item[0])`; the negated count gives descending order while the tag stays ascending. Slice `[:k]` handles both k = 0 and k larger than the list."
+  ],
+  "solution": "from collections import Counter\n\ndef rank_tags(tags, k):\n    counts = Counter(tag.strip().lower() for tag in tags)\n    counts.pop('', None)\n    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))\n    return [[tag, n] for tag, n in ranked[:k]]\n\nCounting is O(n) and sorting the d distinct tags is O(d log d). `Counter.most_common(k)` is tempting but breaks ties by first appearance, not alphabetically, so the explicit key tuple is what makes the answer correct. If d is huge and k small, `heapq.nsmallest(k, counts.items(), key=lambda item: (-item[1], item[0]))` gives the same result in O(d log k).",
+  "checklist": [
+    "I normalise before counting, so 'Py', 'py ' and 'PY' are one tag.",
+    "Blank tags are dropped, not counted as ''.",
+    "Ties are broken alphabetically with a key tuple, not left to `most_common`.",
+    "k = 0 and k larger than the number of tags both work through slicing."
+  ],
+  "pitfalls": [
+    "Relying on `Counter.most_common` for a tie-break it does not provide.",
+    "Using `reverse=True` on the whole key tuple, which also reverses the alphabetical tie-break.",
+    "Building a grid with `[[0] * n] * m` and wondering why a whole column changes.",
+    "Using `list.pop(0)` as a queue in BFS: each pop shifts every remaining element.",
+    "Raising `sys.setrecursionlimit` instead of writing an iterative traversal.",
+    "Writing `x == a or b` when you mean `x in (a, b)`: the first is `(x == a) or b`, which is truthy whenever b is."
+  ],
+  "walkthrough": [
+    {
+      "title": "Late binding, step by step",
+      "body": "A closure stores a reference to the enclosing variable, not its value at creation time. After the loop finishes, `i` is 2, so every lambda returns 2 when called. Bind the current value with a default argument (`lambda i=i: i`), which is evaluated at definition time, or use `functools.partial`. The same bug appears with callbacks created in a loop.",
+      "diagram": "pyz-late"
+    },
+    {
+      "title": "Solve the core task: count, then sort by a key tuple",
+      "body": "Say the plan in one sentence: \"normalise and count with a Counter, drop blanks, sort items by `(-count, tag)`, slice k.\" Each clause maps to one line. Then test the edges aloud: an empty list, all-blank tags, a tie, and k larger than the number of distinct tags. The key tuple is the part interviewers probe, so explain why `most_common` alone would be wrong."
+    },
+    {
+      "title": "Grid BFS with a deque",
+      "body": "Shortest path in steps on an unweighted grid is BFS. Seed a `deque` with the start and distance 0, and mark it seen. Pop from the left, return if it is the target, otherwise push every in-bounds, open, unseen neighbour with distance + 1, marking it seen **when it is pushed** so no cell enters the queue twice. Chained comparisons (`0 <= nr < rows`) keep the bounds check readable. An empty queue means the target is unreachable.",
+      "diagram": "pyz-bfs"
+    },
+    {
+      "title": "Why a list is the wrong queue",
+      "body": "`list.pop(0)` must shift every remaining element one slot left, so n pops cost about n²/2 moves. `deque.popleft()` is O(1). For a few dozen items nobody notices; for a 300 x 300 grid BFS the list version does billions of moves. Use `deque` for any FIFO, and say why.",
+      "diagram": "pyz-cost"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Bundle equivalent codes",
+      "prompt": "Write `bundle_equivalent(codes)`. Two codes are equivalent when they contain exactly the same characters with the same counts, ignoring case. Return a list of groups: groups appear in the order their first member appears, and each group keeps its members in input order.",
+      "hints": [
+        "`''.join(sorted(code.lower()))` is a signature that equivalent codes share.",
+        "A plain dict keeps insertion order, so `groups.setdefault(signature, []).append(code)` then `list(groups.values())` gives the required order."
+      ],
+      "solution": "def bundle_equivalent(codes):\n    groups = {}\n    for code in codes:\n        signature = ''.join(sorted(code.lower()))\n        groups.setdefault(signature, []).append(code)\n    return list(groups.values())",
+      "checklist": [
+        "Case is ignored but the original spelling is returned.",
+        "Character counts matter: 'aab' and 'abb' differ.",
+        "Group order follows first appearance."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Steps to the nearest exit",
+      "prompt": "Write `steps_to_exit(grid)` for a list of equal-length strings. 'S' is the start, 'E' marks an exit (there may be several), '#' is a wall and '.' is open floor. Moving one cell up, down, left or right costs one step. Return the fewest steps from S to any exit, or -1 if no exit is reachable, there is no S, or the grid is empty.",
+      "hints": [
+        "BFS visits cells in order of distance, so the first exit you pop is the nearest.",
+        "Use `collections.deque`, store `(cell, dist)` pairs, and mark cells seen when you enqueue them."
+      ],
+      "solution": "from collections import deque\n\ndef steps_to_exit(grid):\n    start = next(((r, c) for r, row in enumerate(grid)\n                  for c, ch in enumerate(row) if ch == 'S'), None)\n    if start is None:\n        return -1\n    rows, cols = len(grid), len(grid[0])\n    queue = deque([(start, 0)])\n    seen = {start}\n    while queue:\n        (r, c), dist = queue.popleft()\n        if grid[r][c] == 'E':\n            return dist\n        for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):\n            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != '#' and (nr, nc) not in seen:\n                seen.add((nr, nc))\n                queue.append(((nr, nc), dist + 1))\n    return -1",
+      "checklist": [
+        "I use deque.popleft(), not list.pop(0).",
+        "Cells are marked seen when enqueued.",
+        "An empty grid, a missing S and an unreachable exit all return -1."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Your recursive DFS fails on a large input. Why not just call `sys.setrecursionlimit`?",
+      "answer": "The limit protects the process. Raising it lets Python frames pile up until the C stack or memory runs out, which can crash the interpreter instead of raising a catchable `RecursionError`. The robust fix is an explicit stack (list with append/pop) or BFS with a deque, which handles any depth in heap memory."
+    },
+    {
+      "question": "When would you use `Counter.most_common(k)`, `heapq.nlargest` or `sorted` for a top-k answer?",
+      "answer": "`most_common(k)` is the shortest when ties may be in any order (it keeps first-seen order for equal counts). `heapq.nlargest`/`nsmallest` with a key is O(n log k) and accepts a tie-breaking key tuple. `sorted` with a key tuple is O(n log n) and the clearest when you need every item ordered or n is small."
+    },
+    {
+      "question": "Can you rely on dict order in an answer?",
+      "answer": "Yes. Since Python 3.7 the language guarantees that dicts iterate in insertion order, so grouping into a dict and returning `list(d.values())` gives first-appearance order. Sets carry no order guarantee, so sort them before returning or comparing output."
+    },
+    {
+      "question": "Why does `a == b == c` sometimes surprise people?",
+      "answer": "Python chains comparisons: it means `a == b and b == c`, evaluating b once. Readers coming from C expect `(a == b) == c`, which compares a bool with c. So `0 == 0 == 1` is False, while `(0 == 0) == 1` is True because True equals 1."
+    }
+  ],
+  "takeaways": [
+    "Name the shape first: count, group, FIFO, top k, sorted search or custom order; each has a one-line idiom.",
+    "Defaults are evaluated once and closures bind late; both bite in loops.",
+    "Copies are shallow and `[[x] * n] * m` aliases rows; build nested lists with a comprehension.",
+    "Chained comparisons, and/or operands, `sort()` returning None and float rounding are the favourite predict-the-output traps.",
+    "Prefer iteration over deep recursion; raising the recursion limit is not a fix."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyz-picker",
+        "type": "flow",
+        "title": "Which tool for this problem shape?",
+        "alt": "Decision diagram. From the question 'Problem shape?' six branches lead to a tool: counting leads to Counter, grouping by key to defaultdict(list) or setdefault, FIFO or BFS to deque, the k best items to heapq, searching a sorted list to bisect, and a custom order to sorted with a key tuple.",
+        "caption": "Recognise the shape, then the idiom is one line. Say the choice and its cost out loud.",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "Problem shape?",
+            "kind": "decision",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "counter",
+            "label": "Counter",
+            "kind": "good",
+            "col": 2,
+            "row": 0,
+            "sub": "most_common(k)"
+          },
+          {
+            "id": "group",
+            "label": "defaultdict",
+            "kind": "good",
+            "col": 2,
+            "row": 1,
+            "sub": "list / setdefault"
+          },
+          {
+            "id": "deque",
+            "label": "deque",
+            "kind": "good",
+            "col": 2,
+            "row": 2,
+            "sub": "popleft() is O(1)"
+          },
+          {
+            "id": "heap",
+            "label": "heapq",
+            "kind": "good",
+            "col": 2,
+            "row": 3,
+            "sub": "nlargest: n log k"
+          },
+          {
+            "id": "bisect",
+            "label": "bisect",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "O(log n) search"
+          },
+          {
+            "id": "sorted",
+            "label": "sorted(key=...)",
+            "kind": "good",
+            "col": 2,
+            "row": 5,
+            "sub": "key=(-n, name)"
+          }
+        ],
+        "edges": [
+          {
+            "from": "q",
+            "to": "counter",
+            "label": "count things"
+          },
+          {
+            "from": "q",
+            "to": "group",
+            "label": "group by key"
+          },
+          {
+            "from": "q",
+            "to": "deque",
+            "label": "FIFO / BFS"
+          },
+          {
+            "from": "q",
+            "to": "heap",
+            "label": "k best items"
+          },
+          {
+            "from": "q",
+            "to": "bisect",
+            "label": "search sorted"
+          },
+          {
+            "from": "q",
+            "to": "sorted",
+            "label": "custom order"
+          }
+        ]
+      },
+      {
+        "id": "pyz-alias",
+        "type": "compare",
+        "title": "Repeated rows versus a comprehension",
+        "alt": "Side-by-side comparison. On the left, [[0] * 3] * 3 gives a grid whose three slots all point at one shared row list. On the right, a list comprehension gives three slots pointing at three separate row lists.",
+        "caption": "Multiplying a list repeats references. Build each row in a comprehension so every row is its own object.",
+        "before": {
+          "label": "[[0] * 3] * 3: one shared row",
+          "nodes": [
+            {
+              "id": "g0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "g1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "g2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "row",
+              "label": "[0, 0, 0]",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "one list object"
+            }
+          ],
+          "edges": [
+            {
+              "from": "g0",
+              "to": "row"
+            },
+            {
+              "from": "g1",
+              "to": "row"
+            },
+            {
+              "from": "g2",
+              "to": "row"
+            }
+          ]
+        },
+        "after": {
+          "label": "[[0] * 3 for _ in range(3)]",
+          "nodes": [
+            {
+              "id": "g0",
+              "label": "grid[0]",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "g1",
+              "label": "grid[1]",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "g2",
+              "label": "grid[2]",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "r0",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "r1",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 1
+            },
+            {
+              "id": "r2",
+              "label": "[0, 0, 0]",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "g0",
+              "to": "r0"
+            },
+            {
+              "from": "g1",
+              "to": "r1"
+            },
+            {
+              "from": "g2",
+              "to": "r2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyz-late",
+        "type": "sequence",
+        "title": "Why every lambda returns the last i",
+        "alt": "Sequence diagram with three actors: the for loop, a lambda created in the loop, and the enclosing scope that holds i. The loop creates the lambda and then moves i to 0, 1 and 2. Later the lambda is called, looks up i in the scope and receives 2. The fix binds i as a default argument at definition time.",
+        "caption": "Closures look variables up at call time. A default argument freezes the value at definition time.",
+        "actors": [
+          {
+            "id": "loop",
+            "label": "for loop"
+          },
+          {
+            "id": "fn",
+            "label": "lambda: i"
+          },
+          {
+            "id": "scope",
+            "label": "scope holding i"
+          }
+        ],
+        "messages": [
+          {
+            "from": "loop",
+            "to": "fn",
+            "label": "create lambda (each pass)",
+            "note": "The lambda stores a reference to the variable i, not its current value."
+          },
+          {
+            "from": "loop",
+            "to": "scope",
+            "label": "i = 0, then 1, then 2"
+          },
+          {
+            "from": "fn",
+            "to": "scope",
+            "label": "called later: look up i",
+            "note": "The loop has finished, so i is 2."
+          },
+          {
+            "from": "scope",
+            "to": "fn",
+            "label": "2",
+            "style": "reply"
+          },
+          {
+            "from": "loop",
+            "to": "fn",
+            "label": "fix: lambda i=i: i",
+            "note": "The default is evaluated at definition time, so each lambda keeps its own value."
+          }
+        ]
+      },
+      {
+        "id": "pyz-bfs",
+        "type": "flow",
+        "title": "Grid BFS with a deque",
+        "alt": "Flow diagram of breadth-first search. A deque seeded with the start feeds popleft. The popped cell is checked: if it is the exit, return its distance; otherwise its four neighbours are checked for being in bounds, open and unseen, and valid ones are marked seen and appended back to the deque with distance plus one. When the deque is empty the answer is -1.",
+        "caption": "FIFO order means cells come out nearest first, so the first exit popped is the shortest answer.",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "deque([start])",
+            "kind": "queue",
+            "col": 0,
+            "row": 1,
+            "sub": "seen = {start}"
+          },
+          {
+            "id": "pop",
+            "label": "popleft()",
+            "kind": "worker",
+            "col": 1,
+            "row": 1,
+            "sub": "nearest first"
+          },
+          {
+            "id": "isE",
+            "label": "cell == 'E'?",
+            "kind": "decision",
+            "col": 2,
+            "row": 1
+          },
+          {
+            "id": "found",
+            "label": "return dist",
+            "kind": "good",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "nbrs",
+            "label": "4 neighbours",
+            "kind": "service",
+            "col": 3,
+            "row": 1,
+            "sub": "up/down/left/right"
+          },
+          {
+            "id": "ok",
+            "label": "valid & unseen?",
+            "kind": "decision",
+            "col": 3,
+            "row": 2,
+            "sub": "in bounds, not '#'"
+          },
+          {
+            "id": "push",
+            "label": "mark + append",
+            "kind": "state",
+            "col": 1,
+            "row": 2,
+            "sub": "dist + 1"
+          },
+          {
+            "id": "none",
+            "label": "queue empty",
+            "kind": "bad",
+            "col": 0,
+            "row": 3,
+            "sub": "return -1"
+          }
+        ],
+        "edges": [
+          {
+            "from": "q",
+            "to": "pop",
+            "label": "next cell"
+          },
+          {
+            "from": "pop",
+            "to": "isE"
+          },
+          {
+            "from": "isE",
+            "to": "found",
+            "label": "yes"
+          },
+          {
+            "from": "isE",
+            "to": "nbrs",
+            "label": "no"
+          },
+          {
+            "from": "nbrs",
+            "to": "ok"
+          },
+          {
+            "from": "ok",
+            "to": "push",
+            "label": "yes"
+          },
+          {
+            "from": "push",
+            "to": "q",
+            "label": "enqueue"
+          },
+          {
+            "from": "q",
+            "to": "none",
+            "label": "empty"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Seed the deque with `(start, 0)` and mark start seen. `popleft()` takes the oldest entry, which is always one of the nearest unexplored cells."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "If the popped cell is an exit, its distance is the answer: BFS pops cells in non-decreasing distance order."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "Otherwise generate the four neighbours and filter with `0 <= nr < rows and 0 <= nc < cols`, not a wall, not seen."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "Mark each valid neighbour seen when you append it with `dist + 1`, so no cell is queued twice."
+          },
+          {
+            "edges": [
+              7
+            ],
+            "text": "If the deque empties without reaching an exit, no exit is reachable: return -1."
+          }
+        ]
+      },
+      {
+        "id": "pyz-cost",
+        "type": "bars",
+        "title": "Draining a 10,000-item queue",
+        "alt": "Bar chart of approximate element operations to remove 10,000 items from the front one at a time. list.pop(0) needs about 50 million element moves (n squared over 2); deque.popleft needs about 0.01 million operations (n).",
+        "caption": "Big-O estimates, not timings: a list shifts everything left on every front pop; a deque does constant work.",
+        "unit": "M operations, n=10k pops",
+        "bars": [
+          {
+            "label": "list.pop(0): n²/2",
+            "value": 50
+          },
+          {
+            "label": "deque.popleft(): n",
+            "value": 0.01,
+            "highlight": true
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "rank_tags",
+        "starter": "def rank_tags(tags, k):\n    # Normalise (strip + lower), drop blanks, count,\n    # then order by count desc, tag asc; keep the first k as [tag, count].\n    return sorted(set(tags))[:k]\n",
+        "solution": "from collections import Counter\n\n\ndef rank_tags(tags, k):\n    counts = Counter(tag.strip().lower() for tag in tags)\n    counts.pop('', None)\n    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))\n    return [[tag, n] for tag, n in ranked[:k]]\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "py",
+                "Go",
+                "py ",
+                "rust",
+                "go",
+                "PY"
+              ],
+              2
+            ],
+            "expected": [
+              [
+                "py",
+                3
+              ],
+              [
+                "go",
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              [],
+              3
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                "b",
+                "a",
+                "c",
+                "a",
+                "b"
+              ],
+              3
+            ],
+            "expected": [
+              [
+                "a",
+                2
+              ],
+              [
+                "b",
+                2
+              ],
+              [
+                "c",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "x"
+              ],
+              5
+            ],
+            "expected": [
+              [
+                "x",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "  ",
+                "",
+                "ok"
+              ],
+              2
+            ],
+            "expected": [
+              [
+                "ok",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "a",
+                "b"
+              ],
+              0
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "Ünï",
+                "ünï ",
+                "abc"
+              ],
+              1
+            ],
+            "expected": [
+              [
+                "ünï",
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "A",
+                "a",
+                " A "
+              ],
+              1
+            ],
+            "expected": [
+              [
+                "a",
+                3
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "zeta",
+                "alpha",
+                "zeta",
+                "alpha",
+                "mid"
+              ],
+              2
+            ],
+            "expected": [
+              [
+                "alpha",
+                2
+              ],
+              [
+                "zeta",
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "bundle_equivalent",
+        "starter": "def bundle_equivalent(codes):\n    # Group codes with the same letters (any order, any case).\n    return [codes]\n",
+        "solution": "def bundle_equivalent(codes):\n    groups = {}\n    for code in codes:\n        signature = ''.join(sorted(code.lower()))\n        groups.setdefault(signature, []).append(code)\n    return list(groups.values())\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "Tea",
+                "eat",
+                "Ate",
+                "bat",
+                "tab",
+                "x"
+              ]
+            ],
+            "expected": [
+              [
+                "Tea",
+                "eat",
+                "Ate"
+              ],
+              [
+                "bat",
+                "tab"
+              ],
+              [
+                "x"
+              ]
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                "a"
+              ]
+            ],
+            "expected": [
+              [
+                "a"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "ab",
+                "AB",
+                "ba"
+              ]
+            ],
+            "expected": [
+              [
+                "ab",
+                "AB",
+                "ba"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "aab",
+                "abb"
+              ]
+            ],
+            "expected": [
+              [
+                "aab"
+              ],
+              [
+                "abb"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "Éa",
+                "aé",
+                "ea"
+              ]
+            ],
+            "expected": [
+              [
+                "Éa",
+                "aé"
+              ],
+              [
+                "ea"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "",
+                ""
+              ]
+            ],
+            "expected": [
+              [
+                "",
+                ""
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "z1",
+                "1z",
+                "z2"
+              ]
+            ],
+            "expected": [
+              [
+                "z1",
+                "1z"
+              ],
+              [
+                "z2"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "steps_to_exit",
+        "starter": "def steps_to_exit(grid):\n    # BFS from 'S' with collections.deque; '#' is a wall.\n    return -1\n",
+        "solution": "from collections import deque\n\n\ndef steps_to_exit(grid):\n    start = next(((r, c) for r, row in enumerate(grid)\n                  for c, ch in enumerate(row) if ch == 'S'), None)\n    if start is None:\n        return -1\n    rows, cols = len(grid), len(grid[0])\n    queue = deque([(start, 0)])\n    seen = {start}\n    while queue:\n        (r, c), dist = queue.popleft()\n        if grid[r][c] == 'E':\n            return dist\n        for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):\n            if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] != '#' and (nr, nc) not in seen:\n                seen.add((nr, nc))\n                queue.append(((nr, nc), dist + 1))\n    return -1\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "S.#",
+                "..#",
+                "#.E"
+              ]
+            ],
+            "expected": 4
+          },
+          {
+            "args": [
+              [
+                "S#E"
+              ]
+            ],
+            "expected": -1
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": -1
+          },
+          {
+            "args": [
+              [
+                "SE"
+              ]
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              [
+                "E..S"
+              ]
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              [
+                "S.."
+              ]
+            ],
+            "expected": -1
+          },
+          {
+            "args": [
+              [
+                "S....",
+                "####.",
+                "E...."
+              ]
+            ],
+            "expected": 10
+          },
+          {
+            "args": [
+              [
+                "E.S..E"
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                "S.",
+                ".E"
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                "...",
+                ".E."
+              ]
+            ],
+            "expected": -1
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "def add(item, bucket=[]):\n    bucket.append(item)\n    return bucket\n\nadd(1)\nprint(add(2))",
+        "choices": [
+          "[2]",
+          "[1, 2]",
+          "[1]"
+        ],
+        "answer": 1,
+        "explain": "The default list is created once, when `def` runs, and every call without `bucket` appends to that same list. Use `bucket=None` and create the list inside."
+      },
+      {
+        "code": "fs = [lambda: i for i in range(3)]\nprint([f() for f in fs])",
+        "choices": [
+          "[0, 1, 2]",
+          "[2, 2, 2]",
+          "[3, 3, 3]"
+        ],
+        "answer": 1,
+        "explain": "Each lambda looks up `i` when called, after the comprehension finished with `i` at 2. `lambda i=i: i` would freeze each value."
+      },
+      {
+        "code": "g = [[0] * 2] * 2\ng[0][0] = 9\nprint(g)",
+        "choices": [
+          "[[9, 0], [0, 0]]",
+          "[[9, 0], [9, 0]]",
+          "[[9, 9], [0, 0]]"
+        ],
+        "answer": 1,
+        "explain": "`* 2` on the outer list repeats a reference to one row, so both slots show the change."
+      },
+      {
+        "code": "print(0 == 0 == 1, (0 == 0) == 1)",
+        "choices": [
+          "False False",
+          "True True",
+          "False True",
+          "True False"
+        ],
+        "answer": 2,
+        "explain": "The chain means `0 == 0 and 0 == 1`, which is False. The parenthesised form compares True with 1, and `True == 1` because bool subclasses int."
+      },
+      {
+        "code": "print(0 or [] or 'x', 3 and 0, [3, 1].sort() or 'done')",
+        "choices": [
+          "True False done",
+          "x 0 done",
+          "x 0 [1, 3]",
+          "x False None"
+        ],
+        "answer": 1,
+        "explain": "`or` returns the first truthy operand (or the last one), `and` returns the first falsy operand (or the last one). `sort()` returns None, so `or` falls through to 'done'."
+      },
+      {
+        "code": "nums = [1, 2, 2, 3]\nfor n in nums:\n    if n == 2:\n        nums.remove(n)\nprint(nums)",
+        "choices": [
+          "[1, 3]",
+          "[1, 2, 3]",
+          "[1, 2, 2, 3]"
+        ],
+        "answer": 1,
+        "explain": "Removing the first 2 shifts the second 2 into the slot the iterator just visited, so it is skipped. Filter into a new list instead."
+      },
+      {
+        "code": "a = [[1], [2]]\nb = a.copy()\nb[0].append(9)\nb.append([3])\nprint(a)",
+        "choices": [
+          "[[1], [2]]",
+          "[[1, 9], [2]]",
+          "[[1, 9], [2], [3]]"
+        ],
+        "answer": 1,
+        "explain": "`copy()` is shallow: a new outer list holding the same inner lists. Appending to `b` does not touch `a`, but mutating a shared inner list does."
+      },
+      {
+        "code": "print(round(2.5), round(3.5), 7 / 7, -7 // 2)",
+        "choices": [
+          "3 4 1 -3",
+          "2 4 1.0 -4",
+          "2 4 1 -4",
+          "3 4 1.0 -3"
+        ],
+        "answer": 1,
+        "explain": "`round` breaks .5 ties toward the even integer, `/` always returns a float, and `//` floors toward negative infinity."
+      },
+      {
+        "code": "for n in [3, 5, 7]:\n    if n % 2 == 0:\n        print('found', n)\n        break\nelse:\n    print('none even')",
+        "choices": [
+          "none even",
+          "found 3",
+          "found 7\nnone even"
+        ],
+        "answer": 0,
+        "explain": "The loop never breaks, so the `else` block runs. It would be skipped only if `break` fired."
+      }
+    ],
+    "tip": "Before typing, name the shape and the idiom in one sentence (\"count with a Counter, sort by (-count, name), slice k\"). When a predict-the-output question appears, say the rule you are applying (\"defaults are evaluated once\", \"closures bind late\") before giving the answer; the rule is what earns the credit.",
+    "links": {
+      "problems": [
+        "group-by-letters",
+        "most-frequent-k",
+        "grid-shortest-path"
+      ],
+      "guides": [
+        "pattern-recognition",
+        "edge-case-checklist",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "graph-bfs-shortest-hops",
+        "heaps-top-k",
+        "py-basics",
+        "py-sequences-unpacking",
+        "py-collections",
+        "py-sorting-keys",
+        "py-functions-closures"
+      ]
+    }
+  }
+}

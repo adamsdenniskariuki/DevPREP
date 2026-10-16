@@ -1,0 +1,1425 @@
+{
+  "id": "py-concurrency",
+  "track": "python",
+  "title": "Concurrency: the GIL, threads, processes and asyncio",
+  "minutes": 55,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "What the GIL does and does not protect, racing threads and locks, thread versus process pools, asyncio's event loop, and how to choose a model for I/O-bound versus CPU-bound work.",
+  "prerequisites": [
+    "py-functions-closures"
+  ],
+  "prerequisiteNotes": "py-functions-closures: functions as values (you pass them to executors and tasks) and `global`/`nonlocal` (shared counters in the race examples). Generators help but are explained where used.",
+  "objectives": [
+    "Distinguish concurrency from parallelism and say which one each Python tool gives you.",
+    "Explain what the GIL serialises, when it is released, and why CPU-bound threads do not speed up.",
+    "Spot a read-modify-write race such as `counter += 1` and fix it with a `Lock`.",
+    "Choose between `ThreadPoolExecutor`, `ProcessPoolExecutor` and asyncio, including the pickling and start-up costs of processes.",
+    "Write asyncio code with `create_task`, `gather`, a `Semaphore` for bounded concurrency, timeouts and `to_thread` for blocking calls.",
+    "Simulate a worker pool and an event loop deterministically with a heap and generators."
+  ],
+  "concepts": [
+    {
+      "title": "Concurrency is not parallelism",
+      "body": "**Concurrency** means several tasks are in progress at once and their steps interleave; **parallelism** means steps literally execute at the same instant on different cores. A single-threaded event loop is concurrent but never parallel. In CPython, threads are concurrent and overlap waiting, but (on the default build) only one executes Python bytecode at a time; separate **processes** each have their own interpreter and run in parallel. Interviewers want you to say which of the two your design needs before naming a library.",
+      "code": "# Same 3 tasks of 1 s each, different models:\n# sequential           -> ~3 s\n# 3 threads, I/O waits -> ~1 s   (waits overlap: concurrency)\n# 3 threads, CPU loops -> ~3 s   (GIL: no parallel bytecode)\n# 3 processes, CPU     -> ~1 s + start-up and pickling (parallelism)\n# asyncio, I/O waits   -> ~1 s   (one thread, switches at await)"
+    },
+    {
+      "title": "The GIL: what it serialises and when it lets go",
+      "body": "CPython's **global interpreter lock** lets one thread at a time execute bytecode, which keeps interpreter internals such as reference counts consistent. A thread releases it around blocking I/O (`socket.recv`, file reads, `time.sleep`) and inside many C extensions (NumPy, `hashlib` and `zlib` on large buffers), and a CPU-bound holder is asked to drop it every `sys.getswitchinterval()` (5 ms by default). So threads speed up I/O-bound work but not pure-Python CPU work. CPython 3.13 added an optional, experimental **free-threaded** build without the GIL (PEP 703); it is not the default and extension support varies, so do not assume it in an interview answer.",
+      "code": "import time\nfrom concurrent.futures import ThreadPoolExecutor\n\ndef nap(seconds):        # blocking wait: releases the GIL\n    time.sleep(seconds)\n\ndef spin(n):             # pure-Python loop: holds the GIL\n    while n:\n        n -= 1\n\nwith ThreadPoolExecutor(max_workers=4) as pool:\n    list(pool.map(nap, [1] * 4))           # about 1 s, not 4 s\n    list(pool.map(spin, [10_000_000] * 4)) # no faster than a plain loop",
+      "diagram": "pya-gil"
+    },
+    {
+      "title": "Threads share memory, so races are your problem",
+      "body": "The GIL protects the interpreter, not your invariants. `counter += 1` compiles to several bytecodes (load, add, store), and a switch between the load and the store **loses an update**. Whether a given run shows it depends on version and timing, which is exactly why it ships to production. Guard every read-modify-write of shared state with a `threading.Lock` used as `with lock:`, keep the critical section small, and acquire multiple locks in one global order to avoid deadlock. `Lock` is not re-entrant; use `RLock` if the same thread may re-acquire. Single operations on built-ins like `list.append` or `dict[key] = v` are atomic in CPython, but compound check-then-act code is not; `queue.Queue` is the safe hand-off between threads.",
+      "code": "import threading\n\ncounter = 0\nlock = threading.Lock()\n\ndef add(n):\n    global counter\n    for _ in range(n):\n        with lock:          # load, add, store happen as one unit\n            counter += 1\n\nthreads = [threading.Thread(target=add, args=(100_000,)) for _ in range(4)]\nfor t in threads:\n    t.start()\nfor t in threads:\n    t.join()\nprint(counter)  # always 400000; without the lock it may be lower",
+      "diagram": "pya-race"
+    },
+    {
+      "title": "concurrent.futures: thread pools versus process pools",
+      "body": "`ThreadPoolExecutor` and `ProcessPoolExecutor` share one API: `submit` returns a `Future`, `map` yields results **in input order**, and `as_completed` yields futures **in completion order**; `future.result()` re-raises the worker's exception. Threads are cheap and share memory, so they suit blocking I/O. Processes sidestep the GIL for CPU work but every function and argument is **pickled** to the worker and every result pickled back: the function must be importable at module level (no lambdas or nested functions), and large arguments cost copying. Workers take time to start, and with the `spawn` start method (the default on Windows and macOS) the main module is re-imported, so guard the entry point with `if __name__ == '__main__':`. `multiprocessing.Pool` is the older, lower-level equivalent; use `chunksize` with many tiny tasks.",
+      "code": "from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed\nimport urllib.request\n\ndef fetch(url):\n    with urllib.request.urlopen(url, timeout=5) as resp:\n        return url, len(resp.read())\n\ndef crunch(n):                      # module level, so it can be pickled\n    return sum(i * i for i in range(n))\n\nif __name__ == '__main__':          # needed when workers are spawned\n    urls = ['https://example.com', 'https://example.org']\n    with ThreadPoolExecutor(max_workers=16) as pool:\n        futures = [pool.submit(fetch, u) for u in urls]\n        for fut in as_completed(futures):     # completion order\n            print(fut.result())               # re-raises worker errors\n    with ProcessPoolExecutor() as pool:       # one worker per CPU by default\n        print(list(pool.map(crunch, [10**6] * 8, chunksize=2)))  # input order"
+    },
+    {
+      "title": "asyncio: one thread, many waits",
+      "body": "An `async def` function returns a **coroutine** when called; nothing runs until it is awaited or wrapped by `asyncio.create_task`, which schedules it on the **event loop**. Each `await` on something not yet ready suspends the coroutine and lets the loop run another task, so switches happen only at `await` and plain code between awaits needs no lock. `asyncio.gather` waits for several awaitables and returns results in argument order (`asyncio.TaskGroup`, 3.11+, adds structured cancellation). The catch: a call that blocks without awaiting (`time.sleep`, `requests.get`, a heavy loop) **stalls every task**. Push blocking work to a thread with `await asyncio.to_thread(fn, ...)`, bound concurrency with `asyncio.Semaphore(n)`, and bound time with `asyncio.timeout(s)` (3.11+) or `asyncio.wait_for`, both of which raise `TimeoutError` and cancel the inner work.",
+      "code": "import asyncio\n\nasync def fetch(client, url, limit):\n    async with limit:                    # at most N requests in flight\n        async with asyncio.timeout(5):   # TimeoutError after 5 s\n            return await client.get(url) # suspends; other tasks run\n\nasync def main(client, urls):\n    limit = asyncio.Semaphore(50)\n    tasks = [asyncio.create_task(fetch(client, u, limit)) for u in urls]\n    results = await asyncio.gather(*tasks, return_exceptions=True)\n    digest = await asyncio.to_thread(hash_big_file, 'dump.bin')  # blocking work off the loop\n    return results, digest\n\n# client: any async HTTP client (e.g. httpx.AsyncClient)\n# asyncio.run(main(client, urls)) starts the loop and runs main to completion",
+      "diagram": "pya-loop"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Choose the model from the bottleneck",
+      "body": "Start by asking where the time goes. If it is waiting (HTTP calls, database queries, disk), you need overlap: asyncio when the stack is async and the fan-out is large, a `ThreadPoolExecutor` when the libraries block. If it is Python executing loops, threads will not help on the default build: vectorise into NumPy or another extension that releases the GIL, or use a `ProcessPoolExecutor` and make each task big enough to amortise pickling. Mixed workloads are common: an asyncio service that offloads a CPU-heavy step with `loop.run_in_executor(process_pool, fn, arg)`.",
+      "diagram": "pya-choose"
+    },
+    {
+      "title": "A pool is a heap of 'free at' times",
+      "body": "A `ThreadPoolExecutor(max_workers=k)` fed tasks in order behaves like this: each task waits for the earliest-free worker, so its start time is the smallest 'free at' value. Keep those values in a min-heap: read `free_at[0]`, then `heapreplace` it with `start + duration`. That is O(n log k) and is the same idea as a semaphore-bounded `gather`. The makespan stops improving once the longest task dominates, which is why a bigger pool is not always faster.",
+      "diagram": "pya-makespan"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "Create a heap of zeros, one per worker (capped at the number of tasks so an empty list stays empty). For each duration in submission order, take the root as the start time and replace it with the end time. Record `[start, end]`, and finish with `max(..., default=0)` so no tasks gives a makespan of 0."
+    }
+  ],
+  "example": "import heapq\n\n# Three downloads on a pool of 2: when does each finish?\nfree_at = [0, 0]\nfor seconds in [3, 1, 2]:\n    start = free_at[0]\n    heapq.heapreplace(free_at, start + seconds)\n    print(start, '->', start + seconds)\n# 0 -> 3\n# 0 -> 1\n# 1 -> 3",
+  "task": "Write `pool_schedule(durations, workers)` that simulates a pool of `workers` identical workers (like `ThreadPoolExecutor(max_workers=workers)`) running tasks submitted in list order. Each task starts on whichever worker becomes free earliest and runs for its duration. Return a dict with `spans`, a list of `[start, end]` per task in input order, and `makespan`, the time the last task finishes (0 for no tasks). Assume `workers >= 1` and durations are non-negative integers.",
+  "starter": "def pool_schedule(durations, workers):\n    # Return {'spans': [[start, end], ...], 'makespan': last end}\n    ...",
+  "hints": [
+    "Only the earliest time a worker becomes free matters for the next task, and that is the minimum of a changing set: a job for `heapq`.",
+    "Start with `[0] * min(workers, len(durations))`; for each task read `heap[0]` as the start and `heapq.heapreplace(heap, start + d)`."
+  ],
+  "solution": "import heapq\n\ndef pool_schedule(durations, workers):\n    free_at = [0] * min(workers, len(durations))\n    spans = []\n    for duration in durations:\n        start = free_at[0]\n        heapq.heapreplace(free_at, start + duration)\n        spans.append([start, start + duration])\n    return {'spans': spans, 'makespan': max((end for _, end in spans), default=0)}\n\nA list of zeros is already a valid min-heap, so no `heapify` is needed. `heapreplace` pops the root and pushes the new end time in one O(log k) step, so the whole run is O(n log k) time and O(k) extra space. Capping the heap at `len(durations)` keeps the empty case trivial, and `default=0` on `max` gives the makespan for no tasks without a special branch.",
+  "checklist": [
+    "Each task starts at the earliest time any worker is free, in submission order.",
+    "I use a heap rather than scanning all workers for every task.",
+    "Empty input returns `{'spans': [], 'makespan': 0}`, and zero-length tasks are handled.",
+    "I can map the simulation back to `ThreadPoolExecutor(max_workers=k)` or a semaphore of size k."
+  ],
+  "pitfalls": [
+    "Using threads for pure-Python CPU work and expecting a speed-up; the GIL serialises the bytecode.",
+    "Believing the GIL makes `counter += 1` or check-then-set code thread-safe.",
+    "Calling `time.sleep` or a blocking client inside a coroutine, which freezes the whole event loop.",
+    "Calling a coroutine function without `await` or `create_task`: the body never runs.",
+    "Sending lambdas, nested functions or huge objects to a `ProcessPoolExecutor`; they fail to pickle or cost more to copy than to compute.",
+    "Launching one task per item with no `Semaphore`, then overwhelming the server or exhausting file descriptors."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Replay a lost update",
+      "prompt": "Write `run_interleaving(schedule)`. A shared counter starts at 0 and every thread repeatedly runs `counter += 1` as two steps: load the counter into its own register, then store register + 1. `schedule` is a string; each character names the thread that executes its next step. Return the final counter. A thread whose last step was a load has not written anything yet.",
+      "hints": [
+        "Track, per thread, the value it loaded and has not stored yet; a dict keyed by thread name works.",
+        "If the thread has a pending load, this step is a store (`counter = loaded + 1`); otherwise it is a load."
+      ],
+      "solution": "def run_interleaving(schedule):\n    counter = 0\n    loaded = {}                      # thread -> value it read but has not written back\n    for thread in schedule:\n        if thread in loaded:\n            counter = loaded.pop(thread) + 1   # store: may overwrite someone else's write\n        else:\n            loaded[thread] = counter           # load\n    return counter",
+      "checklist": [
+        "'ABAB' gives 1: both threads loaded 0 before either stored.",
+        "A trailing unmatched load does not change the counter.",
+        "Thread names can be any character, including non-ASCII."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A virtual-time event loop",
+      "prompt": "Write `virtual_loop(jobs)`, where `jobs` is a list of `[name, delays]`. Each job behaves like `async def job(): for d in delays: await asyncio.sleep(d)`. All jobs start at time 0 in list order. Every time a job runs (when it starts and each time it wakes), record `[time, name]`. Jobs wake at the time they asked for; equal times run in the order the sleeps were requested. Return the records in the order they happen. Use virtual time: nothing should really sleep.",
+      "hints": [
+        "Model each job as a generator that yields its delays; `next(gen)` runs it to its next 'await', and StopIteration means it returned.",
+        "Keep a heap of `(wake_time, sequence_number, name, generator)`; the counter breaks ties FIFO and stops Python from ever comparing generators."
+      ],
+      "solution": "import heapq\nfrom itertools import count\n\ndef virtual_loop(jobs):\n    def job(delays):\n        for delay in delays:\n            yield delay              # plays the part of 'await asyncio.sleep(delay)'\n\n    order = count()                  # FIFO tie-break for equal wake-up times\n    queue = [(0, next(order), name, job(delays)) for name, delays in jobs]\n    heapq.heapify(queue)\n    trace = []\n    while queue:\n        now, _, name, coro = heapq.heappop(queue)\n        trace.append([now, name])\n        try:\n            delay = next(coro)       # run the job until its next 'await'\n        except StopIteration:\n            continue                 # the job returned\n        heapq.heappush(queue, (now + delay, next(order), name, coro))\n    return trace",
+      "checklist": [
+        "A job with k delays appears k + 1 times in the trace.",
+        "Zero delays still yield to other ready jobs, like `asyncio.sleep(0)`.",
+        "Ties are broken by request order, never by comparing names or generators."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "If CPython has a GIL, why do you still need locks?",
+      "answer": "The GIL guarantees one bytecode at a time, not that your multi-step operation is atomic. A thread can be switched out between the load and the store of `counter += 1`, or between `if key not in d` and `d[key] = ...`. Locks protect your invariants; the GIL only protects the interpreter's."
+    },
+    {
+      "question": "You need to call an API for 10,000 ids, at most 50 at a time, each with a 5-second timeout. How?",
+      "answer": "With asyncio: create one `Semaphore(50)`, wrap each call in `async with sem:` and `async with asyncio.timeout(5):`, create the tasks and `gather(..., return_exceptions=True)` so one failure does not cancel the rest. With blocking libraries the equivalent is `ThreadPoolExecutor(max_workers=50)` and a per-request timeout on the client. Mention retries with backoff for the failures."
+    },
+    {
+      "question": "Your ProcessPoolExecutor version is slower than the plain loop. Why?",
+      "answer": "Each task pays for pickling the function and arguments, IPC and unpickling the result, and the pool pays process start-up. If each task is tiny, that overhead dominates. Batch work (`chunksize`, or fewer bigger tasks), avoid shipping large objects, and check the work is actually CPU-bound."
+    },
+    {
+      "question": "What happens if a coroutine calls `time.sleep(2)`?",
+      "answer": "The whole event loop thread sleeps for 2 seconds: no other task runs, timers fire late and connections may time out. Use `await asyncio.sleep(2)`, or move unavoidable blocking calls to `await asyncio.to_thread(...)`. asyncio debug mode (`PYTHONASYNCIODEBUG=1`) logs callbacks that run too long."
+    }
+  ],
+  "takeaways": [
+    "Concurrency interleaves tasks; parallelism runs them at the same instant. Say which you need.",
+    "The GIL lets threads overlap I/O but not pure-Python CPU work; processes or native code give CPU parallelism.",
+    "The GIL does not make read-modify-write safe: guard shared state with a `Lock`.",
+    "Process pools pickle everything and start slowly; give them big, module-level tasks.",
+    "asyncio switches only at `await`: never block the loop, bound fan-out with a `Semaphore`, and put timeouts on every external call."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pya-gil",
+        "type": "sequence",
+        "title": "Two threads sharing one GIL",
+        "alt": "Sequence diagram with thread A, the GIL, thread B and a socket. A holds the GIL while running bytecode, releases it when it blocks on recv, B acquires it and runs, A asks for it back when data arrives, and B drops it at the next switch interval so A can resume.",
+        "caption": "Only the GIL holder runs Python bytecode. Blocking I/O hands it over for free; pure-Python CPU work only trades it at switch intervals, so threads overlap waits, not computation.",
+        "actors": [
+          {
+            "id": "a",
+            "label": "Thread A"
+          },
+          {
+            "id": "gil",
+            "label": "GIL"
+          },
+          {
+            "id": "b",
+            "label": "Thread B"
+          },
+          {
+            "id": "sock",
+            "label": "Socket"
+          }
+        ],
+        "messages": [
+          {
+            "from": "a",
+            "to": "gil",
+            "label": "acquire, run bytecode",
+            "note": "Thread A holds the GIL, so it is the only thread executing Python bytecode."
+          },
+          {
+            "from": "b",
+            "to": "gil",
+            "label": "request GIL: wait",
+            "note": "Thread B is runnable but must wait; on a multi-core machine a core sits idle."
+          },
+          {
+            "from": "a",
+            "to": "sock",
+            "label": "recv(): release GIL first",
+            "note": "Blocking I/O calls release the GIL before they wait in the OS."
+          },
+          {
+            "from": "gil",
+            "to": "b",
+            "label": "B acquires, runs Python",
+            "style": "reply",
+            "note": "B makes progress while A waits on the network: this is the overlap threads buy you."
+          },
+          {
+            "from": "sock",
+            "to": "a",
+            "label": "data ready",
+            "style": "reply",
+            "note": "The OS wakes A, but A must re-acquire the GIL before running Python again."
+          },
+          {
+            "from": "a",
+            "to": "gil",
+            "label": "request GIL",
+            "note": "A sets a drop request; B keeps running until its next eval-loop check."
+          },
+          {
+            "from": "b",
+            "to": "gil",
+            "label": "drop at switch interval",
+            "note": "CPython asks the holder to drop the GIL every sys.getswitchinterval() seconds (5 ms by default)."
+          },
+          {
+            "from": "gil",
+            "to": "a",
+            "label": "A resumes",
+            "style": "reply",
+            "note": "Handoffs interleave the two threads; they never run bytecode at the same instant."
+          }
+        ]
+      },
+      {
+        "id": "pya-race",
+        "type": "compare",
+        "title": "Lost update versus a locked increment",
+        "alt": "Side-by-side comparison. Without a lock, threads A and B both read counter 0, both write 1, and the counter ends at 1. With a lock, A reads and writes 1 while holding the lock, then B reads 1 and writes 2.",
+        "caption": "`counter += 1` is load, add, store. Without a lock a switch between load and store loses one increment; the lock makes the three steps one unit.",
+        "before": {
+          "label": "No lock: one update lost",
+          "nodes": [
+            {
+              "id": "c0",
+              "label": "counter = 0",
+              "kind": "storage",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "a",
+              "label": "A loads 0",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "b",
+              "label": "B loads 0",
+              "kind": "state",
+              "col": 2,
+              "row": 1
+            },
+            {
+              "id": "as",
+              "label": "A stores 1",
+              "kind": "bad",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "bs",
+              "label": "B stores 1",
+              "kind": "bad",
+              "col": 2,
+              "row": 2
+            },
+            {
+              "id": "c1",
+              "label": "counter = 1",
+              "kind": "bad",
+              "col": 1,
+              "row": 3,
+              "sub": "expected 2"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c0",
+              "to": "a",
+              "label": "read"
+            },
+            {
+              "from": "c0",
+              "to": "b",
+              "label": "read"
+            },
+            {
+              "from": "a",
+              "to": "as"
+            },
+            {
+              "from": "b",
+              "to": "bs"
+            },
+            {
+              "from": "as",
+              "to": "c1"
+            },
+            {
+              "from": "bs",
+              "to": "c1",
+              "label": "overwrites"
+            }
+          ]
+        },
+        "after": {
+          "label": "with lock: increments serialised",
+          "nodes": [
+            {
+              "id": "c0",
+              "label": "counter = 0",
+              "kind": "storage",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "a",
+              "label": "A load + store",
+              "kind": "state",
+              "col": 0,
+              "row": 1,
+              "sub": "holds the lock"
+            },
+            {
+              "id": "c1",
+              "label": "counter = 1",
+              "kind": "storage",
+              "col": 1,
+              "row": 2
+            },
+            {
+              "id": "b",
+              "label": "B load + store",
+              "kind": "state",
+              "col": 2,
+              "row": 3,
+              "sub": "waited for lock"
+            },
+            {
+              "id": "c2",
+              "label": "counter = 2",
+              "kind": "good",
+              "col": 1,
+              "row": 4
+            }
+          ],
+          "edges": [
+            {
+              "from": "c0",
+              "to": "a",
+              "label": "acquire"
+            },
+            {
+              "from": "a",
+              "to": "c1",
+              "label": "release"
+            },
+            {
+              "from": "c1",
+              "to": "b",
+              "label": "acquire"
+            },
+            {
+              "from": "b",
+              "to": "c2",
+              "label": "release"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pya-loop",
+        "type": "sequence",
+        "title": "One event loop, two tasks",
+        "alt": "Sequence diagram with the event loop, task A, task B and the network. The loop runs A until it awaits a request, then runs B until it awaits, then resumes each task when the network reports its response is ready, and each task returns its result.",
+        "caption": "Tasks only switch at `await`. One thread overlaps many waits; any line that blocks without awaiting freezes every task.",
+        "actors": [
+          {
+            "id": "loop",
+            "label": "Event loop"
+          },
+          {
+            "id": "a",
+            "label": "Task A"
+          },
+          {
+            "id": "b",
+            "label": "Task B"
+          },
+          {
+            "id": "net",
+            "label": "Network"
+          }
+        ],
+        "messages": [
+          {
+            "from": "loop",
+            "to": "a",
+            "label": "run until first await",
+            "note": "create_task schedules A; the loop runs it as soon as the current task yields."
+          },
+          {
+            "from": "a",
+            "to": "net",
+            "label": "send request",
+            "style": "async"
+          },
+          {
+            "from": "a",
+            "to": "loop",
+            "label": "await: suspend",
+            "style": "reply",
+            "note": "await hands control back to the loop; A's local state stays in its coroutine frame."
+          },
+          {
+            "from": "loop",
+            "to": "b",
+            "label": "run until first await"
+          },
+          {
+            "from": "b",
+            "to": "net",
+            "label": "send request",
+            "style": "async"
+          },
+          {
+            "from": "b",
+            "to": "loop",
+            "label": "await: suspend",
+            "style": "reply",
+            "note": "Both requests are now in flight on one thread."
+          },
+          {
+            "from": "net",
+            "to": "loop",
+            "label": "A's response ready",
+            "style": "async",
+            "note": "The loop's selector reports the socket is readable."
+          },
+          {
+            "from": "loop",
+            "to": "a",
+            "label": "resume after await"
+          },
+          {
+            "from": "a",
+            "to": "loop",
+            "label": "return result",
+            "style": "reply"
+          },
+          {
+            "from": "net",
+            "to": "loop",
+            "label": "B's response ready",
+            "style": "async"
+          },
+          {
+            "from": "loop",
+            "to": "b",
+            "label": "resume after await"
+          },
+          {
+            "from": "b",
+            "to": "loop",
+            "label": "return result",
+            "style": "reply",
+            "note": "gather would now return [A's result, B's result] in argument order."
+          }
+        ]
+      },
+      {
+        "id": "pya-choose",
+        "type": "flow",
+        "title": "Picking a concurrency model",
+        "alt": "Decision flow. Start from where the time goes. Waiting on I/O leads to asyncio for many connections with async libraries, or a thread pool for blocking libraries. Pure-Python CPU work leads to a process pool, or to NumPy and C extensions that release the GIL when the work vectorises.",
+        "caption": "Name the bottleneck first. I/O-bound work wants overlap (asyncio or threads); CPU-bound Python wants more interpreters (processes) or native code.",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "What is slow?",
+            "kind": "decision",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "io",
+            "label": "Waiting on I/O",
+            "kind": "decision",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "cpu",
+            "label": "Python CPU work",
+            "kind": "decision",
+            "col": 2,
+            "row": 4
+          },
+          {
+            "id": "aio",
+            "label": "asyncio",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "1000s of sockets"
+          },
+          {
+            "id": "thr",
+            "label": "ThreadPool",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "blocking clients"
+          },
+          {
+            "id": "native",
+            "label": "NumPy / C ext",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "releases the GIL"
+          },
+          {
+            "id": "proc",
+            "label": "ProcessPool",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "args are pickled"
+          }
+        ],
+        "edges": [
+          {
+            "from": "q",
+            "to": "io",
+            "label": "network, disk, DB"
+          },
+          {
+            "from": "q",
+            "to": "cpu",
+            "label": "loops, parsing"
+          },
+          {
+            "from": "io",
+            "to": "aio",
+            "label": "async libraries"
+          },
+          {
+            "from": "io",
+            "to": "thr",
+            "label": "blocking libraries"
+          },
+          {
+            "from": "cpu",
+            "to": "native",
+            "label": "vectorisable"
+          },
+          {
+            "from": "cpu",
+            "to": "proc",
+            "label": "pure Python"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Measure or reason about where the wall-clock time goes: waiting on something external, or executing Python bytecode."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "For I/O, overlap the waits. asyncio scales to thousands of connections if your libraries are async; a thread pool works with ordinary blocking clients."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "For CPU, threads do not help because of the GIL. Push the loop into native code that releases it, or fan out to processes and pay for pickling and start-up."
+          }
+        ]
+      },
+      {
+        "id": "pya-makespan",
+        "type": "bars",
+        "title": "Makespan of tasks [4, 2, 3, 1] by pool size",
+        "alt": "Bar chart of the finish time for four tasks lasting 4, 2, 3 and 1 units. One worker finishes at 10, two workers at 5, three workers at 4 and four workers at 4.",
+        "caption": "Exact values from the core exercise. More workers help until the longest task (4) sets the floor; past that, extra workers only cost resources.",
+        "unit": "time units",
+        "bars": [
+          {
+            "label": "1 worker",
+            "value": 10
+          },
+          {
+            "label": "2 workers",
+            "value": 5,
+            "highlight": true
+          },
+          {
+            "label": "3 workers",
+            "value": 4
+          },
+          {
+            "label": "4 workers",
+            "value": 4
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "pool_schedule",
+        "starter": "def pool_schedule(durations, workers):\n    # Bug: every task starts at 0, as if there were unlimited workers.\n    spans = [[0, d] for d in durations]\n    return {'spans': spans, 'makespan': max(durations, default=0)}\n",
+        "solution": "import heapq\n\ndef pool_schedule(durations, workers):\n    free_at = [0] * min(workers, len(durations))   # a heap of times each worker frees up\n    spans = []\n    for duration in durations:\n        start = free_at[0]                          # earliest-free worker takes the next task\n        heapq.heapreplace(free_at, start + duration)\n        spans.append([start, start + duration])\n    makespan = max((end for _, end in spans), default=0)\n    return {'spans': spans, 'makespan': makespan}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                4,
+                2,
+                3,
+                1
+              ],
+              2
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  4
+                ],
+                [
+                  0,
+                  2
+                ],
+                [
+                  2,
+                  5
+                ],
+                [
+                  4,
+                  5
+                ]
+              ],
+              "makespan": 5
+            }
+          },
+          {
+            "args": [
+              [],
+              3
+            ],
+            "expected": {
+              "spans": [],
+              "makespan": 0
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                5,
+                5,
+                5
+              ],
+              1
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  5
+                ],
+                [
+                  5,
+                  10
+                ],
+                [
+                  10,
+                  15
+                ]
+              ],
+              "makespan": 15
+            }
+          },
+          {
+            "args": [
+              [
+                3,
+                1
+              ],
+              5
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  3
+                ],
+                [
+                  0,
+                  1
+                ]
+              ],
+              "makespan": 3
+            }
+          },
+          {
+            "args": [
+              [
+                2,
+                2,
+                2,
+                2
+              ],
+              2
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  2
+                ],
+                [
+                  0,
+                  2
+                ],
+                [
+                  2,
+                  4
+                ],
+                [
+                  2,
+                  4
+                ]
+              ],
+              "makespan": 4
+            }
+          },
+          {
+            "args": [
+              [
+                0,
+                4,
+                0,
+                1
+              ],
+              1
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  0,
+                  4
+                ],
+                [
+                  4,
+                  4
+                ],
+                [
+                  4,
+                  5
+                ]
+              ],
+              "makespan": 5
+            }
+          },
+          {
+            "args": [
+              [
+                7
+              ],
+              3
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  7
+                ]
+              ],
+              "makespan": 7
+            }
+          },
+          {
+            "args": [
+              [
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              3
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  1
+                ],
+                [
+                  0,
+                  1
+                ],
+                [
+                  0,
+                  1
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  3,
+                  4
+                ],
+                [
+                  3,
+                  4
+                ],
+                [
+                  3,
+                  4
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  5,
+                  6
+                ],
+                [
+                  5,
+                  6
+                ],
+                [
+                  5,
+                  6
+                ],
+                [
+                  6,
+                  7
+                ],
+                [
+                  6,
+                  7
+                ]
+              ],
+              "makespan": 7
+            }
+          },
+          {
+            "args": [
+              [
+                9,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                1
+              ],
+              2
+            ],
+            "expected": {
+              "spans": [
+                [
+                  0,
+                  9
+                ],
+                [
+                  0,
+                  1
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  2,
+                  3
+                ],
+                [
+                  3,
+                  4
+                ],
+                [
+                  4,
+                  5
+                ],
+                [
+                  5,
+                  6
+                ],
+                [
+                  6,
+                  7
+                ],
+                [
+                  7,
+                  8
+                ],
+                [
+                  8,
+                  9
+                ]
+              ],
+              "makespan": 9
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "run_interleaving",
+        "starter": "def run_interleaving(schedule):\n    # Assumes every increment lands. Simulate the load/store steps instead.\n    return len(schedule) // 2\n",
+        "solution": "def run_interleaving(schedule):\n    counter = 0\n    loaded = {}                      # thread -> value it read but has not written back\n    for thread in schedule:\n        if thread in loaded:\n            counter = loaded.pop(thread) + 1   # store: may overwrite someone else's write\n        else:\n            loaded[thread] = counter           # load\n    return counter\n",
+        "tests": [
+          {
+            "args": [
+              "AABB"
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              "ABAB"
+            ],
+            "expected": 1
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              ""
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              "A"
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              "ABBA"
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              "AABAB"
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              "ABCABC"
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              "AAAAAA"
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              "αβαβ"
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              "ABBAAB"
+            ],
+            "expected": 1
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "virtual_loop",
+        "starter": "def virtual_loop(jobs):\n    # Bug: awaits each job to completion before starting the next one.\n    trace = []\n    now = 0\n    for name, delays in jobs:\n        trace.append([now, name])\n        for delay in delays:\n            now += delay\n            trace.append([now, name])\n    return trace\n",
+        "solution": "import heapq\nfrom itertools import count\n\ndef virtual_loop(jobs):\n    def job(delays):\n        for delay in delays:\n            yield delay              # plays the part of 'await asyncio.sleep(delay)'\n\n    order = count()                  # FIFO tie-break for equal wake-up times\n    queue = [(0, next(order), name, job(delays)) for name, delays in jobs]\n    heapq.heapify(queue)\n    trace = []\n    while queue:\n        now, _, name, coro = heapq.heappop(queue)\n        trace.append([now, name])\n        try:\n            delay = next(coro)       # run the job until its next 'await'\n        except StopIteration:\n            continue                 # the job returned\n        heapq.heappush(queue, (now + delay, next(order), name, coro))\n    return trace\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  "a",
+                  [
+                    2,
+                    1
+                  ]
+                ],
+                [
+                  "b",
+                  [
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "a"
+              ],
+              [
+                0,
+                "b"
+              ],
+              [
+                1,
+                "b"
+              ],
+              [
+                2,
+                "a"
+              ],
+              [
+                3,
+                "a"
+              ]
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [
+                  "x",
+                  []
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "x"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "a",
+                  [
+                    1
+                  ]
+                ],
+                [
+                  "b",
+                  [
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "a"
+              ],
+              [
+                0,
+                "b"
+              ],
+              [
+                1,
+                "a"
+              ],
+              [
+                1,
+                "b"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "slow",
+                  [
+                    5
+                  ]
+                ],
+                [
+                  "fast",
+                  [
+                    1,
+                    1,
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "slow"
+              ],
+              [
+                0,
+                "fast"
+              ],
+              [
+                1,
+                "fast"
+              ],
+              [
+                2,
+                "fast"
+              ],
+              [
+                3,
+                "fast"
+              ],
+              [
+                5,
+                "slow"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "a",
+                  [
+                    0,
+                    0
+                  ]
+                ],
+                [
+                  "b",
+                  [
+                    0
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "a"
+              ],
+              [
+                0,
+                "b"
+              ],
+              [
+                0,
+                "a"
+              ],
+              [
+                0,
+                "b"
+              ],
+              [
+                0,
+                "a"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "γ",
+                  [
+                    3
+                  ]
+                ],
+                [
+                  "δ",
+                  [
+                    1,
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "γ"
+              ],
+              [
+                0,
+                "δ"
+              ],
+              [
+                1,
+                "δ"
+              ],
+              [
+                2,
+                "δ"
+              ],
+              [
+                3,
+                "γ"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "p",
+                  [
+                    2,
+                    2,
+                    2
+                  ]
+                ],
+                [
+                  "q",
+                  [
+                    3,
+                    3
+                  ]
+                ],
+                [
+                  "r",
+                  [
+                    6
+                  ]
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                0,
+                "p"
+              ],
+              [
+                0,
+                "q"
+              ],
+              [
+                0,
+                "r"
+              ],
+              [
+                2,
+                "p"
+              ],
+              [
+                3,
+                "q"
+              ],
+              [
+                4,
+                "p"
+              ],
+              [
+                6,
+                "r"
+              ],
+              [
+                6,
+                "q"
+              ],
+              [
+                6,
+                "p"
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "def worker(name, n):\n    for i in range(n):\n        yield f'{name}{i}'\n\nready = [worker('a', 2), worker('b', 3)]\nout = []\nwhile ready:\n    task = ready.pop(0)\n    try:\n        out.append(next(task))\n        ready.append(task)\n    except StopIteration:\n        pass\nprint(' '.join(out))",
+        "choices": [
+          "a0 a1 b0 b1 b2",
+          "a0 b0 a1 b1 b2",
+          "b0 a0 b1 a1 b2"
+        ],
+        "answer": 1,
+        "explain": "This is a tiny cooperative scheduler: each generator runs until its next `yield`, then goes to the back of the queue. When `a` is exhausted, `b` keeps the loop to itself. asyncio's ready queue works the same way, with `await` as the yield point."
+      },
+      {
+        "code": "ran = []\n\nasync def job():\n    ran.append(1)\n    return 42\n\nc = job()\nprint(type(c).__name__, ran)\nc.close()",
+        "choices": [
+          "int [1]",
+          "coroutine [1]",
+          "coroutine []"
+        ],
+        "answer": 2,
+        "explain": "Calling an `async def` function only creates a coroutine object; none of its body runs until something awaits it or wraps it in a task. A forgotten `await` produces exactly this silent no-op (plus a 'never awaited' RuntimeWarning when it is garbage-collected)."
+      },
+      {
+        "code": "import types\nlog = []\n\n@types.coroutine\ndef pause():\n    yield\n\nasync def task():\n    log.append('start')\n    await pause()\n    log.append('end')\n\nc = task()\nc.send(None)\nlog.append('loop')\ntry:\n    c.send(None)\nexcept StopIteration:\n    log.append('done')\nprint(log)",
+        "choices": [
+          "['start', 'end', 'loop', 'done']",
+          "['start', 'loop', 'end', 'done']",
+          "['loop', 'start', 'end', 'done']"
+        ],
+        "answer": 1,
+        "explain": "`send(None)` is what an event loop does: it runs the coroutine to its next suspension point. `await pause()` suspends after 'start', the 'loop' gets control back, and the second `send` resumes after the await until the coroutine returns and raises StopIteration."
+      },
+      {
+        "code": "counter = 0\na = counter       # thread A loads\nb = counter       # switch: thread B loads the same value\ncounter = b + 1   # B stores\ncounter = a + 1   # A stores, overwriting B\nprint(counter)",
+        "choices": [
+          "2",
+          "1",
+          "0"
+        ],
+        "answer": 1,
+        "explain": "This is `counter += 1` run by two threads, unrolled into load and store with an unlucky switch in between. Both read 0, both write 1: one increment is lost. The GIL does not prevent this, because the switch happens between bytecodes."
+      },
+      {
+        "code": "import threading\nlock = threading.Lock()\nrlock = threading.RLock()\nlock.acquire()\nrlock.acquire()\nprint(lock.acquire(blocking=False), rlock.acquire(blocking=False))",
+        "choices": [
+          "True True",
+          "False True",
+          "False False"
+        ],
+        "answer": 1,
+        "explain": "A plain `Lock` is not re-entrant: the owner trying to take it again fails here, and with the default `blocking=True` it would deadlock itself. `RLock` counts acquisitions by the owning thread, so nested calls that take the same lock succeed."
+      }
+    ],
+    "tip": "Before naming a library, say 'is this I/O-bound or CPU-bound?' out loud and draw the timeline: threads or asyncio overlap the waits, processes split the CPU. Then name the safety mechanism (a lock, a queue, or 'only at await') and the bound (pool size or semaphore).",
+    "links": {
+      "problems": [
+        "worker-pool-makespan",
+        "bounded-buffer-trace",
+        "token-bucket-limiter",
+        "lock-order-deadlock",
+        "round-robin-iterator"
+      ],
+      "guides": [
+        "queues-async-work",
+        "retries-backoff",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "heaps-top-k",
+        "py-functions-closures",
+        "py-errors-exceptions"
+      ]
+    }
+  }
+}
