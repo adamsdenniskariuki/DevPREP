@@ -41,15 +41,21 @@ export function css(value: string) {
 }
 
 export async function textContrast(locator: Locator) {
-  const styles = await locator.evaluate(element => {
+  const read = () => locator.evaluate(element => {
     const backgrounds: string[] = []
     let current: Element | null = element
     while (current) {
       backgrounds.push(getComputedStyle(current).backgroundColor)
       current = current.parentElement
     }
-    return { foreground: getComputedStyle(element).color, backgrounds }
+    return { connected: element.isConnected, foreground: getComputedStyle(element).color, backgrounds }
   })
+  // A re-render can detach the element mid-read, and detached elements report empty computed colors.
+  let styles = await read()
+  for (let attempt = 0; attempt < 20 && (!styles.connected || !styles.foreground || styles.backgrounds.some(value => !value)); attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    styles = await read()
+  }
   const background = styles.backgrounds.reverse().reduce((base, layer) => over(color(layer), base), [255, 255, 255, 1] as Color)
   return contrast(over(color(styles.foreground), background), background)
 }
