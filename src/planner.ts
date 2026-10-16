@@ -35,7 +35,7 @@ export const DEFAULT_DAYS = 7
 export const MAX_PLAN_DAYS = 90
 export const MAX_LESSONS_PER_DAY = 3
 export const CARD_MINUTES = 10
-const TRACK_NAMES: Record<Track, string> = { dsa: 'DSA', 'system-design': 'System design', ml: 'ML', ai: 'AI/LLM', behavioral: 'Behavioral', python: 'Python' }
+const TRACK_NAMES: Record<Track, string> = { dsa: 'DSA', 'system-design': 'System design', ml: 'ML', ai: 'AI/LLM', behavioral: 'Behavioral', python: 'Python', typescript: 'TypeScript' }
 
 function dayNumber(day: string): number {
   const [y, m, d] = day.split('-').map(Number)

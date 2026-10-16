@@ -1,0 +1,1504 @@
+{
+  "id": "ts-arrays-maps-sets",
+  "track": "typescript",
+  "title": "Arrays, Maps and Sets",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "The array methods interviewers expect, which ones mutate and their ES2023 copying twins, the default sort trap, Map versus plain object, Set for dedupe and membership, shallow copies versus structuredClone, readonly and as const, and the Big-O of every common operation.",
+  "prerequisites": [
+    "ts-scope-closures"
+  ],
+  "prerequisiteNotes": "ts-scope-closures: variables hold references to objects, and callbacks such as the ones passed to map, filter and sort are closures. Aliasing one array from two names is the root of every mutation bug in this lesson.",
+  "objectives": [
+    "Pick the right array method (`map`, `filter`, `reduce`, `flatMap`, `some`, `every`, `find`, `findLast`, `at`, `includes`) and state what it returns on an empty array.",
+    "Say which methods mutate (`sort`, `reverse`, `splice`) and use the copying versions `toSorted`, `toReversed`, `toSpliced` and `with` instead.",
+    "Explain why `[10, 9, 1, 2].sort()` is wrong and write numeric, multi-key and locale-aware comparators.",
+    "Choose between `Map` and a plain object, and explain prototype keys, key coercion and key ordering.",
+    "Use `Set` for dedupe and O(1) membership, and know that objects are compared by reference.",
+    "Tell a shallow copy from a deep one, and use `readonly`, `as const` and `structuredClone` deliberately.",
+    "Quote the Big-O of push, shift, includes, Set.has, sort and spread, and spot hidden O(n²) loops."
+  ],
+  "concepts": [
+    {
+      "title": "The array methods you reach for",
+      "body": "`map`, `filter` and `flatMap` return **new** arrays; `reduce` folds to one value and **throws a TypeError on an empty array without an initial value**, so always pass one. `some` and `every` short-circuit, and `every` on an empty array is `true`. `find` and `findLast` return the element or `undefined` (typed `T | undefined`, so TypeScript makes you handle the miss); `findIndex` returns -1. `at(-1)` reads from the end, while `xs[-1]` is just a missing property. `includes` uses SameValueZero, so it finds `NaN`; `indexOf` uses `===` and does not.",
+      "code": "const nums = [3, -1, 4, 1, -5];\nnums.map(n => n * 2);                // [6, -2, 8, 2, -10]\nnums.filter(n => n > 0);             // [3, 4, 1]\nnums.reduce((sum, n) => sum + n, 0); // 2\n['a b', 'c'].flatMap(s => s.split(' ')); // ['a', 'b', 'c']\nnums.some(n => n < 0);               // true (stops at -1)\n[].every(n => n > 100);              // true: vacuously\nnums.find(n => n < 0);               // -1\nnums.findLast(n => n < 0);           // -5\nnums.at(-1);                         // -5\nnums[-1];                            // undefined\n[NaN].includes(NaN);                 // true\n[NaN].indexOf(NaN);                  // -1"
+    },
+    {
+      "title": "Mutating methods and their copying twins",
+      "body": "`sort`, `reverse`, `splice`, `fill`, `push`, `pop`, `shift` and `unshift` change the array in place, and `sort` and `reverse` **return the same array**, so `const sorted = xs.sort()` leaves two names for one reordered array. ES2023 added copying versions: `toSorted`, `toReversed`, `toSpliced` and `with(index, value)`. They leave the original untouched and exist on `ReadonlyArray` too, which makes them the natural fit for `readonly` inputs and state updates. `with` accepts negative indices (counted from the end) and throws a `RangeError` when the index is out of range.",
+      "code": "const a = [3, 1, 2];\nconst b = a.toSorted((x, y) => x - y); // [1, 2, 3]; a is still [3, 1, 2]\nconst c = a.toReversed();              // [2, 1, 3]\nconst d = a.with(0, 9);                // [9, 1, 2]\nconst e = a.toSpliced(1, 1);           // [3, 2]\n\nconst same = a.sort((x, y) => x - y);  // a is now [1, 2, 3]\nconsole.log(same === a);               // true\na.splice(0, 1);                        // returns [1]; a is [2, 3]",
+      "diagram": "tsa-mutate"
+    },
+    {
+      "title": "The default sort comparator",
+      "body": "With no comparator, `sort` converts every element to a **string** and compares UTF-16 code units, so `[10, 9, 1, 2]` becomes `[1, 10, 2, 9]` and uppercase letters sort before all lowercase ones. Pass `(a, b) => a - b` for numbers. A comparator must return a negative number, zero or a positive number; returning a boolean such as `a > b` is a bug that only sometimes looks right. Since ES2019 `sort` is **stable**, so equal elements keep their input order, which lets you chain keys with `||`. Use `localeCompare` for human-facing text. `undefined` elements always go last without reaching the comparator.",
+      "code": "[10, 9, 1, 2].sort();                  // [1, 10, 2, 9]\n[10, 9, 1, 2].sort((a, b) => a - b);   // [1, 2, 9, 10]\n['b', 'B', 'a'].sort();                // ['B', 'a', 'b']\n['b', 'B', 'a'].sort((x, y) => x.localeCompare(y)); // ['a', 'b', 'B'] in en\n\ntype Player = { name: string; score: number };\nconst byScoreThenName = (p: Player, q: Player) =>\n  q.score - p.score || p.name.localeCompare(q.name);"
+    },
+    {
+      "title": "Map versus plain object",
+      "body": "A `Map` takes keys of **any type** (objects by reference, `1` and `'1'` stay distinct), iterates in insertion order, has an O(1) `size`, and has no inherited keys. A plain object only has string and symbol keys, so `obj[1]` is `obj['1']`; integer-like keys are listed first in ascending order, then other strings in insertion order; and lookups fall through to `Object.prototype`, so `'constructor' in {}` is `true` and assigning `obj['__proto__']` does not create a key. Use an object for a fixed record or a JSON payload; use a `Map` when keys come from data. `JSON.stringify(map)` is `'{}'`, so convert with `Object.fromEntries(map)` or `[...map]` at the boundary.",
+      "code": "const byId = new Map<number, string>([[2, 'bo'], [1, 'ana']]);\nbyId.set(3, 'cy');\nbyId.get(1);       // 'ana'\nbyId.size;         // 3\n[...byId.keys()];  // [2, 1, 3]: insertion order\n\nconst obj: Record<string, number> = {};\nobj['b'] = 1; obj[2] = 1; obj[1] = 1;\nObject.keys(obj);               // ['1', '2', 'b']\n'toString' in obj;              // true: inherited\nObject.hasOwn(obj, 'toString'); // false\nObject.fromEntries(byId);       // { '1': 'ana', '2': 'bo', '3': 'cy' }",
+      "diagram": "tsa-mapobj"
+    },
+    {
+      "title": "Set for dedupe and membership, WeakMap in one breath",
+      "body": "`[...new Set(xs)]` removes duplicates and **keeps first-occurrence order**. `set.has(x)` is O(1) on average, so building a Set once turns an O(n·m) `includes` loop into O(n + m). Sets compare with SameValueZero: `NaN` equals `NaN`, `0` equals `-0`, and two arrays with the same contents are **different** members because objects compare by reference; dedupe objects by a string key instead. Set algebra methods such as `union` arrived in ES2025, so with an ES2023 lib write intersection as `a.filter(x => bSet.has(x))`. A `WeakMap` holds its object keys weakly (an entry disappears once nothing else references the key), is not iterable and has no `size`: use it to cache data per object without leaking memory.",
+      "code": "const ids = [3, 1, 3, 2, 1];\n[...new Set(ids)];              // [3, 1, 2]\nnew Set([NaN, NaN, 0, -0]).size; // 2\nnew Set([[1], [1]]).size;        // 2: two different arrays\n\nconst banned = new Set(['x', 'y']);\n['a', 'x', 'b'].filter(w => !banned.has(w)); // ['a', 'b']\n\nconst sizes = new WeakMap<object, number>();\nconst node = { children: [1, 2] };\nsizes.set(node, node.children.length);"
+    },
+    {
+      "title": "Shallow copies versus structuredClone",
+      "body": "Spread (`[...xs]`, `{ ...obj }`), `slice`, `Array.from`, `concat` and `Object.assign` are all **shallow**: they make a new outer container whose slots point at the same nested objects. Mutate a nested array through the copy and the original changes too. `structuredClone(value)` makes a deep copy of plain data, including `Map`, `Set`, `Date` and cycles; it throws on functions and turns class instances into plain objects. `JSON.parse(JSON.stringify(x))` is a weaker deep copy: it drops `undefined`, turns a `Date` into a string and a `Map` into `{}`. For state updates, prefer copying only the path you change.",
+      "code": "const orig = { name: 'kit', tags: ['a'] };\nconst shallow = { ...orig };        // new outer object, same tags array\nshallow.tags.push('b');             // orig.tags is ['a', 'b'] too\n\nconst deep = structuredClone(orig); // new object AND new array\ndeep.tags.push('c');                // orig.tags is still ['a', 'b']\n\nconst updated = { ...orig, tags: [...orig.tags, 'd'] }; // copy the changed path only",
+      "diagram": "tsa-shallow"
+    },
+    {
+      "title": "readonly arrays and as const",
+      "body": "`readonly T[]` (or `ReadonlyArray<T>`) removes `push`, `sort`, `splice` and index assignment **at compile time**; it compiles to an ordinary array, so it costs nothing and protects nothing at runtime. Accept `readonly` parameters: a mutable array is assignable to them, which tells callers you will not touch their data, and the copying methods (`toSorted`, `with`, `map`) still work. `as const` makes a literal deeply readonly at the type level and keeps literal types, which is ideal for lookup tables such as grid directions. `Object.freeze` is the runtime counterpart, but it is **shallow**: nested arrays stay mutable.",
+      "code": "function median(xs: readonly number[]): number {\n  // xs.sort();  // error: Property 'sort' does not exist on type 'readonly number[]'\n  const s = xs.toSorted((a, b) => a - b);\n  const mid = s.length >> 1;\n  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;\n}\n\nconst DIRS = [[0, 1], [1, 0], [0, -1], [-1, 0]] as const;\ntype Dir = (typeof DIRS)[number]; // readonly [0, 1] | readonly [1, 0] | ...\n\nconst frozen = Object.freeze({ list: [1] });\nfrozen.list.push(2); // allowed: freeze is shallow"
+    },
+    {
+      "title": "What each operation costs",
+      "body": "`push` and `pop` are amortised O(1); `shift`, `unshift` and `splice` in the middle are O(n) because every later element moves. `includes`, `indexOf`, `find` and `filter` scan, so they are O(n). `Map` and `Set` `get`, `set`, `has` and `delete` are O(1) on average (the spec only requires sublinear, and every engine uses hash tables). `sort` and `toSorted` are O(n log n). Every copy (`slice`, spread, `toSorted`, `with`) is O(n), so `acc = [...acc, x]` or `{ ...acc, [k]: v }` inside a `reduce` silently makes the loop O(n²). Using `shift` as a queue pop does the same; keep a head index instead.",
+      "code": "// O(n^2): copies the accumulator on every step\nconst slow = (xs: number[]) => xs.reduce<number[]>((acc, x) => [...acc, x * 2], []);\n// O(n): one array, appended in place\nconst fast = (xs: number[]) => xs.map(x => x * 2);\n\n// O(n) queue without shift\nconst queue = [1, 2, 3];\nlet head = 0;\nwhile (head < queue.length) {\n  const item = queue[head++];\n  if (item < 3) queue.push(item + 10);\n}",
+      "diagram": "tsa-cost"
+    }
+  ],
+  "example": "type Order = { customer: string; total: number };\n\nfunction totalsByCustomer(orders: readonly Order[]): Record<string, number> {\n  const sums = new Map<string, number>();\n  for (const { customer, total } of orders) {\n    sums.set(customer, (sums.get(customer) ?? 0) + total);\n  }\n  return Object.fromEntries(sums); // plain object only at the JSON boundary\n}\n\nconsole.log(JSON.stringify(totalsByCustomer([\n  { customer: 'ana', total: 5 },\n  { customer: 'bo', total: 2 },\n  { customer: 'ana', total: 4 },\n]))); // {\"ana\":9,\"bo\":2}",
+  "task": "Write `tally(words)`. `words` is an array of strings that may be empty and may contain any text, including `'constructor'`, `'__proto__'`, numeric strings such as `'10'`, emoji and accented letters. Return `[word, count]` pairs for every distinct word (case-sensitive), ordered by count from highest to lowest; words with equal counts must appear in the order they **first appeared** in the input. Do not mutate `words`. Aim for O(n log n) time.",
+  "starter": "function tally(words: string[]): [string, number][] {\n  // TODO: a plain object is a risky counter. Which words break it?\n  const counts: Record<string, number> = {};\n  for (const w of words) counts[w] = (counts[w] ?? 0) + 1;\n  return Object.entries(counts).sort((a, b) => b[1] - a[1]);\n}\n",
+  "hints": [
+    "A plain object is the wrong counter here: `'constructor'` is already 'present' through the prototype and numeric strings get reordered. Count with a `Map<string, number>` instead.",
+    "A `Map` iterates in first-insertion order and `Array.prototype.sort` is stable, so `[...counts].sort((a, b) => b[1] - a[1])` gives the tie order for free."
+  ],
+  "solution": "function tally(words: readonly string[]): [string, number][] {\n  const counts = new Map<string, number>();\n  for (const word of words) {\n    counts.set(word, (counts.get(word) ?? 0) + 1);\n  }\n  // Map iterates in first-insertion order and sort is stable, so ties keep that order.\n  return [...counts].sort((a, b) => b[1] - a[1]);\n}\n\nA `Map` keys on the exact string with no inherited entries, so `'constructor'` starts at `undefined` and `?? 0` gives 0. Its iteration order is first insertion, which is exactly the tie-break rule, and since ES2019 `sort` is stable, so equal counts never swap. Spreading the Map yields a fresh array of `[key, value]` pairs, so sorting it in place never touches the input. Counting is O(n) with O(1) average Map operations and the sort is O(k log k) for k distinct words, O(n log n) overall. The plain-object starter fails twice: `counts['constructor'] ?? 0` returns the inherited `Object` function, so `+ 1` produces a string, and `Object.entries` lists integer-like keys such as `'2'` and `'10'` in ascending numeric order rather than first-seen order.",
+  "checklist": [
+    "I count with a `Map`, so words like `'constructor'` and `'__proto__'` behave like any other word.",
+    "Ties keep first-appearance order because Map preserves insertion order and `sort` is stable.",
+    "My comparator returns a number (`b[1] - a[1]`), not a boolean.",
+    "I sort a fresh array from `[...counts]`, so the input is never mutated.",
+    "An empty input returns `[]`, and the result is JSON-friendly pairs rather than a Map."
+  ],
+  "pitfalls": [
+    "Calling `sort()` with no comparator on numbers and getting string order such as `[1, 10, 2, 9]`.",
+    "Writing `const sorted = xs.sort()` and forgetting that `xs` itself was reordered, or calling `sort` on a prop or argument you do not own.",
+    "Counting with a `{}` literal and colliding with `constructor`, `toString` or `__proto__`, or relying on its key order when keys look like integers.",
+    "Assuming spread is a deep copy, then mutating a nested array through the 'copy'.",
+    "Returning a `Map` or `Set` where JSON is expected: `JSON.stringify` turns both into `{}`.",
+    "Calling `includes` inside a loop or spreading the accumulator inside `reduce`, which quietly makes the solution O(n²).",
+    "Calling `reduce` without an initial value and crashing on an empty array."
+  ],
+  "walkthrough": [
+    {
+      "title": "Why the object counter breaks",
+      "body": "Run the starter on `['constructor', 'x']`. `counts['constructor']` finds nothing own, so lookup walks to `Object.prototype` and returns the `Object` constructor function. That is not nullish, so `?? 0` keeps it and `+ 1` concatenates: the count becomes the string `'function Object() { [native code] }1'`. TypeScript cannot catch this because `Record<string, number>` claims every string key holds a number. With `'__proto__'` it is worse: the assignment hits the inherited setter and no key is created at all. A `Map` has no prototype entries in its key space, so `get` returns `undefined` for any unseen key. If you must use an object, create it with `Object.create(null)` and check `Object.hasOwn`.",
+      "code": "const counts: Record<string, number> = {};\nfor (const w of ['constructor', 'x']) counts[w] = (counts[w] ?? 0) + 1;\nconsole.log(typeof counts['constructor']); // 'string'\n\nconst safe = new Map<string, number>();\nfor (const w of ['constructor', 'x']) safe.set(w, (safe.get(w) ?? 0) + 1);\nconsole.log(safe.get('constructor'));      // 1",
+      "diagram": "tsa-count"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, count: one pass with `counts.set(w, (counts.get(w) ?? 0) + 1)`. Second, materialise: `[...counts]` turns the Map into an array of `[word, count]` tuples in first-seen order, and it is already a copy. Third, order: `sort((a, b) => b[1] - a[1])`, relying on stability for ties. Say the complexity out loud: O(n) to count, O(k log k) to sort k distinct words. If the interviewer then asks for only the top k, mention a bounded min-heap for O(n log k), or bucket by count for O(n)."
+    },
+    {
+      "title": "Immutable updates for the stretch",
+      "body": "Snapshots only stay correct if each step creates new containers along the changed path and **shares** everything else. `[...grid]` copies the outer array but every row is still shared, so writing `next[r][c]` edits the row inside every earlier snapshot. `grid.with(r, grid[r].with(c, mark))` creates exactly two new arrays (the outer grid and one row) and reuses the untouched rows, which is O(rows + cols) per move instead of a full deep copy. Check bounds yourself first: `with` treats -1 as the last index."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Dedupe ignoring case",
+      "prompt": "Write `dedupeIgnoringCase(words)`. Return the words with duplicates removed, where two words are duplicates if their `toLowerCase()` forms are equal. Keep the **first** spelling you see and keep the original order. The starter uses `new Set`, which is case-sensitive.",
+      "hints": [
+        "A Set can still do the work, but store the normalised key, not the word.",
+        "`filter` keeps a word only when its key is not in the Set yet; add the key as you go."
+      ],
+      "solution": "function dedupeIgnoringCase(words: readonly string[]): string[] {\n  const seen = new Set<string>();\n  return words.filter(word => {\n    const key = word.toLowerCase();\n    if (seen.has(key)) return false;\n    seen.add(key);\n    return true;\n  });\n}",
+      "checklist": [
+        "The first spelling wins: `['Apple', 'apple']` gives `['Apple']`.",
+        "Order is preserved and an empty input gives `[]`.",
+        "Membership checks are O(1) Set lookups, so the whole pass is O(n)."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Board history without aliasing",
+      "prompt": "Write `boardHistory(board, moves)`. `board` is a grid of one-character strings where `'.'` is empty, and each move is `[row, col, mark]`. Return every state: the original board, then one snapshot after each move. A move outside the grid (including negative indices) or onto a non-empty cell changes nothing but still adds a snapshot. Earlier snapshots and the input must never change. The starter's copy is too shallow.",
+      "hints": [
+        "Print the starter's output: every snapshot shows the final board, because all of them share the same row arrays.",
+        "Replace one cell with `current.with(r, current[r].with(c, mark))`, after checking `0 <= r < rows` and `0 <= c < cols` yourself."
+      ],
+      "solution": "type Grid = readonly (readonly string[])[];\ntype Move = readonly [row: number, col: number, mark: string];\n\nfunction boardHistory(board: Grid, moves: readonly Move[]): Grid[] {\n  const snapshots: Grid[] = [board];\n  let current = board;\n  for (const [r, c, mark] of moves) {\n    const row = r >= 0 ? current[r] : undefined;\n    if (row !== undefined && c >= 0 && c < row.length && row[c] === '.') {\n      // Copy only the path that changes: a new outer array and a new row.\n      current = current.with(r, row.with(c, mark));\n    }\n    snapshots.push(current);\n  }\n  return snapshots;\n}",
+      "checklist": [
+        "Earlier snapshots still show the board as it was at that step.",
+        "Negative or too-large indices are rejected before calling `with`.",
+        "Untouched rows are shared between snapshots instead of deep-copied."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you pick a plain object over a Map?",
+      "answer": "When the shape is a fixed record with known string keys (a config, a DTO, a JSON payload), because objects get property access syntax, precise types per key and serialize directly. When keys come from data, are not strings, or entries are added and removed often, use a Map: no prototype collisions, no key coercion, insertion-order iteration and O(1) `size`. Convert at the boundary with `Object.fromEntries(map)` or `new Map(Object.entries(obj))`."
+    },
+    {
+      "question": "How would you deep-copy a value, and what can go wrong?",
+      "answer": "`structuredClone` handles nested arrays, objects, Map, Set, Date, typed arrays and cycles. It throws a `DataCloneError` on functions and DOM nodes, and it does not keep prototypes, so class instances come back as plain objects without their methods. `JSON.parse(JSON.stringify(x))` loses `undefined`, functions, Map and Set contents, and turns Dates into strings. Often the better answer is not to deep-copy at all and to copy only the changed path."
+    },
+    {
+      "question": "Your solution calls `includes` inside a `filter`. What is the complexity and how do you fix it?",
+      "answer": "Each `includes` scans the other array, so filtering n items against m is O(n·m). Build `const lookup = new Set(other)` once (O(m)) and call `lookup.has(x)` (O(1) average), giving O(n + m). The same reasoning applies to `indexOf` and `find` inside loops."
+    },
+    {
+      "question": "Is there a built-in group-by?",
+      "answer": "Yes, since ES2024: `Object.groupBy(items, fn)` returns a null-prototype object of arrays and `Map.groupBy(items, fn)` returns a Map. They are not in an ES2023 lib, so in an interview either confirm the target or write the four-line Map loop, which also lets you aggregate (sum, count) instead of building arrays."
+    },
+    {
+      "question": "Does `readonly number[]` stop someone mutating the array?",
+      "answer": "Only at compile time, and only through that reference. The emitted JavaScript is a normal array, so a cast or another mutable alias can still change it. For runtime protection use `Object.freeze`, which is shallow; for real guarantees, never hand out the internal array and return copies or readonly views."
+    }
+  ],
+  "takeaways": [
+    "`sort`, `reverse` and `splice` mutate and return the same array; `toSorted`, `toReversed`, `toSpliced` and `with` copy.",
+    "Default `sort` compares strings: always pass `(a, b) => a - b` for numbers. Sort is stable, so ties keep input order.",
+    "Use a Map when keys come from data: any key type, insertion order, `size`, and no prototype keys.",
+    "`[...new Set(xs)]` dedupes in first-seen order; build a Set once instead of calling `includes` in a loop.",
+    "Spread and slice are shallow; use `structuredClone` for a deep copy or, better, copy only the changed path.",
+    "`readonly` and `as const` are compile-time only; accept `readonly` parameters and return fresh arrays."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsa-mutate",
+        "type": "compare",
+        "title": "sort versus toSorted",
+        "alt": "Side-by-side comparison. On the left, names a and b both point at one array that a.sort() reordered in place to 1, 2, 3. On the right, a still points at the original array 3, 1, 2 and b points at a separate new sorted array 1, 2, 3.",
+        "caption": "sort reorders the array you already have and hands it back; toSorted leaves it alone and returns a new one.",
+        "before": {
+          "label": "b = a.sort(): one array, two names",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "name a",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "b = a.sort()",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "arr",
+              "label": "the one array",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "now [1, 2, 3]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "arr",
+              "label": "same reference"
+            },
+            {
+              "from": "b",
+              "to": "arr",
+              "label": "same reference"
+            }
+          ]
+        },
+        "after": {
+          "label": "b = a.toSorted(): original kept",
+          "nodes": [
+            {
+              "id": "a",
+              "label": "name a",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "b",
+              "label": "b = a.toSorted()",
+              "kind": "client",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "orig",
+              "label": "original array",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "still [3, 1, 2]"
+            },
+            {
+              "id": "copy",
+              "label": "new array",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "[1, 2, 3]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "a",
+              "to": "orig"
+            },
+            {
+              "from": "b",
+              "to": "copy",
+              "label": "fresh copy"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsa-mapobj",
+        "type": "flow",
+        "title": "Map or plain object?",
+        "alt": "Decision flow. Starting from a need for key to value lookup, ask whether all keys are strings; if not, use a Map. If they are, ask whether keys come from users or data; if so, use a Map because of prototype keys like __proto__. Otherwise ask whether entries are added and deleted often; if so, use a Map, if not a plain object fits a fixed record or JSON shape. A side note offers Object.create(null) as a prototype-free object.",
+        "caption": "Default to a Map for data-driven keys; keep plain objects for fixed records and JSON boundaries.",
+        "nodes": [
+          {
+            "id": "need",
+            "label": "key -> value",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "lookup by key"
+          },
+          {
+            "id": "str",
+            "label": "all string keys?",
+            "kind": "decision",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "user",
+            "label": "keys from data?",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": "user input, words"
+          },
+          {
+            "id": "churn",
+            "label": "lots of churn?",
+            "kind": "decision",
+            "col": 2,
+            "row": 4
+          },
+          {
+            "id": "map",
+            "label": "Map",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "any key, has size"
+          },
+          {
+            "id": "obj",
+            "label": "plain object",
+            "kind": "good",
+            "col": 2,
+            "row": 5,
+            "sub": "fixed record, JSON"
+          },
+          {
+            "id": "bare",
+            "label": "bare object",
+            "kind": "note",
+            "col": 0,
+            "row": 3,
+            "sub": "create(null)"
+          }
+        ],
+        "edges": [
+          {
+            "from": "need",
+            "to": "str"
+          },
+          {
+            "from": "str",
+            "to": "map",
+            "label": "no: numbers, objects"
+          },
+          {
+            "from": "str",
+            "to": "user",
+            "label": "yes"
+          },
+          {
+            "from": "user",
+            "to": "map",
+            "label": "yes: __proto__ risk"
+          },
+          {
+            "from": "user",
+            "to": "churn",
+            "label": "no"
+          },
+          {
+            "from": "churn",
+            "to": "map",
+            "label": "yes"
+          },
+          {
+            "from": "churn",
+            "to": "obj",
+            "label": "no"
+          },
+          {
+            "from": "bare",
+            "to": "user",
+            "label": "object fallback"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Objects coerce keys to strings, so `1` and `'1'` collide and object keys collapse to `'[object Object]'`. Any non-string key means Map."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Keys taken from input can be `constructor` or `__proto__`, which an ordinary object already 'has'. A Map has no inherited keys."
+          },
+          {
+            "edges": [
+              4,
+              5,
+              6
+            ],
+            "text": "Maps are built for frequent insert and delete and report `size` in O(1). A fixed, known set of string fields is a record: use an object (or a type with named properties)."
+          },
+          {
+            "edges": [
+              7
+            ],
+            "text": "If an API demands an object, `Object.create(null)` gives one without a prototype; still check keys with `Object.hasOwn`."
+          }
+        ]
+      },
+      {
+        "id": "tsa-shallow",
+        "type": "flow",
+        "title": "Spread copies one level; structuredClone copies all",
+        "alt": "Memory diagram. The name orig points at an object whose tags field points at an array holding a and b. The name copy points at a second object made by spread, whose tags field points at the very same array. The name deep points at a third object made by structuredClone, whose tags field points at its own new array holding a, b and c.",
+        "caption": "A shallow copy gets a new outer object but shares everything nested inside it.",
+        "nodes": [
+          {
+            "id": "orig",
+            "label": "orig",
+            "kind": "client",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "copy",
+            "label": "copy",
+            "kind": "client",
+            "col": 0,
+            "row": 2
+          },
+          {
+            "id": "deep",
+            "label": "deep",
+            "kind": "client",
+            "col": 0,
+            "row": 4
+          },
+          {
+            "id": "o1",
+            "label": "object",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "{ name, tags }"
+          },
+          {
+            "id": "o2",
+            "label": "object",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "{ ...orig }"
+          },
+          {
+            "id": "o3",
+            "label": "object",
+            "kind": "state",
+            "col": 2,
+            "row": 4,
+            "sub": "structuredClone"
+          },
+          {
+            "id": "t1",
+            "label": "tags array",
+            "kind": "bad",
+            "col": 4,
+            "row": 1,
+            "sub": "['a', 'b'] shared"
+          },
+          {
+            "id": "t2",
+            "label": "new tags array",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "['a', 'b', 'c']"
+          }
+        ],
+        "edges": [
+          {
+            "from": "orig",
+            "to": "o1"
+          },
+          {
+            "from": "o1",
+            "to": "t1",
+            "label": "tags"
+          },
+          {
+            "from": "copy",
+            "to": "o2",
+            "label": "spread"
+          },
+          {
+            "from": "o2",
+            "to": "t1",
+            "label": "tags (same ref)"
+          },
+          {
+            "from": "deep",
+            "to": "o3",
+            "label": "structuredClone"
+          },
+          {
+            "from": "o3",
+            "to": "t2",
+            "label": "tags (new array)"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`orig` refers to an object, and its `tags` field refers to a separate array."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "`{ ...orig }` builds a new object but copies the **reference** in `tags`, so `copy.tags.push('b')` changes the array `orig` sees too."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "`structuredClone` walks the whole graph and builds new nested containers, so pushing `'c'` onto `deep.tags` leaves `orig.tags` alone."
+          }
+        ]
+      },
+      {
+        "id": "tsa-cost",
+        "type": "bars",
+        "title": "Rough steps per operation on 1,000 elements",
+        "alt": "Bar chart of Big-O classes evaluated at n equals 1,000. push or pop and Map or Set lookups are about 1 step; shift or unshift, includes or indexOf, and a spread copy are about 1,000 steps; sort is about 10,000 steps (n log2 n). Map and Set lookups are highlighted.",
+        "caption": "Hash lookups stay flat, scans and copies grow with n, and sort grows with n log n: build a Set before you loop.",
+        "unit": "steps at n=1000 (Big-O)",
+        "bars": [
+          {
+            "label": "push / pop: O(1)",
+            "value": 1
+          },
+          {
+            "label": "Set.has / Map.get",
+            "value": 1,
+            "highlight": true
+          },
+          {
+            "label": "shift / unshift: O(n)",
+            "value": 1000
+          },
+          {
+            "label": "includes: O(n)",
+            "value": 1000
+          },
+          {
+            "label": "[...xs] copy: O(n)",
+            "value": 1000
+          },
+          {
+            "label": "sort: O(n log n)",
+            "value": 9966
+          }
+        ]
+      },
+      {
+        "id": "tsa-count",
+        "type": "compare",
+        "title": "Counting 'constructor' with an object and with a Map",
+        "alt": "Comparison. On the left, the word constructor is looked up in an empty object literal, the lookup falls through to Object.prototype, which returns the Object function, and adding 1 yields a string instead of a count. On the right, the same word is looked up in a new Map, get returns undefined, and the count becomes 1.",
+        "caption": "An object literal inherits keys from Object.prototype; a Map's key space starts truly empty.",
+        "before": {
+          "label": "counts = {}: inherited keys leak in",
+          "nodes": [
+            {
+              "id": "w",
+              "label": "'constructor'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "obj",
+              "label": "counts = {}",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "no own keys"
+            },
+            {
+              "id": "proto",
+              "label": "Object.prototype",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "has constructor"
+            },
+            {
+              "id": "res",
+              "label": "Object fn + 1",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "a string, not 1"
+            }
+          ],
+          "edges": [
+            {
+              "from": "w",
+              "to": "obj",
+              "label": "counts[w] ?? 0"
+            },
+            {
+              "from": "obj",
+              "to": "proto",
+              "label": "lookup falls through"
+            },
+            {
+              "from": "proto",
+              "to": "res",
+              "label": "not nullish",
+              "style": "fail"
+            }
+          ]
+        },
+        "after": {
+          "label": "new Map(): only your entries",
+          "nodes": [
+            {
+              "id": "w",
+              "label": "'constructor'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "map",
+              "label": "new Map()",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "no inherited keys"
+            },
+            {
+              "id": "res",
+              "label": "count = 1",
+              "kind": "good",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "w",
+              "to": "map",
+              "label": "get(w) ?? 0"
+            },
+            {
+              "from": "map",
+              "to": "res",
+              "label": "undefined -> 0 + 1"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "tally",
+        "starter": "function tally(words: string[]): [string, number][] {\n  // TODO: a plain object is a risky counter. Which words break it?\n  const counts: Record<string, number> = {};\n  for (const w of words) counts[w] = (counts[w] ?? 0) + 1;\n  return Object.entries(counts).sort((a, b) => b[1] - a[1]);\n}\n",
+        "solution": "function tally(words: readonly string[]): [string, number][] {\n  const counts = new Map<string, number>();\n  for (const word of words) {\n    counts.set(word, (counts.get(word) ?? 0) + 1);\n  }\n  // Map iterates in first-insertion order and sort is stable, so ties keep that order.\n  return [...counts].sort((a, b) => b[1] - a[1]);\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "to",
+                "be",
+                "or",
+                "not",
+                "to",
+                "be"
+              ]
+            ],
+            "expected": [
+              [
+                "to",
+                2
+              ],
+              [
+                "be",
+                2
+              ],
+              [
+                "or",
+                1
+              ],
+              [
+                "not",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "10",
+                "3",
+                "10",
+                "2",
+                "2"
+              ]
+            ],
+            "expected": [
+              [
+                "10",
+                2
+              ],
+              [
+                "2",
+                2
+              ],
+              [
+                "3",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "constructor",
+                "x"
+              ]
+            ],
+            "expected": [
+              [
+                "constructor",
+                1
+              ],
+              [
+                "x",
+                1
+              ]
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "solo"
+              ]
+            ],
+            "expected": [
+              [
+                "solo",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "__proto__",
+                "__proto__",
+                "toString"
+              ]
+            ],
+            "expected": [
+              [
+                "__proto__",
+                2
+              ],
+              [
+                "toString",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "é",
+                "e",
+                "é",
+                "😀",
+                "😀",
+                "😀"
+              ]
+            ],
+            "expected": [
+              [
+                "😀",
+                3
+              ],
+              [
+                "é",
+                2
+              ],
+              [
+                "e",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "A",
+                "a",
+                "A"
+              ]
+            ],
+            "expected": [
+              [
+                "A",
+                2
+              ],
+              [
+                "a",
+                1
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "z",
+                "y",
+                "x",
+                "x",
+                "y",
+                "z"
+              ]
+            ],
+            "expected": [
+              [
+                "z",
+                2
+              ],
+              [
+                "y",
+                2
+              ],
+              [
+                "x",
+                2
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                "-1",
+                "1",
+                "",
+                "",
+                "1"
+              ]
+            ],
+            "expected": [
+              [
+                "1",
+                2
+              ],
+              [
+                "",
+                2
+              ],
+              [
+                "-1",
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "dedupeIgnoringCase",
+        "starter": "function dedupeIgnoringCase(words: string[]): string[] {\n  // TODO: 'Apple' and 'apple' should count as the same word.\n  return [...new Set(words)];\n}\n",
+        "solution": "function dedupeIgnoringCase(words: readonly string[]): string[] {\n  const seen = new Set<string>();\n  return words.filter(word => {\n    const key = word.toLowerCase();\n    if (seen.has(key)) return false;\n    seen.add(key);\n    return true;\n  });\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "Apple",
+                "pear",
+                "apple",
+                "PEAR",
+                "fig"
+              ]
+            ],
+            "expected": [
+              "Apple",
+              "pear",
+              "fig"
+            ]
+          },
+          {
+            "args": [
+              [
+                "b",
+                "a",
+                "b"
+              ]
+            ],
+            "expected": [
+              "b",
+              "a"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "One"
+              ]
+            ],
+            "expected": [
+              "One"
+            ]
+          },
+          {
+            "args": [
+              [
+                "ÉCOLE",
+                "école",
+                "Ecole"
+              ]
+            ],
+            "expected": [
+              "ÉCOLE",
+              "Ecole"
+            ]
+          },
+          {
+            "args": [
+              [
+                "x",
+                "X",
+                "x",
+                "X"
+              ]
+            ],
+            "expected": [
+              "x"
+            ]
+          },
+          {
+            "args": [
+              [
+                "10",
+                "010",
+                "10"
+              ]
+            ],
+            "expected": [
+              "10",
+              "010"
+            ]
+          },
+          {
+            "args": [
+              [
+                "constructor",
+                "Constructor",
+                "__proto__"
+              ]
+            ],
+            "expected": [
+              "constructor",
+              "__proto__"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "boardHistory",
+        "starter": "function boardHistory(board: string[][], moves: [number, number, string][]): string[][][] {\n  const snapshots: string[][][] = [board];\n  let current = board;\n  for (const [r, c, mark] of moves) {\n    const next = [...current]; // TODO: is this copy deep enough?\n    if (next[r]?.[c] === '.') next[r][c] = mark;\n    snapshots.push(next);\n    current = next;\n  }\n  return snapshots;\n}\n",
+        "solution": "type Grid = readonly (readonly string[])[];\ntype Move = readonly [row: number, col: number, mark: string];\n\nfunction boardHistory(board: Grid, moves: readonly Move[]): Grid[] {\n  const snapshots: Grid[] = [board];\n  let current = board;\n  for (const [r, c, mark] of moves) {\n    const row = r >= 0 ? current[r] : undefined;\n    if (row !== undefined && c >= 0 && c < row.length && row[c] === '.') {\n      // Copy only the path that changes: a new outer array and a new row.\n      current = current.with(r, row.with(c, mark));\n    }\n    snapshots.push(current);\n  }\n  return snapshots;\n}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  0,
+                  0,
+                  "X"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "X",
+                  "."
+                ]
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  0,
+                  1,
+                  "X"
+                ],
+                [
+                  1,
+                  0,
+                  "O"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "X"
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "X"
+                ],
+                [
+                  "O",
+                  "."
+                ]
+              ]
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              []
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  0,
+                  0,
+                  "X"
+                ],
+                [
+                  0,
+                  0,
+                  "O"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "X",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "X",
+                  "."
+                ]
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  -1,
+                  0,
+                  "X"
+                ],
+                [
+                  0,
+                  -1,
+                  "X"
+                ],
+                [
+                  2,
+                  0,
+                  "X"
+                ],
+                [
+                  0,
+                  2,
+                  "X"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "."
+                ]
+              ]
+            ]
+          },
+          {
+            "args": [
+              [],
+              [
+                [
+                  0,
+                  0,
+                  "X"
+                ]
+              ]
+            ],
+            "expected": [
+              [],
+              []
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "X",
+                  "."
+                ]
+              ],
+              [
+                [
+                  0,
+                  1,
+                  "✗"
+                ],
+                [
+                  0,
+                  0,
+                  "O"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  "X",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "X",
+                  "✗"
+                ]
+              ],
+              [
+                [
+                  "X",
+                  "✗"
+                ]
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  ".",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  1,
+                  1,
+                  "X"
+                ],
+                [
+                  0,
+                  0,
+                  "O"
+                ],
+                [
+                  2,
+                  2,
+                  "X"
+                ]
+              ]
+            ],
+            "expected": [
+              [
+                [
+                  ".",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  ".",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "X",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "O",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "X",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "."
+                ]
+              ],
+              [
+                [
+                  "O",
+                  ".",
+                  "."
+                ],
+                [
+                  ".",
+                  "X",
+                  "."
+                ],
+                [
+                  ".",
+                  ".",
+                  "X"
+                ]
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const nums = [10, 9, 1, 2];\nnums.sort();\nconsole.log(nums.join(','));",
+        "choices": [
+          "1,2,9,10",
+          "1,10,2,9",
+          "10,9,2,1"
+        ],
+        "answer": 1,
+        "explain": "With no comparator, `sort` compares the elements as strings, and `'10'` comes before `'2'` because `'1'` < `'2'`. Pass `(a, b) => a - b` for numeric order."
+      },
+      {
+        "code": "const a = [3, 1, 2];\nconst b = a.sort((x, y) => x - y);\nconst c = a.toReversed();\nb.push(9);\nconsole.log(a.join(','), a === b, c.join(','));",
+        "choices": [
+          "3,1,2 false 2,1,3",
+          "1,2,3,9 true 3,2,1",
+          "1,2,3,9 true 9,3,2,1"
+        ],
+        "answer": 1,
+        "explain": "`sort` reorders `a` in place and returns `a` itself, so `b.push(9)` grows `a`. `toReversed` made an independent copy before the push, so `c` stays `3,2,1`."
+      },
+      {
+        "code": "const m = new Map<string | number, string>();\nm.set(1, 'num').set('1', 'str');\nconst o: Record<string, string> = {};\no[1] = 'num';\no['1'] = 'str';\nconsole.log(m.size, Object.keys(o).length, o[1]);",
+        "choices": [
+          "2 1 str",
+          "1 1 str",
+          "2 2 num"
+        ],
+        "answer": 0,
+        "explain": "A Map keeps `1` and `'1'` as different keys. An object converts the number key to the string `'1'`, so the second assignment overwrites the first."
+      },
+      {
+        "code": "const o = { b: 1, 2: 1, a: 1, 1: 1 };\nconsole.log(Object.keys(o).join(','));",
+        "choices": [
+          "b,2,a,1",
+          "1,2,b,a",
+          "1,2,a,b"
+        ],
+        "answer": 1,
+        "explain": "Objects list integer-like keys first in ascending order, then string keys in insertion order. A Map would give `b,2,a,1`."
+      },
+      {
+        "code": "const orig = { tags: ['a'] };\nconst copy = { ...orig };\ncopy.tags.push('b');\nconst deep = structuredClone(orig);\ndeep.tags.push('c');\nconsole.log(orig.tags.join(','), deep.tags.join(','));",
+        "choices": [
+          "a a,c",
+          "a,b a,b,c",
+          "a,b,c a,b,c"
+        ],
+        "answer": 1,
+        "explain": "Spread copies only the outer object, so `copy.tags` is the same array as `orig.tags`. `structuredClone` runs after the push and builds a new array, so `'c'` lands only in `deep`."
+      },
+      {
+        "code": "const xs = [NaN, 0];\nconsole.log(xs.includes(NaN), xs.indexOf(NaN), new Set([[1], [1]]).size);",
+        "choices": [
+          "true -1 2",
+          "false -1 1",
+          "true 0 1"
+        ],
+        "answer": 0,
+        "explain": "`includes` uses SameValueZero, which treats `NaN` as equal to itself; `indexOf` uses `===`, which does not. The two `[1]` literals are different objects, so the Set keeps both."
+      },
+      {
+        "code": "const row = ['a', 'b', 'c'];\nconsole.log(row.with(-1, 'z').join(''), row.at(-1), row[-1]);",
+        "choices": [
+          "abz c undefined",
+          "zbc c c",
+          "abc c undefined"
+        ],
+        "answer": 0,
+        "explain": "`with` and `at` count negative indices from the end, and `with` returns a copy, so `row` is unchanged. `row[-1]` is a plain property lookup for the key `'-1'`, which does not exist."
+      },
+      {
+        "code": "const counts: Record<string, number> = {};\nfor (const w of ['constructor', 'x']) counts[w] = (counts[w] ?? 0) + 1;\nconsole.log(typeof counts['constructor'], counts['x']);",
+        "choices": [
+          "number 1",
+          "string 1",
+          "undefined 1"
+        ],
+        "answer": 1,
+        "explain": "`counts['constructor']` is inherited from `Object.prototype` (the `Object` function), which is not nullish, so `+ 1` concatenates into a string. The type says number; the runtime disagrees."
+      }
+    ],
+    "tip": "When you reach for a collection in the room, name the choice and its cost in one sentence: 'keys come from input, so a Map; counting is O(n), sorting k distinct keys is O(k log k)'. If you sort, say 'toSorted, so I don't mutate the caller's array' or pass a numeric comparator out loud; interviewers listen for both.",
+    "links": {
+      "problems": [
+        "most-frequent-k",
+        "group-by-letters",
+        "has-nearby-duplicate",
+        "longest-distinct-stretch"
+      ],
+      "guides": [
+        "complexity-reasoning",
+        "edge-case-checklist"
+      ],
+      "lessons": [
+        "hash-map-complements",
+        "heaps-top-k",
+        "sorting-stable-merge",
+        "py-collections"
+      ]
+    }
+  }
+}

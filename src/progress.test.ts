@@ -28,7 +28,7 @@ describe('expanded curriculum contract', () => {
     expect(lessons.length).toBeGreaterThanOrEqual(40)
     expect(new Set(lessons.map(lesson => lesson.id)).size).toBe(lessons.length)
     expect(lessons.filter(lesson => lesson.track === 'dsa').length).toBeGreaterThanOrEqual(18)
-    expect(tracks.map(track => track.id)).toEqual(['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python'])
+    expect(tracks.map(track => track.id)).toEqual(['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript'])
     for (const lesson of lessons) {
       expect(lesson.id).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
       expect(tracks.some(track => track.id === lesson.track)).toBe(true)

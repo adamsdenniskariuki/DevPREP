@@ -19,8 +19,16 @@ export interface RunRequest {
 }
 
 export type RunResponse =
-  | { kind: 'done'; outcomes: CaseOutcome[]; output: string }
-  | { kind: 'error'; error: string; output: string }
+  | { kind: 'done'; outcomes: CaseOutcome[]; output: string; diagnostics?: TypeDiagnostic[] }
+  | { kind: 'error'; error: string; output: string; diagnostics?: TypeDiagnostic[] }
+
+/** A TypeScript type error in learner code (TypeScript labs only; the code still runs). */
+export interface TypeDiagnostic {
+  line: number
+  column: number
+  code: number
+  message: string
+}
 
 /** Structural equality over JSON values. Object key order is ignored; numbers compare exactly. */
 export function deepEqual(a: unknown, b: unknown): boolean {
@@ -106,6 +114,48 @@ export function runJs({ code, name, cases }: RunRequest): RunResponse {
       return { pass: false, error: describeError(error), ms: now() - started }
     }
   })
+  return { kind: 'done', outcomes, output: flush() }
+}
+
+/**
+ * Like runJs, but awaits promise results (with a per-case limit) so async and event-loop exercises can be tested.
+ * Used by the TypeScript runner after transpiling.
+ */
+export async function runJsAsync({ code, name, cases }: RunRequest, caseLimitMs = 3000): Promise<RunResponse> {
+  const output: string[] = []
+  let size = 0
+  const write = (...parts: unknown[]) => {
+    if (size > OUTPUT_LIMIT) return
+    const line = parts.map(part => (typeof part === 'string' ? part : safeStringify(part))).join(' ')
+    size += line.length + 1
+    output.push(line)
+  }
+  const fakeConsole = { log: write, info: write, warn: write, error: write, debug: write }
+  const flush = () => truncate(output.join('\n'), OUTPUT_LIMIT)
+  let fn: unknown
+  try {
+    fn = new Function('console', `"use strict";\n${code}\n;return typeof ${name} === 'function' ? ${name} : undefined`)(fakeConsole)
+  } catch (error) {
+    return { kind: 'error', error: describeError(error), output: flush() }
+  }
+  if (typeof fn !== 'function') return { kind: 'error', error: `Define a function named ${name}.`, output: flush() }
+  const outcomes: CaseOutcome[] = []
+  for (const test of cases) {
+    const started = now()
+    try {
+      let value = (fn as (...args: unknown[]) => unknown)(...structuredClone(test.args))
+      if (value && typeof (value as PromiseLike<unknown>).then === 'function') {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const limit = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`The promise did not settle within ${caseLimitMs / 1000} s.`)), caseLimitMs) })
+        try { value = await Promise.race([value, limit]) } finally { clearTimeout(timer) }
+      }
+      const outcome: CaseOutcome = { pass: false, actual: value === undefined ? undefined : JSON.stringify(value), ms: now() - started }
+      outcome.pass = isPassing(outcome, test.expected)
+      outcomes.push(outcome)
+    } catch (error) {
+      outcomes.push({ pass: false, error: describeError(error), ms: now() - started })
+    }
+  }
   return { kind: 'done', outcomes, output: flush() }
 }
 

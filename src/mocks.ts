@@ -26,7 +26,7 @@ export interface Mock {
   questions: MockQuestion[]
 }
 
-export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30, python: 30 }
+export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30, python: 30, typescript: 30 }
 export const STAR_RUBRIC = [
   'Set the situation in two or three sentences',
   'Made your own role and the stakes clear',

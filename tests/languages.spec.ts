@@ -4,12 +4,13 @@ import { palettes } from '../src/appearance'
 import { color, contrast, over } from './contrast'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
-const LANGUAGES = ['python']
+const LANGUAGES = ['python', 'typescript']
 const read = (path: string) => JSON.parse(readFileSync(new URL(`../content/${path}`, import.meta.url), 'utf8'))
 const languageTracks = LANGUAGES.map(id => read(`${id}/track.json`))
 const lessons = LANGUAGES.flatMap(id => readdirSync(new URL(`../content/${id}/`, import.meta.url)).filter(file => file !== 'track.json').map(file => read(`${id}/${file}`)))
+const firstOf = (track: { lessons: string[] }) => lessons.find(lesson => lesson.id === track.lessons[0])!
 const python = languageTracks[0]
-const first = lessons.find(lesson => lesson.id === python.lessons[0])!
+const first = firstOf(python)
 
 async function openLesson(page: Page, lesson = first) {
   await page.goto(`./#tracks/${lesson.track}`)
@@ -30,33 +31,37 @@ async function diagramsShown(page: Page) {
   return seen
 }
 
-test('language tracks are listed apart from interview tracks with SE/SSE core tags', async ({ page }) => {
-  await page.goto('./#tracks')
-  await page.getByRole('button', { name: python.title, exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Languages' })).toBeVisible()
-  await expect(page.getByRole('heading', { level: 3 })).toHaveCount(python.lessons.length)
-  await expect(page.locator('.pill', { hasText: 'SE core' }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Take placement check' })).toBeVisible()
-})
+for (const track of languageTracks) {
+  test(`${track.title} is listed apart from interview tracks with SE/SSE core tags`, async ({ page }) => {
+    await page.goto('./#tracks')
+    await page.getByRole('button', { name: track.title, exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Languages' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 3 })).toHaveCount(track.lessons.length)
+    await expect(page.locator('.pill', { hasText: 'SE core' }).first()).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Take placement check' })).toBeVisible()
+  })
 
-test('a language lesson draws every diagram once and checks predict-the-output answers', async ({ page }) => {
-  await openLesson(page)
-  const seen = await diagramsShown(page)
-  expect(seen.sort()).toEqual(first.lab.diagrams.map((diagram: { id: string }) => diagram.id).sort())
-  const picker = page.getByRole('combobox', { name: 'In this lesson' })
-  await picker.selectOption({ label: await picker.locator('option', { hasText: 'Predict the output' }).innerText() })
-  for (const [index, item] of first.lab.predict.entries()) {
-    await page.getByRole('group', { name: `Snippet ${index + 1}: what does it print?` }).getByRole('radio', { name: item.choices[item.answer], exact: true }).check()
-  }
-  await page.getByRole('button', { name: 'Check answers' }).click()
-  await expect(page.getByText(`${first.lab.predict.length} of ${first.lab.predict.length}`)).toBeVisible()
-})
+  test(`a ${track.title} lesson draws every diagram once and checks predict-the-output answers`, async ({ page }) => {
+    const first = firstOf(track)
+    await openLesson(page, first)
+    const seen = await diagramsShown(page)
+    expect(seen.sort()).toEqual(first.lab.diagrams.map((diagram: { id: string }) => diagram.id).sort())
+    const picker = page.getByRole('combobox', { name: 'In this lesson' })
+    await picker.selectOption({ label: await picker.locator('option', { hasText: 'Predict the output' }).innerText() })
+    for (const [index, item] of first.lab.predict.entries()) {
+      await page.getByRole('group', { name: `Snippet ${index + 1}: what does it print?` }).getByRole('radio', { name: item.choices[item.answer], exact: true }).check()
+    }
+    await page.getByRole('button', { name: 'Check answers' }).click()
+    await expect(page.getByText(`${first.lab.predict.length} of ${first.lab.predict.length}`)).toBeVisible()
+  })
+}
 
-test('the core exercise runs in Python, fails the starter and passes the solution', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop', 'Pyodide download is covered once.')
+for (const track of languageTracks) test(`the core exercise runs in ${track.title}, fails the starter and passes the solution`, async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Runtime downloads are covered once.')
   test.setTimeout(180_000)
+  const first = firstOf(track)
   const core = first.lab.exercises.find((exercise: { id: string }) => exercise.id === 'core')
-  await openLesson(page)
+  await openLesson(page, first)
   await page.getByRole('button', { name: 'Continue to practice' }).click()
   const results = page.locator('.run-results')
   await page.getByRole('button', { name: 'Run tests' }).click()
@@ -65,14 +70,24 @@ test('the core exercise runs in Python, fails the starter and passes the solutio
   await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
   await page.getByRole('button', { name: 'Run tests' }).click()
   await expect(results).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`)
+  if (first.lab.lang === 'ts') {
+    await expect(results.locator('.type-errors')).toHaveCount(0)
+    const typo = `${core.solution}\nconst typeCheckProbe: number = 'not a number'\n`
+    await page.getByRole('textbox', { name: /Your solution/ }).fill(typo)
+    await page.getByRole('button', { name: 'Run tests' }).click()
+    await expect(results.locator('.type-errors summary')).toHaveText('1 type error · the code still ran')
+    await expect(results).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`)
+    await expect(results.locator('.type-errors')).toContainText("Type 'string' is not assignable to type 'number'.")
+    await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
+  }
   await page.reload()
   await expect(page.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
 })
 
-test('the placement check marks known lessons, saves them and earns its badge', async ({ page }) => {
-  await page.goto(`./#tracks/${python.id}`)
+for (const track of languageTracks) test(`the ${track.title} placement check marks known lessons, saves them and earns its badge`, async ({ page }) => {
+  await page.goto(`./#tracks/${track.id}`)
   await page.getByRole('button', { name: 'Take placement check' }).click()
-  const questions = python.placement
+  const questions = track.placement
   for (const [index, question] of questions.entries()) {
     const choice = question.choices[question.answer].replace(/`/g, '')
     await page.locator('.placement .fg-questions > li').nth(index).getByRole('radio', { name: choice, exact: true }).check()
@@ -83,9 +98,9 @@ test('the placement check marks known lessons, saves them and earns its badge', 
   await page.getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('button', { name: 'Retake placement check' })).toBeVisible()
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), PROGRESS_KEY)
-  expect(new Set(saved.placements[python.id].known)).toEqual(known)
+  expect(new Set(saved.placements[track.id].known)).toEqual(known)
   await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
-  await expect(page.locator('.badge.earned', { hasText: `${python.title} placed` })).toBeVisible()
+  await expect(page.locator('.badge.earned', { hasText: `${track.title} placed` })).toBeVisible()
 })
 
 test('lesson diagrams stay readable in every palette, light and dark', async ({ page }) => {
@@ -120,14 +135,14 @@ test('lesson diagrams stay readable in every palette, light and dark', async ({ 
   }
 })
 
-for (const width of [360, 768, 1440]) {
-  test(`language lessons fit without sideways scrolling at ${width}px`, async ({ page }) => {
+for (const width of [360, 768, 1440]) for (const python of languageTracks) {
+  test(`${python.title} lessons fit without sideways scrolling at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto(`./#tracks/${python.id}`)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.getByRole('button', { name: 'Take placement check' }).click()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-    await openLesson(page)
+    await openLesson(page, firstOf(python))
     const picker = page.getByRole('combobox', { name: 'In this lesson' })
     const count = await picker.locator('option').count()
     for (let index = 0; index < count; index++) {
@@ -139,10 +154,10 @@ for (const width of [360, 768, 1440]) {
   })
 }
 
-test('every language lesson draws each of its diagrams exactly once at 360px', async ({ page }) => {
+for (const track of languageTracks) test(`every ${track.title} lesson draws each of its diagrams exactly once at 360px`, async ({ page }) => {
   test.setTimeout(480_000)
   await page.setViewportSize({ width: 360, height: 800 })
-  for (const lesson of lessons) {
+  for (const lesson of lessons.filter(item => item.track === track.id)) {
     await openLesson(page, lesson)
     const seen = await diagramsShown(page)
     expect(seen.sort(), lesson.id).toEqual(lesson.lab.diagrams.map((diagram: { id: string }) => diagram.id).sort())

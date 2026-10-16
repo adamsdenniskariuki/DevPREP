@@ -8,16 +8,22 @@ import { lessons } from '../curriculum'
 import type { LabExercise, Lesson, LessonLab, TrackInfo } from '../curriculum-types'
 import { problemIndex } from '../problems'
 import { guideIndex } from '../guides'
-import { runCode, type RunPhase, type RunReport } from '../runner/runner'
+import { runCode, type RunLanguage, type RunPhase, type RunReport } from '../runner/runner'
 import type { CodeLanguage } from '../problem-types'
 import { inline } from '../inline'
 import '../field-guide.css'
 import '../lab.css'
 
-/** Runner language for a lab. TypeScript labs reuse the JavaScript runner after type-checking. */
-export function runLanguage(lab: LessonLab): CodeLanguage {
+/** Runner language for a lab: TypeScript is type-checked and transpiled in its own worker. */
+export function runLanguage(lab: LessonLab): RunLanguage {
+  return lab.lang
+}
+/** Editor and result-formatting language: TypeScript reads as JavaScript. */
+function displayLanguage(lab: LessonLab): CodeLanguage {
   return lab.lang === 'py' ? 'py' : 'js'
 }
+const DOWNLOAD_NOTE = { py: ' Python’s first run downloads about 13 MB, then works offline.', ts: ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline.' } as const
+const LOADING_LABEL: Partial<Record<RunPhase, string>> = { 'loading-python': 'Loading Python…', 'loading-typescript': 'Loading TypeScript…', running: 'Running…' }
 const LANGUAGE_NAME = { py: 'Python', ts: 'TypeScript' } as const
 
 /** A lab diagram, numbered by its place in the lab. */
@@ -86,6 +92,7 @@ export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
   label: string
 }) {
   const lang = runLanguage(lab)
+  const shown = displayLanguage(lab)
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
   const [result, setResult] = useState<{ report: RunReport; message?: string }>()
   const live = useRef(true)
@@ -114,11 +121,11 @@ export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
       <label htmlFor={id}>{label} <span className="muted">· {LANGUAGE_NAME[lab.lang]}</span></label>
       <button type="button" className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
     </div>
-    <CodeEditor id={id} lang={lang} value={value} onChange={onChange} describedBy={`${id}-help`} />
-    <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : ''}</p>
-    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'running' ? 'Running…' : 'Run tests'}</button></div>
+    <CodeEditor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
+    <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang]}</p>
+    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase]}</button></div>
     <div className="run-results" role="status" aria-live="polite">
-      {result && <RunResults tests={exercise.tests} fn={exercise.function} lang={lang} report={result.report} message={result.message} />}
+      {result && <RunResults tests={exercise.tests} fn={exercise.function} lang={shown} typescript={lab.lang === 'ts'} report={result.report} message={result.message} />}
     </div>
   </div>
 }

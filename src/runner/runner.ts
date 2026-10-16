@@ -2,15 +2,24 @@ import type { CodeLanguage } from '../problem-types'
 import { TIMEOUT_MS, type RunRequest, type RunResponse } from './core'
 import { PYODIDE_VERSION } from './pyodide-version'
 import type { PyWorkerMessage } from './py.worker'
+import { TYPESCRIPT_VERSION } from './ts-version'
+import type { TsWorkerMessage } from './ts.worker'
 
 export type RunReport =
   | RunResponse
   | { kind: 'timeout'; ms: number }
   | { kind: 'load-error'; error: string }
 
-export type RunPhase = 'loading-python' | 'running'
+export type RunPhase = 'loading-python' | 'loading-typescript' | 'running'
+/** Languages the runner executes: problem languages plus TypeScript (labs only). */
+export type RunLanguage = CodeLanguage | 'ts'
+/** TypeScript runs as JavaScript after type-checking; the extra second covers compiling. */
+export const TS_TIMEOUT_MS = TIMEOUT_MS.js + 1000
 
 const PYTHON_LOAD_TIMEOUT_MS = 180_000
+const TYPESCRIPT_LOAD_TIMEOUT_MS = 120_000
+let tsWorker: Worker | undefined
+let tsReady: Promise<void> | undefined
 let jsWorker: Worker | undefined
 let pyWorker: Worker | undefined
 let pyReady: Promise<void> | undefined
@@ -18,6 +27,10 @@ let queue: Promise<unknown> = Promise.resolve()
 
 export function pyodideIndexURL(base = document.baseURI) {
   return new URL(`pyodide/${PYODIDE_VERSION}/`, base).href
+}
+
+export function typescriptBaseURL(base = document.baseURI) {
+  return new URL(`typescript/${TYPESCRIPT_VERSION}/`, base).href
 }
 
 function reply<T>(worker: Worker, ms: number, accept: (data: unknown) => T | undefined): Promise<T | 'timeout'> {
@@ -64,7 +77,61 @@ export function preparePython(): Promise<void> {
   return pyReady
 }
 
-async function runOnce(lang: CodeLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {
+function resetTypeScript() {
+  tsWorker?.terminate()
+  tsWorker = undefined
+  tsReady = undefined
+}
+
+/** Starts (or reuses) the TypeScript worker and resolves once the compiler is ready. */
+export function prepareTypeScript(): Promise<void> {
+  if (!tsReady) {
+    const worker = new Worker(new URL('./ts.worker.ts', import.meta.url), { type: 'module', name: 'devprep-typescript' })
+    tsWorker = worker
+    tsReady = (async () => {
+      const done = reply(worker, TYPESCRIPT_LOAD_TIMEOUT_MS, data => {
+        const message = data as { type: string; error?: string }
+        if (message.type === 'ready') return 'ready'
+        if (message.type === 'load-error') return `error:${message.error}`
+      })
+      worker.postMessage({ type: 'init', baseURL: typescriptBaseURL() } satisfies TsWorkerMessage)
+      const result = await done
+      if (result !== 'ready') throw new Error(result === 'timeout' ? 'TypeScript took too long to load. Check your connection and try again.' : result.slice(6))
+    })()
+    tsReady.catch(resetTypeScript)
+  }
+  return tsReady
+}
+
+async function runTypeScript(request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {
+  onPhase('loading-typescript')
+  try {
+    await prepareTypeScript()
+  } catch (error) {
+    return { kind: 'load-error', error: error instanceof Error ? error.message : String(error) }
+  }
+  const worker = tsWorker!
+  onPhase('running')
+  const started = performance.now()
+  const pending = reply(worker, TS_TIMEOUT_MS, data => {
+    const message = data as { type: string; result?: RunResponse }
+    return message.type === 'result' ? message.result : undefined
+  })
+  worker.postMessage({ type: 'run', ...request } satisfies TsWorkerMessage)
+  try {
+    const result = await pending
+    if (result !== 'timeout') return result
+  } catch (error) {
+    resetTypeScript()
+    return { kind: 'error', error: error instanceof Error ? error.message : String(error), output: '' }
+  }
+  // A runaway loop blocks the worker, so stop it; the next run reloads the compiler from cache.
+  resetTypeScript()
+  return { kind: 'timeout', ms: Math.round(performance.now() - started) }
+}
+
+async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {
+  if (lang === 'ts') return runTypeScript(request, onPhase)
   const started = performance.now()
   if (lang === 'js') {
     jsWorker ??= new Worker(new URL('./js.worker.ts', import.meta.url), { type: 'module', name: 'devprep-javascript' })
@@ -110,7 +177,7 @@ async function runOnce(lang: CodeLanguage, request: RunRequest, onPhase: (phase:
 }
 
 /** Runs code against test cases in a sandboxed worker, one run at a time, with a time limit. */
-export function runCode(lang: CodeLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void = () => {}): Promise<RunReport> {
+export function runCode(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void = () => {}): Promise<RunReport> {
   const next = queue.then(() => runOnce(lang, request, onPhase))
   queue = next.catch(() => undefined)
   return next
