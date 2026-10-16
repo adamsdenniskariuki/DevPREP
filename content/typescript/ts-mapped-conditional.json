@@ -1,0 +1,1220 @@
+{
+  "id": "ts-mapped-conditional",
+  "track": "typescript",
+  "title": "Utility, mapped and conditional types",
+  "minutes": 55,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "How the built-in utility types are written, mapped types with `keyof`, modifiers and `as` key remapping, conditional types and their distribution over unions, `infer`, template literal types, recursive types and their limits, and the judgement call on when type-level cleverness stops paying for itself.",
+  "prerequisites": [
+    "ts-generics"
+  ],
+  "prerequisiteNotes": "ts-generics: type parameters, `K extends keyof T`, indexed access `T[K]` and the built-in utility types from the caller's side. This lesson opens those utilities up and writes them yourself, so you need to read a generic signature fluently first.",
+  "objectives": [
+    "Implement `Partial`, `Required`, `Readonly`, `Pick`, `Record`, `Exclude`, `Extract`, `NonNullable`, `ReturnType`, `Parameters` and `Awaited` from memory and explain each line.",
+    "Write mapped types over `keyof T` that add or remove `readonly` and `?`, and rename or filter keys with an `as` clause.",
+    "Predict how a conditional type distributes over a union, and switch distribution off with `[T] extends [U]`.",
+    "Extract parts of a type with `infer`, including pieces of a string with template literal types.",
+    "Write a recursive type such as `DeepReadonly<T>` or a dotted `Path<T>`, and name its limits (functions, arrays, `Map`, recursion depth).",
+    "Pair a runtime function with a precise type and prove the type with `Equal`/`Expect` checks and `@ts-expect-error`.",
+    "Argue, in an interview, when a simpler type or an overload beats a clever one."
+  ],
+  "concepts": [
+    {
+      "title": "The utility types are short type programs",
+      "body": "Every built-in utility is a few lines of ordinary TypeScript in `lib.es5.d.ts`, built from two tools: **mapped types** (`{ [P in K]: ... }`) and **conditional types** (`T extends U ? X : Y`). Writing them yourself is a classic senior interview warm-up, and it explains their quirks. `Pick` constrains `K extends keyof T`, but `Omit` accepts `K extends keyof any`, which is why a misspelt key is silently ignored. `Exclude` and `Extract` filter **union members**, not object keys. `NonNullable<T>` is `T & {}` since TS 4.8, because `{}` means \"any non-nullish value\". `ReturnType` and `Parameters` use `infer` to pull a piece out of a function type, and `Awaited` recurses to unwrap nested promises. The `any` in their constraints is the deliberate \"any function\" top type, not a leak.",
+      "code": "type MyPartial<T>  = { [P in keyof T]?: T[P] };\ntype MyRequired<T> = { [P in keyof T]-?: T[P] };\ntype MyReadonly<T> = { readonly [P in keyof T]: T[P] };\ntype MyPick<T, K extends keyof T> = { [P in K]: T[P] };\ntype MyRecord<K extends keyof any, V> = { [P in K]: V };\ntype MyOmit<T, K extends keyof any> = MyPick<T, MyExclude<keyof T, K>>;\n\ntype MyExclude<T, U> = T extends U ? never : T;\ntype MyExtract<T, U> = T extends U ? T : never;\ntype MyNonNullable<T> = T & {};\n\ntype MyReturnType<F extends (...args: any) => any> = F extends (...args: any) => infer R ? R : never;\ntype MyParameters<F extends (...args: any) => any> = F extends (...args: infer A) => any ? A : never;\ntype MyAwaited<T> = T extends PromiseLike<infer V> ? MyAwaited<V> : T;  // simplified\n\ntype A = MyExclude<'a' | 'b' | 'c', 'a'>;           // 'b' | 'c'\ntype B = MyAwaited<Promise<Promise<number>>>;        // number"
+    },
+    {
+      "title": "Mapped types and modifiers",
+      "body": "A mapped type `{ [K in Keys]: V }` builds an object type by iterating a union of keys. When the keys are `keyof T` for a type parameter `T` it is **homomorphic**: it copies each property's `readonly` and `?` modifiers, and it maps arrays to arrays and tuples to tuples instead of turning them into objects with `length` and `push` keys. Prefix a modifier with `-` to remove it and `+` (the default) to add it: `-readonly` gives you a `Mutable<T>` (not built in), `-?` gives `Required<T>`, and `-?` also strips the `undefined` that came from the `?`. Keys can be any union, so `{ [K in 'x' | 'y']: number }` is just `Record<'x' | 'y', number>`. Mapping over a primitive leaves it unchanged, but mapping over a **function** type loses its call signature, which matters for recursive types.",
+      "code": "type Mutable<T>  = { -readonly [K in keyof T]: T[K] };\ntype Concrete<T> = { [K in keyof T]-?: T[K] };\ntype Nullable<T> = { [K in keyof T]: T[K] | null };\n\ninterface Draft { readonly id: number; title?: string }\ntype Editable = Mutable<Draft>;      // { id: number; title?: string }\ntype Saved = Concrete<Draft>;        // { readonly id: number; title: string }\n\ntype Pair = [string, number];\ntype NullPair = Nullable<Pair>;      // [string | null, number | null], still a tuple\n\ntype Flags = { [K in 'dark' | 'beta']: boolean };  // { dark: boolean; beta: boolean }"
+    },
+    {
+      "title": "Key remapping with as",
+      "body": "Since TS 4.1 a mapped type can compute a **new key** for each property with an `as` clause: `{ [K in keyof T as NewKey]: T[K] }`. The value type still uses the original `K`, so you can rename without losing the link to `T[K]`. Remapping a key to `never` **removes** it, which gives you filtering by key (`Omit` as one line) or by value type (keep only the methods, keep only the string fields). Combine it with template literal types to derive names: getters, setters, event handlers. Because `keyof T` can include `number` and `symbol`, intersect with `string` (`string & K`) before passing a key to `Capitalize`. An `as` clause over `keyof T` keeps modifiers, so optional properties stay optional.",
+      "code": "type Getters<T> = {\n  [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];\n};\ntype G = Getters<{ id: number; name: string }>;\n// { getId: () => number; getName: () => string }\n\ntype WithoutKeys<T, K extends keyof T> = { [P in keyof T as P extends K ? never : P]: T[P] };\n\ntype MethodsOf<T> = {\n  [K in keyof T as T[K] extends (...args: never[]) => unknown ? K : never]: T[K];\n};\ninterface Store { size: number; get(id: string): string; clear(): void }\ntype StoreMethods = MethodsOf<Store>;   // { get(id: string): string; clear(): void }",
+      "diagram": "tsm-mapped"
+    },
+    {
+      "title": "Conditional types and distribution",
+      "body": "`T extends U ? X : Y` is an `if` at the type level: if `T` is assignable to `U` the result is `X`, otherwise `Y`. When the checked type is a **naked type parameter** and it is instantiated with a union, the conditional **distributes**: it runs once per member and unions the results. That is exactly what makes `Exclude` work, and exactly what surprises people: `ToArray<string | number>` is `string[] | number[]`, not `(string | number)[]`, and `IsString<string | number>` is `boolean`. `never` is the empty union, so a distributive conditional over `never` returns `never` without evaluating either branch. To test the union as a whole, wrap both sides in a one-element tuple: `[T] extends [string]`. Distribution only happens on a bare `T`; `T[]`, `[T]` or `keyof T` in the checked position do not distribute.",
+      "code": "type ToArray<T> = T extends unknown ? T[] : never;\ntype A = ToArray<string | number>;          // string[] | number[]\n\ntype ToArrayWhole<T> = [T] extends [unknown] ? T[] : never;\ntype B = ToArrayWhole<string | number>;     // (string | number)[]\n\ntype IsString<T> = T extends string ? true : false;\ntype C = IsString<string | number>;         // boolean (true | false)\ntype D = IsString<never>;                   // never: nothing to distribute over\n\ntype IsStringWhole<T> = [T] extends [string] ? true : false;\ntype E = IsStringWhole<string | number>;    // false\ntype F = IsStringWhole<never>;              // true: never is assignable to everything\n\ntype IsNever<T> = [T] extends [never] ? true : false;   // the standard never test",
+      "diagram": "tsm-boxed"
+    },
+    {
+      "title": "infer: pattern matching on types",
+      "body": "`infer X` can appear only in the `extends` clause of a conditional type. It declares a type variable that TypeScript fills in by matching the checked type against the pattern, and it is available in the true branch. That is how `ReturnType`, `Parameters` and `Awaited` work, and you can write your own extractors: the element type of an array, the resolved type of a promise, the first element of a tuple, the props of a component. With several candidate signatures (overloads), `infer` matches the **last** one. Since TS 4.7 you can constrain what is inferred: `infer N extends number`. If the pattern does not match, the false branch runs, and returning `never` there is the usual way to say \"not applicable\".",
+      "code": "type ElementOf<T> = T extends readonly (infer E)[] ? E : never;\ntype E1 = ElementOf<string[]>;                 // string\n\ntype First<T> = T extends readonly [infer H, ...unknown[]] ? H : never;\ntype F1 = First<[boolean, number]>;            // boolean\ntype F2 = First<[]>;                           // never\n\ntype Resolved<T> = T extends Promise<infer V> ? V : T;\ntype R1 = Resolved<Promise<string[]>>;         // string[]\n\ntype FirstArg<F> = F extends (first: infer A, ...rest: never[]) => unknown ? A : never;\ntype A1 = FirstArg<(id: number, verbose?: boolean) => void>;   // number\n\ntype ToNumber<S> = S extends `${infer N extends number}` ? N : never;\ntype N1 = ToNumber<'42'>;                      // 42"
+    },
+    {
+      "title": "Template literal types",
+      "body": "A template literal type builds string literal types the way a template string builds strings: a backtick-quoted `on${Capitalize<K>}` with `K = 'click'` is the type `'onClick'`. When a placeholder holds a union, the result is the **cross product**: `${'sm' | 'lg'}-${'red' | 'blue'}` has four members, so large unions grow fast (TypeScript refuses unions over 100,000 members). The intrinsic helpers `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize` change case, and they are evaluated by the compiler, not written in TypeScript. Combined with `infer`, template literals also **parse** strings: `${infer Head}.${infer Rest}` splits at the first dot, which lets you type route parameters, dotted config paths or event names. The runtime still needs the matching string code; the type only describes it.",
+      "code": "type EventName = 'click' | 'keyDown';\ntype Handler = `on${Capitalize<EventName>}`;       // 'onClick' | 'onKeyDown'\n\ntype Size = 'sm' | 'lg';\ntype Tone = 'red' | 'blue';\ntype ClassName = `${Size}-${Tone}`;                // 4 members: 'sm-red' | 'sm-blue' | ...\n\ntype RouteParams<S extends string> =\n  S extends `${string}:${infer P}/${infer Rest}` ? P | RouteParams<`/${Rest}`>\n  : S extends `${string}:${infer P}` ? P\n  : never;\ntype P1 = RouteParams<'/users/:id/posts/:postId'>;  // 'id' | 'postId'\n\nfunction on<E extends EventName>(name: E): `on${Capitalize<E>}` {\n  return `on${name[0].toUpperCase()}${name.slice(1)}` as `on${Capitalize<E>}`;\n}"
+    },
+    {
+      "title": "Recursive types and their limits",
+      "body": "A type alias may refer to itself inside a mapped or conditional type, which is how you describe arbitrarily nested data: `DeepReadonly<T>`, `DeepPartial<T>`, dotted `Path<T>`, JSON values. The traps are in the edges. Mapping over a **function** drops its call signature, so special-case functions first. A homomorphic mapped type keeps arrays and tuples as arrays, which is what you want; but class instances such as `Map`, `Set` and `Date` are mapped member by member, so a `DeepReadonly<Map<K, V>>` still has a callable `set`. Recursion has a budget: very deep or wide instantiations fail with **TS2589** (\"Type instantiation is excessively deep and possibly infinite\"); conditional types in tail position may recurse much deeper (up to 1000 levels, TS 4.5+). Recursive types also slow the editor and produce long error messages, so recurse only as deep as the data really goes, and never over unbounded unions such as `string`.",
+      "code": "type DeepReadonly<T> =\n  T extends (...args: never[]) => unknown ? T\n  : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> }\n  : T;\n\ntype Cfg = { db: { hosts: string[]; retry: { max: number } }; onError: (e: Error) => void };\ntype FrozenCfg = DeepReadonly<Cfg>;\n// { readonly db: { readonly hosts: readonly string[]; readonly retry: { readonly max: number } };\n//   readonly onError: (e: Error) => void }\n\ntype Json = string | number | boolean | null | Json[] | { [key: string]: Json };\n\ntype StillMutable = DeepReadonly<{ m: Map<string, number> }>;\n// m.set(...) still type-checks: Map methods are not made read-only"
+    },
+    {
+      "title": "When type-level cleverness hurts",
+      "body": "Interviewers at senior level often ask \"would you ship this?\" after you write an impressive type. Type-level code is code: it needs names, tests and maintainers, and its error messages are part of the API. Prefer the simplest type that catches the bugs you actually have: a plain union, an overload or two, or a generic with `K extends keyof T`. Reach for mapped, conditional and recursive types at **boundaries used by many callers** (a typed event bus, a config reader, an API client), where one careful type removes a whole class of mistakes. When you do, split it into named helpers, pin it with `Equal`/`Expect` tests and `@ts-expect-error` negatives, and keep the runtime implementation simple; the implementation usually needs one cast (`as Mapped<T>`) because the compiler cannot prove a loop builds a mapped type. If the type is harder to read than the bug it prevents, delete it.",
+      "code": "// Clever: one expression, unreadable errors, nobody else will touch it\ntype Get<T, P> = P extends `${infer H}.${infer R}` ? H extends keyof T ? Get<T[H], R> : never : P extends keyof T ? T[P] : never;\n\n// Readable: named steps, and tests that pin the behaviour\ntype Head<P extends string> = P extends `${infer H}.${string}` ? H : P;\ntype Rest<P extends string> = P extends `${string}.${infer R}` ? R : never;\n\ntype Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;\ntype Expect<T extends true> = T;\ntype _head = Expect<Equal<Head<'a.b.c'>, 'a'>>;\ntype _rest = Expect<Equal<Rest<'a.b.c'>, 'b.c'>>;\n\n// Often enough: an overload per real use, no type-level machinery at all\nfunction read(key: 'port'): number;\nfunction read(key: 'host'): string;\nfunction read(key: 'port' | 'host'): number | string {\n  return key === 'port' ? 8080 : 'localhost';\n}",
+      "diagram": "tsm-readable"
+    }
+  ],
+  "example": "type DeepReadonly<T> =\n  T extends (...args: never[]) => unknown ? T                 // keep functions callable\n  : T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> }  // arrays and tuples stay arrays\n  : T;                                                        // primitives unchanged\n\nfunction deepFreeze<T>(value: T, seen = new WeakSet<object>()): DeepReadonly<T> {\n  if (typeof value === 'object' && value !== null && !seen.has(value)) {\n    seen.add(value);\n    for (const key of Reflect.ownKeys(value)) {\n      deepFreeze((value as Record<PropertyKey, unknown>)[key], seen);\n    }\n    Object.freeze(value);\n  }\n  return value as DeepReadonly<T>;\n}\n\nconst settings = deepFreeze({ theme: 'dark', editor: { tabSize: 2, rulers: [80, 120] } });\n// settings.editor.tabSize = 4;      // error: tabSize is read-only\n// settings.editor.rulers.push(100); // error: push does not exist on readonly number[]\nconsole.log(Object.isFrozen(settings.editor.rulers));  // true: runtime agrees with the type",
+  "task": "Write `handlerMap(events)`, which takes a list of event names such as `['click', 'keyDown']` and returns an object that maps each **handler name** to its event: `{ onClick: 'click', onKeyDown: 'keyDown' }`. A handler name is `on` followed by the event name with its first character upper-cased (the same rule as `Capitalize`); the rest of the name is unchanged and duplicates collapse into one key. Declare `type HandlerMap<K extends string>` as a mapped type with key remapping, so that the return type is exact: `handlerMap(['click', 'keyDown'])` must have the type `{ onClick: 'click'; onKeyDown: 'keyDown' }`, and reading `handlers.onclick` must be a compile error. Use a `const` type parameter so callers do not need `as const`.",
+  "starter": "type HandlerMap<K extends string> = Record<string, K>;\n\nfunction handlerMap<const K extends string>(events: readonly K[]): HandlerMap<K> {\n  const out: Record<string, K> = {};\n  for (const event of events) {\n    // TODO: capitalise the event name, and give the result a precise mapped type\n    out['on' + event] = event;\n  }\n  return out;\n}\n",
+  "hints": [
+    "The key of each property is a template literal type: map over `E in K` and remap with `as` to `on${Capitalize<E>}`, keeping `E` as the value type.",
+    "At runtime build a plain `Record<string, string>` with `name.charAt(0).toUpperCase() + name.slice(1)`, then cast once at the return: the compiler cannot prove that a loop produces a mapped type."
+  ],
+  "solution": "type HandlerMap<K extends string> = {\n  [E in K as `on${Capitalize<E>}`]: E;\n};\n\nfunction capitalize<S extends string>(s: S): Capitalize<S> {\n  return (s.charAt(0).toUpperCase() + s.slice(1)) as Capitalize<S>;\n}\n\nfunction handlerMap<const K extends string>(events: readonly K[]): HandlerMap<K> {\n  const out: Record<string, string> = {};\n  for (const event of events) out[`on${capitalize(event)}`] = event;\n  return out as HandlerMap<K>;\n}\n\n`HandlerMap<K>` iterates the union of event names and uses an `as` clause to compute each key with the template literal type `on${Capitalize<E>}`, while the value stays the original literal `E`. The `const` modifier on `K` makes `['click', 'keyDown']` infer as the literal union `'click' | 'keyDown'` instead of `string`, so the mapped type has exact keys and `handlers.onclick` is an error. `capitalize` applies the same rule at runtime that `Capitalize` applies at compile time (upper-case the first UTF-16 unit, keep the rest), so the types and values agree; the only cast is at the boundary where a hand-built object becomes the mapped type. Duplicates overwrite the same key, the work is O(n) in the number of events, and an empty list gives `{}` with the type `{}`.",
+  "checklist": [
+    "`HandlerMap<K>` is a mapped type with an `as` clause; there is no `Record<string, ...>` in the public return type.",
+    "Hovering `handlerMap(['click', 'keyDown'])` shows `{ onClick: 'click'; onKeyDown: 'keyDown' }` and `handlers.onclick` is a compile error.",
+    "The runtime rule matches `Capitalize`: only the first character changes, so `'keyDown'` becomes `'onKeyDown'` and `'Change'` becomes `'onChange'`.",
+    "Empty input returns `{}`, duplicate events produce one key, and the only `as` is the final cast."
+  ],
+  "pitfalls": [
+    "Expecting `ToArray<string | number>` to be `(string | number)[]`; a naked type parameter distributes, so wrap it as `[T] extends [unknown]` when you mean the whole union.",
+    "Writing `IsNever<T> = T extends never ? true : false`, which returns `never` for `never`; the reliable test is `[T] extends [never]`.",
+    "Passing `keyof T` straight to `Capitalize` or a template literal; `keyof` may include `number` and `symbol`, so intersect with `string` first.",
+    "Writing a recursive `DeepReadonly` that maps over functions (losing the call signature) or assuming it protects `Map` and `Set` contents.",
+    "Treating `Readonly`, `Partial` or `Required` as runtime operations: they reshape types only; `Object.freeze` is shallow and an `as Required<T>` assertion can lie.",
+    "Using `Exclude<string, ''>` for a non-empty string: `string` is not a union, so nothing is excluded.",
+    "Shipping a one-line type-level puzzle without `Equal`/`Expect` tests; the next edit silently turns it into `never` or `any`."
+  ],
+  "walkthrough": [
+    {
+      "title": "Trace a distributive conditional by hand",
+      "body": "When a conditional type surprises you, evaluate it the way the checker does. First ask: is the checked type a naked type parameter, and is it being instantiated with a union? If yes, split the union and evaluate the conditional once per member, substituting that member for `T` in both branches. Then union the results and drop every `never`. `Exclude<'a' | 'b' | 'c', 'b'>` becomes three small questions whose answers are `'a'`, `never` and `'c'`, so the result is `'a' | 'c'`. Narrating this in an interview shows you understand why `Exclude` filters unions and why `NonNullable<string | null>` is `string`.",
+      "code": "type MyExclude<T, U> = T extends U ? never : T;\n\n// MyExclude<'a' | 'b' | 'c', 'b'>\n//   = ('a' extends 'b' ? never : 'a')\n//   | ('b' extends 'b' ? never : 'b')\n//   | ('c' extends 'b' ? never : 'c')\n//   = 'a' | never | 'c'\n//   = 'a' | 'c'\n\ntype Events = 'click' | 'focus' | 'scroll';\ntype NoScroll = MyExclude<Events, 'scroll'>;     // 'click' | 'focus'\ntype OnlyFocus = Extract<Events, 'focus' | 'x'>; // 'focus'",
+      "diagram": "tsm-distribute"
+    },
+    {
+      "title": "Evaluate a recursive template literal type",
+      "body": "A recursive type is a loop the checker runs at compile time. For `PathValue<Cfg, 'server.port'>`, match the path against the pattern `${infer Head}.${infer Rest}`: `Head` is everything up to the **first** dot and `Rest` the remainder. Check that `Head` is a key of the current type, then recurse with the property type and the shorter path. When no dot is left, the base case looks the last key up directly. Every step either shrinks the input or stops, which is what keeps the recursion finite. A wrong segment falls to `never`, and the `P extends Path<T>` constraint on the function turns that into an error at the call site instead.",
+      "code": "type Cfg = { server: { port: number; host: string }; debug: boolean };\n\ntype PathValue<T, P extends string> = P extends `${infer Head}.${infer Rest}`\n  ? Head extends keyof T ? PathValue<T[Head], Rest> : never\n  : P extends keyof T ? T[P] : never;\n\ntype Port = PathValue<Cfg, 'server.port'>;   // number\ntype Srv  = PathValue<Cfg, 'server'>;        // { port: number; host: string }\ntype Bad  = PathValue<Cfg, 'server.prot'>;   // never",
+      "diagram": "tsm-pathvalue"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, write the type, because it is the point of the exercise: `type HandlerMap<K extends string> = { [E in K as` followed by the template literal key `on${Capitalize<E>}` and the value `E`. Say aloud that the `as` clause renames the key while the value still refers to the original `E`. Second, write the signature with a `const` type parameter so the event list infers as a literal union, and test it mentally: `HandlerMap<'click'>` is `{ onClick: 'click' }`. Third, write the boring runtime loop with a plain record and one cast at the end, and point out that `capitalize` must follow the same rule as `Capitalize`, otherwise the type would promise keys the object does not have. Close by proving the type with an `Equal`/`Expect` check and a `@ts-expect-error` line for a misspelt handler."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Omit with a remapped type",
+      "prompt": "Write `omit(obj, keys)`, which returns a shallow copy of `obj` without the listed keys. Declare `type Without<T, K extends keyof T>` yourself as a mapped type that **remaps** each omitted key to `never` (do not use the built-in `Omit`), and use it as the return type. Unlike `Omit`, your key parameter must be checked: `omit(account, ['pasword'])` is a compile error. Repeated keys are harmless, optional properties stay optional in the type, and nested objects are shared, not cloned.",
+      "hints": [
+        "`{ [P in keyof T as P extends K ? never : P]: T[P] }` keeps every key except those in `K`, and because it maps over `keyof T` it keeps `?` and `readonly`.",
+        "At runtime put the keys in a `Set`, copy the other own entries from `Object.entries(obj)` into a `Record<string, unknown>`, and cast it to `Without<T, K>` once."
+      ],
+      "solution": "type Without<T, K extends keyof T> = {\n  [P in keyof T as P extends K ? never : P]: T[P];\n};\n\nfunction omit<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Without<T, K> {\n  const drop = new Set<PropertyKey>(keys);\n  const out: Record<string, unknown> = {};\n  for (const [key, value] of Object.entries(obj)) {\n    if (!drop.has(key)) out[key] = value;\n  }\n  return out as Without<T, K>;\n}",
+      "checklist": [
+        "`Without<Account, 'password'>` equals `{ id: number; email: string; note?: string }`.",
+        "A misspelt key is a compile error, and reading an omitted key from the result is a compile error.",
+        "Empty `keys` returns a copy with every property; the input object is not modified."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Typed dotted paths",
+      "prompt": "Write `getPath(obj, path)`, which reads a value by a dotted path such as `'server.port'`. Declare `type Path<T>` as the union of every valid dotted path into `T` (treat arrays as leaves: `'tags'` is a path, `'tags.0'` is not) and `type PathValue<T, P extends string>` as the type found at that path. The signature `<T extends object, P extends Path<T>>(obj: T, path: P): PathValue<T, P>` must make a misspelt path a compile error and give `getPath(cfg, 'server.port')` the type `number`. At runtime, split on dots and walk the object, returning whatever value is found, including `null`, `0` and `false`.",
+      "hints": [
+        "`Path<T>` maps each string key `K` to `K | ` plus the template `${K}.${Path<T[K]>}`, then indexes the mapped type with `[keyof T & string]` to collect the union; primitives and arrays give `never`, which drops the dotted form.",
+        "`PathValue` splits with `${infer Head}.${infer Rest}`, checks `Head extends keyof T` and recurses on `T[Head]`; the base case is `P extends keyof T ? T[P] : never`."
+      ],
+      "solution": "type Path<T> = T extends readonly unknown[]\n  ? never\n  : T extends object\n    ? { [K in keyof T & string]: K | `${K}.${Path<T[K]>}` }[keyof T & string]\n    : never;\n\ntype PathValue<T, P extends string> = P extends `${infer Head}.${infer Rest}`\n  ? Head extends keyof T\n    ? PathValue<T[Head], Rest>\n    : never\n  : P extends keyof T\n    ? T[P]\n    : never;\n\nfunction getPath<T extends object, P extends Path<T>>(obj: T, path: P): PathValue<T, P> {\n  let current: unknown = obj;\n  for (const key of path.split('.')) {\n    if (typeof current !== 'object' || current === null) break;\n    current = (current as Record<string, unknown>)[key];\n  }\n  return current as PathValue<T, P>;\n}",
+      "checklist": [
+        "`Path<typeof cfg>` lists exactly the top-level keys and the dotted nested keys, and no array indexes.",
+        "`getPath(cfg, 'server.port')` has type `number`; `'server.prot'` is a compile error.",
+        "Falsy values (`0`, `false`, `''`) and `null` come back as they are, not replaced by a default."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why is `ToArray<string | number>` equal to `string[] | number[]`, and how would you get `(string | number)[]`?",
+      "answer": "`T extends unknown ? T[] : never` checks a naked type parameter, so when `T` is a union the conditional distributes: it runs for `string` and for `number` separately and unions the results. Wrapping both sides in a tuple, `[T] extends [unknown] ? T[] : never`, checks the union as one type and returns `(string | number)[]`. Distribution is usually what you want for filters like `Exclude`, and usually not what you want for predicates like `IsString` or `IsNever`."
+    },
+    {
+      "question": "Implement `ReturnType` and explain what happens with an overloaded function.",
+      "answer": "`type MyReturnType<F extends (...args: any) => any> = F extends (...args: any) => infer R ? R : never`. The `infer R` makes the checker match `F` against a function shape and bind `R` to its return type. For an overloaded function, inference uses the **last** signature (usually the most general one), so `ReturnType` may not match the overload a particular call would pick. If you need per-call precision, use a generic signature instead of overloads."
+    },
+    {
+      "question": "Your `DeepReadonly<T>` passes tests on plain objects. What breaks on real data?",
+      "answer": "Functions lose their call signature if they are mapped, so check for them first and return them unchanged. Arrays and tuples are fine with a homomorphic mapped type. Class instances are mapped member by member, so `Map`, `Set` and `Date` keep their mutating methods; add explicit branches such as `T extends Map<infer K, infer V> ? ReadonlyMap<DeepReadonly<K>, DeepReadonly<V>>`. Very deep or recursive data can hit TS2589, and the type is compile-time only: you still need a runtime `deepFreeze` if writes must fail."
+    },
+    {
+      "question": "A teammate wrote a 30-line conditional type that infers SQL column types from a query string. Would you approve it?",
+      "answer": "Only if it pays for itself. I would ask how many call sites depend on it, what the error message looks like when a column is misspelt, whether it has `Equal`/`Expect` tests including negative cases, and how it affects editor performance. If it is used in two places, a hand-written result interface or a code generator is simpler and safer. If it is the core of a shared data layer, I would ask for it to be split into named helpers with tests rather than rejected."
+    },
+    {
+      "question": "Why does `Omit<T, K>` accept keys that are not in `T`, while `Pick<T, K>` does not?",
+      "answer": "`Pick` is `{ [P in K]: T[P] }`, which needs `K extends keyof T` so that `T[P]` is valid. `Omit` is `Pick<T, Exclude<keyof T, K>>`, which works for any `K` because `Exclude` simply removes nothing when `K` has no overlap, and the library declares it with the looser `K extends keyof any`. A checked version is a mapped type over `keyof T` with `as P extends K ? never : P` and `K extends keyof T`."
+    }
+  ],
+  "takeaways": [
+    "Every utility type is a mapped type, a conditional type, or both; writing them yourself explains their quirks, such as `Omit` not checking its keys.",
+    "Homomorphic mapped types over `keyof T` keep modifiers and preserve arrays and tuples; `-readonly` and `-?` remove modifiers; `as` renames keys, and `never` deletes them.",
+    "Conditional types distribute over unions only when the checked type is a naked type parameter; `[T] extends [U]` turns that off.",
+    "`infer` pattern-matches types, and with template literal types it parses strings such as event names, routes and dotted paths.",
+    "Recursive types need guards for functions and class instances and have a depth budget; pair them with a runtime function and prove them with `Equal`/`Expect` and `@ts-expect-error`.",
+    "Use type-level machinery where many callers benefit, split it into named, tested steps, and prefer a plain union or an overload when that is enough."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsm-mapped",
+        "type": "flow",
+        "title": "A mapped type with key remapping",
+        "alt": "Flow diagram of the mapped type Getters over a User type with keys id, name and password. The mapped type iterates K in keyof T. The key id is remapped with an as clause to getId and name to getName, while password is remapped to never and therefore dropped. The surviving keys form the result type with getId and getName.",
+        "caption": "A mapped type visits every key; the as clause renames it, and remapping a key to never deletes it from the result.",
+        "nodes": [
+          {
+            "id": "user",
+            "label": "User",
+            "kind": "storage",
+            "col": 0,
+            "row": 2,
+            "sub": "id, name, password"
+          },
+          {
+            "id": "loop",
+            "label": "K in keyof T",
+            "kind": "decision",
+            "col": 1,
+            "row": 2,
+            "sub": "one key at a time"
+          },
+          {
+            "id": "id",
+            "label": "'id'",
+            "kind": "state",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "name",
+            "label": "'name'",
+            "kind": "state",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "pw",
+            "label": "'password'",
+            "kind": "state",
+            "col": 2,
+            "row": 4
+          },
+          {
+            "id": "gid",
+            "label": "as getId",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "() => number"
+          },
+          {
+            "id": "gname",
+            "label": "as getName",
+            "kind": "good",
+            "col": 3,
+            "row": 2,
+            "sub": "() => string"
+          },
+          {
+            "id": "never",
+            "label": "as never",
+            "kind": "bad",
+            "col": 3,
+            "row": 4,
+            "sub": "key dropped"
+          },
+          {
+            "id": "out",
+            "label": "Getters<User>",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "getId, getName"
+          }
+        ],
+        "edges": [
+          {
+            "from": "user",
+            "to": "loop",
+            "label": "keyof T"
+          },
+          {
+            "from": "loop",
+            "to": "id"
+          },
+          {
+            "from": "loop",
+            "to": "name"
+          },
+          {
+            "from": "loop",
+            "to": "pw"
+          },
+          {
+            "from": "id",
+            "to": "gid",
+            "label": "Capitalize"
+          },
+          {
+            "from": "name",
+            "to": "gname",
+            "label": "Capitalize"
+          },
+          {
+            "from": "pw",
+            "to": "never",
+            "label": "filtered"
+          },
+          {
+            "from": "gid",
+            "to": "out"
+          },
+          {
+            "from": "gname",
+            "to": "out"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`keyof User` is the union `'id' | 'name' | 'password'`; the mapped type takes one member at a time as `K`."
+          },
+          {
+            "edges": [
+              1,
+              2,
+              3
+            ],
+            "text": "Each key is processed independently, like a loop body at the type level."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "The `as` clause computes a new key: the template literal type `get${Capitalize<K>}` turns `'id'` into `'getId'`. The value type is still built from the original `T[K]`."
+          },
+          {
+            "edges": [
+              6
+            ],
+            "text": "`K extends 'password' ? never : ...` remaps the secret to `never`, and a key of `never` is simply left out."
+          },
+          {
+            "edges": [
+              7,
+              8
+            ],
+            "text": "The result has exactly the surviving, renamed keys: `{ getId: () => number; getName: () => string }`."
+          }
+        ]
+      },
+      {
+        "id": "tsm-boxed",
+        "type": "compare",
+        "title": "Naked T distributes, [T] does not",
+        "alt": "Comparison of IsString applied to string | number. On the left, with a naked type parameter, the check runs once for string giving true and once for number giving false, so the result is the union boolean. On the right, with T wrapped in a one-element tuple, the whole union is checked once against [string] and the answer is false.",
+        "caption": "A conditional type on a naked type parameter runs once per union member; wrap both sides in a tuple to test the union as a whole.",
+        "before": {
+          "label": "T extends string ? true : false",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "string | number",
+              "kind": "client",
+              "col": 0,
+              "row": 1,
+              "sub": "T = the union"
+            },
+            {
+              "id": "s",
+              "label": "string",
+              "kind": "state",
+              "col": 1,
+              "row": 0,
+              "sub": "extends: true"
+            },
+            {
+              "id": "n",
+              "label": "number",
+              "kind": "state",
+              "col": 1,
+              "row": 2,
+              "sub": "extends: false"
+            },
+            {
+              "id": "out",
+              "label": "boolean",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "true | false"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "s",
+              "label": "split"
+            },
+            {
+              "from": "in",
+              "to": "n",
+              "label": "split"
+            },
+            {
+              "from": "s",
+              "to": "out"
+            },
+            {
+              "from": "n",
+              "to": "out"
+            }
+          ]
+        },
+        "after": {
+          "label": "[T] extends [string] ? true : false",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "[string|number]",
+              "kind": "client",
+              "col": 0,
+              "row": 1,
+              "sub": "boxed in a tuple"
+            },
+            {
+              "id": "chk",
+              "label": "one check",
+              "kind": "decision",
+              "col": 1,
+              "row": 1,
+              "sub": "whole union"
+            },
+            {
+              "id": "out",
+              "label": "false",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "number is not str"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "chk",
+              "label": "no split"
+            },
+            {
+              "from": "chk",
+              "to": "out"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsm-distribute",
+        "type": "flow",
+        "title": "Exclude<'a' | 'b' | 'c', 'b'> step by step",
+        "alt": "Flow diagram of a distributive conditional type. Exclude of the union 'a', 'b', 'c' with 'b' splits into three separate checks. 'a' extends 'b' is false, so 'a' is kept. 'b' extends 'b' is true, so it becomes never. 'c' extends 'b' is false, so 'c' is kept. The three results are joined back into the union 'a' | 'c', and the never disappears.",
+        "caption": "Distribution maps the conditional over each union member and re-unions the results; never members vanish, which is how Exclude filters.",
+        "nodes": [
+          {
+            "id": "src",
+            "label": "Exclude<U, 'b'>",
+            "kind": "client",
+            "col": 0,
+            "row": 2,
+            "sub": "U = 'a'|'b'|'c'"
+          },
+          {
+            "id": "qa",
+            "label": "'a' extends 'b'?",
+            "kind": "decision",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "qb",
+            "label": "'b' extends 'b'?",
+            "kind": "decision",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "qc",
+            "label": "'c' extends 'b'?",
+            "kind": "decision",
+            "col": 2,
+            "row": 4
+          },
+          {
+            "id": "ka",
+            "label": "'a'",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "false: keep T"
+          },
+          {
+            "id": "kb",
+            "label": "never",
+            "kind": "bad",
+            "col": 3,
+            "row": 2,
+            "sub": "true: drop"
+          },
+          {
+            "id": "kc",
+            "label": "'c'",
+            "kind": "good",
+            "col": 3,
+            "row": 4,
+            "sub": "false: keep T"
+          },
+          {
+            "id": "res",
+            "label": "'a' | 'c'",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "never vanishes"
+          }
+        ],
+        "edges": [
+          {
+            "from": "src",
+            "to": "qa",
+            "label": "member 1"
+          },
+          {
+            "from": "src",
+            "to": "qb",
+            "label": "member 2"
+          },
+          {
+            "from": "src",
+            "to": "qc",
+            "label": "member 3"
+          },
+          {
+            "from": "qa",
+            "to": "ka"
+          },
+          {
+            "from": "qb",
+            "to": "kb"
+          },
+          {
+            "from": "qc",
+            "to": "kc"
+          },
+          {
+            "from": "ka",
+            "to": "res"
+          },
+          {
+            "from": "kb",
+            "to": "res"
+          },
+          {
+            "from": "kc",
+            "to": "res"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1,
+              2
+            ],
+            "text": "`Exclude<T, U> = T extends U ? never : T`. Because `T` is a naked type parameter, the union is split and the conditional runs once per member."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "`'a'` is not assignable to `'b'`, so the false branch returns `T`, which is now just `'a'`."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "`'b'` is assignable to `'b'`, so this member becomes `never`."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "`'c'` is kept, like `'a'`."
+          },
+          {
+            "edges": [
+              6,
+              7,
+              8
+            ],
+            "text": "The results are unioned again: `'a' | never | 'c'` simplifies to `'a' | 'c'`. `Extract` is the same type with the branches swapped."
+          }
+        ]
+      },
+      {
+        "id": "tsm-pathvalue",
+        "type": "sequence",
+        "title": "Evaluating PathValue<Cfg, 'server.port'>",
+        "alt": "Sequence diagram with four actors: the getPath call, the PathValue type, a template literal match and a keyof check. The call asks for PathValue of Cfg and server.port. The template match infers Head as server and Rest as port. The keyof check confirms server is a key, so PathValue recurses on Cfg['server'] with port. The second match fails because port has no dot, the keyof check accepts port, and the result number is returned to the call.",
+        "caption": "infer in a template literal peels one path segment per step; recursion on the rest walks the object type until a single key remains.",
+        "actors": [
+          {
+            "id": "call",
+            "label": "getPath call"
+          },
+          {
+            "id": "pv",
+            "label": "PathValue"
+          },
+          {
+            "id": "tm",
+            "label": "Template match"
+          },
+          {
+            "id": "key",
+            "label": "keyof check"
+          }
+        ],
+        "messages": [
+          {
+            "from": "call",
+            "to": "pv",
+            "label": "T = Cfg, P = 'server.port'"
+          },
+          {
+            "from": "pv",
+            "to": "tm",
+            "label": "P extends ${infer H}.${infer R}?",
+            "note": "infer binds Head to the text before the first dot and Rest to everything after it."
+          },
+          {
+            "from": "tm",
+            "to": "pv",
+            "label": "H = 'server', R = 'port'",
+            "style": "reply"
+          },
+          {
+            "from": "pv",
+            "to": "key",
+            "label": "'server' extends keyof Cfg?"
+          },
+          {
+            "from": "key",
+            "to": "pv",
+            "label": "yes: recurse on Cfg['server']",
+            "style": "reply",
+            "note": "PathValue<Cfg['server'], 'port'>: same type, smaller input."
+          },
+          {
+            "from": "pv",
+            "to": "tm",
+            "label": "'port' extends ${H}.${R}?"
+          },
+          {
+            "from": "tm",
+            "to": "pv",
+            "label": "no dot: no match",
+            "style": "reply"
+          },
+          {
+            "from": "pv",
+            "to": "key",
+            "label": "'port' extends keyof T?"
+          },
+          {
+            "from": "key",
+            "to": "pv",
+            "label": "yes: T['port']",
+            "style": "reply"
+          },
+          {
+            "from": "pv",
+            "to": "call",
+            "label": "number",
+            "style": "reply",
+            "note": "A typo such as 'server.prot' fails a keyof check and yields never."
+          }
+        ]
+      },
+      {
+        "id": "tsm-readable",
+        "type": "compare",
+        "title": "Clever type versus named steps with tests",
+        "alt": "Comparison of two ways to ship a complex type. On the left, one nested conditional type with five levels of infer leads to cryptic errors at call sites, slow checks with a risk of the excessively deep error, and changes only its author dares to make. On the right, named helper types such as Head, Rest and Path give clear errors, are pinned by Equal and Expect type tests, and are safe for anyone to change.",
+        "caption": "Type-level code is code: split it into named steps, test it with Equal/Expect, and stop when the types are harder to read than the bug they prevent.",
+        "before": {
+          "label": "One clever conditional type",
+          "nodes": [
+            {
+              "id": "sig",
+              "label": "nested ternary",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "5 levels of infer"
+            },
+            {
+              "id": "err",
+              "label": "cryptic error",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "'x' is not 'never'"
+            },
+            {
+              "id": "own",
+              "label": "author-only",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "nobody else dares"
+            },
+            {
+              "id": "slow",
+              "label": "slow checks",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "TS2589 risk"
+            }
+          ],
+          "edges": [
+            {
+              "from": "sig",
+              "to": "err",
+              "label": "caller typo"
+            },
+            {
+              "from": "sig",
+              "to": "own",
+              "label": "change request"
+            },
+            {
+              "from": "sig",
+              "to": "slow",
+              "label": "deep recursion"
+            }
+          ]
+        },
+        "after": {
+          "label": "Named helpers plus type tests",
+          "nodes": [
+            {
+              "id": "help",
+              "label": "named helpers",
+              "kind": "good",
+              "col": 0,
+              "row": 0,
+              "sub": "Head, Rest, Path"
+            },
+            {
+              "id": "err",
+              "label": "clear error",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "not 'a' | 'b'"
+            },
+            {
+              "id": "tests",
+              "label": "Equal/Expect",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "type-level tests"
+            },
+            {
+              "id": "edit",
+              "label": "safe to change",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "tests catch drift"
+            }
+          ],
+          "edges": [
+            {
+              "from": "help",
+              "to": "err",
+              "label": "caller typo"
+            },
+            {
+              "from": "help",
+              "to": "tests",
+              "label": "pinned by"
+            },
+            {
+              "from": "tests",
+              "to": "edit",
+              "label": "enables"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "handlerMap",
+        "starter": "type HandlerMap<K extends string> = Record<string, K>;\n\nfunction handlerMap<const K extends string>(events: readonly K[]): HandlerMap<K> {\n  const out: Record<string, K> = {};\n  for (const event of events) {\n    // TODO: capitalise the event name, and give the result a precise mapped type\n    out['on' + event] = event;\n  }\n  return out;\n}\n",
+        "solution": "type HandlerMap<K extends string> = {\n  [E in K as `on${Capitalize<E>}`]: E;\n};\n\nfunction capitalize<S extends string>(s: S): Capitalize<S> {\n  return (s.charAt(0).toUpperCase() + s.slice(1)) as Capitalize<S>;\n}\n\nfunction handlerMap<const K extends string>(events: readonly K[]): HandlerMap<K> {\n  const out: Record<string, string> = {};\n  for (const event of events) out[`on${capitalize(event)}`] = event;\n  return out as HandlerMap<K>;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst handlers = handlerMap(['click', 'keyDown']);\ntype _1 = Expect<Equal<typeof handlers, { onClick: 'click'; onKeyDown: 'keyDown' }>>\ntype _2 = Expect<Equal<HandlerMap<'focus' | 'blur'>, { onFocus: 'focus'; onBlur: 'blur' }>>\ntype _3 = Expect<Equal<HandlerMap<never>, {}>>\n// @ts-expect-error handler names are camel-cased: onClick, not onclick\nhandlers.onclick;\n// @ts-expect-error only the listed events get a handler name\nhandlers.onSubmit;\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "click",
+                "keyDown"
+              ]
+            ],
+            "expected": {
+              "onClick": "click",
+              "onKeyDown": "keyDown"
+            }
+          },
+          {
+            "args": [
+              [
+                "submit"
+              ]
+            ],
+            "expected": {
+              "onSubmit": "submit"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              [
+                "focus",
+                "focus",
+                "blur"
+              ]
+            ],
+            "expected": {
+              "onFocus": "focus",
+              "onBlur": "blur"
+            }
+          },
+          {
+            "args": [
+              [
+                "Change"
+              ]
+            ],
+            "expected": {
+              "onChange": "Change"
+            }
+          },
+          {
+            "args": [
+              [
+                "ünload",
+                "éclair"
+              ]
+            ],
+            "expected": {
+              "onÜnload": "ünload",
+              "onÉclair": "éclair"
+            }
+          },
+          {
+            "args": [
+              [
+                "mouse-enter",
+                "x"
+              ]
+            ],
+            "expected": {
+              "onMouse-enter": "mouse-enter",
+              "onX": "x"
+            }
+          },
+          {
+            "args": [
+              [
+                "a",
+                "A"
+              ]
+            ],
+            "expected": {
+              "onA": "A"
+            }
+          },
+          {
+            "args": [
+              [
+                "",
+                "go"
+              ]
+            ],
+            "expected": {
+              "on": "",
+              "onGo": "go"
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "omit",
+        "starter": "// TODO: remap the keys so the omitted ones disappear from the type\ntype Without<T, K extends keyof T> = T;\n\nfunction omit<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Without<T, K> {\n  return { ...obj };\n}\n",
+        "solution": "type Without<T, K extends keyof T> = {\n  [P in keyof T as P extends K ? never : P]: T[P];\n};\n\nfunction omit<T extends object, K extends keyof T>(obj: T, keys: readonly K[]): Without<T, K> {\n  const drop = new Set<PropertyKey>(keys);\n  const out: Record<string, unknown> = {};\n  for (const [key, value] of Object.entries(obj)) {\n    if (!drop.has(key)) out[key] = value;\n  }\n  return out as Without<T, K>;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ninterface Account { id: number; email: string; password: string; note?: string }\ntype _1 = Expect<Equal<Without<Account, 'password'>, { id: number; email: string; note?: string }>>\ntype _2 = Expect<Equal<Without<Account, 'password' | 'note'>, { id: number; email: string }>>\ndeclare const account: Account;\nconst safe = omit(account, ['password']);\ntype _3 = Expect<Equal<typeof safe.email, string>>\n// @ts-expect-error the password was removed from the type\nsafe.password;\n// @ts-expect-error 'pasword' is not a key of Account\nomit(account, ['pasword']);\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "id": 1,
+                "email": "a@x.io",
+                "password": "pw"
+              },
+              [
+                "password"
+              ]
+            ],
+            "expected": {
+              "id": 1,
+              "email": "a@x.io"
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1,
+                "b": 2
+              },
+              []
+            ],
+            "expected": {
+              "a": 1,
+              "b": 2
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {},
+              []
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              {
+                "a": 1,
+                "b": 2
+              },
+              [
+                "a",
+                "a"
+              ]
+            ],
+            "expected": {
+              "b": 2
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1,
+                "b": 2
+              },
+              [
+                "a",
+                "b"
+              ]
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              {
+                "ключ": "v",
+                "k": null
+              },
+              [
+                "ключ"
+              ]
+            ],
+            "expected": {
+              "k": null
+            }
+          },
+          {
+            "args": [
+              {
+                "n": -1,
+                "deep": {
+                  "x": [
+                    1,
+                    2
+                  ]
+                }
+              },
+              [
+                "n"
+              ]
+            ],
+            "expected": {
+              "deep": {
+                "x": [
+                  1,
+                  2
+                ]
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              [
+                "missing"
+              ]
+            ],
+            "expected": {
+              "a": 1
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "getPath",
+        "starter": "// TODO: replace these placeholders with recursive template literal types\ntype Path<T> = string;\ntype PathValue<T, P extends string> = unknown;\n\nfunction getPath<T extends object, P extends Path<T>>(obj: T, path: P): PathValue<T, P> {\n  return (obj as Record<string, unknown>)[path] as PathValue<T, P>;\n}\n",
+        "solution": "type Path<T> = T extends readonly unknown[]\n  ? never\n  : T extends object\n    ? { [K in keyof T & string]: K | `${K}.${Path<T[K]>}` }[keyof T & string]\n    : never;\n\ntype PathValue<T, P extends string> = P extends `${infer Head}.${infer Rest}`\n  ? Head extends keyof T\n    ? PathValue<T[Head], Rest>\n    : never\n  : P extends keyof T\n    ? T[P]\n    : never;\n\nfunction getPath<T extends object, P extends Path<T>>(obj: T, path: P): PathValue<T, P> {\n  let current: unknown = obj;\n  for (const key of path.split('.')) {\n    if (typeof current !== 'object' || current === null) break;\n    current = (current as Record<string, unknown>)[key];\n  }\n  return current as PathValue<T, P>;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst cfg = { server: { port: 8080, host: 'local' }, tags: ['a'], debug: false };\ntype _1 = Expect<Equal<Path<typeof cfg>, 'server' | 'server.port' | 'server.host' | 'tags' | 'debug'>>\nconst port = getPath(cfg, 'server.port');\ntype _2 = Expect<Equal<typeof port, number>>\nconst server = getPath(cfg, 'server');\ntype _3 = Expect<Equal<typeof server, { port: number; host: string }>>\ntype _4 = Expect<Equal<PathValue<typeof cfg, 'server.nope'>, never>>\n// @ts-expect-error typo in the path\ngetPath(cfg, 'server.prot');\n// @ts-expect-error arrays are leaves: there is no 'tags.0'\ngetPath(cfg, 'tags.0');\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "server": {
+                  "port": 8080,
+                  "host": "local"
+                }
+              },
+              "server.port"
+            ],
+            "expected": 8080
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "b": {
+                    "c": "deep"
+                  }
+                }
+              },
+              "a.b"
+            ],
+            "expected": {
+              "c": "deep"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "x": 1
+              },
+              "x"
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              {
+                "flag": {
+                  "on": false
+                }
+              },
+              "flag.on"
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "v": {
+                  "n": 0
+                }
+              },
+              "v.n"
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              {
+                "m": {
+                  "t": -7
+                }
+              },
+              "m.t"
+            ],
+            "expected": -7
+          },
+          {
+            "args": [
+              {
+                "tags": [
+                  "a",
+                  "b"
+                ]
+              },
+              "tags"
+            ],
+            "expected": [
+              "a",
+              "b"
+            ]
+          },
+          {
+            "args": [
+              {
+                "città": {
+                  "nome": "Roma"
+                }
+              },
+              "città.nome"
+            ],
+            "expected": "Roma"
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "b": null
+                }
+              },
+              "a.b"
+            ],
+            "expected": null
+          },
+          {
+            "args": [
+              {
+                "a": {
+                  "b": {
+                    "c": {
+                      "d": {
+                        "e": "bottom"
+                      }
+                    }
+                  }
+                }
+              },
+              "a.b.c.d.e"
+            ],
+            "expected": "bottom"
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "interface Point { x: number; y: number }\n\nconst p3 = { x: 1, y: 2, z: 3 };\nconst p: Point = p3;\nconst keys = Object.keys(p) as (keyof Point)[];\nconsole.log(keys.length, keys.join(','));",
+        "choices": [
+          "2 x,y",
+          "3 x,y,z",
+          "Compile error"
+        ],
+        "answer": 1,
+        "explain": "Structural typing lets an object with extra properties be assigned to `Point` (excess-property checks apply only to fresh literals). `keyof Point` describes the type, not the object, so the `as (keyof Point)[]` cast lies: this is exactly why `Object.keys` returns `string[]`."
+      },
+      {
+        "code": "interface Opts { retries: number; verbose: boolean }\n\nconst defaults: Opts = { retries: 3, verbose: false };\nconst patch: Partial<Opts> = { retries: undefined };\nconst merged: Opts = { ...defaults, ...patch };\nconsole.log(merged.retries);",
+        "choices": [
+          "3",
+          "undefined",
+          "Compile error"
+        ],
+        "answer": 1,
+        "explain": "`Partial` adds `?`, and without `exactOptionalPropertyTypes` an optional property may hold an explicit `undefined`. Spread copies the key, so `undefined` overwrites the default, yet the spread's type is still `number`. Skip `undefined` values when merging, or enable `exactOptionalPropertyTypes`."
+      },
+      {
+        "code": "const cfg = Object.freeze({ db: { port: 5432 } });\ncfg.db.port = 1;\nconsole.log(cfg.db.port);",
+        "choices": [
+          "5432",
+          "1",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "`Object.freeze` is shallow at runtime and its type is `Readonly<T>`, which is shallow too, so the nested write both compiles and succeeds. A recursive `DeepReadonly<T>` plus a recursive `deepFreeze` is needed to protect nested data."
+      },
+      {
+        "code": "type NonEmpty = Exclude<string, ''>;\n\nconst label: NonEmpty = '';\nconsole.log(label.length, typeof label);",
+        "choices": [
+          "0 string",
+          "Compile error: '' is excluded",
+          "undefined undefined"
+        ],
+        "answer": 0,
+        "explain": "`Exclude` distributes over union members, and `string` is not a union of literals, so `string extends ''` is simply false and `NonEmpty` is just `string`. Conditional types cannot subtract a value from an infinite type; use a branded type with a runtime check instead."
+      },
+      {
+        "code": "interface Retry { retries?: number }\n\nfunction withDefaults(o: Retry): Required<Retry> {\n  return o as Required<Retry>;\n}\nconsole.log(withDefaults({}).retries + 1);",
+        "choices": [
+          "1",
+          "NaN",
+          "undefined"
+        ],
+        "answer": 1,
+        "explain": "`Required` only removes `?` from the type. The assertion tells the checker the property exists, but the object is still `{}`, so `retries` is `undefined` and `undefined + 1` is `NaN`. Fill in the default values (`{ retries: 3, ...o }`) instead of asserting."
+      }
+    ],
+    "tip": "When you write a type-level helper in the room, write one `Equal`/`Expect` line and one `@ts-expect-error` line right under it, and say \"this is the test for the type\". Then say out loud where the runtime and the type could disagree (here: the capitalisation rule) and why there is exactly one cast. Interviewers at senior level are listening for that judgement more than for the cleverness of the type.",
+    "links": {
+      "guides": [
+        "clean-code",
+        "code-review",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "ts-generics",
+        "ts-types-basics",
+        "py-typing"
+      ]
+    }
+  }
+}

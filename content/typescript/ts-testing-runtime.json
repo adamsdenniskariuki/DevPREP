@@ -1,0 +1,1421 @@
+{
+  "id": "ts-testing-runtime",
+  "track": "typescript",
+  "title": "Testing and runtimes: Node vs browser",
+  "minutes": 50,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "Arrange, act, assert; stubs, fakes, spies and mocks, and why injected fakes beat module mocking; injectable clocks and seeded randomness; fake timers and awaiting instead of sleeping; table-driven and property-style tests; what to unit test versus integration test, and why types are not tests. Then how Node and browsers differ in globals, modules, APIs, event loop, workers and security.",
+  "prerequisites": [
+    "ts-promises-async"
+  ],
+  "prerequisiteNotes": "ts-promises-async: an async test is only as good as the promise it returns or awaits. Every deterministic-async technique here (await the work, never sleep; drive timers by hand) relies on knowing when a promise settles and which queue its continuation lands in.",
+  "objectives": [
+    "Structure a test as arrange, act, assert and name it after one behaviour.",
+    "Tell a stub, a fake, a spy and a mock apart, and prefer injected fakes over module mocking.",
+    "Make time and randomness injectable with a `Clock` interface and a seeded generator, and explain fake timers.",
+    "Write deterministic async tests that await the work instead of sleeping.",
+    "Use table-driven cases and property-style checks, and decide what belongs in unit versus integration tests.",
+    "Explain how Node and browsers differ in globals, modules, I/O APIs, event-loop extras, workers and security model."
+  ],
+  "concepts": [
+    {
+      "title": "Arrange, act, assert",
+      "body": "A good unit test has three visible parts: **arrange** the inputs and collaborators, **act** by calling the one thing under test, and **assert** on the observable result. Keep one behaviour per test and name the test after that behaviour (`'SAVE10 takes 10% off'`, not `'test2'`), so a failure message alone tells you what broke. Assert on **outputs and effects** the caller can see (return values, calls to a collaborator, stored state), not on private steps, so the test survives refactoring. If the arrange step is long, the design is telling you the unit has too many dependencies.",
+      "code": "function applyDiscount(total: number, code: string): number {\n  return code === 'SAVE10' ? Math.round(total * 0.9) : total\n}\n\ntest('SAVE10 takes 10% off', () => {\n  const total = 200                              // arrange\n  const result = applyDiscount(total, 'SAVE10')  // act\n  expect(result).toBe(180)                       // assert\n})\n\ntest('unknown codes leave the total alone', () => {\n  expect(applyDiscount(200, 'NOPE')).toBe(200)\n})"
+    },
+    {
+      "title": "Test doubles: stub, fake, spy, mock",
+      "body": "A **stub** returns canned answers and checks nothing. A **fake** is a real but simpler implementation (an in-memory store or mailer). A **spy** wraps or replaces a function and **records** calls so you can assert on them afterwards. A **mock** is pre-programmed with expectations and fails if they are not met. Prefer **dependency injection**: take collaborators as parameters (or constructor arguments) typed by a small interface, and pass a fake in tests. Module mocking (`jest.mock('./clock')`, `vi.mock`) patches what a file imports: it is hoisted, global to the test file, tied to file paths and easy to leak between tests. Keep it for code you cannot change.",
+      "code": "interface Mailer {\n  send(to: string, body: string): Promise<void>\n}\n\nconst okMailer: Mailer = { send: async () => {} }        // stub\n\nclass InMemoryMailer implements Mailer {                 // fake\n  sent: { to: string; body: string }[] = []\n  async send(to: string, body: string): Promise<void> {\n    this.sent.push({ to, body })\n  }\n}\n\nasync function welcome(user: { email: string }, mailer: Mailer): Promise<void> {\n  await mailer.send(user.email, 'Welcome!')\n}\n\nconst mailer = new InMemoryMailer()\nawait welcome({ email: 'a@x.io' }, mailer)\nexpect(mailer.sent).toEqual([{ to: 'a@x.io', body: 'Welcome!' }])",
+      "diagram": "tsr-doubles"
+    },
+    {
+      "title": "Make time and randomness injectable",
+      "body": "`Date.now()`, `new Date()` and `Math.random()` are hidden inputs: a test cannot control them, so expiry, scheduling and shuffling become flaky. Turn them into parameters. A `Clock` interface with `now(): number` has a one-line production version (`{ now: () => Date.now() }`) and a `FakeClock` whose `advance(ms)` moves time on command. Randomness becomes an `Rng` (`() => number` in `[0, 1)`): production passes `Math.random`, tests pass a **seeded** generator so every run sees the same sequence. A default parameter (`rng: Rng = Math.random`) keeps call sites unchanged. When a seeded test fails, log the seed so the failure can be replayed.",
+      "code": "interface Clock {\n  now(): number\n}\nconst systemClock: Clock = { now: () => Date.now() }\n\ntype Rng = () => number   // uniform in [0, 1)\n\nfunction pickWinner<T>(entries: readonly T[], rng: Rng = Math.random): T | undefined {\n  return entries[Math.floor(rng() * entries.length)]\n}\n\n// production: pickWinner(users)\n// test:       pickWinner(users, mulberry32(42))   same winner on every run"
+    },
+    {
+      "title": "Fake timers and deterministic async",
+      "body": "Code that calls `setTimeout` (debounce, retry, timeouts) is tested with **fake timers**: the test framework replaces the timer functions (and usually `Date`) with a virtual clock, and the test advances it by hand. Vitest has `vi.useFakeTimers()` and `vi.advanceTimersByTime(ms)`, Jest the same with `jest.`, and Node's `node:test` has `mock.timers`. Due callbacks then run synchronously in time order. Advancing timers does not flush promise continuations, so code mixing timers and `await` needs the async variants (`advanceTimersByTimeAsync`). For plain async code, **await the promise** the code returns; never `sleep(100)` and hope. A sleep is either too short (flaky) or too long (slow).",
+      "code": "vi.useFakeTimers()\nconst onIdle = vi.fn()\nconst save = debounce(onIdle, 300)\nsave()\nsave()\nvi.advanceTimersByTime(299)\nexpect(onIdle).not.toHaveBeenCalled()\nvi.advanceTimersByTime(1)\nexpect(onIdle).toHaveBeenCalledTimes(1)\nvi.useRealTimers()\n\n// async: wait for the work itself, not for a guessed delay\nawait expect(loadUser(-1)).rejects.toThrow('bad id')",
+      "diagram": "tsr-timers"
+    },
+    {
+      "title": "Table-driven tests and property-style thinking",
+      "body": "When one function needs many input/output pairs, write them as a **table** and loop: `test.each(cases)` in Jest and Vitest, or a plain `for...of` over tuples. Adding an edge case becomes one line, and the table reads as a spec: empty, single, duplicates, negatives, unicode, boundaries. **Property-style** tests go further: instead of listing outputs, state a rule that must hold for every input (sorting returns a permutation in order; `decode(encode(x))` equals `x`; a shuffle keeps the same multiset) and check it on many generated inputs from a **seeded** generator. Libraries such as fast-check also shrink a failing input to a minimal one.",
+      "code": "const cases: [input: string, expected: string][] = [\n  ['Hello World', 'hello-world'],\n  ['  trim me ', 'trim-me'],\n  ['', ''],\n  ['Ünïcode ok', 'ünïcode-ok'],\n]\ntest.each(cases)('slugify(%j) is %j', (input, expected) => {\n  expect(slugify(input)).toBe(expected)\n})\n\n// property: for 500 seeded random arrays, the result is sorted and a permutation\nconst rng = mulberry32(7)\nfor (let run = 0; run < 500; run++) {\n  const xs = Array.from({ length: Math.floor(rng() * 20) }, () => Math.floor(rng() * 100) - 50)\n  const out = mySort(xs)\n  expect(out.every((v, i) => i === 0 || out[i - 1] <= v)).toBe(true)\n  expect([...out].sort((a, b) => a - b)).toEqual([...xs].sort((a, b) => a - b))\n}"
+    },
+    {
+      "title": "Unit versus integration, and why types are not tests",
+      "body": "**Unit tests** cover logic in isolation: branches, edge cases, error paths, with fakes for slow or nondeterministic collaborators. **Integration tests** cover the wiring you faked: the real database query, the HTTP client against a test server, serialisation, configuration, the adapter around a third-party SDK. Do not mock what you do not own; wrap it in a small adapter and integration-test the adapter. Keep a few end-to-end tests for critical journeys. Types are erased at run time and check **shapes, not values**: a function typed `number` can return `NaN`, an off-by-one index or `-1`, and JSON from the network is whatever the server sent. Types remove a class of bugs; tests check behaviour.",
+      "code": "function parsePort(raw: string): number {\n  return Number(raw)          // type-checks; parsePort('80a') is NaN\n}\n\n// Only tests catch these:\n// parsePort('80a') -> NaN, parsePort('') -> 0, parsePort('70000') -> 70000\n// Fix: validate and return null for bad input\nfunction parsePortSafe(raw: string): number | null {\n  const n = Number(raw)\n  return /^\\d+$/.test(raw) && n >= 1 && n <= 65535 ? n : null\n}",
+      "diagram": "tsr-confidence"
+    },
+    {
+      "title": "Node vs browser: globals, modules and APIs",
+      "body": "The engine is the same ECMAScript; the **host** adds the rest. Browsers expose `window` (and `self` in workers), `document` and the DOM, `localStorage`, and rendering. Node exposes `process` (env, argv, exit), `Buffer`, and built-in modules such as `node:fs`, `node:net` and `node:child_process`; `__dirname` and `require` exist only in CommonJS files. `globalThis` names the global object everywhere. Many web APIs now exist in both: `fetch`, `URL`, `AbortController`, `TextEncoder`, `structuredClone` and timers (`fetch` is global since Node 18). Modules: browsers load ES modules by URL (`<script type=\"module\">`); Node supports both CommonJS and ES modules, chosen by the `.mjs`/`.cjs` extension or `\"type\"` in `package.json`. Feature-detect with `typeof` rather than assuming a host.",
+      "code": "const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined'\nconst isNode = typeof process !== 'undefined' && process.versions?.node !== undefined\n\n// Same code, both hosts:\nconst res = await fetch('https://example.com/data.json')\nconst data: unknown = await res.json()\n\n// Node only:     import { readFile } from 'node:fs/promises'\n// Browser only:  document.querySelector('#app')",
+      "diagram": "tsr-runtimes"
+    },
+    {
+      "title": "Event loop extras, workers and the security model",
+      "body": "Both hosts run a task, then drain microtasks. **Node** adds `process.nextTick` (its queue drains before promise microtasks) and `setImmediate` (the check phase, after I/O polling). **Browsers** add rendering: between tasks the page may run `requestAnimationFrame` callbacks, style, layout and paint, so a long task freezes the UI. For CPU-heavy work, browsers have **Web Workers** and Node has `worker_threads`: separate threads with their own globals and event loop, talking by `postMessage` (structured clone, with transferable buffers); workers have no DOM. Security differs most: page code runs in a **sandbox** limited by the same-origin policy and CORS, with no file system; Node runs with the **full OS rights** of its user, so a malicious dependency can read files and spawn processes. Node 20+ adds an opt-in permission model (`--experimental-permission`, later `--permission`).",
+      "code": "// Node\nimport { Worker } from 'node:worker_threads'\nconst nodeWorker = new Worker(new URL('./hash.js', import.meta.url))\nnodeWorker.on('message', (digest: string) => console.log(digest))\nnodeWorker.postMessage(bytes)\n\n// Browser\nconst webWorker = new Worker(new URL('./hash.js', import.meta.url), { type: 'module' })\nwebWorker.onmessage = (e: MessageEvent<string>) => console.log(e.data)\nwebWorker.postMessage(bytes)"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Testing a TTL cache without waiting",
+      "body": "A cache entry set at time `t` with TTL `ttlMs` should be readable while `now < t + ttlMs` and gone from `t + ttlMs` on. Testing that with real time means sleeping for the TTL, and the boundary millisecond is impossible to hit reliably. Inject the clock instead: the test builds a `FakeClock`, passes it to the cache, sets a key, advances 99 ms and expects a hit, then advances 1 ms and expects a miss. The whole test is synchronous, runs in microseconds and checks the exact boundary. The same shape tests sessions, rate limiters, token expiry and retry schedules.",
+      "code": "test('entries expire exactly at ttl', () => {\n  const clock = new FakeClock(0)\n  const cache = createTtlCache<number>(100, clock)\n  cache.set('a', 1)\n  clock.advance(99)\n  expect(cache.get('a')).toBe(1)\n  clock.advance(1)\n  expect(cache.get('a')).toBeUndefined()\n})",
+      "diagram": "tsr-aaa"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, declare the seam: `interface Clock { now(): number }`, and a `FakeClock` that stores a number and has `advance(ms)`. Second, write `createTtlCache<V>(ttlMs, clock)` over a `Map<string, { value: V; expiresAt: number }>`: `set` stores `clock.now() + ttlMs`; `get` returns the value only while `clock.now() < expiresAt`, deleting it otherwise; `size` sweeps expired entries first (deleting from a `Map` while iterating it is safe). Third, the driver `simulateTtl` creates one `FakeClock`, replays the operations with a `switch` on `op[0]` (TypeScript narrows the tuple union), and pushes `null` for a miss so the output is JSON-friendly. Mention that expiry is lazy, so memory is reclaimed on access or on `size`, and that a production cache would also cap its size."
+    }
+  ],
+  "example": "interface Clock {\n  now(): number\n}\n\nfunction makeLimiter(max: number, windowMs: number, clock: Clock): () => boolean {\n  const hits: number[] = []\n  return function allow(): boolean {\n    const now = clock.now()\n    while (hits.length > 0 && hits[0] <= now - windowMs) hits.shift()\n    if (hits.length >= max) return false\n    hits.push(now)\n    return true\n  }\n}\n\nlet t = 0\nconst clock: Clock = { now: () => t }\nconst allow = makeLimiter(2, 1000, clock)\nconsole.log(allow(), allow(), allow())   // true true false\nt = 1000\nconsole.log(allow())                     // true: the window slid, no sleeping needed",
+  "task": "Write `simulateTtl(ttlMs, ops)` on top of a testable cache. Declare `interface Clock { now(): number }` and a `FakeClock` class implementing it with `advance(ms)`. Write a generic `createTtlCache<V>(ttlMs, clock)` returning `get(key)` (the value, or `undefined` once expired), `set(key, value)` (which restarts the TTL) and `size()` (live entries only). An entry set at time `t` is live while `now < t + ttlMs`. The driver replays `ops`, each one `['set', key, n]`, `['get', key]`, `['advance', ms]` or `['size']`, against a fresh `FakeClock` at 0, and returns the outputs of `get` (`null` for a miss) and `size` in order. Never read `Date.now()`.",
+  "starter": "interface Clock {\n  now(): number\n}\n\nclass FakeClock implements Clock {\n  private time: number\n  constructor(start = 0) {\n    this.time = start\n  }\n  now(): number {\n    return this.time\n  }\n  advance(ms: number): void {\n    this.time += ms\n  }\n}\n\n// TODO: read time from `clock` instead of Date.now(), make the cache generic in V,\n// and drop expired entries (an entry set at time t is gone from t + ttlMs).\nfunction createTtlCache(ttlMs: number, clock: any): any {\n  const store = new Map<string, { value: number; expiresAt: number }>()\n  return {\n    get(key: string) {\n      const entry = store.get(key)\n      if (!entry || Date.now() >= entry.expiresAt) return undefined\n      return entry.value\n    },\n    set(key: string, value: number) {\n      store.set(key, { value, expiresAt: Date.now() + ttlMs })\n    },\n    size() {\n      return store.size\n    },\n  }\n}\n\ntype Op = ['set', string, number] | ['get', string] | ['advance', number] | ['size']\n\nfunction simulateTtl(ttlMs: number, ops: Op[]): (number | null)[] {\n  const clock = new FakeClock()\n  const cache = createTtlCache(ttlMs, clock)\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'set') cache.set(op[1], op[2])\n    else if (op[0] === 'get') out.push(cache.get(op[1]) ?? null)\n    else if (op[0] === 'advance') clock.advance(op[1])\n    else out.push(cache.size())\n  }\n  return out\n}\n",
+  "hints": [
+    "The starter ignores its `clock` argument and reads `Date.now()`, so advancing the fake changes nothing. Replace every `Date.now()` with `clock.now()` and type the parameter as `Clock`.",
+    "Make the cache generic: `createTtlCache<V>(ttlMs: number, clock: Clock): TtlCache<V>` over `Map<string, { value: V; expiresAt: number }>`. In `size`, delete entries with `clock.now() >= expiresAt` before returning `store.size`."
+  ],
+  "solution": "interface Clock {\n  now(): number\n}\n\nclass FakeClock implements Clock {\n  private time: number\n  constructor(start = 0) {\n    this.time = start\n  }\n  now(): number {\n    return this.time\n  }\n  advance(ms: number): void {\n    this.time += ms\n  }\n}\n\ninterface TtlCache<V> {\n  get(key: string): V | undefined\n  set(key: string, value: V): void\n  size(): number\n}\n\nfunction createTtlCache<V>(ttlMs: number, clock: Clock): TtlCache<V> {\n  const store = new Map<string, { value: V; expiresAt: number }>()\n  const isLive = (expiresAt: number): boolean => clock.now() < expiresAt\n  return {\n    get(key) {\n      const entry = store.get(key)\n      if (entry === undefined) return undefined\n      if (!isLive(entry.expiresAt)) {\n        store.delete(key)\n        return undefined\n      }\n      return entry.value\n    },\n    set(key, value) {\n      store.set(key, { value, expiresAt: clock.now() + ttlMs })\n    },\n    size() {\n      for (const [key, entry] of store) if (!isLive(entry.expiresAt)) store.delete(key)\n      return store.size\n    },\n  }\n}\n\ntype Op = ['set', string, number] | ['get', string] | ['advance', number] | ['size']\n\nfunction simulateTtl(ttlMs: number, ops: Op[]): (number | null)[] {\n  const clock = new FakeClock()\n  const cache = createTtlCache<number>(ttlMs, clock)\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    switch (op[0]) {\n      case 'set':\n        cache.set(op[1], op[2])\n        break\n      case 'get':\n        out.push(cache.get(op[1]) ?? null)\n        break\n      case 'advance':\n        clock.advance(op[1])\n        break\n      case 'size':\n        out.push(cache.size())\n        break\n    }\n  }\n  return out\n}\n\nThe clock is the only source of time, so the driver's `FakeClock` fully controls expiry and the results are identical on every run. `set` records an absolute `expiresAt`, which makes overwriting a key restart its TTL for free. `get` and `size` both use one `isLive` rule (`now < expiresAt`), so the boundary is consistent: at exactly `ttlMs` the entry is gone, and a TTL of 0 means nothing is ever readable. Expired entries are removed lazily, on `get` and on `size`, so `get` and `set` are O(1) and `size` is O(n). The generic `V` lets the same cache hold strings or user objects, and the type checks confirm that `get` returns `V | undefined` and that a clock without `now()` is rejected.",
+  "checklist": [
+    "Time comes only from the injected `Clock`; there is no `Date.now()` in the cache.",
+    "An entry is live while `now < setAt + ttlMs` and gone at exactly `ttlMs`.",
+    "Setting an existing key restarts its TTL.",
+    "`size()` counts only live entries, and a TTL of 0 makes every entry expire immediately.",
+    "`createTtlCache<V>` is generic, `get` returns `V | undefined`, and there is no `any`."
+  ],
+  "pitfalls": [
+    "Reading `Date.now()` or `Math.random()` deep inside logic, so tests cannot control them and become flaky.",
+    "Sleeping in tests (`await sleep(100)`) instead of awaiting the promise or advancing fake timers.",
+    "Starting an async test without returning or awaiting its promise, so it passes before the assertion runs.",
+    "Sharing one fake or spy across tests, so results depend on test order; create fresh doubles per test.",
+    "Module-mocking everything: tests then check that mocks were called, not that the behaviour is right, and they break on every refactor.",
+    "Treating a clean type check as proof of correctness; types do not catch `NaN`, off-by-one errors or bad JSON.",
+    "Assuming a host: touching `window` in code that also runs in Node (or `process` in the browser) without a `typeof` guard."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A hand-written spy",
+      "prompt": "Write `createSpy(impl)` returning a function that calls `impl`, plus two arrays: `calls` (each call's argument list) and `results` (each return value). Declare `type Spy<A extends unknown[], R>` for it so argument and return types flow through. Then `spyGreet(names)` wraps `name => 'hi ' + name` in a spy, passes it to the given `greetAll`, and returns `{ calls, results }`.",
+      "hints": [
+        "Type it as `function createSpy<A extends unknown[], R>(impl: (...args: A) => R): Spy<A, R>`, with `Spy<A, R> = ((...args: A) => R) & { calls: A[]; results: R[] }`.",
+        "Inside, define `const spy = (...args: A): R => { ... }` that pushes `args`, calls `impl(...args)`, pushes the result and returns it; then `return Object.assign(spy, { calls, results })`."
+      ],
+      "solution": "// Code under test: greets every name that is not blank, trimmed.\nfunction greetAll(names: string[], greet: (name: string) => string): string[] {\n  const out: string[] = []\n  for (const raw of names) {\n    const name = raw.trim()\n    if (name !== '') out.push(greet(name))\n  }\n  return out\n}\n\ntype Spy<A extends unknown[], R> = ((...args: A) => R) & {\n  calls: A[]\n  results: R[]\n}\n\nfunction createSpy<A extends unknown[], R>(impl: (...args: A) => R): Spy<A, R> {\n  const calls: A[] = []\n  const results: R[] = []\n  const spy = (...args: A): R => {\n    calls.push(args)\n    const result = impl(...args)\n    results.push(result)\n    return result\n  }\n  return Object.assign(spy, { calls, results })\n}\n\nfunction spyGreet(names: string[]): { calls: [string][]; results: string[] } {\n  const greet = createSpy((name: string) => `hi ${name}`)\n  greetAll(names, greet)\n  return { calls: greet.calls, results: greet.results }\n}\n",
+      "checklist": [
+        "Blank names never reach the spy, and the spy sees the trimmed name.",
+        "`calls` holds argument tuples (`[['ann'], ['bo']]`), not flattened values.",
+        "The spy keeps `impl`'s parameter and return types; there is no `any`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A seeded, testable shuffle",
+      "prompt": "Write `mulberry32(seed)`, a seeded generator returning numbers in `[0, 1)`, and a generic `shuffle<T>(items, rng)` that does a Fisher-Yates shuffle on a copy, walking `i` from the end down to 1 and swapping with `j = Math.floor(rng() * (i + 1))`. Declare `type Rng = () => number`. Then `seededShuffle(items, seed)` returns `shuffle(items, mulberry32(seed))`, so the same seed always gives the same order.",
+      "hints": [
+        "Keep a 32-bit state in a closure: each call adds the constant `0x6d2b79f5` (`>>> 0` keeps it unsigned), mixes it with `Math.imul` and xor-shifts, and divides the final unsigned value by `4294967296`.",
+        "`shuffle` must not touch the input: `const out = items.slice()`, loop `for (let i = out.length - 1; i > 0; i--)`, and swap with destructuring. Type `items` as `readonly T[]` so literal tuples work."
+      ],
+      "solution": "type Rng = () => number\n\n// mulberry32: a 32-bit state stepped by a constant, then scrambled into [0, 1).\nfunction mulberry32(seed: number): Rng {\n  let state = seed >>> 0\n  return () => {\n    state = (state + 0x6d2b79f5) >>> 0\n    let t = state\n    t = Math.imul(t ^ (t >>> 15), t | 1)\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296\n  }\n}\n\nfunction shuffle<T>(items: readonly T[], rng: Rng): T[] {\n  const out = items.slice()\n  for (let i = out.length - 1; i > 0; i--) {\n    const j = Math.floor(rng() * (i + 1))\n    ;[out[i], out[j]] = [out[j], out[i]]\n  }\n  return out\n}\n\nfunction seededShuffle(items: string[], seed: number): string[] {\n  return shuffle(items, mulberry32(seed))\n}\n",
+      "checklist": [
+        "The same seed gives the same order on every run; the input array is not mutated.",
+        "The output is always a permutation of the input (same length, same multiset).",
+        "The shuffle takes the generator as a parameter, so production can pass `Math.random`."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When is module mocking still the right tool?",
+      "answer": "When you cannot change the code's signature: legacy code that imports a singleton, a third-party module with side effects at import time, or a quick characterisation test before a refactor. Even then, mock at the boundary (the HTTP client, the SDK), restore it after each test, and plan to move to injection. If you own the code, a parameter or constructor argument is simpler and type-checked."
+    },
+    {
+      "question": "A test passes locally and fails one run in twenty on CI. How do you hunt it down?",
+      "answer": "Look for hidden inputs: real time (`Date.now`, timezones, midnight), `Math.random`, sleeps that race the work, shared state between tests (module-level fakes, a shared database row), test order, and unawaited promises. Rerun the single test many times and in random order, log the seed for any random data, and replace each hidden input with an injected clock, seeded generator or awaited promise rather than adding retries."
+    },
+    {
+      "question": "Can one module run in both Node and the browser? What breaks?",
+      "answer": "Yes, if it sticks to ECMAScript plus the shared web APIs (`fetch`, `URL`, `TextEncoder`, `crypto.getRandomValues`, timers). It breaks when it imports `node:fs`, reads `process.env`, or touches `window`/`document` at import time. Isolate host-specific code behind an interface, inject it, and use `package.json` `exports` conditions (`\"browser\"`, `\"node\"`) so each host resolves the right file."
+    },
+    {
+      "question": "Our component tests run in jsdom. Is that testing the browser?",
+      "answer": "Not fully. jsdom implements the DOM and events in Node, so it is fast and good for logic and markup, but it has no layout, painting or real CSS, and some APIs are missing or stubbed. Behaviour that depends on sizes, scrolling, focus quirks or real network policy (CORS, cookies) needs a real browser via Playwright or similar, kept to a small set of end-to-end tests."
+    }
+  ],
+  "takeaways": [
+    "Arrange, act, assert, with one behaviour per test named after that behaviour.",
+    "Stubs answer, fakes work, spies record, mocks expect; inject fakes through parameters instead of patching modules.",
+    "Make time and randomness parameters: a `Clock` with `now()` and a seeded `Rng`; drive timers with fake timers.",
+    "Await the work instead of sleeping, and never leave an async test's promise unreturned.",
+    "Tables and properties cover many cases cheaply; integration tests cover the wiring fakes hide; types check shapes, not behaviour.",
+    "Node and browsers share the language and many web APIs but differ in globals, I/O, event-loop extras, workers and trust."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsr-doubles",
+        "type": "compare",
+        "title": "Module mocking versus an injected fake",
+        "alt": "Two side-by-side pictures. On the left, a test calls checkout, which imports and reads the real Date.now; to control time the test installs a module mock that replaces the import globally. On the right, checkout takes a clock parameter: the test creates a FakeClock and passes it in, while production wiring passes a system clock that reads Date.now.",
+        "caption": "When the dependency is a parameter, the test just passes a fake: no module patching, no hoisting, no global state to reset.",
+        "before": {
+          "label": "Module mock: patch what it imports",
+          "nodes": [
+            {
+              "id": "t",
+              "label": "test",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "patches the import"
+            },
+            {
+              "id": "code",
+              "label": "checkout()",
+              "kind": "service",
+              "col": 2,
+              "row": 0,
+              "sub": "imports the clock"
+            },
+            {
+              "id": "mock",
+              "label": "module mock",
+              "kind": "bad",
+              "col": 0,
+              "row": 2,
+              "sub": "hoisted, global"
+            },
+            {
+              "id": "real",
+              "label": "Date.now",
+              "kind": "external",
+              "col": 2,
+              "row": 2,
+              "sub": "real time"
+            }
+          ],
+          "edges": [
+            {
+              "from": "t",
+              "to": "code",
+              "label": "calls"
+            },
+            {
+              "from": "code",
+              "to": "real",
+              "label": "reads time"
+            },
+            {
+              "from": "t",
+              "to": "mock",
+              "label": "mock module path"
+            },
+            {
+              "from": "mock",
+              "to": "real",
+              "label": "replaces",
+              "style": "fail"
+            }
+          ]
+        },
+        "after": {
+          "label": "Dependency injection: pass a fake",
+          "nodes": [
+            {
+              "id": "t",
+              "label": "test",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "owns the fake"
+            },
+            {
+              "id": "code",
+              "label": "checkout(clock)",
+              "kind": "service",
+              "col": 2,
+              "row": 0,
+              "sub": "depends on Clock"
+            },
+            {
+              "id": "fake",
+              "label": "FakeClock",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "advance(ms)"
+            },
+            {
+              "id": "prod",
+              "label": "systemClock",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "Date.now in prod"
+            }
+          ],
+          "edges": [
+            {
+              "from": "t",
+              "to": "fake",
+              "label": "new FakeClock()"
+            },
+            {
+              "from": "t",
+              "to": "code",
+              "label": "pass the clock"
+            },
+            {
+              "from": "code",
+              "to": "fake",
+              "label": "clock.now()"
+            },
+            {
+              "from": "prod",
+              "to": "code",
+              "label": "wired in main"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsr-timers",
+        "type": "flow",
+        "title": "Fake timers: time moves only when the test says so",
+        "alt": "Flow diagram. Code under test schedules three timers due at 30, 50 and 120 ms into a fake timer queue. The test calls advance(100) on the fake clock, which moves now from 0 to 100 and pops the timers due by then: the callbacks at 30 and 50 run in order, while the one at 120 stays pending.",
+        "caption": "Advancing a fake clock runs exactly the callbacks that are due, in time order and synchronously, so a 5-minute timeout test takes microseconds.",
+        "nodes": [
+          {
+            "id": "sut",
+            "label": "code under test",
+            "kind": "service",
+            "col": 0,
+            "row": 3,
+            "sub": "setTimeout x3"
+          },
+          {
+            "id": "test",
+            "label": "test",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "advance(100)"
+          },
+          {
+            "id": "fake",
+            "label": "fake clock",
+            "kind": "state",
+            "col": 2,
+            "row": 1,
+            "sub": "now: 0 to 100"
+          },
+          {
+            "id": "q",
+            "label": "timer queue",
+            "kind": "queue",
+            "col": 2,
+            "row": 3,
+            "sub": "due 30, 50, 120"
+          },
+          {
+            "id": "f30",
+            "label": "callback @30",
+            "kind": "good",
+            "col": 4,
+            "row": 2,
+            "sub": "runs first"
+          },
+          {
+            "id": "f50",
+            "label": "callback @50",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "runs second"
+          },
+          {
+            "id": "f120",
+            "label": "callback @120",
+            "kind": "note",
+            "col": 4,
+            "row": 4,
+            "sub": "still pending"
+          }
+        ],
+        "edges": [
+          {
+            "from": "sut",
+            "to": "q",
+            "label": "schedules"
+          },
+          {
+            "from": "test",
+            "to": "fake",
+            "label": "advance(100)"
+          },
+          {
+            "from": "fake",
+            "to": "q",
+            "label": "pop due <= 100"
+          },
+          {
+            "from": "q",
+            "to": "f30",
+            "label": "fire at 30"
+          },
+          {
+            "from": "q",
+            "to": "f50",
+            "label": "fire at 50"
+          },
+          {
+            "from": "q",
+            "to": "f120",
+            "label": "not yet",
+            "style": "async"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "The code schedules three timers. With fake timers installed nothing runs in real time; they sit in the fake queue."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "The test calls `advance(100)`. The fake clock moves forward instantly and synchronously, so no sleep is needed."
+          },
+          {
+            "edges": [
+              2,
+              3,
+              4
+            ],
+            "text": "Every timer due by 100 ms fires in due-time order, with `now()` set to each due time as it runs."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "The 120 ms timer stays queued, so the test can assert it has **not** fired yet, then advance 20 more."
+          }
+        ]
+      },
+      {
+        "id": "tsr-confidence",
+        "type": "chart",
+        "title": "What each kind of check buys you",
+        "alt": "Chart with speed and stability on the x axis and realism on the y axis. The type check is fastest but proves the least about behaviour. Pure unit tests and property tests are fast with low realism; unit tests with fakes are a little more realistic; contract and integration tests are slower and prove more; browser end-to-end tests are slowest and most realistic.",
+        "caption": "Scores are a qualitative ranking, not measurements: put most tests where they are fast and stable, and add a few slow realistic ones for the wiring.",
+        "x": {
+          "label": "Speed and stability",
+          "low": "slow, flaky",
+          "high": "fast, stable"
+        },
+        "y": {
+          "label": "Realism (what it proves)",
+          "low": "shapes only",
+          "high": "real system"
+        },
+        "points": [
+          {
+            "label": "type check",
+            "x": 10,
+            "y": 1
+          },
+          {
+            "label": "pure unit test",
+            "x": 9,
+            "y": 3
+          },
+          {
+            "label": "property test",
+            "x": 7,
+            "y": 4
+          },
+          {
+            "label": "unit + fakes",
+            "x": 8,
+            "y": 6,
+            "highlight": true
+          },
+          {
+            "label": "contract test",
+            "x": 5,
+            "y": 7
+          },
+          {
+            "label": "integration",
+            "x": 3,
+            "y": 8
+          },
+          {
+            "label": "browser e2e",
+            "x": 1,
+            "y": 10
+          }
+        ]
+      },
+      {
+        "id": "tsr-runtimes",
+        "type": "flow",
+        "title": "One language, two hosts",
+        "alt": "Flow diagram with the JavaScript engine at the bottom centre and two hosts above it. The browser host on the left offers window and document with the DOM and rendering, Web Workers that talk by postMessage, and a sandbox enforced by same-origin rules. The Node host on the right offers process and Buffer, worker_threads with parentPort, and full OS access to files, network and processes. Both hosts share globals such as fetch, URL and timers.",
+        "caption": "The engine is the same ECMAScript; the host decides the globals, the I/O APIs, how threads look and how much the code is trusted.",
+        "nodes": [
+          {
+            "id": "shared",
+            "label": "in both hosts",
+            "kind": "note",
+            "col": 2,
+            "row": 0,
+            "sub": "fetch, URL, timers"
+          },
+          {
+            "id": "browser",
+            "label": "browser host",
+            "kind": "client",
+            "col": 1,
+            "row": 2
+          },
+          {
+            "id": "node",
+            "label": "Node.js host",
+            "kind": "service",
+            "col": 3,
+            "row": 2
+          },
+          {
+            "id": "engine",
+            "label": "JS engine",
+            "kind": "state",
+            "col": 2,
+            "row": 4,
+            "sub": "ES2023 built-ins"
+          },
+          {
+            "id": "dom",
+            "label": "window, document",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "DOM + rendering"
+          },
+          {
+            "id": "ww",
+            "label": "Web Workers",
+            "kind": "worker",
+            "col": 0,
+            "row": 2,
+            "sub": "postMessage"
+          },
+          {
+            "id": "sb",
+            "label": "sandbox",
+            "kind": "good",
+            "col": 0,
+            "row": 4,
+            "sub": "same-origin, CORS"
+          },
+          {
+            "id": "proc",
+            "label": "process, Buffer",
+            "kind": "service",
+            "col": 4,
+            "row": 0,
+            "sub": "env, argv, exit"
+          },
+          {
+            "id": "wt",
+            "label": "worker_threads",
+            "kind": "worker",
+            "col": 4,
+            "row": 2,
+            "sub": "parentPort"
+          },
+          {
+            "id": "os",
+            "label": "OS access",
+            "kind": "bad",
+            "col": 4,
+            "row": 4,
+            "sub": "fs, net, spawn"
+          }
+        ],
+        "edges": [
+          {
+            "from": "browser",
+            "to": "dom",
+            "label": "page globals"
+          },
+          {
+            "from": "browser",
+            "to": "ww",
+            "label": "threads"
+          },
+          {
+            "from": "browser",
+            "to": "sb",
+            "label": "trust model"
+          },
+          {
+            "from": "node",
+            "to": "proc",
+            "label": "process globals"
+          },
+          {
+            "from": "node",
+            "to": "wt",
+            "label": "threads"
+          },
+          {
+            "from": "node",
+            "to": "os",
+            "label": "trust model"
+          },
+          {
+            "from": "browser",
+            "to": "shared"
+          },
+          {
+            "from": "node",
+            "to": "shared"
+          },
+          {
+            "from": "browser",
+            "to": "engine",
+            "label": "runs on"
+          },
+          {
+            "from": "node",
+            "to": "engine",
+            "label": "runs on"
+          }
+        ]
+      },
+      {
+        "id": "tsr-aaa",
+        "type": "sequence",
+        "title": "Arrange, act, assert with a fake clock",
+        "alt": "Sequence diagram with a test, a FakeClock and a TtlCache. The test creates the clock and the cache, sets key a at time 0, advances the clock by 99 and reads a, which is still live. It advances by 1 more and reads again; the cache asks the clock, sees 100 and reports a as expired.",
+        "caption": "The test controls time explicitly, so the boundary (99 live, 100 expired) is checked exactly and the test runs in microseconds.",
+        "actors": [
+          {
+            "id": "test",
+            "label": "test"
+          },
+          {
+            "id": "clock",
+            "label": "FakeClock"
+          },
+          {
+            "id": "cache",
+            "label": "TtlCache"
+          }
+        ],
+        "messages": [
+          {
+            "from": "test",
+            "to": "clock",
+            "label": "new FakeClock(0)",
+            "note": "Arrange: build the fake first."
+          },
+          {
+            "from": "test",
+            "to": "cache",
+            "label": "createTtlCache(100, clock)",
+            "note": "Arrange: inject it; the cache never touches Date.now."
+          },
+          {
+            "from": "test",
+            "to": "cache",
+            "label": "set('a', 1)"
+          },
+          {
+            "from": "cache",
+            "to": "clock",
+            "label": "now()"
+          },
+          {
+            "from": "clock",
+            "to": "cache",
+            "label": "0, so expiresAt = 100",
+            "style": "reply"
+          },
+          {
+            "from": "test",
+            "to": "clock",
+            "label": "advance(99)",
+            "note": "Act: move time instantly; no sleeping."
+          },
+          {
+            "from": "test",
+            "to": "cache",
+            "label": "get('a')"
+          },
+          {
+            "from": "cache",
+            "to": "clock",
+            "label": "now()"
+          },
+          {
+            "from": "clock",
+            "to": "cache",
+            "label": "99",
+            "style": "reply"
+          },
+          {
+            "from": "cache",
+            "to": "test",
+            "label": "1 (99 < 100)",
+            "style": "reply",
+            "note": "Assert: still live one millisecond before expiry."
+          },
+          {
+            "from": "test",
+            "to": "clock",
+            "label": "advance(1)"
+          },
+          {
+            "from": "test",
+            "to": "cache",
+            "label": "get('a')"
+          },
+          {
+            "from": "cache",
+            "to": "test",
+            "label": "undefined (expired)",
+            "style": "reply",
+            "note": "Assert the boundary: at exactly 100 ms the entry is gone."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "simulateTtl",
+        "starter": "interface Clock {\n  now(): number\n}\n\nclass FakeClock implements Clock {\n  private time: number\n  constructor(start = 0) {\n    this.time = start\n  }\n  now(): number {\n    return this.time\n  }\n  advance(ms: number): void {\n    this.time += ms\n  }\n}\n\n// TODO: read time from `clock` instead of Date.now(), make the cache generic in V,\n// and drop expired entries (an entry set at time t is gone from t + ttlMs).\nfunction createTtlCache(ttlMs: number, clock: any): any {\n  const store = new Map<string, { value: number; expiresAt: number }>()\n  return {\n    get(key: string) {\n      const entry = store.get(key)\n      if (!entry || Date.now() >= entry.expiresAt) return undefined\n      return entry.value\n    },\n    set(key: string, value: number) {\n      store.set(key, { value, expiresAt: Date.now() + ttlMs })\n    },\n    size() {\n      return store.size\n    },\n  }\n}\n\ntype Op = ['set', string, number] | ['get', string] | ['advance', number] | ['size']\n\nfunction simulateTtl(ttlMs: number, ops: Op[]): (number | null)[] {\n  const clock = new FakeClock()\n  const cache = createTtlCache(ttlMs, clock)\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    if (op[0] === 'set') cache.set(op[1], op[2])\n    else if (op[0] === 'get') out.push(cache.get(op[1]) ?? null)\n    else if (op[0] === 'advance') clock.advance(op[1])\n    else out.push(cache.size())\n  }\n  return out\n}\n",
+        "solution": "interface Clock {\n  now(): number\n}\n\nclass FakeClock implements Clock {\n  private time: number\n  constructor(start = 0) {\n    this.time = start\n  }\n  now(): number {\n    return this.time\n  }\n  advance(ms: number): void {\n    this.time += ms\n  }\n}\n\ninterface TtlCache<V> {\n  get(key: string): V | undefined\n  set(key: string, value: V): void\n  size(): number\n}\n\nfunction createTtlCache<V>(ttlMs: number, clock: Clock): TtlCache<V> {\n  const store = new Map<string, { value: V; expiresAt: number }>()\n  const isLive = (expiresAt: number): boolean => clock.now() < expiresAt\n  return {\n    get(key) {\n      const entry = store.get(key)\n      if (entry === undefined) return undefined\n      if (!isLive(entry.expiresAt)) {\n        store.delete(key)\n        return undefined\n      }\n      return entry.value\n    },\n    set(key, value) {\n      store.set(key, { value, expiresAt: clock.now() + ttlMs })\n    },\n    size() {\n      for (const [key, entry] of store) if (!isLive(entry.expiresAt)) store.delete(key)\n      return store.size\n    },\n  }\n}\n\ntype Op = ['set', string, number] | ['get', string] | ['advance', number] | ['size']\n\nfunction simulateTtl(ttlMs: number, ops: Op[]): (number | null)[] {\n  const clock = new FakeClock()\n  const cache = createTtlCache<number>(ttlMs, clock)\n  const out: (number | null)[] = []\n  for (const op of ops) {\n    switch (op[0]) {\n      case 'set':\n        cache.set(op[1], op[2])\n        break\n      case 'get':\n        out.push(cache.get(op[1]) ?? null)\n        break\n      case 'advance':\n        clock.advance(op[1])\n        break\n      case 'size':\n        out.push(cache.size())\n        break\n    }\n  }\n  return out\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst clock: Clock = new FakeClock(5)\nconst cache = createTtlCache<string>(100, clock)\ntype _1 = Expect<Equal<ReturnType<typeof cache.get>, string | undefined>>\ntype _2 = Expect<Equal<ReturnType<typeof cache.size>, number>>\n// @ts-expect-error values must match V\ncache.set('k', 42)\n// @ts-expect-error a clock must have now()\ncreateTtlCache<string>(100, {})\n",
+        "tests": [
+          {
+            "args": [
+              100,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "get",
+                  "a"
+                ],
+                [
+                  "advance",
+                  99
+                ],
+                [
+                  "get",
+                  "a"
+                ],
+                [
+                  "advance",
+                  1
+                ],
+                [
+                  "get",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              1,
+              1,
+              null
+            ]
+          },
+          {
+            "args": [
+              50,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "advance",
+                  30
+                ],
+                [
+                  "set",
+                  "b",
+                  2
+                ],
+                [
+                  "size"
+                ],
+                [
+                  "advance",
+                  20
+                ],
+                [
+                  "size"
+                ],
+                [
+                  "get",
+                  "b"
+                ]
+              ]
+            ],
+            "expected": [
+              2,
+              1,
+              2
+            ]
+          },
+          {
+            "args": [
+              100,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "advance",
+                  60
+                ],
+                [
+                  "set",
+                  "a",
+                  5
+                ],
+                [
+                  "advance",
+                  60
+                ],
+                [
+                  "get",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              5
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              100,
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              0,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "get",
+                  "a"
+                ],
+                [
+                  "size"
+                ]
+              ]
+            ],
+            "expected": [
+              null,
+              0
+            ]
+          },
+          {
+            "args": [
+              100,
+              [
+                [
+                  "get",
+                  "missing"
+                ],
+                [
+                  "size"
+                ]
+              ]
+            ],
+            "expected": [
+              null,
+              0
+            ]
+          },
+          {
+            "args": [
+              10,
+              [
+                [
+                  "set",
+                  "日本",
+                  7
+                ],
+                [
+                  "set",
+                  "🙂",
+                  -3
+                ],
+                [
+                  "advance",
+                  5
+                ],
+                [
+                  "get",
+                  "🙂"
+                ],
+                [
+                  "get",
+                  "日本"
+                ],
+                [
+                  "advance",
+                  5
+                ],
+                [
+                  "size"
+                ]
+              ]
+            ],
+            "expected": [
+              -3,
+              7,
+              0
+            ]
+          },
+          {
+            "args": [
+              100,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "set",
+                  "b",
+                  2
+                ],
+                [
+                  "set",
+                  "c",
+                  3
+                ],
+                [
+                  "advance",
+                  100
+                ],
+                [
+                  "size"
+                ],
+                [
+                  "get",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              0,
+              null
+            ]
+          },
+          {
+            "args": [
+              1000,
+              [
+                [
+                  "set",
+                  "a",
+                  1
+                ],
+                [
+                  "advance",
+                  999
+                ],
+                [
+                  "size"
+                ],
+                [
+                  "advance",
+                  1
+                ],
+                [
+                  "get",
+                  "a"
+                ],
+                [
+                  "set",
+                  "a",
+                  2
+                ],
+                [
+                  "get",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              1,
+              null,
+              2
+            ]
+          },
+          {
+            "args": [
+              30,
+              [
+                [
+                  "set",
+                  "x",
+                  0
+                ],
+                [
+                  "advance",
+                  10
+                ],
+                [
+                  "set",
+                  "x",
+                  0
+                ],
+                [
+                  "advance",
+                  25
+                ],
+                [
+                  "get",
+                  "x"
+                ],
+                [
+                  "advance",
+                  5
+                ],
+                [
+                  "get",
+                  "x"
+                ]
+              ]
+            ],
+            "expected": [
+              0,
+              null
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "spyGreet",
+        "starter": "// Code under test: greets every name that is not blank, trimmed.\nfunction greetAll(names: string[], greet: (name: string) => string): string[] {\n  const out: string[] = []\n  for (const raw of names) {\n    const name = raw.trim()\n    if (name !== '') out.push(greet(name))\n  }\n  return out\n}\n\n// TODO: return a function that calls impl and records every argument list and result.\nfunction createSpy(impl: any): any {\n  return Object.assign(impl, { calls: [], results: [] })\n}\n\nfunction spyGreet(names: string[]): { calls: [string][]; results: string[] } {\n  const greet = createSpy((name: string) => `hi ${name}`)\n  greetAll(names, greet)\n  return { calls: greet.calls, results: greet.results }\n}\n",
+        "solution": "// Code under test: greets every name that is not blank, trimmed.\nfunction greetAll(names: string[], greet: (name: string) => string): string[] {\n  const out: string[] = []\n  for (const raw of names) {\n    const name = raw.trim()\n    if (name !== '') out.push(greet(name))\n  }\n  return out\n}\n\ntype Spy<A extends unknown[], R> = ((...args: A) => R) & {\n  calls: A[]\n  results: R[]\n}\n\nfunction createSpy<A extends unknown[], R>(impl: (...args: A) => R): Spy<A, R> {\n  const calls: A[] = []\n  const results: R[] = []\n  const spy = (...args: A): R => {\n    calls.push(args)\n    const result = impl(...args)\n    results.push(result)\n    return result\n  }\n  return Object.assign(spy, { calls, results })\n}\n\nfunction spyGreet(names: string[]): { calls: [string][]; results: string[] } {\n  const greet = createSpy((name: string) => `hi ${name}`)\n  greetAll(names, greet)\n  return { calls: greet.calls, results: greet.results }\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst s = createSpy((times: number, word: string) => word.repeat(times))\ns(2, 'ab')\ntype _1 = Expect<Equal<typeof s.calls, [times: number, word: string][]>>\ntype _2 = Expect<Equal<typeof s.results, string[]>>\ntype _3 = Expect<Equal<ReturnType<typeof s>, string>>\n// @ts-expect-error the spy keeps the argument types of impl\ns('ab', 2)\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "ann",
+                "  ",
+                "bo "
+              ]
+            ],
+            "expected": {
+              "calls": [
+                [
+                  "ann"
+                ],
+                [
+                  "bo"
+                ]
+              ],
+              "results": [
+                "hi ann",
+                "hi bo"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "cy"
+              ]
+            ],
+            "expected": {
+              "calls": [
+                [
+                  "cy"
+                ]
+              ],
+              "results": [
+                "hi cy"
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "calls": [],
+              "results": []
+            }
+          },
+          {
+            "args": [
+              [
+                "",
+                " ",
+                "\t"
+              ]
+            ],
+            "expected": {
+              "calls": [],
+              "results": []
+            }
+          },
+          {
+            "args": [
+              [
+                "a",
+                "a"
+              ]
+            ],
+            "expected": {
+              "calls": [
+                [
+                  "a"
+                ],
+                [
+                  "a"
+                ]
+              ],
+              "results": [
+                "hi a",
+                "hi a"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "Zoë",
+                " 日本 "
+              ]
+            ],
+            "expected": {
+              "calls": [
+                [
+                  "Zoë"
+                ],
+                [
+                  "日本"
+                ]
+              ],
+              "results": [
+                "hi Zoë",
+                "hi 日本"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "  padded  ",
+                "x y"
+              ]
+            ],
+            "expected": {
+              "calls": [
+                [
+                  "padded"
+                ],
+                [
+                  "x y"
+                ]
+              ],
+              "results": [
+                "hi padded",
+                "hi x y"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "seededShuffle",
+        "starter": "type Rng = () => number\n\n// TODO: build a seeded generator and make the shuffle take it as a parameter.\nfunction shuffle(items: any[], rng?: any): any[] {\n  const out = items.slice()\n  for (let i = out.length - 1; i > 0; i--) {\n    const j = Math.floor(Math.random() * (i + 1))\n    ;[out[i], out[j]] = [out[j], out[i]]\n  }\n  return out\n}\n\nfunction seededShuffle(items: string[], seed: number): string[] {\n  return shuffle(items)\n}\n",
+        "solution": "type Rng = () => number\n\n// mulberry32: a 32-bit state stepped by a constant, then scrambled into [0, 1).\nfunction mulberry32(seed: number): Rng {\n  let state = seed >>> 0\n  return () => {\n    state = (state + 0x6d2b79f5) >>> 0\n    let t = state\n    t = Math.imul(t ^ (t >>> 15), t | 1)\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296\n  }\n}\n\nfunction shuffle<T>(items: readonly T[], rng: Rng): T[] {\n  const out = items.slice()\n  for (let i = out.length - 1; i > 0; i--) {\n    const j = Math.floor(rng() * (i + 1))\n    ;[out[i], out[j]] = [out[j], out[i]]\n  }\n  return out\n}\n\nfunction seededShuffle(items: string[], seed: number): string[] {\n  return shuffle(items, mulberry32(seed))\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\nconst rng: () => number = mulberry32(1)\nconst picked = shuffle(['a', 'b'] as const, rng)\ntype _1 = Expect<Equal<typeof picked, ('a' | 'b')[]>>\ntype _2 = Expect<Equal<ReturnType<typeof mulberry32>, Rng>>\n// @ts-expect-error pass a generator, not a seed\nshuffle([1, 2], 42)\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "a",
+                "b",
+                "c",
+                "d",
+                "e",
+                "f",
+                "g",
+                "h"
+              ],
+              42
+            ],
+            "expected": [
+              "c",
+              "h",
+              "b",
+              "a",
+              "g",
+              "f",
+              "d",
+              "e"
+            ]
+          },
+          {
+            "args": [
+              [
+                "a",
+                "b",
+                "c",
+                "d",
+                "e",
+                "f",
+                "g",
+                "h"
+              ],
+              7
+            ],
+            "expected": [
+              "e",
+              "g",
+              "b",
+              "c",
+              "d",
+              "f",
+              "h",
+              "a"
+            ]
+          },
+          {
+            "args": [
+              [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8"
+              ],
+              2024
+            ],
+            "expected": [
+              "8",
+              "1",
+              "2",
+              "3",
+              "6",
+              "4",
+              "5",
+              "7"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              5
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                "solo"
+              ],
+              9
+            ],
+            "expected": [
+              "solo"
+            ]
+          },
+          {
+            "args": [
+              [
+                "x",
+                "x",
+                "y",
+                "y",
+                "z"
+              ],
+              1
+            ],
+            "expected": [
+              "z",
+              "y",
+              "x",
+              "x",
+              "y"
+            ]
+          },
+          {
+            "args": [
+              [
+                "é",
+                "日",
+                "🙂",
+                "a"
+              ],
+              0
+            ],
+            "expected": [
+              "a",
+              "🙂",
+              "é",
+              "日"
+            ]
+          },
+          {
+            "args": [
+              [
+                "p",
+                "q",
+                "r",
+                "s",
+                "t",
+                "u"
+              ],
+              -3
+            ],
+            "expected": [
+              "t",
+              "u",
+              "q",
+              "p",
+              "r",
+              "s"
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "const log: string[] = []\nfunction test(name: string, fn: () => unknown): void {\n  try {\n    const result = fn()\n    if (result instanceof Promise) result.catch(() => log.push('late FAIL ' + name))\n    log.push('pass ' + name)\n  } catch {\n    log.push('FAIL ' + name)\n  }\n}\ntest('sync', () => { if (1 + 1 !== 3) throw new Error('math') })\ntest('async', async () => { await null; throw new Error('late') })\nsetTimeout(() => console.log(log.join(', ')), 0)",
+        "choices": [
+          "FAIL sync, pass async, late FAIL async",
+          "FAIL sync, FAIL async",
+          "FAIL sync, pass async"
+        ],
+        "answer": 0,
+        "explain": "An `async` test returns a promise immediately, so `try/catch` sees no error and the runner records a pass. The failure arrives later as a rejection. Real runners `await` what the test returns; in your own tests, always return or `await` the promise."
+      },
+      {
+        "code": "const saved: string[] = []\nconst log: string[] = []\nfunction save(item: string): Promise<void> {\n  return new Promise(resolve => setTimeout(() => { saved.push(item); resolve() }, 20))\n}\nsave('a')\nsetTimeout(() => log.push('slept 10ms: ' + saved.length), 10)\nsave('b').then(() => log.push('awaited: ' + saved.length))\nsetTimeout(() => console.log(log.join(' | ')), 50)",
+        "choices": [
+          "slept 10ms: 2 | awaited: 2",
+          "slept 10ms: 0 | awaited: 2",
+          "slept 10ms: 0 | awaited: 1"
+        ],
+        "answer": 1,
+        "explain": "A sleep guesses how long the work takes; here the guess is too short and the check sees nothing. Waiting on the promise itself resumes exactly when `b` is saved, and `a` (scheduled earlier with the same delay) is already in."
+      },
+      {
+        "code": "function lcg(seed: number): () => number {\n  let s = seed\n  return () => (s = (s * 31 + 7) % 100)\n}\nconst a = lcg(1)\nconst b = lcg(1)\nconsole.log([a(), a(), b()].join(' '))",
+        "choices": [
+          "38 85 38",
+          "38 85 85",
+          "38 38 38"
+        ],
+        "answer": 0,
+        "explain": "Each generator owns its state in a closure. The same seed reproduces the same sequence, and `b` starts from the beginning because it does not share `a`'s state. That is what makes a seeded test repeatable."
+      },
+      {
+        "code": "const g = globalThis as unknown as Record<string, unknown>\nconsole.log([typeof g.window, typeof g.globalThis, typeof g.setTimeout].join(' '))",
+        "choices": [
+          "undefined object function",
+          "object object function",
+          "undefined undefined function"
+        ],
+        "answer": 0,
+        "explain": "This runs in Node, which has no `window`. `globalThis` exists in every host and points at the global object; timers exist in both. In a browser page the first value would be `object`. Feature-detect with `typeof`, which never throws for a missing global."
+      },
+      {
+        "code": "function parseAge(raw: string): number {\n  return Number(raw)\n}\nconst age = parseAge('forty')\nconsole.log(typeof age + ' ' + Number.isNaN(age) + ' ' + (age > 0))",
+        "choices": [
+          "number true false",
+          "string false false",
+          "number false true"
+        ],
+        "answer": 0,
+        "explain": "The signature promises a `number` and keeps that promise: `NaN` is a number. Types check shapes, not values, so only a test with a bad input catches this."
+      },
+      {
+        "code": "const sent: string[] = []\nconst fakeSend = (to: string): void => { sent.push(to) }\nfunction notify(users: string[], send: (to: string) => void): number {\n  for (const u of users) send(u)\n  return users.length\n}\nconst first = notify(['ann', 'bo'], fakeSend)\nconst second = notify(['cy'], fakeSend)\nconsole.log(first + ' ' + second + ' ' + sent.length)",
+        "choices": [
+          "2 1 1",
+          "2 1 3",
+          "2 3 3"
+        ],
+        "answer": 1,
+        "explain": "Both calls share one fake, so its record keeps growing. A second test asserting `sent.length === 1` would pass or fail depending on test order. Create fresh fakes inside each test (or reset them in `beforeEach`)."
+      }
+    ],
+    "tip": "When asked to test something time-based or random, say \"I'd inject the clock and the random source\" before writing code, and sketch the seam: an interface, a production implementation and a fake. Then name the boundary cases you would put in a table (empty, exactly at the limit, one past it). Interviewers listen for testability as a design choice, not an afterthought.",
+    "links": {
+      "problems": [
+        "lru-cache",
+        "token-bucket-limiter",
+        "time-versioned-store"
+      ],
+      "guides": [
+        "testing-your-code",
+        "testing-strategy",
+        "edge-case-checklist",
+        "caching-strategies"
+      ],
+      "lessons": [
+        "ts-promises-async",
+        "ts-event-loop",
+        "ts-generics",
+        "py-modules-testing"
+      ]
+    }
+  }
+}

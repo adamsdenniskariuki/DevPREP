@@ -1,0 +1,1397 @@
+{
+  "id": "ts-narrowing-unions",
+  "track": "typescript",
+  "title": "Unions, narrowing and exhaustiveness",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Discriminated unions that make impossible states unrepresentable, every narrowing check the compiler understands and where narrowing silently stops, exhaustiveness with `never` and `assertNever`, user-defined type guards and assertion functions (trusted, not checked), validating `unknown` input, and the strictness flags that decide how much the checker catches.",
+  "prerequisites": [
+    "ts-types-basics"
+  ],
+  "prerequisiteNotes": "ts-types-basics: union and literal types, the basic narrowing checks, and `unknown` versus `any` versus `never`. This lesson builds on those to model whole state machines, prove a `switch` handles every case, and write guards you can trust.",
+  "objectives": [
+    "Model a request lifecycle as a discriminated union so that states such as 'loading with an error' cannot be constructed.",
+    "Narrow with `typeof`, `in`, `instanceof`, equality and a discriminant, and explain the cases where TypeScript keeps or drops a narrowing.",
+    "Make a `switch` exhaustive with an `assertNever(x: never): never` helper so that adding a variant becomes a compile error at every unhandled site.",
+    "Write user-defined type guards (`x is T`) and assertion functions (`asserts x is T`), and explain why the compiler trusts their bodies without checking them.",
+    "Validate untrusted JSON from `unknown` by composing small guards, without `any` or `as`.",
+    "Say what `strict` turns on, and what `noUncheckedIndexedAccess` adds that `strict` does not."
+  ],
+  "concepts": [
+    {
+      "title": "Make impossible states unrepresentable",
+      "body": "A 'bag of optionals' such as `{ status: string; data?: T; error?: string }` allows 2 x 2 x infinity combinations, most of them nonsense: loading with data, success with an error, success without data. Every reader must guess which fields go together, and every access needs a `?.` or `!`. A **discriminated union** (tagged union) lists the legal states instead: each member has a literal **discriminant** (`status: 'loading'`) and exactly the fields that state owns. The compiler then rejects an illegal literal at construction, and checking the tag narrows the whole object, so `s.data` is available only after `s.status === 'success'`. The discriminant must be a literal type (string, number, boolean, `null` or `undefined`) shared by every member; a plain `string` tag does not discriminate. Carry per-state data in the state that needs it, like `attempt` on both `loading` and `failure`, rather than at the top level.",
+      "code": "type Fetch<T> =\n  | { status: 'idle' }\n  | { status: 'loading'; startedAt: number }\n  | { status: 'success'; data: T }\n  | { status: 'failure'; error: string };\n\nfunction label(f: Fetch<string[]>): string {\n  if (f.status === 'success') return `${f.data.length} rows`; // data exists here only\n  if (f.status === 'failure') return `error: ${f.error}`;\n  return f.status;\n}\n\n// const bad: Fetch<string[]> = { status: 'loading', startedAt: 1, error: 'x' };\n// error: 'error' does not exist on the loading member",
+      "diagram": "tsn-bag"
+    },
+    {
+      "title": "Every way to narrow, and where narrowing stops",
+      "body": "The checker narrows a union along these runtime checks: `typeof x === 'string'` (primitives and `'function'`; remember `typeof null === 'object'`), `x instanceof C` (classes only, never interfaces, because interfaces are erased), `'key' in x` (keeps the members that declare `key`, even optionally; since TS 4.9 an unlisted key adds `Record<'key', unknown>`), equality with a literal or `null` (`x == null` removes both `null` and `undefined`), and a discriminant check on a property. Aliased conditions such as `const isOk = r.ok; if (isOk)` also narrow when `r` is a `const` or an unreassigned parameter (TS 4.4), and checking one **destructured** `const` field narrows its siblings (TS 4.6). Narrowing is **dropped** inside callbacks for `let` variables that are reassigned after the closure is created, and it is **not** dropped after a function call, even one that mutates the object: property narrowings are optimistic. Since TS 5.5, `xs.filter(x => x !== null)` infers a type predicate, but `filter(Boolean)` still does not.",
+      "code": "type Res = { ok: true; value: number } | { ok: false; error: string };\n\nfunction read(r: Res): string {\n  const isOk = r.ok;                // aliased condition (TS 4.4)\n  if (isOk) return String(r.value);\n  return r.error;\n}\n\ntype Action = { kind: 'add'; payload: number } | { kind: 'rename'; payload: string };\n\nfunction apply(action: Action): string {\n  const { kind, payload } = action; // destructured siblings (TS 4.6)\n  return kind === 'add' ? payload.toFixed(0) : payload.toUpperCase();\n}\n\nfunction pad(input: string | number | Date | null): string {\n  if (input == null) return '-';            // null and undefined\n  if (input instanceof Date) return input.toISOString();\n  if (typeof input === 'number') return input.toFixed(2);\n  return input.trim();                      // only string remains\n}\n\nconst ids = [3, null, 0].filter(x => x !== null);  // number[] (TS 5.5)"
+    },
+    {
+      "title": "Exhaustiveness with never and assertNever",
+      "body": "Each `case` removes one member from the union, so after the last one the remaining type is `never`. Passing it to `function assertNever(x: never): never` therefore compiles, and the day someone adds a `'hexagon'` variant the leftover type becomes the hexagon member, which is not assignable to `never`: every `switch` that forgot it turns into a compile error pointing at the default. That is the real payoff of discriminated unions in a large codebase. At runtime the helper throws, which also catches data from an older or newer server that does not match the types. Alternatives: `const _exhaustive: never = s;` or `throw new Error(String(s satisfies never))`. An annotated return type gives a weaker signal (TS2366, 'lacks ending return statement'), and only when the function returns a value, so prefer the explicit helper. `noFallthroughCasesInSwitch` (on in this runtime) additionally rejects a non-empty case that falls into the next one.",
+      "code": "type Shape =\n  | { kind: 'circle'; r: number }\n  | { kind: 'square'; side: number }\n  | { kind: 'tri'; base: number; h: number };\n\nfunction assertNever(x: never): never {\n  throw new Error(`Unhandled: ${JSON.stringify(x)}`);\n}\n\nfunction area(s: Shape): number {\n  switch (s.kind) {\n    case 'circle': return Math.PI * s.r * s.r;\n    case 'square': return s.side * s.side;\n    case 'tri':    return (s.base * s.h) / 2;\n    default:       return assertNever(s);  // s: never here\n  }\n}",
+      "diagram": "tsn-exhaust"
+    },
+    {
+      "title": "Type guards and assertion functions are trusted, not checked",
+      "body": "A function returning `value is T` is a **user-defined type guard**: when it returns `true` the caller's argument narrows to `T`, and when it returns `false` it narrows to the rest. An **assertion function** returning `asserts value is T` (or `asserts cond`) narrows everything after the call and must throw otherwise; it needs an explicit type annotation on the call target, so `const assertX = (v: unknown): asserts v is X => ...` fails at the call site with TS2775 unless the variable itself is annotated. The catch: the compiler only checks that the body returns a `boolean` (or nothing). It never checks that the body proves the claim, so `return 'name' in x` typed as `x is User` makes `{ name: 42 }` a `User`, and an empty assertion body asserts everything. Treat guards like tiny parsers: check every field you rely on, keep them next to the type, and test them with bad input. Prefer a guard over `as`, because the lie is at least confined to one tested function.",
+      "code": "interface User { name: string; age: number }\n\nfunction isUserLoose(x: unknown): x is User {\n  return typeof x === 'object' && x !== null && 'name' in x;   // compiles, lies\n}\n\nfunction isUser(x: unknown): x is User {\n  if (typeof x !== 'object' || x === null || !('name' in x) || !('age' in x)) return false;\n  return typeof x.name === 'string' && typeof x.age === 'number';\n}\n\nfunction assertUser(x: unknown): asserts x is User {\n  if (!isUser(x)) throw new TypeError('not a User');\n}\n\nconst data: unknown = JSON.parse('{\"name\":\"Ada\",\"age\":36}');\nassertUser(data);\ndata.name.toUpperCase();          // data: User from here on",
+      "diagram": "tsn-guard"
+    },
+    {
+      "title": "unknown at the boundary: compose small guards",
+      "body": "`JSON.parse`, `catch (e)`, message events and storage reads hand you values of unknown shape. Typing them `any` silences the checker everywhere the value flows; typing them `unknown` forces a check before use. Validation scales by **composition**: a reusable `isRecord(v): v is Record<string, unknown>` (object, not null, not an array), a few leaf guards (`isFiniteNumber`, `isNonEmptyString`), then one guard or assertion per domain type that switches on the discriminant and checks that variant's fields. Destructure fields into locals before narrowing them, which narrows reliably and reads well. Return a result union (`{ ok: true; value } | { ok: false; error }`) or throw a `TypeError` with a path such as `lines[2]: invalid item` so the caller knows what failed. Under `strict`, `catch (e)` is `unknown` too (`useUnknownInCatchVariables`), so narrow with `e instanceof Error` before reading `e.message`.",
+      "code": "function isRecord(v: unknown): v is Record<string, unknown> {\n  return typeof v === 'object' && v !== null && !Array.isArray(v);\n}\n\ntype Msg = { type: 'ping' } | { type: 'chat'; text: string };\n\nfunction parseMsg(raw: string): Msg | undefined {\n  let data: unknown;\n  try { data = JSON.parse(raw); } catch { return undefined; }\n  if (!isRecord(data)) return undefined;\n  if (data.type === 'ping') return { type: 'ping' };\n  const { type, text } = data;\n  return type === 'chat' && typeof text === 'string' ? { type, text } : undefined;\n}\n\ntry { JSON.parse('{'); } catch (e) {\n  console.log(e instanceof SyntaxError ? 'bad JSON' : String(e));  // e: unknown\n}"
+    },
+    {
+      "title": "Strictness flags decide what narrowing can catch",
+      "body": "`strict: true` (what this runtime uses) switches on a family of flags, including `strictNullChecks` (`null` and `undefined` are separate types, so `string | null` must be narrowed before use; without it, every type silently includes them and none of this lesson works), `noImplicitAny` (an unannotated parameter that cannot be inferred is an error instead of a silent `any`), `useUnknownInCatchVariables`, `strictFunctionTypes` and `strictPropertyInitialization`. Two useful flags are **not** in `strict`. `noUncheckedIndexedAccess` makes `arr[i]` and `record[key]` include `| undefined`, so an empty array or a missing key must be handled; this runtime does not enable it, so `[][0].toFixed()` type-checks here and throws. `exactOptionalPropertyTypes` distinguishes a missing property from one explicitly set to `undefined`. Mention both when asked how you would harden a codebase; turning on `noUncheckedIndexedAccess` in an existing project usually surfaces real bugs along with some noise in loops that already check bounds.",
+      "code": "// tsconfig.json\n// {\n//   \"compilerOptions\": {\n//     \"strict\": true,                    // strictNullChecks, noImplicitAny, ...\n//     \"noUncheckedIndexedAccess\": true,  // not part of strict\n//     \"exactOptionalPropertyTypes\": true\n//   }\n// }\n\nconst scores: number[] = [];\nconst top = scores[0];      // strict only: number   with the flag: number | undefined\nconst best = top ?? 0;      // with the flag you must decide what an empty list means\n\nconst byName: Record<string, number> = {};\nconst ada = byName['ada'];  // same story for index signatures",
+      "diagram": "tsn-index"
+    }
+  ],
+  "example": "type RequestState =\n  | { status: 'idle' }\n  | { status: 'loading'; attempt: number }\n  | { status: 'success'; data: string[] }\n  | { status: 'failure'; error: string; attempt: number };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);\n}\n\nfunction render(state: RequestState): string {\n  switch (state.status) {\n    case 'idle':    return 'Press load';\n    case 'loading': return `Loading (try ${state.attempt})...`;\n    case 'success': return state.data.length ? state.data.join(', ') : 'No results';\n    case 'failure': return `Failed after ${state.attempt}: ${state.error}`;\n    default:        return assertNever(state);\n  }\n}\n\nconsole.log(render({ status: 'loading', attempt: 2 }));      // Loading (try 2)...\nconsole.log(render({ status: 'success', data: ['a', 'b'] })); // a, b",
+  "task": "Write `transition(state, event)`, the reducer for a request lifecycle. Declare `type RequestState` as a discriminated union on `status`: `idle`; `loading` with `attempt: number`; `success` with `data: string[]`; `failure` with `error: string` and `attempt: number`. Declare `type RequestEvent` as a union on `type`: `FETCH`, `RESOLVE` (with `data`), `REJECT` (with `error`), `RETRY` and `RESET`. Rules: `FETCH` starts `loading` with attempt 1 from any state except `loading`, which is returned unchanged; `RESOLVE` turns `loading` into `success` and `REJECT` turns it into `failure` with the same attempt, while in any other state they are stale and the state is returned unchanged; `RETRY` turns a `failure` with attempt below 3 into `loading` with attempt + 1, otherwise nothing changes; `RESET` always returns `idle`. Switch on the event and end with `default: return assertNever(event)` using a helper `assertNever(value: never): never`, so a new event type cannot be forgotten.",
+  "starter": "type RequestState = { status: string; attempt?: number; data?: string[]; error?: string };\ntype RequestEvent = { type: string; data?: string[]; error?: string };\n\nfunction transition(state: RequestState, event: RequestEvent): RequestState {\n  // TODO: model both types as discriminated unions, add assertNever, handle every event\n  if (event.type === 'FETCH') return { status: 'loading', attempt: 1 };\n  if (event.type === 'RESET') return { status: 'idle' };\n  return state;\n}\n",
+  "hints": [
+    "Write the two unions first. `state.status === 'loading'` then makes `state.attempt` available, and `case 'RESOLVE':` makes `event.data` available, so no `?.` or `!` is needed anywhere.",
+    "Inside `switch (event.type)` each case is a single expression: check the current `state.status`, build the next state literal, or return `state` itself when the event is stale. The `default` branch sees `event: never` and returns `assertNever(event)`."
+  ],
+  "solution": "type RequestState =\n  | { status: 'idle' }\n  | { status: 'loading'; attempt: number }\n  | { status: 'success'; data: string[] }\n  | { status: 'failure'; error: string; attempt: number };\n\ntype RequestEvent =\n  | { type: 'FETCH' }\n  | { type: 'RESOLVE'; data: string[] }\n  | { type: 'REJECT'; error: string }\n  | { type: 'RETRY' }\n  | { type: 'RESET' };\n\nconst MAX_ATTEMPTS = 3;\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);\n}\n\nfunction transition(state: RequestState, event: RequestEvent): RequestState {\n  switch (event.type) {\n    case 'FETCH':\n      return state.status === 'loading' ? state : { status: 'loading', attempt: 1 };\n    case 'RESOLVE':\n      return state.status === 'loading' ? { status: 'success', data: event.data } : state;\n    case 'REJECT':\n      return state.status === 'loading'\n        ? { status: 'failure', error: event.error, attempt: state.attempt }\n        : state;\n    case 'RETRY':\n      return state.status === 'failure' && state.attempt < MAX_ATTEMPTS\n        ? { status: 'loading', attempt: state.attempt + 1 }\n        : state;\n    case 'RESET':\n      return { status: 'idle' };\n    default:\n      return assertNever(event);\n  }\n}\n\nBoth types are discriminated unions, so every state literal is checked against exactly one member: `{ status: 'idle', data: [] }` or a `failure` without an error is a compile error, and the typeChecks prove it. Switching on `event.type` narrows the event, so `event.data` exists only in the `RESOLVE` case; comparing `state.status` narrows the state, so `state.attempt` is read only where it exists. Stale events (a `RESOLVE` after `RESET`) return the same state object, which also lets a UI skip re-rendering. The `default` branch receives `never`; if someone adds a `CANCEL` event to the union, `assertNever(event)` stops compiling until a case is written, and at runtime an unexpected event object throws instead of silently doing nothing. Each call is O(1) and creates at most one small object.",
+  "checklist": [
+    "Both `RequestState` and `RequestEvent` are discriminated unions with literal tags; no field is optional.",
+    "No `?.`, `!`, `as` or `any`: each field is read only after narrowing.",
+    "Stale `RESOLVE`/`REJECT` events and a `RETRY` at the attempt limit return the unchanged state.",
+    "The switch ends in `default: return assertNever(event)`, so adding a variant is a compile error."
+  ],
+  "pitfalls": [
+    "Modelling state as one object with optional `data?`, `error?` and `loading: boolean` flags, which allows contradictory combinations and forces `!` everywhere.",
+    "Using `string` instead of a literal type for the tag: `{ kind: string }` does not discriminate, so checking it narrows nothing.",
+    "Ending a switch with `default: return 0` or no default at all, which silently swallows a newly added variant instead of making it a compile error.",
+    "Writing a type guard that checks one field (`'name' in x`) and claims the whole type; the compiler trusts the predicate and the crash happens far away.",
+    "Leaving an assertion function body empty or under-checking it, which narrows everything after the call with no runtime proof.",
+    "Expecting narrowing to be reset after a function call that mutates the object; property narrowings are optimistic and stay in place.",
+    "Using `instanceof` on an interface or on a plain object that merely has the class's shape; it checks the prototype chain, not the structure.",
+    "Assuming `arr[0]` is safe because it type-checks: without `noUncheckedIndexedAccess` an empty array gives `undefined` typed as the element type."
+  ],
+  "walkthrough": [
+    {
+      "title": "Read the reducer as a state machine",
+      "body": "Before writing code, draw the states as boxes and the events as arrows: that picture is the spec. `FETCH` leaves `idle` (and `success` or `failure`) for `loading`; `loading` resolves to `success` or rejects to `failure`; a `failure` can `RETRY` back to `loading` while attempts remain; `RESET` returns to `idle` from anywhere. Any arrow not drawn is a no-op, which is how stale responses are ignored. Interviewers like to ask what happens when a `RESOLVE` arrives after a `RESET`; with this model the answer is 'nothing', because only `loading` accepts it. Saying that out loud shows you designed for races, not just the happy path.",
+      "diagram": "tsn-state"
+    },
+    {
+      "title": "Adding a variant: let the compiler find every switch",
+      "body": "Suppose product asks for a `CANCEL` event. Add `| { type: 'CANCEL' }` to `RequestEvent` and compile. Every `switch (event.type)` that ends with `assertNever(event)` now fails with 'Argument of type `{ type: 'CANCEL' }` is not assignable to parameter of type `never`', so the compiler gives you a to-do list of every reducer, logger and serializer that must decide what cancelling means. Without the helper, those switches would fall through to a default that returns the old state and the feature would ship half done. The same works for state: a new `status: 'stale'` lights up every `render` and every `transition` branch that inspects it.",
+      "code": "type Event = { type: 'FETCH' } | { type: 'RESET' } | { type: 'CANCEL' };\n\nfunction assertNever(x: never): never { throw new Error(JSON.stringify(x)); }\n\nfunction describe(e: Event): string {\n  switch (e.type) {\n    case 'FETCH': return 'fetching';\n    case 'RESET': return 'reset';\n    case 'CANCEL': return 'cancelled';   // delete this line and the default fails to compile\n    default: return assertNever(e);\n  }\n}"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First, write the types and say why: 'four states, each owning its fields; five events, each carrying its payload; impossible combinations do not type-check'. Second, write `switch (event.type)` with one case per event; inside each, narrow `state.status` with a ternary and either build the next literal or return `state` unchanged. Third, add `default: return assertNever(event)` and mention the runtime benefit: a malformed event from a WebSocket throws loudly. Close with cost (O(1), at most one allocation) and the follow-up you would offer: lift the attempt limit into a parameter, or add a `CANCEL` event and let the compiler show every place that must handle it."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A shape guard you can trust",
+      "prompt": "Write `isShape(value: unknown): value is Shape` for `type Shape = { kind: 'circle'; radius: number } | { kind: 'rect'; width: number; height: number }`. Return `true` only for a plain object (not `null`, not an array) whose `kind` is `'circle'` with a finite, non-negative number `radius`, or `'rect'` with finite, non-negative numbers `width` and `height`. Extra properties are allowed. Anything else, including other kinds, strings and arrays, returns `false` without throwing.",
+      "hints": [
+        "Start with `isRecord(v): v is Record<string, unknown>` so you can read `value.kind` safely, then switch on it.",
+        "A small `isSize(v: unknown): v is number` guard that checks `typeof`, `Number.isFinite` and `>= 0` keeps each case one line."
+      ],
+      "solution": "type Shape =\n  | { kind: 'circle'; radius: number }\n  | { kind: 'rect'; width: number; height: number };\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction isSize(value: unknown): value is number {\n  return typeof value === 'number' && Number.isFinite(value) && value >= 0;\n}\n\nfunction isShape(value: unknown): value is Shape {\n  if (!isRecord(value)) return false;\n  switch (value.kind) {\n    case 'circle':\n      return isSize(value.radius);\n    case 'rect':\n      return isSize(value.width) && isSize(value.height);\n    default:\n      return false;\n  }\n}\n",
+      "checklist": [
+        "`null`, arrays, strings and `{}` return `false` instead of throwing.",
+        "Every field the type promises is checked, including its sign.",
+        "The return type is `value is Shape`, so callers get `kind` and the variant's fields after the check."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Checkout with an assertion function",
+      "prompt": "Declare `type Line` as a union of `{ kind: 'item'; sku: string; price: number; qty: number }`, `{ kind: 'discount'; percent: number }` and `{ kind: 'shipping'; cost: number }`, plus `interface Order { lines: Line[] }` and `type CheckoutResult = { ok: true; total: number } | { ok: false; error: string }`. Write `assertOrder(value: unknown): asserts value is Order` that throws a `TypeError` for the first problem: `'expected { lines: [...] }'` if there is no `lines` array; then for line `i`, `'lines[i]: expected an object'`, `'lines[i]: invalid item'` (non-empty `sku`, finite `price` >= 0, integer `qty` >= 1), `'lines[i]: invalid discount'` (`percent` from 0 to 100), `'lines[i]: invalid shipping'` (finite `cost` >= 0) or `'lines[i]: unknown kind'`. Then write `checkout(input: unknown): CheckoutResult`: catch the assertion error into `{ ok: false, error }`; otherwise total = items subtotal x (1 - min(sum of percents, 100) / 100) + shipping, rounded to cents with `Math.round(total * 100) / 100`. Handle the lines with an exhaustive switch.",
+      "hints": [
+        "Write `assertLine(value: unknown, at: string): asserts value is Line` and call it for each element from `assertOrder`; destructure each variant's fields into locals before checking them.",
+        "After `assertOrder(input)` returns, `input` is an `Order`, so `for (const line of input.lines)` with `switch (line.kind)` and `default: assertNever(line)` needs no casts."
+      ],
+      "solution": "type Line =\n  | { kind: 'item'; sku: string; price: number; qty: number }\n  | { kind: 'discount'; percent: number }\n  | { kind: 'shipping'; cost: number };\n\ninterface Order { lines: Line[] }\n\ntype CheckoutResult = { ok: true; total: number } | { ok: false; error: string };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled line: ${JSON.stringify(value)}`);\n}\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction isAmount(value: unknown): value is number {\n  return typeof value === 'number' && Number.isFinite(value) && value >= 0;\n}\n\nfunction assertLine(value: unknown, at: string): asserts value is Line {\n  if (!isRecord(value)) throw new TypeError(`${at}: expected an object`);\n  switch (value.kind) {\n    case 'item': {\n      const { sku, price, qty } = value;\n      const ok = typeof sku === 'string' && sku !== '' && isAmount(price) &&\n        typeof qty === 'number' && Number.isInteger(qty) && qty >= 1;\n      if (!ok) throw new TypeError(`${at}: invalid item`);\n      return;\n    }\n    case 'discount': {\n      const { percent } = value;\n      if (!isAmount(percent) || percent > 100) throw new TypeError(`${at}: invalid discount`);\n      return;\n    }\n    case 'shipping':\n      if (!isAmount(value.cost)) throw new TypeError(`${at}: invalid shipping`);\n      return;\n    default:\n      throw new TypeError(`${at}: unknown kind`);\n  }\n}\n\nfunction assertOrder(value: unknown): asserts value is Order {\n  const lines = isRecord(value) ? value.lines : undefined;\n  if (!Array.isArray(lines)) throw new TypeError('expected { lines: [...] }');\n  lines.forEach((line: unknown, i: number) => assertLine(line, `lines[${i}]`));\n}\n\nfunction checkout(input: unknown): CheckoutResult {\n  try {\n    assertOrder(input);\n  } catch (e) {\n    return { ok: false, error: e instanceof Error ? e.message : String(e) };\n  }\n  let subtotal = 0;\n  let percent = 0;\n  let shipping = 0;\n  for (const line of input.lines) {\n    switch (line.kind) {\n      case 'item':\n        subtotal += line.price * line.qty;\n        break;\n      case 'discount':\n        percent += line.percent;\n        break;\n      case 'shipping':\n        shipping += line.cost;\n        break;\n      default:\n        assertNever(line);\n    }\n  }\n  const total = subtotal * (1 - Math.min(percent, 100) / 100) + shipping;\n  return { ok: true, total: Math.round(total * 100) / 100 };\n}\n",
+      "checklist": [
+        "The assertion function checks every field of every variant before the compiler starts trusting `Order`.",
+        "The first invalid line wins and the error message names its index.",
+        "Discounts are capped at 100 percent, shipping is never discounted, and an empty order totals 0."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why not model the request as `{ loading: boolean; data?: T; error?: string }`?",
+      "answer": "It admits states the program never means: loading with an error, success without data, data and error together. Every consumer has to defend against them with `?.` and `!`, and nothing stops a reducer from producing them. A discriminated union lists the four legal states, the compiler rejects the rest at construction, and checking the tag gives you exactly the fields that exist."
+    },
+    {
+      "question": "What does `assertNever` buy you over `default: return state`?",
+      "answer": "At compile time, `assertNever(x: never)` only type-checks while every variant is handled, so adding one turns every unhandled switch into an error that names the missing member. At runtime it throws on data that does not match the types (an old client, a new server), instead of silently doing nothing. A plain default hides both problems."
+    },
+    {
+      "question": "Your guard `isUser(x): x is User` returns `'name' in x`. What can go wrong and how would you fix it?",
+      "answer": "The compiler never checks that the body proves the predicate, so `{ name: 42 }` passes and is typed as `User`; the crash happens later at `user.name.toUpperCase()`. Check every field you depend on with its type, test the guard with malformed inputs, or generate the guard from a schema library (Zod, Valibot) so the type and the check come from one definition."
+    },
+    {
+      "question": "Which compiler flags would you turn on for a new TypeScript service and why?",
+      "answer": "`strict` for `strictNullChecks`, `noImplicitAny`, `useUnknownInCatchVariables` and the rest; then `noUncheckedIndexedAccess` so array and record lookups include `undefined`, `exactOptionalPropertyTypes` so missing and `undefined` differ, and `noFallthroughCasesInSwitch`. They cost a few extra checks but catch empty-array crashes and half-handled switches at compile time."
+    },
+    {
+      "question": "When does TypeScript keep a narrowing that is no longer true at runtime?",
+      "answer": "Property narrowings survive function calls: after `if (box.state.status === 'loading') { reset(); box.state.attempt }` the checker still believes `loading`, even if `reset` replaced the state. It is a deliberate trade-off for usability. Copy the value into a `const` before calling out, or re-check after the call. Guards and assertion functions with weak bodies are the other source of narrowings that lie."
+    }
+  ],
+  "takeaways": [
+    "Model states as a discriminated union with a literal tag; impossible combinations then fail to compile.",
+    "Narrow with `typeof`, `instanceof`, `in`, equality or the tag; property narrowings are optimistic and survive function calls.",
+    "End every switch over a union with `assertNever(x: never)`, so a new variant is a compile error and bad data throws.",
+    "Type guards and assertion functions are trusted, not checked: test them like parsers.",
+    "Validate `unknown` with small composed guards; `strict` does not include `noUncheckedIndexedAccess`."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsn-state",
+        "type": "flow",
+        "title": "The request lifecycle as a tagged union",
+        "alt": "State machine with four states. RESET leads from any state to idle. FETCH moves idle to loading, which carries an attempt number. RESOLVE moves loading to success, which carries data. REJECT moves loading to failure, which carries an error and the attempt. RETRY from failure goes to a decision, attempt below 3, which leads back to loading with attempt plus one.",
+        "caption": "Each box is one union member with only its own fields; an event with no arrow from the current state is a no-op.",
+        "nodes": [
+          {
+            "id": "any",
+            "label": "any state",
+            "kind": "note",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "idle",
+            "label": "idle",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "no fields"
+          },
+          {
+            "id": "loading",
+            "label": "loading",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "attempt: number"
+          },
+          {
+            "id": "success",
+            "label": "success",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "data: string[]"
+          },
+          {
+            "id": "failure",
+            "label": "failure",
+            "kind": "bad",
+            "col": 4,
+            "row": 4,
+            "sub": "error, attempt"
+          },
+          {
+            "id": "retry",
+            "label": "attempt < 3?",
+            "kind": "decision",
+            "col": 2,
+            "row": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "any",
+            "to": "idle",
+            "label": "RESET"
+          },
+          {
+            "from": "idle",
+            "to": "loading",
+            "label": "FETCH"
+          },
+          {
+            "from": "loading",
+            "to": "success",
+            "label": "RESOLVE"
+          },
+          {
+            "from": "loading",
+            "to": "failure",
+            "label": "REJECT"
+          },
+          {
+            "from": "failure",
+            "to": "retry",
+            "label": "RETRY"
+          },
+          {
+            "from": "retry",
+            "to": "loading",
+            "label": "yes: attempt + 1"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              1
+            ],
+            "text": "`FETCH` from `idle` builds `{ status: 'loading', attempt: 1 }`. It does the same from `success` or `failure`; in `loading` it is ignored."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "`RESOLVE` is accepted only in `loading`. The new `success` object carries `data`; a stale `RESOLVE` in any other state returns the state unchanged."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "`REJECT` also needs `loading`, and copies `state.attempt` into the `failure`, which is only readable after narrowing on `status`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "`RETRY` in `failure` goes back to `loading` with `attempt + 1` while attempts remain; at 3 the failure stays."
+          },
+          {
+            "edges": [
+              0
+            ],
+            "text": "`RESET` returns `{ status: 'idle' }` from any state, dropping every field the old state had."
+          }
+        ]
+      },
+      {
+        "id": "tsn-exhaust",
+        "type": "flow",
+        "title": "How a switch narrows a union down to never",
+        "alt": "Narrowing flow for s of type Shape, a union of circle, rect and tri. Each case check peels one member off to the right: circle, rect and triangle. What falls through every check reaches default with type never, where assertNever(s) compiles. A new hex kind without a case would reach the default with type Hex, which is a compile error.",
+        "caption": "Each case removes a member; only when none is left does the default see never, so a forgotten variant cannot compile.",
+        "nodes": [
+          {
+            "id": "start",
+            "label": "s: Shape",
+            "kind": "client",
+            "col": 0,
+            "row": 0,
+            "sub": "circle|rect|tri"
+          },
+          {
+            "id": "dc",
+            "label": "kind 'circle'?",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "circle",
+            "label": "s: Circle",
+            "kind": "good",
+            "col": 2,
+            "row": 1,
+            "sub": "s.r available"
+          },
+          {
+            "id": "dr",
+            "label": "kind 'rect'?",
+            "kind": "decision",
+            "col": 0,
+            "row": 2,
+            "sub": "s: Rect | Tri"
+          },
+          {
+            "id": "rect",
+            "label": "s: Rect",
+            "kind": "good",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "dt",
+            "label": "kind 'tri'?",
+            "kind": "decision",
+            "col": 0,
+            "row": 3,
+            "sub": "s: Tri"
+          },
+          {
+            "id": "tri",
+            "label": "s: Tri",
+            "kind": "good",
+            "col": 2,
+            "row": 3
+          },
+          {
+            "id": "def",
+            "label": "default",
+            "kind": "state",
+            "col": 0,
+            "row": 4,
+            "sub": "s: never"
+          },
+          {
+            "id": "an",
+            "label": "assertNever(s)",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "compiles"
+          },
+          {
+            "id": "hex",
+            "label": "add 'hex' kind",
+            "kind": "bad",
+            "col": 4,
+            "row": 4,
+            "sub": "Hex is not never"
+          }
+        ],
+        "edges": [
+          {
+            "from": "start",
+            "to": "dc"
+          },
+          {
+            "from": "dc",
+            "to": "circle",
+            "label": "yes"
+          },
+          {
+            "from": "dc",
+            "to": "dr",
+            "label": "no"
+          },
+          {
+            "from": "dr",
+            "to": "rect",
+            "label": "yes"
+          },
+          {
+            "from": "dr",
+            "to": "dt",
+            "label": "no"
+          },
+          {
+            "from": "dt",
+            "to": "tri",
+            "label": "yes"
+          },
+          {
+            "from": "dt",
+            "to": "def",
+            "label": "no"
+          },
+          {
+            "from": "def",
+            "to": "an"
+          },
+          {
+            "from": "an",
+            "to": "hex",
+            "label": "if a case is missing",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Comparing the discriminant with `'circle'` narrows the true branch to the circle member, so `s.r` is readable."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "On the false branch the circle is gone: `s` is `Rect | Tri`, and the next case peels off `Rect`."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "Only `Tri` is left before the last case."
+          },
+          {
+            "edges": [
+              6,
+              7
+            ],
+            "text": "Nothing is left for the default: `s` is `never`, so `assertNever(s)` type-checks."
+          },
+          {
+            "edges": [
+              8
+            ],
+            "text": "Add `{ kind: 'hex' }` to the union without a case and the default sees `Hex`, which is not assignable to `never`: compile error at every forgotten switch."
+          }
+        ]
+      },
+      {
+        "id": "tsn-bag",
+        "type": "compare",
+        "title": "Bag of optionals versus a tagged union",
+        "alt": "Comparison of two ways to type a request. On the left, status is a string with optional data and error: a loading state with data compiles, and a success state may lack data so every read needs a non-null assertion. On the right, status is a literal tag with four exact shapes: loading with data is a compile error, and narrowing to success guarantees data is a string array.",
+        "caption": "Optional fields describe every combination; a tagged union describes only the legal ones.",
+        "before": {
+          "label": "{ status: string; data?; error? }",
+          "nodes": [
+            {
+              "id": "s",
+              "label": "status: string",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "data?, error?"
+            },
+            {
+              "id": "mix",
+              "label": "loading + data",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "compiles"
+            },
+            {
+              "id": "ok",
+              "label": "success",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "data! everywhere"
+            }
+          ],
+          "edges": [
+            {
+              "from": "s",
+              "to": "mix",
+              "label": "allows"
+            },
+            {
+              "from": "s",
+              "to": "ok",
+              "label": "maybe no data"
+            }
+          ]
+        },
+        "after": {
+          "label": "discriminated union on status",
+          "nodes": [
+            {
+              "id": "s",
+              "label": "status literal",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "4 exact shapes"
+            },
+            {
+              "id": "mix",
+              "label": "loading + data",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "compile error"
+            },
+            {
+              "id": "ok",
+              "label": "success",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "data: string[]"
+            }
+          ],
+          "edges": [
+            {
+              "from": "s",
+              "to": "mix",
+              "label": "rejects"
+            },
+            {
+              "from": "s",
+              "to": "ok",
+              "label": "narrows to"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsn-guard",
+        "type": "sequence",
+        "title": "A type guard that lies",
+        "alt": "Sequence diagram with your code, the type checker and the runtime. The checker sees isUser returning x is User and narrows data to User without examining the body. At runtime the guard only checks that a name key exists, so the object with name 42 passes. Calling data.name.toUpperCase() then throws a TypeError far from the guard.",
+        "caption": "The compiler trusts a predicate's signature, not its body; a weak guard moves the crash somewhere else.",
+        "actors": [
+          {
+            "id": "code",
+            "label": "Your code"
+          },
+          {
+            "id": "tsc",
+            "label": "Type checker"
+          },
+          {
+            "id": "rt",
+            "label": "Runtime"
+          }
+        ],
+        "messages": [
+          {
+            "from": "code",
+            "to": "tsc",
+            "label": "if (isUser(data))",
+            "note": "The signature says `x is User`."
+          },
+          {
+            "from": "tsc",
+            "to": "code",
+            "label": "data: User",
+            "style": "reply",
+            "note": "Only the return type is used; the body is never compared with the claim."
+          },
+          {
+            "from": "code",
+            "to": "rt",
+            "label": "isUser({ name: 42 })"
+          },
+          {
+            "from": "rt",
+            "to": "code",
+            "label": "true: 'name' in x",
+            "style": "reply"
+          },
+          {
+            "from": "code",
+            "to": "rt",
+            "label": "data.name.toUpperCase()"
+          },
+          {
+            "from": "rt",
+            "to": "code",
+            "label": "TypeError",
+            "style": "fail",
+            "note": "The crash is reported here, not in the guard that lied."
+          }
+        ]
+      },
+      {
+        "id": "tsn-index",
+        "type": "compare",
+        "title": "Indexing an array with and without noUncheckedIndexedAccess",
+        "alt": "Comparison of reading scores[0] from an empty number array. With strict only, the read is typed number, so calling toFixed compiles and throws a TypeError at runtime. With noUncheckedIndexedAccess the read is typed number or undefined, so the code must check or default the value before calling toFixed.",
+        "caption": "`strict` does not cover indexing; `noUncheckedIndexedAccess` makes every lookup admit it may be missing.",
+        "before": {
+          "label": "strict only (this runtime)",
+          "nodes": [
+            {
+              "id": "read",
+              "label": "scores[0]",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "empty array"
+            },
+            {
+              "id": "type",
+              "label": "number",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "assumed present"
+            },
+            {
+              "id": "use",
+              "label": "top.toFixed(1)",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "TypeError at run"
+            }
+          ],
+          "edges": [
+            {
+              "from": "read",
+              "to": "type",
+              "label": "typed as"
+            },
+            {
+              "from": "type",
+              "to": "use",
+              "label": "compiles"
+            }
+          ]
+        },
+        "after": {
+          "label": "strict + noUncheckedIndexedAccess",
+          "nodes": [
+            {
+              "id": "read",
+              "label": "scores[0]",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "empty array"
+            },
+            {
+              "id": "type",
+              "label": "number|undefined",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "maybe missing"
+            },
+            {
+              "id": "use",
+              "label": "top ?? 0",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "decide, then use"
+            }
+          ],
+          "edges": [
+            {
+              "from": "read",
+              "to": "type",
+              "label": "typed as"
+            },
+            {
+              "from": "type",
+              "to": "use",
+              "label": "must narrow"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "transition",
+        "starter": "type RequestState = { status: string; attempt?: number; data?: string[]; error?: string };\ntype RequestEvent = { type: string; data?: string[]; error?: string };\n\nfunction transition(state: RequestState, event: RequestEvent): RequestState {\n  // TODO: model both types as discriminated unions, add assertNever, handle every event\n  if (event.type === 'FETCH') return { status: 'loading', attempt: 1 };\n  if (event.type === 'RESET') return { status: 'idle' };\n  return state;\n}\n",
+        "solution": "type RequestState =\n  | { status: 'idle' }\n  | { status: 'loading'; attempt: number }\n  | { status: 'success'; data: string[] }\n  | { status: 'failure'; error: string; attempt: number };\n\ntype RequestEvent =\n  | { type: 'FETCH' }\n  | { type: 'RESOLVE'; data: string[] }\n  | { type: 'REJECT'; error: string }\n  | { type: 'RETRY' }\n  | { type: 'RESET' };\n\nconst MAX_ATTEMPTS = 3;\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled variant: ${JSON.stringify(value)}`);\n}\n\nfunction transition(state: RequestState, event: RequestEvent): RequestState {\n  switch (event.type) {\n    case 'FETCH':\n      return state.status === 'loading' ? state : { status: 'loading', attempt: 1 };\n    case 'RESOLVE':\n      return state.status === 'loading' ? { status: 'success', data: event.data } : state;\n    case 'REJECT':\n      return state.status === 'loading'\n        ? { status: 'failure', error: event.error, attempt: state.attempt }\n        : state;\n    case 'RETRY':\n      return state.status === 'failure' && state.attempt < MAX_ATTEMPTS\n        ? { status: 'loading', attempt: state.attempt + 1 }\n        : state;\n    case 'RESET':\n      return { status: 'idle' };\n    default:\n      return assertNever(event);\n  }\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _status = Expect<Equal<RequestState['status'], 'idle' | 'loading' | 'success' | 'failure'>>\ntype _events = Expect<Equal<RequestEvent['type'], 'FETCH' | 'RESOLVE' | 'REJECT' | 'RETRY' | 'RESET'>>\ntype _never = Expect<Equal<Parameters<typeof assertNever>[0], never>>\ntype _result = Expect<Equal<ReturnType<typeof transition>, RequestState>>\nfunction _narrowed(s: RequestState): string[] | number {\n  if (s.status === 'success') return s.data\n  if (s.status === 'failure') return s.attempt\n  return 0\n}\n// @ts-expect-error idle carries no data\nconst _idle: RequestState = { status: 'idle', data: [] }\n// @ts-expect-error a failure needs an error message\nconst _failure: RequestState = { status: 'failure', attempt: 1 }\n// @ts-expect-error RESOLVE must carry its data\ntransition({ status: 'idle' }, { type: 'RESOLVE' })\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "status": "idle"
+              },
+              {
+                "type": "FETCH"
+              }
+            ],
+            "expected": {
+              "status": "loading",
+              "attempt": 1
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "loading",
+                "attempt": 2
+              },
+              {
+                "type": "RESOLVE",
+                "data": [
+                  "a",
+                  "b"
+                ]
+              }
+            ],
+            "expected": {
+              "status": "success",
+              "data": [
+                "a",
+                "b"
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "status": "loading",
+                "attempt": 2
+              },
+              {
+                "type": "REJECT",
+                "error": "timeout"
+              }
+            ],
+            "expected": {
+              "status": "failure",
+              "error": "timeout",
+              "attempt": 2
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "success",
+                "data": [
+                  "x"
+                ]
+              },
+              {
+                "type": "RESOLVE",
+                "data": [
+                  "stale"
+                ]
+              }
+            ],
+            "expected": {
+              "status": "success",
+              "data": [
+                "x"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "idle"
+              },
+              {
+                "type": "REJECT",
+                "error": "late"
+              }
+            ],
+            "expected": {
+              "status": "idle"
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "failure",
+                "error": "e",
+                "attempt": 1
+              },
+              {
+                "type": "RETRY"
+              }
+            ],
+            "expected": {
+              "status": "loading",
+              "attempt": 2
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "failure",
+                "error": "e",
+                "attempt": 3
+              },
+              {
+                "type": "RETRY"
+              }
+            ],
+            "expected": {
+              "status": "failure",
+              "error": "e",
+              "attempt": 3
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "idle"
+              },
+              {
+                "type": "RETRY"
+              }
+            ],
+            "expected": {
+              "status": "idle"
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "loading",
+                "attempt": 2
+              },
+              {
+                "type": "FETCH"
+              }
+            ],
+            "expected": {
+              "status": "loading",
+              "attempt": 2
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "failure",
+                "error": "e",
+                "attempt": 2
+              },
+              {
+                "type": "FETCH"
+              }
+            ],
+            "expected": {
+              "status": "loading",
+              "attempt": 1
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "failure",
+                "error": "e",
+                "attempt": 2
+              },
+              {
+                "type": "RESET"
+              }
+            ],
+            "expected": {
+              "status": "idle"
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "loading",
+                "attempt": 1
+              },
+              {
+                "type": "RESOLVE",
+                "data": []
+              }
+            ],
+            "expected": {
+              "status": "success",
+              "data": []
+            }
+          },
+          {
+            "args": [
+              {
+                "status": "loading",
+                "attempt": 1
+              },
+              {
+                "type": "RESOLVE",
+                "data": [
+                  "東京",
+                  "Zürich"
+                ]
+              }
+            ],
+            "expected": {
+              "status": "success",
+              "data": [
+                "東京",
+                "Zürich"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "isShape",
+        "starter": "type Shape =\n  | { kind: 'circle'; radius: number }\n  | { kind: 'rect'; width: number; height: number };\n\nfunction isShape(value: unknown): boolean {\n  // TODO: return a type predicate and check every field; `any` crashes on null\n  const v = value as any;\n  return v.kind === 'circle' || v.kind === 'rect';\n}\n",
+        "solution": "type Shape =\n  | { kind: 'circle'; radius: number }\n  | { kind: 'rect'; width: number; height: number };\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction isSize(value: unknown): value is number {\n  return typeof value === 'number' && Number.isFinite(value) && value >= 0;\n}\n\nfunction isShape(value: unknown): value is Shape {\n  if (!isRecord(value)) return false;\n  switch (value.kind) {\n    case 'circle':\n      return isSize(value.radius);\n    case 'rect':\n      return isSize(value.width) && isSize(value.height);\n    default:\n      return false;\n  }\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _param = Expect<Equal<Parameters<typeof isShape>[0], unknown>>\ntype _width = Expect<Equal<Extract<Shape, { kind: 'rect' }>['width'], number>>\ndeclare const _input: unknown\nif (isShape(_input)) {\n  const _kind: 'circle' | 'rect' = _input.kind\n}\n// @ts-expect-error unknown must be narrowed before use\n_input.kind\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "radius": 2
+              }
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              {
+                "kind": "rect",
+                "width": 3
+              }
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              null
+            ],
+            "expected": false
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {}
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              "circle"
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "radius": -1
+              }
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "radius": "2"
+              }
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "kind": "rect",
+                "width": 0,
+                "height": 5,
+                "color": "red"
+              }
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              {
+                "kind": "triangle",
+                "base": 1,
+                "height": 2
+              }
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "kind": "círculo",
+                "radius": 1
+              }
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "radius": 1,
+                "nested": {
+                  "kind": "rect"
+                }
+              }
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "circle",
+                  "radius": 1
+                }
+              ]
+            ],
+            "expected": false
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "checkout",
+        "starter": "type Line =\n  | { kind: 'item'; sku: string; price: number; qty: number }\n  | { kind: 'discount'; percent: number };\n// TODO: add the shipping line { kind: 'shipping'; cost: number }\n\ninterface Order { lines: Line[] }\n\ntype CheckoutResult = { ok: true; total: number } | { ok: false; error: string };\n\nfunction assertOrder(value: unknown): asserts value is Order {\n  // TODO: validate every line; an empty assertion function is trusted, not checked\n}\n\nfunction checkout(input: unknown): CheckoutResult {\n  try {\n    assertOrder(input);\n  } catch (e) {\n    return { ok: false, error: e instanceof Error ? e.message : String(e) };\n  }\n  let subtotal = 0;\n  for (const line of input.lines) {\n    if (line.kind === 'item') subtotal += line.price * line.qty;\n  }\n  return { ok: true, total: subtotal };\n}\n",
+        "solution": "type Line =\n  | { kind: 'item'; sku: string; price: number; qty: number }\n  | { kind: 'discount'; percent: number }\n  | { kind: 'shipping'; cost: number };\n\ninterface Order { lines: Line[] }\n\ntype CheckoutResult = { ok: true; total: number } | { ok: false; error: string };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled line: ${JSON.stringify(value)}`);\n}\n\nfunction isRecord(value: unknown): value is Record<string, unknown> {\n  return typeof value === 'object' && value !== null && !Array.isArray(value);\n}\n\nfunction isAmount(value: unknown): value is number {\n  return typeof value === 'number' && Number.isFinite(value) && value >= 0;\n}\n\nfunction assertLine(value: unknown, at: string): asserts value is Line {\n  if (!isRecord(value)) throw new TypeError(`${at}: expected an object`);\n  switch (value.kind) {\n    case 'item': {\n      const { sku, price, qty } = value;\n      const ok = typeof sku === 'string' && sku !== '' && isAmount(price) &&\n        typeof qty === 'number' && Number.isInteger(qty) && qty >= 1;\n      if (!ok) throw new TypeError(`${at}: invalid item`);\n      return;\n    }\n    case 'discount': {\n      const { percent } = value;\n      if (!isAmount(percent) || percent > 100) throw new TypeError(`${at}: invalid discount`);\n      return;\n    }\n    case 'shipping':\n      if (!isAmount(value.cost)) throw new TypeError(`${at}: invalid shipping`);\n      return;\n    default:\n      throw new TypeError(`${at}: unknown kind`);\n  }\n}\n\nfunction assertOrder(value: unknown): asserts value is Order {\n  const lines = isRecord(value) ? value.lines : undefined;\n  if (!Array.isArray(lines)) throw new TypeError('expected { lines: [...] }');\n  lines.forEach((line: unknown, i: number) => assertLine(line, `lines[${i}]`));\n}\n\nfunction checkout(input: unknown): CheckoutResult {\n  try {\n    assertOrder(input);\n  } catch (e) {\n    return { ok: false, error: e instanceof Error ? e.message : String(e) };\n  }\n  let subtotal = 0;\n  let percent = 0;\n  let shipping = 0;\n  for (const line of input.lines) {\n    switch (line.kind) {\n      case 'item':\n        subtotal += line.price * line.qty;\n        break;\n      case 'discount':\n        percent += line.percent;\n        break;\n      case 'shipping':\n        shipping += line.cost;\n        break;\n      default:\n        assertNever(line);\n    }\n  }\n  const total = subtotal * (1 - Math.min(percent, 100) / 100) + shipping;\n  return { ok: true, total: Math.round(total * 100) / 100 };\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _result = Expect<Equal<ReturnType<typeof checkout>, CheckoutResult>>\ntype _error = Expect<Equal<Extract<CheckoutResult, { ok: false }>['error'], string>>\ndeclare const _raw: unknown\nassertOrder(_raw)\nconst _order: Order = _raw\nconst _ship: Line = { kind: 'shipping', cost: 4.5 }\n// @ts-expect-error a discount has no sku\nconst _bad: Line = { kind: 'discount', percent: 10, sku: 'x' }\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "a",
+                    "price": 10,
+                    "qty": 2
+                  },
+                  {
+                    "kind": "shipping",
+                    "cost": 5
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "total": 25
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "a",
+                    "price": "5",
+                    "qty": 1
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[0]: invalid item"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "lines": []
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "total": 0
+            }
+          },
+          {
+            "args": [
+              null
+            ],
+            "expected": {
+              "ok": false,
+              "error": "expected { lines: [...] }"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": {
+                  "kind": "item"
+                }
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "expected { lines: [...] }"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "pen",
+                    "price": 19.99,
+                    "qty": 3
+                  },
+                  {
+                    "kind": "discount",
+                    "percent": 10
+                  },
+                  {
+                    "kind": "shipping",
+                    "cost": 4.5
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "total": 58.47
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "a",
+                    "price": 50,
+                    "qty": 1
+                  },
+                  {
+                    "kind": "discount",
+                    "percent": 60
+                  },
+                  {
+                    "kind": "discount",
+                    "percent": 60
+                  },
+                  {
+                    "kind": "shipping",
+                    "cost": 3
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "total": 3
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "x",
+                    "price": 1,
+                    "qty": 1
+                  },
+                  {
+                    "kind": "gift",
+                    "note": "hi"
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[1]: unknown kind"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "x",
+                    "price": 1,
+                    "qty": 0
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[0]: invalid item"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "x",
+                    "price": 1,
+                    "qty": 1.5
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[0]: invalid item"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  "item"
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[0]: expected an object"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "discount",
+                    "percent": -5
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[0]: invalid discount"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "x",
+                    "price": 1,
+                    "qty": 1
+                  },
+                  {
+                    "kind": "shipping",
+                    "cost": -2
+                  },
+                  {
+                    "kind": "gift"
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "error": "lines[1]: invalid shipping"
+            }
+          },
+          {
+            "args": [
+              {
+                "lines": [
+                  {
+                    "kind": "item",
+                    "sku": "茶",
+                    "price": 2.5,
+                    "qty": 2
+                  }
+                ]
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "total": 5
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "function isNumber(x: unknown): x is number {\n  return typeof x === 'string';   // wrong check, still compiles\n}\n\nconst v: unknown = '42';\nif (isNumber(v)) {\n  console.log(typeof v, v + 1);\n}",
+        "choices": [
+          "number 43",
+          "string 421",
+          "nothing is printed"
+        ],
+        "answer": 1,
+        "explain": "The compiler trusts the predicate signature and narrows `v` to `number`, so `v + 1` type-checks. At runtime the guard returned `true` for a string, and `'42' + 1` concatenates to `'421'`."
+      },
+      {
+        "code": "const scores: number[] = [];\nconst top = scores[0];            // typed number under plain strict\ntry {\n  console.log(top.toFixed(1));\n} catch (e) {\n  console.log(e instanceof TypeError ? 'TypeError' : 'other');\n}",
+        "choices": [
+          "0.0",
+          "undefined",
+          "TypeError"
+        ],
+        "answer": 2,
+        "explain": "`strict` does not include `noUncheckedIndexedAccess`, so `scores[0]` is typed `number` even though it is `undefined` at runtime, and calling a method on `undefined` throws. With the flag, `top` would be `number | undefined` and the call would not compile."
+      },
+      {
+        "code": "class HttpError extends Error {\n  constructor(message: string, public status: number) {\n    super(message);\n  }\n}\n\nconst fake: HttpError = { name: 'HttpError', message: 'Not found', status: 404 };\nconsole.log(fake instanceof HttpError, fake.status);",
+        "choices": [
+          "true 404",
+          "false 404",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "Typing is structural, so a plain object with the right fields is assignable to `HttpError`. `instanceof` checks the prototype chain at runtime, and this object was never constructed by the class. A `#private` field or a discriminant property makes such fakes impossible to type."
+      },
+      {
+        "code": "type Shape = { kind: 'circle'; r: number } | { kind: 'square'; side: number };\n\nfunction assertNever(x: never): never {\n  throw new Error('unhandled ' + JSON.stringify(x));\n}\n\nfunction area(s: Shape): number {\n  switch (s.kind) {\n    case 'circle': return Math.round(Math.PI * s.r * s.r);\n    case 'square': return s.side * s.side;\n    default: return assertNever(s);\n  }\n}\n\nconst shapes = JSON.parse('[{\"kind\":\"square\",\"side\":3},{\"kind\":\"hex\",\"side\":1}]') as Shape[];\nconst out: string[] = [];\nfor (const s of shapes) {\n  try { out.push(String(area(s))); } catch (e) { out.push(e instanceof Error ? e.message : 'error'); }\n}\nconsole.log(out.join(' | '));",
+        "choices": [
+          "9 | unhandled {\"kind\":\"hex\",\"side\":1}",
+          "9 | undefined",
+          "9 | 1"
+        ],
+        "answer": 0,
+        "explain": "The `as Shape[]` cast is unchecked, so the `hex` object reaches `area`. No case matches, the default runs, and `assertNever` throws with the offending value. Without the default the function would return `undefined` despite its `number` return type."
+      },
+      {
+        "code": "type State = { status: 'loading'; attempt: number } | { status: 'idle' };\nconst box: { state: State } = { state: { status: 'loading', attempt: 1 } };\n\nfunction reset(): void {\n  box.state = { status: 'idle' };\n}\n\nif (box.state.status === 'loading') {\n  reset();\n  console.log(box.state.attempt);   // still narrowed to loading\n}",
+        "choices": [
+          "1",
+          "undefined",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "Property narrowings are not invalidated by function calls, so the checker still believes `box.state` is the loading member. `reset` replaced it with `{ status: 'idle' }`, which has no `attempt`, so the read is `undefined`. Copy the value into a `const` before calling out, or re-check afterwards."
+      },
+      {
+        "code": "const counts: (number | null)[] = [0, 3, null, 5];\nconst truthy = counts.filter(Boolean);           // still (number | null)[]\nconst present = counts.filter(c => c !== null);  // number[] since TS 5.5\nconsole.log(truthy.join(','), present.join(','));",
+        "choices": [
+          "0,3,5 0,3,5",
+          "3,5 0,3,5",
+          "3,5 3,5"
+        ],
+        "answer": 1,
+        "explain": "`filter(Boolean)` drops every falsy value, including the `0` you wanted to keep, and its type is not narrowed. The arrow `c => c !== null` keeps `0`, and TypeScript 5.5 infers it as a type predicate, so `present` is `number[]`."
+      }
+    ],
+    "tip": "Draw the states as boxes before typing: one box per union member with its own fields, one arrow per event. Then say the two sentences interviewers listen for: 'impossible states do not type-check' and 'the default calls `assertNever`, so a new variant is a compile error and bad data throws'. If the input comes from outside, add a third: 'it arrives as `unknown`, and my guard checks every field because the compiler trusts it blindly'.",
+    "links": {
+      "problems": [
+        "evaluate-postfix",
+        "min-stack-ops",
+        "token-bucket-limiter"
+      ],
+      "guides": [
+        "api-error-format",
+        "edge-case-checklist",
+        "graceful-degradation"
+      ],
+      "lessons": [
+        "ts-types-basics",
+        "ts-generics",
+        "py-typing"
+      ]
+    }
+  }
+}

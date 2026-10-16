@@ -103,11 +103,12 @@ export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
   const id = `lab-${exercise.id}`
   async function run() {
     setResult(undefined)
-    const report = await runCode(lang, { code: value, name: exercise.function, cases: [...exercise.tests, ...exercise.hiddenTests] }, setPhase)
+    const report = await runCode(lang, { code: value, name: exercise.function, cases: [...exercise.tests, ...exercise.hiddenTests], typeChecks: exercise.typeChecks }, setPhase)
     if (!live.current) return
     setPhase('idle')
-    const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass)
-    setResult({ report, message: passed ? `All ${report.outcomes.length} tests passed.` : undefined })
+    const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass) && report.typeChecks?.pass !== false
+    const checks = report.kind === 'done' && report.typeChecks ? ' and the type checks' : ''
+    setResult({ report, message: passed ? `All ${report.outcomes.length} tests${checks} passed.` : undefined })
     if (passed) onPass?.()
   }
   function reset() {
@@ -123,9 +124,10 @@ export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
     </div>
     <CodeEditor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
     <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang]}</p>
+    {exercise.typeChecks && <details className="type-checks"><summary>Type checks your types must pass</summary><pre><code>{exercise.typeChecks}</code></pre></details>}
     <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase]}</button></div>
     <div className="run-results" role="status" aria-live="polite">
-      {result && <RunResults tests={exercise.tests} fn={exercise.function} lang={shown} typescript={lab.lang === 'ts'} report={result.report} message={result.message} />}
+      {result && <RunResults tests={exercise.tests} fn={exercise.function} lang={shown} typescript={lab.lang === 'ts'} report={result.report} message={result.message} typeChecks={exercise.typeChecks} />}
     </div>
   </div>
 }

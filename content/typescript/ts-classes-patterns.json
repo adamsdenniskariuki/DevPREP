@@ -1,0 +1,1328 @@
+{
+  "id": "ts-classes-patterns",
+  "track": "typescript",
+  "title": "Classes and functional patterns",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Classes in TypeScript and what they compile to: field initialisation order, parameter properties, `private` versus `#private`, `readonly`, accessors, `static`, `abstract`, `implements` versus `extends`, and structural typing of classes. Then the functional side: composition over inheritance, pure and higher-order functions, `pipe`/`compose`, currying, memoisation and its cache-key traps, and immutability that actually holds.",
+  "prerequisites": [
+    "ts-this-prototypes"
+  ],
+  "prerequisiteNotes": "ts-this-prototypes: how `this` is bound by the call, the prototype chain and what `class` and `new` really build. This lesson adds TypeScript's class features on top of that model, so you should already be able to say where a method lives and why an extracted method loses its receiver.",
+  "objectives": [
+    "Predict the order in which base fields, base constructor, derived fields and derived constructor run, and avoid calling overridable methods from a constructor.",
+    "Choose between `private`/`protected` (compile-time only) and `#private` (runtime, nominal), and use `readonly`, getters and `static` members to protect invariants.",
+    "Explain `abstract`, `implements` versus `extends`, and why a class type is matched structurally unless it has private members.",
+    "Refactor an inheritance hierarchy into composition with small interfaces and injected collaborators.",
+    "Write and type higher-order utilities: `pipe`, currying and partial application, and a `memoize` with a correct cache key.",
+    "Keep data immutable with `readonly`, `as const`, `Object.freeze` (and know it is shallow) and the ES2023 non-mutating array methods."
+  ],
+  "concepts": [
+    {
+      "title": "Fields, constructors and initialisation order",
+      "body": "A class field (`count = 0`) is an own property defined on each instance. With target ES2022 (TypeScript's default `useDefineForClassFields`), fields use **define** semantics, like `Object.defineProperty`, and run in declaration order. In a base class they run before the constructor body; in a derived class they run **right after** `super()` **returns**. So if a base constructor calls a method the subclass overrides, that override sees the subclass's fields as `undefined`. **Parameter properties** (`constructor(readonly id: string)`) are shorthand that declares a field and assigns the argument in the constructor. TypeScript forbids touching `this` before `super()`. Re-declaring an inherited field in a subclass without an initialiser (`name!: string`) redefines it as `undefined`; write `declare name: string` when you only want to narrow its type.",
+      "code": "class Base {\n  constructor() {\n    console.log(this.describe());   // dispatches to the override\n  }\n  describe(): string { return 'base'; }\n}\n\nclass Child extends Base {\n  name = 'child';                    // runs after super() returns\n  describe(): string { return `I am ${this.name}`; }\n}\n\nnew Child();                          // I am undefined\n\nclass Point {\n  constructor(readonly x: number, readonly y: number) {}  // parameter properties\n}\nconst p = new Point(1, 2);            // p.x === 1, and p.x = 5 is a compile error",
+      "diagram": "tsk-init-order"
+    },
+    {
+      "title": "What a class builds: instance, prototype, constructor",
+      "body": "A `class` is a constructor function plus a prototype object. **Fields** (including arrow-function fields and `#private` slots) live on each instance. **Methods and accessors** (`get`/`set`) live once on `Class.prototype` and are found by prototype lookup. `static` members live on the constructor itself, and a subclass constructor inherits them through its own prototype chain (`Object.getPrototypeOf(Child) === Base`). A getter without a setter is read-only to TypeScript, which makes it the idiomatic way to expose state you do not want written. Arrow-function fields fix `this` but cost one function per instance and cannot be called through `super`.",
+      "code": "class Account {\n  static opened = 0;                 // on Account itself\n  #cents = 0;                        // private slot on each instance\n  readonly log: string[] = [];       // own field on each instance\n\n  constructor(readonly id: string) { Account.opened++; }\n\n  get balance(): number { return this.#cents; }   // on Account.prototype\n  deposit(cents: number): void { this.#cents += cents; this.log.push(`+${cents}`); }\n  onClick = () => this.deposit(1);   // own property: one closure per instance\n}\n\nconst a = new Account('a');\nObject.keys(a);                      // ['id', 'log', 'onClick']: own fields, no #cents\nObject.hasOwn(Account.prototype, 'deposit'); // true",
+      "diagram": "tsk-class-layout"
+    },
+    {
+      "title": "private and protected versus #private, and readonly",
+      "body": "`private` and `protected` are **TypeScript-only**: they are erased, so the property is an ordinary, enumerable property at runtime. `JSON.stringify` and `Object.keys` see it, and TypeScript even allows `obj['secret']` as a deliberate escape hatch. `#secret` is a JavaScript **private name**: it is not a property at all, cannot be reached from outside the class body (not even by subclasses), and `#secret in obj` is a reliable brand check. Use `#private` for real encapsulation (libraries, security-sensitive state) and `private` when you want subclass-friendly `protected` or test access. One cost: a `Proxy` around an object with `#` fields throws when a method reads `this.#x` through the proxy. `readonly` is compile-time only and shallow: a `readonly items: string[]` can still be `push`ed; use `readonly string[]` for that.",
+      "code": "class Vault {\n  private secret = 'hunter2';\n  #pin = 1234;\n  check(pin: number): boolean { return pin === this.#pin; }\n  static isVault(x: object): x is Vault { return #pin in x; }\n}\n\nconst v = new Vault();\nJSON.stringify(v);          // '{\"secret\":\"hunter2\"}'  private is just a property\nv['secret'];                // allowed by TypeScript: 'hunter2'\n// v.#pin;                  // error: not accessible outside class 'Vault'\nVault.isVault({});          // false\n\nclass Team {\n  readonly members: string[] = [];\n}\nconst t = new Team();\nt.members.push('ada');      // fine: readonly is about the binding, not the array\n// t.members = [];          // error: read-only property",
+      "diagram": "tsk-private-compare"
+    },
+    {
+      "title": "abstract, implements versus extends, and structural class types",
+      "body": "`extends` inherits **behaviour**: the subclass gets the parent's prototype and must call `super()`. `implements` only **checks** that the class has an interface's shape; it adds nothing at runtime and does not even type the method parameters for you (under `strict` you still annotate them). An `abstract` class cannot be instantiated with `new` and may declare `abstract` members that subclasses must provide; it is still an ordinary class in the emitted JavaScript. TypeScript compares class instance types **structurally**, so any object with the right public members is assignable to `Point` and `instanceof` will still be false. The exception is a class with `private`, `protected` or `#private` members: only instances from that declaration (or subclasses) match, which makes it behave nominally.",
+      "code": "interface Shape { area(): number }\n\nabstract class Base implements Shape {\n  abstract area(): number;\n  describe(): string { return `area ${this.area().toFixed(1)}`; }\n}\n\nclass Circle extends Base {\n  constructor(private readonly r: number) { super(); }\n  area(): number { return Math.PI * this.r * this.r; }\n}\n\n// new Base();                         // error: cannot create an instance of an abstract class\nconst s: Shape = { area: () => 4 };    // fine: structural\n\nclass Point { constructor(public x: number, public y: number) {} }\nconst p: Point = { x: 1, y: 2 };       // compiles, but p instanceof Point is false"
+    },
+    {
+      "title": "Composition over inheritance",
+      "body": "Inheritance couples a subclass to its parent's internals and fixes one axis of variation. Add a second axis (retrying, logging, caching) and you get a class per combination, plus the **fragile base class** problem: a change in the parent silently changes every child. **Composition** gives an object its collaborators as fields, typed by small interfaces, and passes them in through the constructor. Each behaviour varies independently, decorators such as `withRetry(channel)` wrap any implementation, and tests inject fakes (a fixed clock, an in-memory store) without mocking frameworks. Keep inheritance for genuine is-a relationships with a stable base, usually one level deep (an `abstract` template, a custom `Error`).",
+      "code": "interface Channel { send(to: string, text: string): Promise<void> }\n\nconst email: Channel = { async send(to, text) { /* SMTP */ } };\nconst sms: Channel = { async send(to, text) { /* gateway */ } };\n\nfunction withRetry(channel: Channel, attempts = 3): Channel {\n  return {\n    async send(to, text) {\n      for (let i = 1; ; i++) {\n        try { return await channel.send(to, text); }\n        catch (error) { if (i >= attempts) throw error; }\n      }\n    },\n  };\n}\n\nclass Notifier {\n  constructor(private readonly channel: Channel) {}\n  welcome(user: string): Promise<void> { return this.channel.send(user, 'Welcome!'); }\n}\n\nconst notifier = new Notifier(withRetry(sms));   // any channel, retry or not",
+      "diagram": "tsk-composition"
+    },
+    {
+      "title": "Pure and higher-order functions: pipe, compose, currying",
+      "body": "A **pure** function returns the same output for the same input and has no side effects, so it is trivially testable, cacheable and safe to run in any order. A **higher-order** function takes or returns functions: `map`, `filter`, `memoize`, `withRetry`. `pipe(f, g, h)(x)` is `h(g(f(x)))`, reading left to right; `compose(f, g, h)` applies right to left. Typing a variadic `pipe` needs **overloads** (one per arity) so each step's input must match the previous step's output. **Currying** turns `f(a, b)` into `f(a)(b)`; **partial application** fixes some arguments now and takes the rest later. Both let you build specialised functions such as `const addTax = multiply(1.2)` for use in `map` or `pipe`.",
+      "code": "function pipe<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C {\n  return a => g(f(a));\n}\n\nconst words = (s: string): string[] => s.split(/\\s+/).filter(Boolean);\nconst count = (xs: readonly string[]): number => xs.length;\nconst wordCount = pipe(words, count);           // (a: string) => number\n\nconst multiply = (factor: number) => (n: number): number => n * factor;\nconst addTax = multiply(1.2);                     // curried\n[10, 20].map(addTax);                             // [12, 24]\n\nfunction partial<A, Rest extends unknown[], R>(fn: (a: A, ...rest: Rest) => R, a: A) {\n  return (...rest: Rest): R => fn(a, ...rest);\n}\nconst greet = (greeting: string, name: string) => `${greeting}, ${name}`;\nconst hello = partial(greet, 'Hello');            // (name: string) => string",
+      "diagram": "tsk-pipe"
+    },
+    {
+      "title": "Memoisation and cache keys",
+      "body": "Memoising caches a **pure** function's results by argument. The hard part is the key. `String(args)` and `args.join(',')` collide: `[1]` and `['1']` both give `'1'`, and every object becomes `'[object Object]'`. `JSON.stringify(args)` keeps types and nesting, but is sensitive to property order, turns `undefined` in arrays into `null`, drops functions, and throws on `BigInt` and cycles, so accept a `keyOf` function for anything non-trivial. For a single object argument keyed by identity, use a `WeakMap` so entries die with the object. Check `cache.has(key)`, not truthiness, or results like `0` and `undefined` are recomputed forever. An unbounded cache is a memory leak: bound it (LRU) in long-running processes. For async functions cache the **promise** so concurrent callers share one request, and delete it on rejection.",
+      "code": "const byObject = new WeakMap<object, number>();\nfunction expensiveSize(o: object): number {\n  let size = byObject.get(o);\n  if (size === undefined) {\n    size = JSON.stringify(o).length;   // stand-in for real work\n    byObject.set(o, size);\n  }\n  return size;\n}\n\nconst inFlight = new Map<string, Promise<string>>();\nfunction loadOnce(url: string, load: (u: string) => Promise<string>): Promise<string> {\n  let p = inFlight.get(url);\n  if (!p) {\n    p = load(url).catch(error => { inFlight.delete(url); throw error; });\n    inFlight.set(url, p);\n  }\n  return p;\n}\n\nString([1]) === String(['1']);                     // true: a colliding key\nJSON.stringify([1]) === JSON.stringify(['1']);     // false"
+    },
+    {
+      "title": "Immutability and shared mutable state",
+      "body": "Most bugs in this area are **aliasing**: two parts of the program hold the same array or object and one mutates it. Defend in layers. At compile time, `readonly` properties, `readonly T[]` / `ReadonlyArray<T>` (no `push`, `sort` or `splice`) and `as const` (literal types plus deep `readonly` on the literal) stop accidental writes. At runtime, `Object.freeze` blocks writes (silently in sloppy mode, with a `TypeError` in strict code such as classes and modules), but it is **shallow**: nested objects stay mutable. Prefer producing new values: spread (`{ ...user, name }`), and the ES2023 array methods `toSorted`, `toReversed`, `toSpliced` and `with(index, value)`, which return copies where `sort`, `reverse` and `splice` mutate in place. `structuredClone` makes a deep copy when you must hand out a private snapshot.",
+      "code": "const config = Object.freeze({ retries: 3, hosts: ['a'] });\nconfig.hosts.push('b');              // allowed: freeze is shallow\n\nconst LEVELS = ['debug', 'info', 'warn'] as const;\ntype Level = typeof LEVELS[number];  // 'debug' | 'info' | 'warn'\n// LEVELS.push('error');             // error: readonly tuple\n\nfunction topScores(scores: readonly number[]): number[] {\n  // scores.sort(...)                // error: sort does not exist on readonly number[]\n  return scores.toSorted((a, b) => b - a).slice(0, 3);\n}\n\nconst rows = [3, 1, 2];\nconst fixed = rows.with(0, 9);       // [9, 1, 2]; rows is still [3, 1, 2]\nconst snapshot = structuredClone({ rows });  // deep copy"
+    }
+  ],
+  "example": "interface Clock { now(): number }\ninterface Store<V> {\n  get(key: string): V | undefined;\n  set(key: string, value: V): void;\n  delete(key: string): void;\n}\n\nclass MapStore<V> implements Store<V> {\n  readonly #map = new Map<string, V>();\n  get(key: string): V | undefined { return this.#map.get(key); }\n  set(key: string, value: V): void { this.#map.set(key, value); }\n  delete(key: string): void { this.#map.delete(key); }\n}\n\ninterface Entry<V> { readonly value: V; readonly expires: number }\n\nclass TtlCache<V> {\n  constructor(\n    private readonly store: Store<Entry<V>>,   // composed, not inherited\n    private readonly clock: Clock,\n    private readonly ttlMs: number,\n  ) {}\n\n  get(key: string): V | undefined {\n    const entry = this.store.get(key);\n    if (!entry) return undefined;\n    if (entry.expires <= this.clock.now()) {\n      this.store.delete(key);\n      return undefined;\n    }\n    return entry.value;\n  }\n\n  set(key: string, value: V): void {\n    this.store.set(key, { value, expires: this.clock.now() + this.ttlMs });\n  }\n}\n\nlet t = 0;\nconst fakeClock: Clock = { now: () => t };       // tests control time\nconst cache = new TtlCache<string>(new MapStore(), fakeClock, 1000);\ncache.set('user:1', 'Ada');\nt = 999;\nconsole.log(cache.get('user:1'));   // Ada\nt = 1000;\nconsole.log(cache.get('user:1'));   // undefined",
+  "task": "Write a class `Account` that cannot be put into an invalid state. It has a `readonly id` (use a parameter property), keeps its money in integer cents in a **runtime-private** `#` field, and exposes it through a `balance` getter with **no** setter. `deposit(cents)` and `withdraw(cents)` return the new balance and throw a `RangeError` with message `invalid amount` unless the amount is a positive integer; `withdraw` throws `insufficient funds` instead of going below zero. The constructor takes an optional opening balance (default 0) that must be a non-negative integer. The provided `runLedger(ops)` drives your class and reports each result or error message. Type checks also verify that `balance` and `id` cannot be assigned and that a look-alike object literal is not accepted as an `Account`.",
+  "starter": "class Account {\n  balance: number;\n\n  constructor(public id: string, openingCents = 0) {\n    this.balance = openingCents;\n  }\n\n  deposit(cents: number): number {\n    this.balance += cents;\n    return this.balance;\n  }\n\n  withdraw(cents: number): number {\n    // TODO: validate amounts, refuse overdrafts, and stop outside code writing balance or id\n    this.balance -= cents;\n    return this.balance;\n  }\n}\n\ntype LedgerOp = [kind: 'open' | 'deposit' | 'withdraw' | 'balance', id: string, cents?: number];\n\nfunction runLedger(ops: readonly LedgerOp[]): Array<number | string> {\n  const accounts = new Map<string, Account>();\n  return ops.map(([kind, id, cents = 0]) => {\n    try {\n      if (kind === 'open') {\n        if (accounts.has(id)) throw new Error('duplicate account');\n        const account = new Account(id, cents);\n        accounts.set(id, account);\n        return account.balance;\n      }\n      const account = accounts.get(id);\n      if (!account) throw new Error('unknown account');\n      if (kind === 'deposit') return account.deposit(cents);\n      if (kind === 'withdraw') return account.withdraw(cents);\n      return account.balance;\n    } catch (error) {\n      return error instanceof Error ? error.message : String(error);\n    }\n  });\n}\n",
+  "hints": [
+    "Replace the public `balance` field with `#cents` plus `get balance(): number`, and turn `public id` into `readonly id`. A `#` field also makes the class nominal, which is what rejects the look-alike object.",
+    "Put the validation in one `static #check(cents, allowZero = false)` that throws `new RangeError('invalid amount')`; call it from the constructor (allowing zero) and from both methods, then compare against the balance before subtracting."
+  ],
+  "solution": "class Account {\n  #cents: number;\n\n  constructor(readonly id: string, openingCents = 0) {\n    Account.#check(openingCents, true);\n    this.#cents = openingCents;\n  }\n\n  get balance(): number {\n    return this.#cents;\n  }\n\n  deposit(cents: number): number {\n    Account.#check(cents);\n    this.#cents += cents;\n    return this.#cents;\n  }\n\n  withdraw(cents: number): number {\n    Account.#check(cents);\n    if (cents > this.#cents) throw new RangeError('insufficient funds');\n    this.#cents -= cents;\n    return this.#cents;\n  }\n\n  static #check(cents: number, allowZero = false): void {\n    if (!Number.isInteger(cents) || cents < 0 || (cents === 0 && !allowZero)) {\n      throw new RangeError('invalid amount');\n    }\n  }\n}\n\n`#cents` is a JavaScript private name, so no code outside the class body can read or write it, even with a cast or bracket access, and it is invisible to `Object.keys` and `JSON.stringify`. The `balance` getter is the only way out, and because it has no setter TypeScript treats `acct.balance = 5` as an error. The parameter property `readonly id` declares and assigns the id in one place. Every entry point funnels through the single `static #check`, so the invariant (a non-negative integer number of cents) is enforced once; the overdraft test happens before mutation, so a failed call leaves the state untouched. Because the class has a `#` member, TypeScript stops matching it structurally: an object literal with the same public members is no longer an `Account`. Each operation is O(1).",
+  "checklist": [
+    "Money lives in a `#` field; nothing outside the class can write it, and `balance` is a getter with no setter.",
+    "`id` is a `readonly` parameter property.",
+    "Zero, negative and fractional amounts throw `invalid amount`; an opening balance of 0 is allowed.",
+    "A withdrawal larger than the balance throws `insufficient funds` and leaves the balance unchanged.",
+    "No `any`, no `as`, and the type checks pass."
+  ],
+  "pitfalls": [
+    "Calling an overridable method from a base constructor: the override runs before the subclass's fields are initialised and sees `undefined`.",
+    "Believing `private` hides data at runtime; it is erased, serialised by `JSON.stringify` and reachable with `obj['secret']`.",
+    "Treating `readonly` or `Object.freeze` as deep; nested arrays and objects stay mutable.",
+    "Calling `sort`, `reverse` or `splice` on an array you received, mutating the caller's data; use `toSorted`, `toReversed`, `toSpliced` or copy first.",
+    "Memoising with `String(args)` or `args.join(',')`, so `[1]` and `['1']` (or any two objects) share a cache entry.",
+    "Checking the cache with `cache.get(key) ?? compute()`, which recomputes results that are `undefined` or `null`.",
+    "Memoising an impure function (one that reads time, randomness or mutable state) and serving stale answers.",
+    "Building deep inheritance chains for combinations of behaviour instead of composing small interfaces.",
+    "Expecting `implements` to type method parameters or add behaviour; it only checks the shape."
+  ],
+  "walkthrough": [
+    {
+      "title": "Solve the task: protect the invariant",
+      "body": "Start by stating the invariant out loud: \"the balance is always a non-negative integer number of cents, and only `deposit` and `withdraw` change it.\" Then make every other path impossible. Storage: a `#cents` field, so no outside code can write it. Read access: a getter, so callers can read but TypeScript rejects writes. Identity: `readonly id` as a parameter property. Entry points: one validation helper, called **before** any mutation, so a rejected call changes nothing. Finally mention the trade-off: if subclasses need the balance, `protected` would allow it but only at compile time; with `#cents` they must go through the public API, which keeps the invariant in one place."
+    },
+    {
+      "title": "Typing pipe with overloads",
+      "body": "A single signature cannot say \"each function's input is the previous one's output\" for any number of steps, so libraries write one overload per arity: `pipe<A, B>(f1)`, `pipe<A, B, C>(f1, f2)`, and so on. TypeScript infers `A` from the first function's parameter, `B` from its return, and checks that the second function accepts `B`. The implementation signature is not visible to callers, so it can use loose types and a `reduce`. Point out in an interview that the overloads are the API and the body is three lines; a mismatch such as `pipe(length, toUpperCase)` becomes a compile error at the call site."
+    },
+    {
+      "title": "Refactoring inheritance to composition in the room",
+      "body": "When an interviewer shows `EmailNotifier`, `SmsNotifier`, `RetryingEmailNotifier`, `RetryingSmsNotifier`, name the smell: two independent axes (transport, retry policy) multiplied into classes. Extract the varying part into an interface (`Channel`), give the stable class a constructor parameter of that type, and turn the cross-cutting behaviour into a wrapper (`withRetry(channel)`) that returns another `Channel`. Count the result: N transports plus M wrappers instead of N times M classes. Then add the testing win: inject an in-memory channel and assert on what it recorded."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "A typed pipe and a slugify",
+      "prompt": "Write `pipe` with overloads for one to five functions so that each step's input type must match the previous step's output, and the result is a function from the first input to the last output. Then write `slugify(title)` as a pipeline: strip accents (normalise to NFKD and remove combining marks U+0300 to U+036F), lowercase, replace each run of characters other than `a-z` and `0-9` with a single `-`, and trim leading and trailing dashes. Characters outside ASCII that do not decompose (for example CJK) are dropped.",
+      "hints": [
+        "Write the overloads first: `function pipe<A, B, C>(f1: (a: A) => B, f2: (b: B) => C): (a: A) => C;` and so on, then one implementation that reduces over the functions.",
+        "Each slug step is a one-line `(s: string): string` function; `toSlug = pipe(stripAccents, lower, dashify, trimDashes)` and `slugify` just calls it."
+      ],
+      "solution": "function pipe<A, B>(f1: (a: A) => B): (a: A) => B;\nfunction pipe<A, B, C>(f1: (a: A) => B, f2: (b: B) => C): (a: A) => C;\nfunction pipe<A, B, C, D>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D): (a: A) => D;\nfunction pipe<A, B, C, D, E>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D, f4: (d: D) => E): (a: A) => E;\nfunction pipe<A, B, C, D, E, F>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D, f4: (d: D) => E, f5: (e: E) => F): (a: A) => F;\nfunction pipe(...fns: Array<(value: never) => unknown>): (value: unknown) => unknown {\n  return (value: unknown) => fns.reduce<unknown>((acc, fn) => (fn as (v: unknown) => unknown)(acc), value);\n}\n\nconst stripAccents = (s: string): string => s.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '');\nconst lower = (s: string): string => s.toLowerCase();\nconst dashify = (s: string): string => s.replace(/[^a-z0-9]+/g, '-');\nconst trimDashes = (s: string): string => s.replace(/^-+|-+$/g, '');\n\nconst toSlug = pipe(stripAccents, lower, dashify, trimDashes);\n\nfunction slugify(title: string): string {\n  return toSlug(title);\n}\n",
+      "checklist": [
+        "`pipe` with mismatched steps is a compile error, and the composed function's type is inferred.",
+        "Runs of spaces and punctuation become one dash, with no dash at either end.",
+        "An empty or all-punctuation title gives an empty string."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "memoize with a safe key",
+      "prompt": "Write `memoize(fn, keyOf?)` that returns a function with exactly the same parameter and return types as `fn`, caching results in a `Map`. The default key must distinguish argument types and nesting (`[1]` from `['1']`, `[{ a: 1 }]` from `[{ a: 2 }]`), so use `JSON.stringify` of the argument list; callers can pass their own `keyOf`. A cached result of `undefined` must still count as cached. The provided `countComputations(argLists)` memoises a probe and returns how many times it really ran.",
+      "hints": [
+        "Type it as `<A extends unknown[], R>(fn: (...args: A) => R, keyOf: (...args: A) => string = ...): (...args: A) => R`, so the argument tuple flows through unchanged.",
+        "Test membership with `cache.has(key)`, not `cache.get(key) ?? ...`, because the probe returns `undefined`."
+      ],
+      "solution": "function memoize<A extends unknown[], R>(\n  fn: (...args: A) => R,\n  keyOf: (...args: A) => string = (...args) => JSON.stringify(args),\n): (...args: A) => R {\n  const cache = new Map<string, R>();\n  return (...args: A): R => {\n    const key = keyOf(...args);\n    if (cache.has(key)) return cache.get(key) as R;\n    const value = fn(...args);\n    cache.set(key, value);\n    return value;\n  };\n}\n",
+      "checklist": [
+        "The memoised function keeps the original parameter and return types.",
+        "`[1]` and `['1']`, and objects with different contents, get different keys.",
+        "Results of `undefined` are cached, and a custom `keyOf` is used when given."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you choose `private` over `#private`?",
+      "answer": "`#private` gives real runtime privacy and a reliable brand check, so it suits library code and state that must not leak. `private` (and especially `protected`) is erased, which lets subclasses use `protected`, keeps objects serialisable and inspectable, works through `Proxy`, and allows tests to reach in with `obj['field']`. Many codebases use `private` for ordinary application classes and `#` where encapsulation is a guarantee rather than a convention."
+    },
+    {
+      "question": "Why does a field declared in a subclass come out `undefined` when the base constructor reads it?",
+      "answer": "In a derived class, field initialisers run only after `super()` returns. The base constructor runs first, and if it calls a method the subclass overrides, that method reads fields that do not exist yet. Fix it by not calling overridable methods from constructors: pass the value to `super(...)`, or move the work into a separate `init()` or a static factory that runs after construction."
+    },
+    {
+      "question": "Your memoised `fetchUser(id)` sometimes fires two requests for the same id. Why, and how do you fix it?",
+      "answer": "If you cache the resolved value, two calls that start before the first request finishes both miss the cache. Cache the **promise** instead, set synchronously on the first call, so the second caller awaits the same request. Remove the entry when the promise rejects so a transient failure is not cached forever, and bound the cache size or add a TTL."
+    },
+    {
+      "question": "Does `Object.freeze` or `as const` make an object immutable?",
+      "answer": "Neither is complete. `as const` is compile-time only: it narrows to literal types and marks the literal deeply `readonly`, but nothing is enforced at runtime. `Object.freeze` is enforced at runtime but is shallow, so nested objects and arrays stay writable unless you freeze them recursively. Combine a `Readonly`/`as const` type with a recursive freeze, or simply never share mutable references and return copies."
+    },
+    {
+      "question": "An interviewer asks for an `Animal` hierarchy with flying, swimming and walking variants. What do you say?",
+      "answer": "Abilities are independent axes, so subclasses per combination explode (FlyingSwimmingAnimal...). Model abilities as small interfaces or strategy objects (`Locomotion`) that an `Animal` holds in an array or field, and compose them at construction. Use inheritance only for a stable is-a core, if at all."
+    }
+  ],
+  "takeaways": [
+    "Derived-class fields initialise after `super()` returns, so never call overridable methods from a constructor.",
+    "`private`, `protected`, `readonly` and `abstract` are compile-time only; `#private` is real runtime privacy and makes a class nominal.",
+    "Methods and accessors live on the prototype, fields on the instance, `static` members on the constructor.",
+    "Prefer composition: small interfaces, injected collaborators and wrapper functions beat class-per-combination hierarchies.",
+    "Memoise only pure functions, with a key that cannot collide and a `has` check; bound the cache.",
+    "`readonly`, `as const` and `Object.freeze` are shallow in different ways; return new values with spread and `toSorted`/`with`."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "tsk-init-order",
+        "type": "sequence",
+        "title": "What new Child() runs, and in which order",
+        "alt": "Sequence diagram with your code, the Child constructor, the Base constructor and the instance. new Child() calls super(); the Base constructor creates the instance and calls this.describe(), which dispatches to Child's override and reads name while it is still undefined. Only after super() returns does Child define its name field and run its own constructor body.",
+        "caption": "Base first, derived fields after super(): an override called from a base constructor sees uninitialised fields.",
+        "actors": [
+          {
+            "id": "code",
+            "label": "Your code"
+          },
+          {
+            "id": "child",
+            "label": "Child ctor"
+          },
+          {
+            "id": "base",
+            "label": "Base ctor"
+          },
+          {
+            "id": "inst",
+            "label": "Instance"
+          }
+        ],
+        "messages": [
+          {
+            "from": "code",
+            "to": "child",
+            "label": "new Child()"
+          },
+          {
+            "from": "child",
+            "to": "base",
+            "label": "super()",
+            "note": "A derived constructor cannot touch `this` until `super()` returns."
+          },
+          {
+            "from": "base",
+            "to": "inst",
+            "label": "create, define Base fields"
+          },
+          {
+            "from": "base",
+            "to": "inst",
+            "label": "this.describe()",
+            "note": "Method lookup finds Child's override on Child.prototype."
+          },
+          {
+            "from": "inst",
+            "to": "base",
+            "label": "'I am undefined'",
+            "style": "reply",
+            "note": "`name` has not been defined yet."
+          },
+          {
+            "from": "base",
+            "to": "child",
+            "label": "return this",
+            "style": "reply"
+          },
+          {
+            "from": "child",
+            "to": "inst",
+            "label": "define name = 'child'",
+            "note": "Derived field initialisers run now, in declaration order."
+          },
+          {
+            "from": "child",
+            "to": "inst",
+            "label": "run constructor body"
+          },
+          {
+            "from": "child",
+            "to": "code",
+            "label": "the instance",
+            "style": "reply"
+          }
+        ]
+      },
+      {
+        "id": "tsk-class-layout",
+        "type": "flow",
+        "title": "Where an Account's members live",
+        "alt": "Flow diagram of a class at runtime. The variable acct points to an instance object holding the own fields id and the private slot #cents. The instance's prototype link goes to Account.prototype, which holds the shared methods deposit and withdraw and the balance getter, and links on to Object.prototype. The Account constructor function points to the prototype through its prototype property and holds the static member #check itself.",
+        "caption": "Fields are per instance, methods and accessors are shared on the prototype, statics sit on the constructor.",
+        "nodes": [
+          {
+            "id": "var",
+            "label": "acct",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "variable"
+          },
+          {
+            "id": "inst",
+            "label": "instance",
+            "kind": "state",
+            "col": 2,
+            "row": 1,
+            "sub": "id, #cents (own)"
+          },
+          {
+            "id": "proto",
+            "label": "prototype",
+            "kind": "storage",
+            "col": 4,
+            "row": 1,
+            "sub": "Account.prototype"
+          },
+          {
+            "id": "methods",
+            "label": "methods",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "deposit, withdraw"
+          },
+          {
+            "id": "getter",
+            "label": "get balance",
+            "kind": "good",
+            "col": 3,
+            "row": 3,
+            "sub": "accessor"
+          },
+          {
+            "id": "objproto",
+            "label": "Object.prototype",
+            "kind": "storage",
+            "col": 4,
+            "row": 5,
+            "sub": "toString, ..."
+          },
+          {
+            "id": "ctor",
+            "label": "Account",
+            "kind": "service",
+            "col": 1,
+            "row": 3,
+            "sub": "constructor fn"
+          },
+          {
+            "id": "statics",
+            "label": "static #check",
+            "kind": "note",
+            "col": 1,
+            "row": 5,
+            "sub": "own of Account"
+          }
+        ],
+        "edges": [
+          {
+            "from": "var",
+            "to": "inst",
+            "label": "reference"
+          },
+          {
+            "from": "inst",
+            "to": "proto",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "proto",
+            "to": "methods",
+            "label": "holds"
+          },
+          {
+            "from": "proto",
+            "to": "getter",
+            "label": "holds"
+          },
+          {
+            "from": "proto",
+            "to": "objproto",
+            "label": "[[Prototype]]"
+          },
+          {
+            "from": "ctor",
+            "to": "proto",
+            "label": ".prototype"
+          },
+          {
+            "from": "ctor",
+            "to": "statics",
+            "label": "static member"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`new Account('a')` returns an instance. Its own data are the fields: `id` (a parameter property) and the private slot `#cents`, which is not a property at all."
+          },
+          {
+            "edges": [
+              1,
+              2,
+              3
+            ],
+            "text": "Methods and the `balance` getter live once on `Account.prototype`; every instance finds them by prototype lookup. Arrow-function fields would instead be copied onto each instance."
+          },
+          {
+            "edges": [
+              5,
+              6
+            ],
+            "text": "The class name is the constructor function. `static` members, including `static #check`, are stored on it, not on instances."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Lookup that misses on the prototype continues to `Object.prototype`, which is where `toString` comes from."
+          }
+        ]
+      },
+      {
+        "id": "tsk-private-compare",
+        "type": "compare",
+        "title": "private secret versus #secret at runtime",
+        "alt": "Comparison of two ways to hide a field. On the left, TypeScript's private secret is erased on emit into a plain property, so bracket access v['secret'] compiles and Object.keys and JSON.stringify include it. On the right, the JavaScript private name #secret is stored in a private slot that is not a property, so v['#secret'] is undefined and Object.keys does not list it.",
+        "caption": "private is a compile-time convention; #private is enforced by the JavaScript engine.",
+        "before": {
+          "label": "private secret (TypeScript)",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "private secret",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "prop",
+              "label": "plain property",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "after emit"
+            },
+            {
+              "id": "leak",
+              "label": "v['secret']",
+              "kind": "client",
+              "col": 0,
+              "row": 2,
+              "sub": "allowed by tsc"
+            },
+            {
+              "id": "keys",
+              "label": "Object.keys(v)",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "lists 'secret'"
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "prop",
+              "label": "erased"
+            },
+            {
+              "from": "leak",
+              "to": "prop",
+              "label": "reads it"
+            },
+            {
+              "from": "prop",
+              "to": "keys",
+              "label": "enumerable"
+            }
+          ]
+        },
+        "after": {
+          "label": "#secret (JavaScript)",
+          "nodes": [
+            {
+              "id": "src",
+              "label": "#secret",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "slot",
+              "label": "private slot",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "not a property"
+            },
+            {
+              "id": "leak",
+              "label": "v['#secret']",
+              "kind": "client",
+              "col": 0,
+              "row": 2,
+              "sub": "undefined"
+            },
+            {
+              "id": "keys",
+              "label": "Object.keys(v)",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "no secret"
+            }
+          ],
+          "edges": [
+            {
+              "from": "src",
+              "to": "slot",
+              "label": "kept at runtime"
+            },
+            {
+              "from": "leak",
+              "to": "slot",
+              "label": "cannot reach"
+            },
+            {
+              "from": "slot",
+              "to": "keys",
+              "label": "not listed"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsk-composition",
+        "type": "compare",
+        "title": "Class per combination versus composed behaviour",
+        "alt": "Comparison of two designs for notifications. On the left, an inheritance tree: EmailNotifier and SmsNotifier extend Notifier, and RetryEmail and RetrySms extend them, each duplicating retry logic. On the right, one Notifier holds a Channel; EmailChannel and SmsChannel implement it, and a withRetry wrapper wraps any channel.",
+        "caption": "Inheritance multiplies axes into classes; composition adds one wrapper per behaviour.",
+        "before": {
+          "label": "extends: N x M classes",
+          "nodes": [
+            {
+              "id": "base",
+              "label": "Notifier",
+              "kind": "service",
+              "col": 1,
+              "row": 0,
+              "sub": "base class"
+            },
+            {
+              "id": "email",
+              "label": "EmailNotifier",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "sms",
+              "label": "SmsNotifier",
+              "kind": "state",
+              "col": 2,
+              "row": 2
+            },
+            {
+              "id": "re",
+              "label": "RetryEmail",
+              "kind": "bad",
+              "col": 0,
+              "row": 4,
+              "sub": "copy of retry"
+            },
+            {
+              "id": "rs",
+              "label": "RetrySms",
+              "kind": "bad",
+              "col": 2,
+              "row": 4,
+              "sub": "copy of retry"
+            }
+          ],
+          "edges": [
+            {
+              "from": "email",
+              "to": "base",
+              "label": "extends"
+            },
+            {
+              "from": "sms",
+              "to": "base",
+              "label": "extends"
+            },
+            {
+              "from": "re",
+              "to": "email",
+              "label": "extends"
+            },
+            {
+              "from": "rs",
+              "to": "sms",
+              "label": "extends"
+            }
+          ]
+        },
+        "after": {
+          "label": "has-a: N + M parts",
+          "nodes": [
+            {
+              "id": "n",
+              "label": "Notifier",
+              "kind": "service",
+              "col": 1,
+              "row": 0,
+              "sub": "has a Channel"
+            },
+            {
+              "id": "email",
+              "label": "EmailChannel",
+              "kind": "good",
+              "col": 0,
+              "row": 2,
+              "sub": "implements"
+            },
+            {
+              "id": "sms",
+              "label": "SmsChannel",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "implements"
+            },
+            {
+              "id": "retry",
+              "label": "withRetry(ch)",
+              "kind": "good",
+              "col": 1,
+              "row": 4,
+              "sub": "wraps any Channel"
+            }
+          ],
+          "edges": [
+            {
+              "from": "n",
+              "to": "email",
+              "label": "uses"
+            },
+            {
+              "from": "n",
+              "to": "sms",
+              "label": "or uses"
+            },
+            {
+              "from": "retry",
+              "to": "email",
+              "label": "wraps"
+            },
+            {
+              "from": "retry",
+              "to": "sms",
+              "label": "wraps"
+            }
+          ]
+        }
+      },
+      {
+        "id": "tsk-pipe",
+        "type": "flow",
+        "title": "A title flowing through pipe(...) into a slug",
+        "alt": "Flow diagram of a pipe. The input string Crème Brûlée! enters stripAccents and becomes Creme Brulee!, which enters lower and becomes creme brulee!, which enters dashify and becomes creme-brulee- with a trailing dash, which enters trimDashes and becomes the final slug creme-brulee. Every step takes and returns a string.",
+        "caption": "pipe runs pure steps left to right; each output is the next input, and the types must line up.",
+        "nodes": [
+          {
+            "id": "in",
+            "label": "title",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "'Crème Brûlée!'"
+          },
+          {
+            "id": "f1",
+            "label": "stripAccents",
+            "kind": "service",
+            "col": 1,
+            "row": 1,
+            "sub": "string => string"
+          },
+          {
+            "id": "v1",
+            "label": "'Creme Brulee!'",
+            "kind": "state",
+            "col": 1,
+            "row": 3
+          },
+          {
+            "id": "f2",
+            "label": "lower",
+            "kind": "service",
+            "col": 2,
+            "row": 1,
+            "sub": "string => string"
+          },
+          {
+            "id": "v2",
+            "label": "'creme brulee!'",
+            "kind": "state",
+            "col": 2,
+            "row": 3
+          },
+          {
+            "id": "f3",
+            "label": "dashify",
+            "kind": "service",
+            "col": 3,
+            "row": 1,
+            "sub": "string => string"
+          },
+          {
+            "id": "v3",
+            "label": "'creme-brulee-'",
+            "kind": "state",
+            "col": 3,
+            "row": 3
+          },
+          {
+            "id": "f4",
+            "label": "trimDashes",
+            "kind": "service",
+            "col": 4,
+            "row": 1,
+            "sub": "string => string"
+          },
+          {
+            "id": "out",
+            "label": "'creme-brulee'",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "the slug"
+          }
+        ],
+        "edges": [
+          {
+            "from": "in",
+            "to": "f1"
+          },
+          {
+            "from": "f1",
+            "to": "v1",
+            "label": "NFKD, drop marks"
+          },
+          {
+            "from": "v1",
+            "to": "f2"
+          },
+          {
+            "from": "f2",
+            "to": "v2"
+          },
+          {
+            "from": "v2",
+            "to": "f3"
+          },
+          {
+            "from": "f3",
+            "to": "v3",
+            "label": "runs to '-'"
+          },
+          {
+            "from": "v3",
+            "to": "f4"
+          },
+          {
+            "from": "f4",
+            "to": "out",
+            "label": "trim '-'"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`stripAccents` normalises to NFKD, which splits `è` into `e` plus a combining mark, then deletes the marks."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "`lower` lowercases. Each step is pure: same input, same output, no shared state."
+          },
+          {
+            "edges": [
+              4,
+              5
+            ],
+            "text": "`dashify` turns every run of non-alphanumerics, including the space and `!`, into one dash."
+          },
+          {
+            "edges": [
+              6,
+              7
+            ],
+            "text": "`trimDashes` removes the trailing dash. With typed overloads, a step whose input type does not match would be a compile error."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "runLedger",
+        "starter": "class Account {\n  balance: number;\n\n  constructor(public id: string, openingCents = 0) {\n    this.balance = openingCents;\n  }\n\n  deposit(cents: number): number {\n    this.balance += cents;\n    return this.balance;\n  }\n\n  withdraw(cents: number): number {\n    // TODO: validate amounts, refuse overdrafts, and stop outside code writing balance or id\n    this.balance -= cents;\n    return this.balance;\n  }\n}\n\ntype LedgerOp = [kind: 'open' | 'deposit' | 'withdraw' | 'balance', id: string, cents?: number];\n\nfunction runLedger(ops: readonly LedgerOp[]): Array<number | string> {\n  const accounts = new Map<string, Account>();\n  return ops.map(([kind, id, cents = 0]) => {\n    try {\n      if (kind === 'open') {\n        if (accounts.has(id)) throw new Error('duplicate account');\n        const account = new Account(id, cents);\n        accounts.set(id, account);\n        return account.balance;\n      }\n      const account = accounts.get(id);\n      if (!account) throw new Error('unknown account');\n      if (kind === 'deposit') return account.deposit(cents);\n      if (kind === 'withdraw') return account.withdraw(cents);\n      return account.balance;\n    } catch (error) {\n      return error instanceof Error ? error.message : String(error);\n    }\n  });\n}\n",
+        "solution": "class Account {\n  #cents: number;\n\n  constructor(readonly id: string, openingCents = 0) {\n    Account.#check(openingCents, true);\n    this.#cents = openingCents;\n  }\n\n  get balance(): number {\n    return this.#cents;\n  }\n\n  deposit(cents: number): number {\n    Account.#check(cents);\n    this.#cents += cents;\n    return this.#cents;\n  }\n\n  withdraw(cents: number): number {\n    Account.#check(cents);\n    if (cents > this.#cents) throw new RangeError('insufficient funds');\n    this.#cents -= cents;\n    return this.#cents;\n  }\n\n  static #check(cents: number, allowZero = false): void {\n    if (!Number.isInteger(cents) || cents < 0 || (cents === 0 && !allowZero)) {\n      throw new RangeError('invalid amount');\n    }\n  }\n}\n\ntype LedgerOp = [kind: 'open' | 'deposit' | 'withdraw' | 'balance', id: string, cents?: number];\n\nfunction runLedger(ops: readonly LedgerOp[]): Array<number | string> {\n  const accounts = new Map<string, Account>();\n  return ops.map(([kind, id, cents = 0]) => {\n    try {\n      if (kind === 'open') {\n        if (accounts.has(id)) throw new Error('duplicate account');\n        const account = new Account(id, cents);\n        accounts.set(id, account);\n        return account.balance;\n      }\n      const account = accounts.get(id);\n      if (!account) throw new Error('unknown account');\n      if (kind === 'deposit') return account.deposit(cents);\n      if (kind === 'withdraw') return account.withdraw(cents);\n      return account.balance;\n    } catch (error) {\n      return error instanceof Error ? error.message : String(error);\n    }\n  });\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;\ntype Expect<T extends true> = T;\nconst acct = new Account('a', 10);\ntype _1 = Expect<Equal<typeof acct.balance, number>>;\n// @ts-expect-error balance is a getter with no setter\nacct.balance = 1_000_000;\n// @ts-expect-error id is readonly\nacct.id = 'b';\n// @ts-expect-error a #private field makes Account nominal: a look-alike object is rejected\nconst fake: Account = { id: 'x', balance: 0, deposit: () => 0, withdraw: () => 0 };\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a",
+                  100
+                ],
+                [
+                  "withdraw",
+                  "a",
+                  30
+                ],
+                [
+                  "withdraw",
+                  "a",
+                  100
+                ],
+                [
+                  "balance",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              100,
+              70,
+              "insufficient funds",
+              70
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "b"
+                ],
+                [
+                  "deposit",
+                  "b",
+                  0
+                ],
+                [
+                  "deposit",
+                  "b",
+                  -5
+                ],
+                [
+                  "deposit",
+                  "b",
+                  25
+                ]
+              ]
+            ],
+            "expected": [
+              0,
+              "invalid amount",
+              "invalid amount",
+              25
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a",
+                  5
+                ]
+              ]
+            ],
+            "expected": [
+              5
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a",
+                  5
+                ],
+                [
+                  "open",
+                  "a",
+                  9
+                ],
+                [
+                  "balance",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              5,
+              "duplicate account",
+              5
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "deposit",
+                  "ghost",
+                  10
+                ],
+                [
+                  "balance",
+                  "ghost"
+                ]
+              ]
+            ],
+            "expected": [
+              "unknown account",
+              "unknown account"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a",
+                  -1
+                ],
+                [
+                  "open",
+                  "b",
+                  1.5
+                ],
+                [
+                  "balance",
+                  "a"
+                ]
+              ]
+            ],
+            "expected": [
+              "invalid amount",
+              "invalid amount",
+              "unknown account"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "a",
+                  50
+                ],
+                [
+                  "withdraw",
+                  "a",
+                  2.5
+                ],
+                [
+                  "withdraw",
+                  "a",
+                  50
+                ],
+                [
+                  "withdraw",
+                  "a",
+                  1
+                ]
+              ]
+            ],
+            "expected": [
+              50,
+              "invalid amount",
+              0,
+              "insufficient funds"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "open",
+                  "kontō-東京",
+                  10
+                ],
+                [
+                  "deposit",
+                  "kontō-東京",
+                  15
+                ],
+                [
+                  "open",
+                  "b",
+                  0
+                ],
+                [
+                  "balance",
+                  "kontō-東京"
+                ],
+                [
+                  "balance",
+                  "b"
+                ]
+              ]
+            ],
+            "expected": [
+              10,
+              25,
+              0,
+              25,
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "slugify",
+        "starter": "function pipe(...fns: Array<(x: any) => any>): (x: any) => any {\n  return (x) => fns.reduce((acc, fn) => fn(acc), x);\n}\n\nconst lower = (s: string): string => s.toLowerCase();\n\nfunction slugify(title: string): string {\n  // TODO: type pipe with overloads, then strip accents, dash runs of other characters and trim dashes\n  return pipe(lower)(title);\n}\n",
+        "solution": "function pipe<A, B>(f1: (a: A) => B): (a: A) => B;\nfunction pipe<A, B, C>(f1: (a: A) => B, f2: (b: B) => C): (a: A) => C;\nfunction pipe<A, B, C, D>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D): (a: A) => D;\nfunction pipe<A, B, C, D, E>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D, f4: (d: D) => E): (a: A) => E;\nfunction pipe<A, B, C, D, E, F>(f1: (a: A) => B, f2: (b: B) => C, f3: (c: C) => D, f4: (d: D) => E, f5: (e: E) => F): (a: A) => F;\nfunction pipe(...fns: Array<(value: never) => unknown>): (value: unknown) => unknown {\n  return (value: unknown) => fns.reduce<unknown>((acc, fn) => (fn as (v: unknown) => unknown)(acc), value);\n}\n\nconst stripAccents = (s: string): string => s.normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '');\nconst lower = (s: string): string => s.toLowerCase();\nconst dashify = (s: string): string => s.replace(/[^a-z0-9]+/g, '-');\nconst trimDashes = (s: string): string => s.replace(/^-+|-+$/g, '');\n\nconst toSlug = pipe(stripAccents, lower, dashify, trimDashes);\n\nfunction slugify(title: string): string {\n  return toSlug(title);\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;\ntype Expect<T extends true> = T;\nconst scoreTitle = pipe((s: string) => s.length, (n: number) => n * 2, (n: number) => n > 4);\ntype _1 = Expect<Equal<ReturnType<typeof scoreTitle>, boolean>>;\ntype _2 = Expect<Equal<Parameters<typeof scoreTitle>[0], string>>;\n// @ts-expect-error the second step expects a string but receives a number\npipe((s: string) => s.length, (s: string) => s.toUpperCase());\n",
+        "tests": [
+          {
+            "args": [
+              "Hello, World!"
+            ],
+            "expected": "hello-world"
+          },
+          {
+            "args": [
+              "  TypeScript 5.9 Release  "
+            ],
+            "expected": "typescript-5-9-release"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              ""
+            ],
+            "expected": ""
+          },
+          {
+            "args": [
+              "---!!!---"
+            ],
+            "expected": ""
+          },
+          {
+            "args": [
+              "a"
+            ],
+            "expected": "a"
+          },
+          {
+            "args": [
+              "Crème Brûlée"
+            ],
+            "expected": "creme-brulee"
+          },
+          {
+            "args": [
+              "東京 Tokyo 2024"
+            ],
+            "expected": "tokyo-2024"
+          },
+          {
+            "args": [
+              "Ünïcödé   and   spaces"
+            ],
+            "expected": "unicode-and-spaces"
+          },
+          {
+            "args": [
+              "2 + 2 = 4"
+            ],
+            "expected": "2-2-4"
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "countComputations",
+        "starter": "function memoize(fn: (...args: any[]) => any): (...args: any[]) => any {\n  const cache = new Map<string, any>();\n  return (...args) => {\n    // TODO: String(args) collides ([1] vs ['1'], every object is '[object Object]') and ?? forgets undefined results\n    const key = String(args);\n    return cache.get(key) ?? (cache.set(key, fn(...args)), cache.get(key));\n  };\n}\n\nfunction countComputations(argLists: unknown[][]): number {\n  let computed = 0;\n  const probe = memoize((...args: unknown[]): undefined => {\n    computed++;\n    return undefined;\n  });\n  for (const args of argLists) probe(...args);\n  return computed;\n}\n",
+        "solution": "function memoize<A extends unknown[], R>(\n  fn: (...args: A) => R,\n  keyOf: (...args: A) => string = (...args) => JSON.stringify(args),\n): (...args: A) => R {\n  const cache = new Map<string, R>();\n  return (...args: A): R => {\n    const key = keyOf(...args);\n    if (cache.has(key)) return cache.get(key) as R;\n    const value = fn(...args);\n    cache.set(key, value);\n    return value;\n  };\n}\n\nfunction countComputations(argLists: unknown[][]): number {\n  let computed = 0;\n  const probe = memoize((...args: unknown[]): undefined => {\n    computed++;\n    return undefined;\n  });\n  for (const args of argLists) probe(...args);\n  return computed;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;\ntype Expect<T extends true> = T;\nconst repeat = memoize((s: string, n: number) => s.repeat(n));\ntype _1 = Expect<Equal<ReturnType<typeof repeat>, string>>;\ntype _2 = Expect<Equal<Parameters<typeof repeat>, [s: string, n: number]>>;\n// @ts-expect-error arguments keep their types through memoize\nrepeat(3, 'x');\nconst nameLength = memoize((user: { id: number; name: string }) => user.name.length, (user) => String(user.id));\ntype _3 = Expect<Equal<ReturnType<typeof nameLength>, number>>;\n",
+        "tests": [
+          {
+            "args": [
+              [
+                [
+                  1,
+                  2
+                ],
+                [
+                  1,
+                  2
+                ],
+                [
+                  2,
+                  1
+                ]
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                [
+                  {
+                    "a": 1
+                  }
+                ],
+                [
+                  {
+                    "a": 2
+                  }
+                ],
+                [
+                  {
+                    "a": 1
+                  }
+                ]
+              ]
+            ],
+            "expected": 2
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              [
+                []
+              ]
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              [
+                [
+                  1
+                ],
+                [
+                  "1"
+                ],
+                [
+                  1
+                ]
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                [
+                  1,
+                  2
+                ],
+                [
+                  "1,2"
+                ]
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                [
+                  "é"
+                ],
+                [
+                  "é"
+                ],
+                [
+                  "e"
+                ]
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                [
+                  [
+                    1,
+                    [
+                      2
+                    ]
+                  ]
+                ],
+                [
+                  [
+                    1,
+                    [
+                      2
+                    ]
+                  ]
+                ],
+                [
+                  [
+                    1,
+                    [
+                      3
+                    ]
+                  ]
+                ]
+              ]
+            ],
+            "expected": 2
+          },
+          {
+            "args": [
+              [
+                [
+                  null
+                ],
+                [
+                  null
+                ],
+                [
+                  -3
+                ],
+                [
+                  -3
+                ]
+              ]
+            ],
+            "expected": 2
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "class Base {\n  constructor() {\n    console.log(this.describe());\n  }\n  describe(): string { return 'base'; }\n}\n\nclass Child extends Base {\n  name = 'child';\n  describe(): string { return `I am ${this.name}`; }\n}\n\nnew Child();",
+        "choices": [
+          "I am child",
+          "I am undefined",
+          "base"
+        ],
+        "answer": 1,
+        "explain": "The base constructor runs first and `this.describe()` dispatches to Child's override, but Child's fields are only defined after `super()` returns, so `this.name` is still `undefined`."
+      },
+      {
+        "code": "class Vault {\n  private secret = 'hunter2';\n  #pin = 1234;\n  check(pin: number): boolean { return pin === this.#pin; }\n}\n\nconst v = new Vault();\nconsole.log(v['secret'], Object.keys(v).join(','));",
+        "choices": [
+          "hunter2 secret",
+          "undefined ",
+          "hunter2 secret,pin",
+          "hunter2 secret,#pin"
+        ],
+        "answer": 0,
+        "explain": "`private` is erased, so `secret` is an ordinary enumerable property, and TypeScript deliberately allows bracket access to it. `#pin` is a private slot, not a property, so `Object.keys` never lists it."
+      },
+      {
+        "code": "class Point {\n  constructor(public x: number, public y: number) {}\n}\n\nconst p: Point = { x: 1, y: 2 };\nconsole.log(p instanceof Point, p.x + p.y);",
+        "choices": [
+          "true 3",
+          "false 3",
+          "false NaN"
+        ],
+        "answer": 1,
+        "explain": "Class types are structural, so an object literal with the same public members type-checks as a `Point`. It was never constructed by `Point`, so its prototype is `Object.prototype` and `instanceof` is false."
+      },
+      {
+        "code": "const config = Object.freeze({ retries: 1, hosts: ['a'] });\nconfig.hosts.push('b');\nconsole.log(config.hosts.length, Object.isFrozen(config.hosts));",
+        "choices": [
+          "1 true",
+          "2 false",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "`Object.freeze` is shallow: `config` itself is frozen, but `hosts` is a separate, unfrozen array. TypeScript agrees: the type is `Readonly<{ retries: number; hosts: string[] }>`, so `push` is allowed."
+      },
+      {
+        "code": "const scores = [10, 9, 1];\nconst sorted = scores.toSorted();\nconsole.log(scores.join(','), sorted.join(','));",
+        "choices": [
+          "10,9,1 1,9,10",
+          "1,9,10 1,9,10",
+          "10,9,1 1,10,9"
+        ],
+        "answer": 2,
+        "explain": "`toSorted` (ES2023) returns a copy, so `scores` is untouched. Like `sort`, without a comparator it compares strings, so `'10'` sorts before `'9'`. Pass `(a, b) => a - b` for numbers."
+      },
+      {
+        "code": "const cache = new Map<string, number>();\nfunction area(r: { w: number; h: number }): number {\n  const key = String(r);\n  const hit = cache.get(key);\n  if (hit !== undefined) return hit;\n  const value = r.w * r.h;\n  cache.set(key, value);\n  return value;\n}\nconsole.log(area({ w: 2, h: 3 }), area({ w: 4, h: 5 }), cache.size);",
+        "choices": [
+          "6 20 2",
+          "6 6 1",
+          "6 20 1"
+        ],
+        "answer": 1,
+        "explain": "`String` of any plain object is `'[object Object]'`, so both calls share one key and the second returns the stale `6`. Key by content (`JSON.stringify`, a `keyOf` function) or by identity with a `WeakMap`."
+      }
+    ],
+    "tip": "When you write a class in an interview, say the invariant first (\"balance is a non-negative integer, only deposit and withdraw change it\"), then point at each line that protects it: `#` field, getter without setter, `readonly` id, one validation helper called before mutation. If the design grows a second axis of variation, say \"I'd compose that\" and sketch the interface plus a wrapper rather than adding a subclass.",
+    "links": {
+      "problems": [
+        "lru-cache",
+        "stair-ways",
+        "token-bucket-limiter",
+        "time-versioned-store"
+      ],
+      "guides": [
+        "clean-code",
+        "caching-strategies",
+        "testing-your-code"
+      ],
+      "lessons": [
+        "ts-this-prototypes",
+        "ts-scope-closures",
+        "ts-generics",
+        "py-oop-dataclasses",
+        "py-decorators"
+      ]
+    }
+  }
+}

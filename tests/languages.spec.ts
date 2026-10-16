@@ -84,6 +84,25 @@ for (const track of languageTracks) test(`the core exercise runs in ${track.titl
   await expect(page.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
 })
 
+test('a TypeScript type-level exercise shows its type checks and only passes when they do', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'Runtime downloads are covered once.')
+  test.setTimeout(180_000)
+  const lesson = lessons.find(item => item.id === 'ts-narrowing-unions')!
+  const core = lesson.lab.exercises.find((exercise: { id: string }) => exercise.id === 'core')
+  expect(core.typeChecks).toBeTruthy()
+  await openLesson(page, lesson)
+  await page.getByRole('navigation', { name: 'Study steps' }).getByRole('button', { name: 'Practice' }).click()
+  await expect(page.locator('.type-checks summary')).toHaveText('Type checks your types must pass')
+  const results = page.locator('.run-results')
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(results.locator('li', { hasText: 'Type checks' })).toHaveClass(/fail/, { timeout: 150_000 })
+  await expect(results).not.toContainText('All ')
+  await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(results).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests and the type checks passed.`)
+  await expect(results.locator('li', { hasText: 'Type checks' })).toHaveClass(/pass/)
+})
+
 for (const track of languageTracks) test(`the ${track.title} placement check marks known lessons, saves them and earns its badge`, async ({ page }) => {
   await page.goto(`./#tracks/${track.id}`)
   await page.getByRole('button', { name: 'Take placement check' }).click()

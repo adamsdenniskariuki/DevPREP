@@ -465,7 +465,11 @@ function lab(check: Checker, value: unknown, lang: 'py' | 'ts', lesson: Rec) {
     value.exercises.forEach((item, index) => {
       const at = `lab.exercises[${index}]`
       if (!isRec(item)) return check.fail(at, 'expected object')
-      check.keys(item, at, ['id', 'function', 'starter', 'solution', 'tests', 'hiddenTests'])
+      check.keys(item, at, ['id', 'function', 'starter', 'solution', 'tests', 'hiddenTests'], ['typeChecks'])
+      if ('typeChecks' in item) {
+        if (lang !== 'ts') check.fail(`${at}.typeChecks`, 'type checks are for TypeScript labs only')
+        else check.text(item.typeChecks, `${at}.typeChecks`)
+      }
       if (!stages.has(item.id as string)) check.fail(`${at}.id`, 'expected core or the id of an extra practice item')
       else if (seen.has(item.id as string)) check.fail(`${at}.id`, 'duplicate exercise')
       seen.add(item.id as string)

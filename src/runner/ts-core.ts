@@ -94,3 +94,15 @@ export function createTsCompiler(ts: TypeScriptApi, libs: Record<string, string>
 export function formatDiagnostic(diagnostic: TsDiagnostic): string {
   return `Line ${diagnostic.line}:${diagnostic.column} · TS${diagnostic.code}: ${diagnostic.message}`
 }
+
+/**
+ * Checks learner code followed by an exercise's type-check block in one program. Errors on the learner's lines are
+ * ordinary diagnostics; errors inside the block (including unused `@ts-expect-error` directives) fail the type checks.
+ */
+export function checkWithTypeChecks(check: (code: string) => TsDiagnostic[], code: string, typeChecks?: string) {
+  if (!typeChecks) return { diagnostics: check(code), typeChecks: undefined }
+  const offset = code.split('\n').length + 1
+  const all = check(`${code}\n\n${typeChecks}`)
+  const errors = all.filter(item => item.line > offset).map(item => ({ ...item, line: item.line - offset }))
+  return { diagnostics: all.filter(item => item.line <= offset), typeChecks: { pass: errors.length === 0, errors } }
+}

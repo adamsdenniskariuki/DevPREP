@@ -11,7 +11,13 @@
     "ts-promises-async",
     "ts-arrays-maps-sets",
     "ts-types-basics",
-    "ts-generics"
+    "ts-generics",
+    "ts-narrowing-unions",
+    "ts-mapped-conditional",
+    "ts-modules-errors",
+    "ts-classes-patterns",
+    "ts-testing-runtime",
+    "ts-gotchas-idioms"
   ],
   "placement": [
     {
@@ -233,6 +239,175 @@
       "explain": "`K extends keyof T` limits the key to real property names, and `T[K]` is the type of that property.",
       "lessons": [
         "ts-generics"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "function isNum(x: unknown): x is number { return typeof x === 'string'; }\nconst v: unknown = '42';\nif (isNum(v)) console.log(v + 1);",
+      "choices": [
+        "`43`",
+        "`421`",
+        "A compile error"
+      ],
+      "answer": 1,
+      "explain": "The compiler trusts the predicate and narrows `v` to `number`, so it compiles. At runtime `v` is the string `'42'`, and `'42' + 1` is `'421'`.",
+      "lessons": [
+        "ts-narrowing-unions"
+      ]
+    },
+    {
+      "question": "In `switch (s.kind) { ...every case...; default: return assertNever(s) }`, what is the type of `s` in the default branch?",
+      "choices": [
+        "`unknown`",
+        "`Shape`",
+        "`never`",
+        "`any`"
+      ],
+      "answer": 2,
+      "explain": "Each case removes one member of the union; once all are handled nothing is left, so `s` is `never`. Adding an unhandled variant makes the call a compile error.",
+      "lessons": [
+        "ts-narrowing-unions"
+      ]
+    },
+    {
+      "question": "What is `X`?",
+      "code": "type IsString<T> = T extends string ? true : false;\ntype X = IsString<string | number>;",
+      "choices": [
+        "`true`",
+        "`false`",
+        "`boolean`",
+        "`never`"
+      ],
+      "answer": 2,
+      "explain": "`T` is a naked type parameter, so the conditional distributes: `string` gives `true`, `number` gives `false`, and the union `true | false` is `boolean`. `[T] extends [string]` would give `false`.",
+      "lessons": [
+        "ts-mapped-conditional"
+      ]
+    },
+    {
+      "question": "In a mapped type, how do you drop the key `password` while keeping all the other keys of `T`?",
+      "choices": [
+        "`{ [K in keyof T as K extends 'password' ? never : K]: T[K] }`",
+        "`{ [K in keyof T]: K extends 'password' ? never : T[K] }`",
+        "`{ [K in Exclude<T, 'password'>]: T[K] }`",
+        "`{ -password [K in keyof T]: T[K] }`"
+      ],
+      "answer": 0,
+      "explain": "Remapping a key to `never` with an `as` clause removes it. Making the value `never` keeps the key with an unusable type, and `Exclude<T, ...>` filters union members of `T`, not its keys.",
+      "lessons": [
+        "ts-mapped-conditional"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "class NotFoundError extends Error {\n  constructor(readonly resource: string) {\n    super(`${resource} not found`)\n  }\n}\nconst e = new NotFoundError('user')\nconsole.log(e.name, e instanceof NotFoundError)",
+      "choices": [
+        "`Error true`",
+        "`NotFoundError true`",
+        "`NotFoundError false`"
+      ],
+      "answer": 0,
+      "explain": "`name` is inherited from `Error.prototype` unless the subclass sets it. `instanceof` works with ES2015+ output.",
+      "lessons": [
+        "ts-modules-errors"
+      ]
+    },
+    {
+      "question": "Module `a` requires `b`, and `b` requires `a` at its top level (CommonJS). What does `b` get for `a`?",
+      "choices": [
+        "`a`'s partially built `module.exports`",
+        "`a`'s fully initialised exports",
+        "A `ReferenceError` from the TDZ",
+        "An infinite loop"
+      ],
+      "answer": 0,
+      "explain": "The loader caches `a` before running its body, so the cycle returns the half-built exports. A TDZ error is the ESM behaviour.",
+      "lessons": [
+        "ts-modules-errors"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "class Base { constructor() { console.log(this.describe()); } describe() { return 'base'; } }\nclass Child extends Base { name = 'child'; describe() { return `I am ${this.name}`; } }\nnew Child();",
+      "choices": [
+        "`I am child`",
+        "`I am undefined`",
+        "`base`"
+      ],
+      "answer": 1,
+      "explain": "The override runs from the base constructor, before Child's fields are defined after `super()` returns.",
+      "lessons": [
+        "ts-classes-patterns"
+      ]
+    },
+    {
+      "question": "Which hides a field from `JSON.stringify` and from all code outside the class at runtime?",
+      "choices": [
+        "`private secret`",
+        "`protected secret`",
+        "`readonly secret`",
+        "`#secret`"
+      ],
+      "answer": 3,
+      "explain": "`private`, `protected` and `readonly` are erased on emit; `#secret` is a JavaScript private name enforced by the engine.",
+      "lessons": [
+        "ts-classes-patterns"
+      ]
+    },
+    {
+      "question": "A cache's expiry logic calls `Date.now()` directly and its tests are flaky. What is the best fix?",
+      "choices": [
+        "Sleep in the test until the TTL has passed",
+        "Inject a `Clock` with `now()` and pass a fake clock in tests",
+        "Retry the failing test up to 3 times on CI"
+      ],
+      "answer": 1,
+      "explain": "Time is a hidden input. When the clock is a parameter, the test controls it exactly and never waits.",
+      "lessons": [
+        "ts-testing-runtime"
+      ]
+    },
+    {
+      "question": "Which of these is a global in both Node 20+ and modern browsers?",
+      "choices": [
+        "`document`",
+        "`process`",
+        "`fetch`",
+        "`require`"
+      ],
+      "answer": 2,
+      "explain": "`fetch` has been a global in Node since version 18. `document` exists only in browsers, `process` only in Node, and `require` only in CommonJS modules.",
+      "lessons": [
+        "ts-testing-runtime"
+      ]
+    },
+    {
+      "question": "What does this print?",
+      "code": "const xs = [10, 20];\nconst out: string[] = [];\nfor (const i in xs) out.push(i + 1);\nconsole.log(out.join(' '));",
+      "choices": [
+        "`11 21`",
+        "`1 2`",
+        "`01 11`",
+        "`10 20`"
+      ],
+      "answer": 2,
+      "explain": "`for...in` iterates property keys, which are strings, so `'0' + 1` is `'01'`. Use `for...of` for values.",
+      "lessons": [
+        "ts-gotchas-idioms"
+      ]
+    },
+    {
+      "question": "Which expression builds a 2×3 grid of zeros where each row is a separate array?",
+      "choices": [
+        "`new Array(2).fill(new Array(3).fill(0))`",
+        "`Array.from({ length: 2 }, () => new Array(3).fill(0))`",
+        "`Array(2).map(() => Array(3).fill(0))`",
+        "`new Array(2).fill([0, 0, 0])`"
+      ],
+      "answer": 1,
+      "explain": "`fill` stores one shared row in every slot, and `map` skips the holes of `Array(2)`. `Array.from` with a factory calls it once per row.",
+      "lessons": [
+        "ts-gotchas-idioms"
       ]
     }
   ]
