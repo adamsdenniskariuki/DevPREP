@@ -1,0 +1,1341 @@
+{
+  "id": "sql-select-basics",
+  "track": "sql",
+  "title": "SELECT, NULLs and deterministic ordering",
+  "minutes": 50,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "The single-table query done properly: SELECT/FROM/WHERE/ORDER BY/LIMIT, the logical order that decides where an alias is visible, predicates (BETWEEN, IN, LIKE), three-valued logic and every NULL trap interviewers set (`= NULL`, `NOT IN` with a NULL, NULLs in ORDER BY), integer division and casting, and stable top-N and paging with tie-breakers.",
+  "prerequisites": [],
+  "prerequisiteNotes": "None needed beyond knowing what a table, a row and a column are. This is the first SQL lesson; every later lesson (joins, grouping, windows) assumes the NULL rules and the logical order taught here.",
+  "objectives": [
+    "Recite the logical evaluation order FROM → WHERE → SELECT → ORDER BY → LIMIT and use it to explain why a SELECT alias works in ORDER BY but not in WHERE.",
+    "Filter with comparisons, `BETWEEN`, `IN`, `LIKE`/`ILIKE` and know their edge cases (inclusive bounds, reversed bounds, `_` and `%` wildcards).",
+    "Evaluate expressions under three-valued logic and choose `IS NULL`, `IS DISTINCT FROM`, `COALESCE` or `NULLIF` correctly.",
+    "Explain why `NOT IN` returns nothing when the list contains a NULL and rewrite it with `NOT EXISTS`.",
+    "Write top-N and paging queries with a total order: explicit NULL placement and a unique tie-breaker.",
+    "Predict integer division, casts and rounding in PostgreSQL instead of guessing."
+  ],
+  "concepts": [
+    {
+      "title": "The logical order of a SELECT",
+      "body": "You write `SELECT ... FROM ... WHERE ... ORDER BY ... LIMIT`, but Postgres evaluates it **logically** as FROM (which rows exist) → WHERE (keep rows whose condition is TRUE) → GROUP BY/HAVING (next lesson) → SELECT (compute output columns, give them aliases, apply `DISTINCT`) → ORDER BY → LIMIT/OFFSET. The planner may physically reorder work, but the result must match this order. That one fact answers a classic question: an alias such as `AS total` is created in the SELECT step, so WHERE, which runs earlier, cannot see it (`ERROR: column \"total\" does not exist`), while ORDER BY, which runs later, can. Postgres only accepts the bare alias in ORDER BY, not inside an expression such as `ORDER BY total + 1`. To filter on a computed value, repeat the expression or compute it in a subquery or CTE first. `SELECT DISTINCT` removes duplicate output rows (treating NULLs as equal); because it works on the output, `ORDER BY` with DISTINCT may only use selected columns.",
+      "code": "-- Fails: WHERE runs before SELECT creates the alias\nSELECT id, price * qty AS total\nFROM order_lines\nWHERE total > 100;            -- ERROR: column \"total\" does not exist\n\n-- Works: repeat the expression, sort by the alias\nSELECT id, price * qty AS total\nFROM order_lines\nWHERE price * qty > 100\nORDER BY total DESC, id;\n\n-- Or name it first, then filter\nSELECT id, total\nFROM (SELECT id, price * qty AS total FROM order_lines) AS t\nWHERE total > 100;\n\n-- DISTINCT works on output rows; NULLs count as equal\nSELECT DISTINCT status FROM tickets ORDER BY status;",
+      "diagram": "sqb-order"
+    },
+    {
+      "title": "Predicates: comparison, BETWEEN, IN, LIKE",
+      "body": "`BETWEEN a AND b` is inclusive on both ends and means `x >= a AND x <= b`, so reversed bounds (`BETWEEN 10 AND 1`) match nothing; `BETWEEN SYMMETRIC` (Postgres) sorts the bounds for you. Inclusive upper bounds are a trap on timestamps: `ts BETWEEN '2024-03-01' AND '2024-03-31'` misses everything after midnight on the 31st, so use a half-open range `ts >= '2024-03-01' AND ts < '2024-04-01'`. `IN (...)` is shorthand for a chain of `=` joined by OR. `LIKE` is case-sensitive: `%` matches any run of characters, `_` exactly one, and a backslash escapes them; `ILIKE` is the Postgres case-insensitive version. Text comparison is exact, so `'Open' = 'open'` is false and `'open ' = 'open'` is false for `text`; normalise with `lower()` and `trim()` when the data is messy.",
+      "code": "SELECT id, title\nFROM tickets\nWHERE priority BETWEEN 3 AND 5            -- 3, 4 and 5\n  AND status IN ('open', 'pending')\n  AND title ILIKE '%login%'               -- Postgres: case-insensitive\n  AND opened_at >= '2024-03-01'           -- half-open range for timestamps\n  AND opened_at <  '2024-04-01';\n\nSELECT 5 BETWEEN 10 AND 1;                -- false: bounds are not swapped\nSELECT 5 BETWEEN SYMMETRIC 10 AND 1;      -- true\nSELECT 'a_c' LIKE 'a\\_c', 'abc' LIKE 'a\\_c';  -- true, false: _ escaped"
+    },
+    {
+      "title": "NULL and three-valued logic",
+      "body": "NULL means **unknown or missing**, not zero and not empty string. Any comparison with NULL, including `NULL = NULL`, yields **UNKNOWN** (shown as NULL), and arithmetic or `||` with NULL yields NULL. Boolean logic has three values: `AND` is FALSE if either side is FALSE, otherwise UNKNOWN if either side is UNKNOWN; `OR` is TRUE if either side is TRUE, otherwise UNKNOWN if either side is UNKNOWN; `NOT UNKNOWN` is UNKNOWN. WHERE keeps a row only when the condition is **TRUE**, so UNKNOWN rows vanish silently. That is why `WHERE email = NULL` returns nothing and why `WHERE status <> 'closed'` also drops rows whose status is NULL. Test for missing values with `IS NULL` / `IS NOT NULL`, which always return TRUE or FALSE. (CHECK constraints are the opposite: they reject only FALSE, so UNKNOWN passes.)",
+      "code": "-- AND     | TRUE     FALSE   UNKNOWN        OR      | TRUE   FALSE    UNKNOWN\n-- TRUE    | TRUE     FALSE   UNKNOWN        TRUE    | TRUE   TRUE     TRUE\n-- FALSE   | FALSE    FALSE   FALSE          FALSE   | TRUE   FALSE    UNKNOWN\n-- UNKNOWN | UNKNOWN  FALSE   UNKNOWN        UNKNOWN | TRUE   UNKNOWN  UNKNOWN\n\nSELECT NULL = NULL     AS eq,         -- NULL (unknown), not true\n       NULL IS NULL    AS is_null,    -- true\n       NULL AND FALSE  AS and_false,  -- false: FALSE decides\n       NULL OR TRUE    AS or_true,    -- true: TRUE decides\n       NULL + 1        AS plus;       -- NULL\n\nSELECT * FROM members WHERE email = NULL;   -- always 0 rows\nSELECT * FROM members WHERE email IS NULL;  -- the rows you meant",
+      "diagram": "sqb-is-null"
+    },
+    {
+      "title": "NULL-safe tools: IS DISTINCT FROM, COALESCE, NULLIF",
+      "body": "`a IS DISTINCT FROM b` (standard SQL, supported by Postgres) compares like `<>` but treats two NULLs as equal and NULL versus a value as different, so it never returns UNKNOWN; `IS NOT DISTINCT FROM` is the NULL-safe `=`. `status IS DISTINCT FROM 'closed'` keeps NULL statuses, exactly like `status <> 'closed' OR status IS NULL`. `COALESCE(a, b, ...)` returns the first non-NULL argument and stops evaluating there; use it to supply a display default or to treat a missing number as 0 (only when 0 is truly the right meaning). `NULLIF(a, b)` returns NULL when `a = b`, else `a`; the two classic uses are guarding division (`total / NULLIF(count, 0)` gives NULL instead of `division by zero`) and turning sentinel values into NULL (`NULLIF(trim(email), '')`).",
+      "code": "SELECT id,\n       COALESCE(phone, '(none)')            AS contact,\n       revenue / NULLIF(orders, 0)          AS avg_order   -- NULL, not an error\nFROM accounts\nWHERE NULLIF(trim(email), '') IS NULL     -- NULL, '' and '   ' all count as missing\n  AND region IS DISTINCT FROM 'EU';        -- keeps NULL regions\n\nSELECT NULL IS NOT DISTINCT FROM NULL;    -- true\nSELECT 1 IS DISTINCT FROM NULL;           -- true"
+    },
+    {
+      "title": "NOT IN with a NULL in the list",
+      "body": "`x NOT IN (1, NULL)` expands to `x <> 1 AND x <> NULL`. The second comparison is UNKNOWN for every `x`, so the whole condition can only be FALSE or UNKNOWN, never TRUE, and WHERE returns **no rows at all**. The same happens with a subquery: `WHERE id NOT IN (SELECT product_id FROM recalls)` returns nothing as soon as one recall row has a NULL `product_id`. `IN` is less dangerous (a match still gives TRUE), but `NOT IN` fails as a silent empty result, which is why interviewers love it. Fix it with `NOT EXISTS` (a correlated subquery whose `r.product_id = p.id` is never TRUE for NULLs, so they are ignored), or filter the NULLs out of the subquery. `NOT EXISTS` also gets an efficient anti-join plan in Postgres.",
+      "code": "-- Silent bug: one NULL product_id empties the result\nSELECT id FROM products\nWHERE id NOT IN (SELECT product_id FROM recalls);\n\n-- Correct: NULL rows never match, so they cannot block anything\nSELECT p.id FROM products AS p\nWHERE NOT EXISTS (SELECT 1 FROM recalls AS r WHERE r.product_id = p.id);\n\n-- Also correct, if you must keep NOT IN\nSELECT id FROM products\nWHERE id NOT IN (SELECT product_id FROM recalls WHERE product_id IS NOT NULL);",
+      "diagram": "sqb-not-in"
+    },
+    {
+      "title": "ORDER BY, NULL placement and deterministic LIMIT",
+      "body": "Without ORDER BY a result has **no** order; whatever you see is an accident of the plan. With ORDER BY, rows that tie on every sort key can still come back in any order, and that order can differ between runs, so `LIMIT 5` may pick different rows each time and pages built with OFFSET can repeat or skip rows. Always end the sort with a unique column (`, id`) when the result is cut by LIMIT or paged. Postgres treats NULL as **larger than every value**: ascending puts NULLs last, descending puts them **first**, which is how \"most urgent first\" ends up led by tickets with no priority. Say what you mean with `NULLS FIRST` / `NULLS LAST` (standard SQL; MySQL lacks it and sorts NULLs the other way). If ties at the cut-off should all be returned, Postgres 13+ supports `FETCH FIRST 5 ROWS WITH TIES`.",
+      "code": "-- Most urgent first, unset priority last, stable among equals\nSELECT id, title, priority\nFROM tickets\nORDER BY priority DESC NULLS LAST, id\nLIMIT 5;\n\n-- Standard spelling of LIMIT/OFFSET\nSELECT id FROM tickets ORDER BY id OFFSET 10 ROWS FETCH FIRST 5 ROWS ONLY;\n\n-- Return everyone tied with the 3rd row (Postgres 13+)\nSELECT id, score FROM players ORDER BY score DESC FETCH FIRST 3 ROWS WITH TIES;",
+      "diagram": "sqb-ties"
+    },
+    {
+      "title": "Integer division, casting and rounding",
+      "body": "The type of an expression comes from its inputs. `int / int` is **integer division** that truncates toward zero: `7 / 2` is 3 and `-7 / 2` is -3, so `done / total` style percentages quietly become 0. Make one side `numeric` (`7::numeric / 2`, `7 / 2.0`, or `100.0 * part / whole`) to get 3.5. `::type` is the Postgres cast shorthand for standard `CAST(x AS type)`. Casting `numeric` to `int` rounds half away from zero (`3.5::int` is 4), while `round()` on `float8` rounds half to even (`round(2.5::float8)` is 2) and `round(numeric)` rounds half away from zero (`round(2.5)` is 3). `round(x, 2)` exists only for `numeric`, so cast floats first. Division by zero is an error, not NULL: guard it with `NULLIF`.",
+      "code": "SELECT 7 / 2            AS int_div,     -- 3\n       -7 / 2           AS trunc,       -- -3 (toward zero)\n       7 / 2.0          AS num_div,     -- 3.5\n       7::numeric / 2   AS cast_div,    -- 3.5\n       CAST('42' AS int) + 1 AS parsed, -- 43\n       3.5::int         AS to_int,      -- 4\n       round(100.0 * 1 / 3, 2) AS pct;  -- 33.33\n\nSELECT round(2.5::float8);   -- 2 (half to even for float8)\nSELECT 1 / 0;                -- ERROR: division by zero"
+    }
+  ],
+  "example": "-- Schema: orders(id int, customer text, amount numeric(10,2), coupon text NULL, placed_on date)\n-- \"The 3 largest March orders that did not use the SPRING coupon, biggest first.\"\nSELECT id,\n       customer,\n       amount,\n       COALESCE(coupon, '-') AS coupon\nFROM orders\nWHERE placed_on >= DATE '2024-03-01'\n  AND placed_on <  DATE '2024-04-01'           -- half-open month\n  AND coupon IS DISTINCT FROM 'SPRING'         -- orders with no coupon stay in\nORDER BY amount DESC, id                       -- id breaks ties: same 3 rows every run\nLIMIT 3;\n\n-- The tempting version is wrong twice:\n--   coupon <> 'SPRING' drops every order with coupon NULL (UNKNOWN is not TRUE)\n--   ORDER BY amount DESC LIMIT 3 picks arbitrary rows when amounts tie at the cut-off",
+  "task": "Table `tickets(id, title, status, priority, opened_on)`: `status` is `'open'`, `'pending'`, `'on hold'` or `'closed'` (always lower case), or NULL for a ticket nobody has triaged yet; `priority` runs from 1 (low) to 5 (urgent) and is NULL when unset. Return the **at most 5** most urgent tickets that are not closed, as columns `id`, `title`, `priority` in that order. A NULL status counts as not closed. Sort by priority from highest to lowest with NULL priority **after** every numbered ticket (treat it as the lowest), and break ties by `id` ascending. Return `priority` as stored (NULL stays NULL). Rows must come back in that order.",
+  "starter": "-- Return id, title, priority: up to 5 not-closed tickets, most urgent first,\n-- NULL priority last, ties by id.\nSELECT id, title, priority\nFROM tickets\nWHERE status <> 'closed'\nORDER BY priority DESC\nLIMIT 5;",
+  "hints": [
+    "Two NULL traps hide in the starter: what does `NULL <> 'closed'` evaluate to, and where does Postgres put NULLs when you sort DESC?",
+    "Use `status IS DISTINCT FROM 'closed'` in WHERE, and `ORDER BY priority DESC NULLS LAST, id` so the order is total before `LIMIT 5` cuts it."
+  ],
+  "solution": "SELECT id, title, priority\nFROM tickets\nWHERE status IS DISTINCT FROM 'closed'\nORDER BY priority DESC NULLS LAST, id\nLIMIT 5;\n\nThe starter fails three ways. `status <> 'closed'` is UNKNOWN when `status` is NULL, and WHERE keeps only TRUE rows, so untriaged tickets disappear; `IS DISTINCT FROM` treats NULL as different from `'closed'` and keeps them (`status <> 'closed' OR status IS NULL` is equivalent). Postgres sorts NULL as larger than every value, so `priority DESC` puts unset priorities **first**; `NULLS LAST` states the rule from the task. Finally, several tickets can share a priority, so without `, id` the five rows LIMIT keeps are not guaranteed, and the same query could return different tickets on different runs. With the tie-breaker the order is total and the answer is unique. Cost: one scan plus a top-N sort (a bounded heap of 5 rows), O(n log 5); a partial index on `(priority DESC NULLS LAST, id) WHERE status IS DISTINCT FROM 'closed'` lets Postgres read just the first five index entries.",
+  "checklist": [
+    "A ticket with NULL status is in the result; a closed ticket never is.",
+    "Tickets with NULL priority appear after every numbered ticket, and their `priority` is still NULL in the output.",
+    "Equal priorities are ordered by `id`, so exactly the same 5 rows come back every time.",
+    "Columns are `id`, `title`, `priority` in that order, and fewer than 5 eligible tickets just returns fewer rows."
+  ],
+  "pitfalls": [
+    "Writing `WHERE col = NULL` or `col <> NULL`: both are UNKNOWN for every row, so the query returns nothing. Use `IS NULL` / `IS NOT NULL`.",
+    "Filtering with `status <> 'closed'` and silently losing every row where `status` is NULL.",
+    "Assuming `ORDER BY x DESC` puts NULLs last: in Postgres they come first in descending order.",
+    "Using `LIMIT` or `OFFSET` without a unique tie-breaker, so the rows returned change between runs and pages overlap.",
+    "Using `NOT IN (subquery)` when the subquery column can be NULL: one NULL makes the result empty.",
+    "Referencing a SELECT alias in WHERE, or inside an ORDER BY expression; only a bare alias works in ORDER BY.",
+    "Computing a ratio with two integers (`done / total`) and getting 0; cast one side to `numeric` first.",
+    "Using `BETWEEN` with an end date on a timestamp column and missing the last day after midnight."
+  ],
+  "walkthrough": [
+    {
+      "title": "Build the core query clause by clause",
+      "body": "Start by saying the **grain**: one row per ticket, at most five rows. Then follow the logical order. FROM `tickets`. WHERE: \"not closed\" must include unknown status, so write `status IS DISTINCT FROM 'closed'`, and say out loud why `<>` is wrong. SELECT the three requested columns in the requested order, leaving `priority` untouched (do not `COALESCE` it to 0 in the output; the task says NULL stays NULL). ORDER BY: `priority DESC NULLS LAST` encodes \"NULL is lowest\", and `, id` makes the order total. LIMIT 5 last. Before running, test it in your head on three cases interviewers pick: a NULL status, a NULL priority, and a tie at position five.",
+      "code": "SELECT id, title, priority                 -- 3. project the requested columns\nFROM tickets                              -- 1. one row per ticket\nWHERE status IS DISTINCT FROM 'closed'    -- 2. NULL status is not closed\nORDER BY priority DESC NULLS LAST, id     -- 4. NULL lowest, total order\nLIMIT 5;                                  -- 5. cut after sorting"
+    },
+    {
+      "title": "Paging: OFFSET is simple, keyset scales",
+      "body": "Page `p` of size `n` is `ORDER BY ... LIMIT n OFFSET (p - 1) * n`. It is correct only with a total order, and even then it has two costs. Postgres must produce and throw away all the skipped rows, so page 1000 reads 20 000 rows to return 20. And if rows are inserted or deleted between requests, the window shifts: users see a row twice or miss one. **Keyset** (seek) paging remembers the last row's sort key and asks for rows after it, `WHERE (price, id) < (30.00, 7) ORDER BY price DESC, id DESC LIMIT 20` (a row comparison works when every key sorts in the same direction), which an index on `(price, id)` answers by reading only 20 entries on any page. The trade-off: no jumping to an arbitrary page number. In an interview, give OFFSET first for a small table, then volunteer keyset for deep pages.",
+      "code": "-- OFFSET paging: page 3, 20 per page\nSELECT id, name, price\nFROM products\nORDER BY price DESC, id DESC\nLIMIT 20 OFFSET 40;\n\n-- Keyset paging: the last row of the previous page had price 30.00, id 7\nSELECT id, name, price\nFROM products\nWHERE (price, id) < (30.00, 7)\nORDER BY price DESC, id DESC\nLIMIT 20;",
+      "diagram": "sqb-offset"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Members with no usable email",
+      "prompt": "Table `members(id, name, email, phone)`. Some members have no usable email: `email` is NULL, empty, or only spaces. Return those members as `id`, `name`, `contact`, where `contact` is their `phone`, or the text `'(none)'` when `phone` is NULL. Any row order. An email that has spaces around a real address is usable.",
+      "hints": [
+        "`email = NULL` is never true. Which operator tests for a missing value?",
+        "`NULLIF(trim(email), '') IS NULL` covers NULL, empty and blank in one test; `COALESCE(phone, '(none)')` builds `contact`."
+      ],
+      "solution": "SELECT id, name, COALESCE(phone, '(none)') AS contact\nFROM members\nWHERE NULLIF(trim(email), '') IS NULL;",
+      "checklist": [
+        "NULL, `''` and `'   '` emails are all included.",
+        "A member whose email is `' gus@x.io '` is excluded.",
+        "`contact` is `'(none)'` only when `phone` is NULL."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Page 2 of the catalogue, minus recalls",
+      "prompt": "Tables `products(id, name, price, active)` and `recalls(id, product_id, reason)`; `recalls.product_id` is NULL when a report did not name a product. The catalogue lists **active** products that have no recall row, sorted by `price` descending then `id` ascending, 3 per page. Return **page 2** (the 4th to 6th rows) as `id`, `name`, `price`, in catalogue order. Recall rows with a NULL `product_id` must not hide any product.",
+      "hints": [
+        "What does `id NOT IN (SELECT product_id FROM recalls)` return when one `product_id` is NULL?",
+        "Use `NOT EXISTS (SELECT 1 FROM recalls r WHERE r.product_id = p.id)`, then `ORDER BY price DESC, id LIMIT 3 OFFSET 3`."
+      ],
+      "solution": "SELECT p.id, p.name, p.price\nFROM products AS p\nWHERE p.active\n  AND NOT EXISTS (SELECT 1 FROM recalls AS r WHERE r.product_id = p.id)\nORDER BY p.price DESC, p.id\nLIMIT 3 OFFSET 3;",
+      "checklist": [
+        "A recall row with NULL `product_id` does not empty the page.",
+        "Equal prices are ordered by `id`, so page 1 and page 2 never overlap.",
+        "Inactive and recalled products are removed before paging, and a short last page returns fewer than 3 rows."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How would you make the top-5 tickets query fast on 50 million rows?",
+      "answer": "Give Postgres an index that already has the output order: `CREATE INDEX ON tickets (priority DESC NULLS LAST, id) WHERE status IS DISTINCT FROM 'closed'`. The partial index holds only not-closed tickets (often a small fraction), and its order matches ORDER BY exactly, so the plan is an index scan that stops after 5 entries instead of scanning and sorting the table. The query's WHERE must match the index predicate for the planner to use it. Without the index it is a full scan plus a cheap top-N heap sort."
+    },
+    {
+      "question": "`NOT IN` and `NOT EXISTS`: when do they differ, and which do you prefer?",
+      "answer": "They differ when the subquery can produce a NULL: `NOT IN` then returns no rows, while `NOT EXISTS` ignores the NULLs. They also differ when the outer value is NULL (`NULL NOT IN (...)` is UNKNOWN for a non-empty list, so that row is dropped). Prefer `NOT EXISTS` (or a `LEFT JOIN ... WHERE r.id IS NULL` anti-join): it is NULL-safe and Postgres plans it as an anti-join, whereas `NOT IN` over a subquery cannot be turned into an anti-join because of those NULL semantics."
+    },
+    {
+      "question": "Why can't WHERE use a SELECT alias, and what are your options?",
+      "answer": "Logically WHERE runs before SELECT, so the alias does not exist yet. Options: repeat the expression in WHERE; wrap the query in a subquery or CTE and filter the outer query; or in Postgres use `CROSS JOIN LATERAL (SELECT price * qty AS total) AS c` to name it once. ORDER BY runs after SELECT, so it may use the bare alias."
+    },
+    {
+      "question": "What is wrong with deep OFFSET paging, and what would you do instead?",
+      "answer": "OFFSET k makes the database produce and discard k rows, so the cost grows linearly with page number, and concurrent inserts or deletes shift the window so users see duplicates or miss rows. Keyset paging stores the last row's sort key (for example `(price, id)`) and fetches `WHERE (price, id) < (last_price, last_id)` with a matching index, which costs the same on every page and is stable under inserts. The cost is losing random access to page N; return an opaque cursor to the client."
+    }
+  ],
+  "takeaways": [
+    "Logical order FROM → WHERE → SELECT → ORDER BY → LIMIT explains alias visibility and most \"why is this an error\" questions.",
+    "Comparisons with NULL are UNKNOWN and WHERE keeps only TRUE: use `IS NULL`, `IS DISTINCT FROM`, `COALESCE`, `NULLIF`.",
+    "`NOT IN` with a NULL in the list returns nothing; use `NOT EXISTS`.",
+    "Postgres sorts NULLs last ascending and first descending; say `NULLS FIRST` or `NULLS LAST` explicitly.",
+    "Any LIMIT or OFFSET needs a total order: end ORDER BY with a unique column.",
+    "`int / int` truncates; cast to `numeric` before dividing and guard zero with `NULLIF`."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqb-order",
+        "type": "flow",
+        "title": "Logical evaluation order of a single-table SELECT",
+        "alt": "Five boxes in a row: FROM reads rows, WHERE filters them, SELECT computes columns and creates aliases, ORDER BY sorts, and LIMIT keeps the first rows. Below WHERE a red box shows that WHERE cannot see the alias; below ORDER BY a green box shows that ORDER BY can.",
+        "caption": "An alias is born in SELECT: anything evaluated earlier (WHERE) cannot see it, anything later (ORDER BY) can. GROUP BY and HAVING slot in between WHERE and SELECT.",
+        "nodes": [
+          {
+            "id": "from",
+            "label": "FROM tickets",
+            "kind": "db",
+            "col": 0,
+            "row": 0,
+            "sub": "all rows"
+          },
+          {
+            "id": "where",
+            "label": "WHERE",
+            "kind": "decision",
+            "col": 1,
+            "row": 0,
+            "sub": "keep TRUE rows"
+          },
+          {
+            "id": "select",
+            "label": "SELECT",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "aliases created"
+          },
+          {
+            "id": "order",
+            "label": "ORDER BY",
+            "kind": "service",
+            "col": 3,
+            "row": 0,
+            "sub": "sort output"
+          },
+          {
+            "id": "limit",
+            "label": "LIMIT/OFFSET",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "cut after sort"
+          },
+          {
+            "id": "noalias",
+            "label": "WHERE total > 9",
+            "kind": "bad",
+            "col": 1,
+            "row": 2,
+            "sub": "alias unknown"
+          },
+          {
+            "id": "alias",
+            "label": "ORDER BY total",
+            "kind": "good",
+            "col": 3,
+            "row": 2,
+            "sub": "alias visible"
+          }
+        ],
+        "edges": [
+          {
+            "from": "from",
+            "to": "where",
+            "label": "rows"
+          },
+          {
+            "from": "where",
+            "to": "select",
+            "label": "kept rows"
+          },
+          {
+            "from": "select",
+            "to": "order",
+            "label": "output rows"
+          },
+          {
+            "from": "order",
+            "to": "limit",
+            "label": "sorted"
+          },
+          {
+            "from": "where",
+            "to": "noalias",
+            "label": "too early",
+            "style": "fail"
+          },
+          {
+            "from": "order",
+            "to": "alias",
+            "label": "after SELECT"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "FROM decides which rows exist. Everything later works on these rows."
+          },
+          {
+            "edges": [
+              1,
+              4
+            ],
+            "text": "WHERE keeps rows whose condition is TRUE. SELECT has not run yet, so an alias like `total` does not exist here."
+          },
+          {
+            "edges": [
+              2,
+              5
+            ],
+            "text": "SELECT computes output columns and names them. ORDER BY runs afterwards, so `ORDER BY total` works."
+          },
+          {
+            "edges": [
+              3
+            ],
+            "text": "LIMIT and OFFSET cut the already sorted rows, which is why the sort must be total before you limit."
+          }
+        ]
+      },
+      {
+        "id": "sqb-is-null",
+        "type": "compare",
+        "title": "email = NULL versus email IS NULL",
+        "alt": "Two panels. Left: a row with a NULL email and a row with a real email both go through email = NULL, both evaluate to UNKNOWN, and both rows are dropped. Right: the same rows go through email IS NULL; the NULL row evaluates to TRUE and is kept, the other evaluates to FALSE and is dropped.",
+        "caption": "`= NULL` is UNKNOWN for every row, so WHERE drops them all. `IS NULL` always answers TRUE or FALSE.",
+        "before": {
+          "label": "WHERE email = NULL",
+          "nodes": [
+            {
+              "id": "r1",
+              "label": "email: NULL",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "t1",
+              "label": "NULL = NULL",
+              "kind": "decision",
+              "col": 1,
+              "row": 0,
+              "sub": "UNKNOWN"
+            },
+            {
+              "id": "o1",
+              "label": "row dropped",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "wanted it"
+            },
+            {
+              "id": "r2",
+              "label": "email: a@x.io",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "t2",
+              "label": "'a@x.io' = NULL",
+              "kind": "decision",
+              "col": 1,
+              "row": 2,
+              "sub": "UNKNOWN"
+            },
+            {
+              "id": "o2",
+              "label": "row dropped",
+              "kind": "state",
+              "col": 2,
+              "row": 2
+            }
+          ],
+          "edges": [
+            {
+              "from": "r1",
+              "to": "t1"
+            },
+            {
+              "from": "t1",
+              "to": "o1",
+              "label": "not TRUE",
+              "style": "fail"
+            },
+            {
+              "from": "r2",
+              "to": "t2"
+            },
+            {
+              "from": "t2",
+              "to": "o2",
+              "label": "not TRUE"
+            }
+          ]
+        },
+        "after": {
+          "label": "WHERE email IS NULL",
+          "nodes": [
+            {
+              "id": "r1",
+              "label": "email: NULL",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "t1",
+              "label": "NULL IS NULL",
+              "kind": "decision",
+              "col": 1,
+              "row": 0,
+              "sub": "TRUE"
+            },
+            {
+              "id": "o1",
+              "label": "row kept",
+              "kind": "good",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "r2",
+              "label": "email: a@x.io",
+              "kind": "state",
+              "col": 0,
+              "row": 2
+            },
+            {
+              "id": "t2",
+              "label": "IS NULL",
+              "kind": "decision",
+              "col": 1,
+              "row": 2,
+              "sub": "FALSE"
+            },
+            {
+              "id": "o2",
+              "label": "row dropped",
+              "kind": "state",
+              "col": 2,
+              "row": 2,
+              "sub": "correctly"
+            }
+          ],
+          "edges": [
+            {
+              "from": "r1",
+              "to": "t1"
+            },
+            {
+              "from": "t1",
+              "to": "o1",
+              "label": "TRUE"
+            },
+            {
+              "from": "r2",
+              "to": "t2"
+            },
+            {
+              "from": "t2",
+              "to": "o2",
+              "label": "FALSE"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqb-not-in",
+        "type": "flow",
+        "title": "Why 3 NOT IN (1, NULL) filters the row out",
+        "alt": "Flow for x = 3 tested with NOT IN (1, NULL). It expands into 3 <> 1, which is TRUE, and 3 <> NULL, which is UNKNOWN. TRUE AND UNKNOWN is UNKNOWN, so the row is filtered out. Below, NOT EXISTS ignores the NULL row and the product is kept.",
+        "caption": "NOT IN is a chain of <> joined by AND; one NULL makes every row UNKNOWN. NOT EXISTS never matches a NULL, so it cannot block rows.",
+        "nodes": [
+          {
+            "id": "q",
+            "label": "NOT IN (1, NULL)",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "for x = 3"
+          },
+          {
+            "id": "a",
+            "label": "3 <> 1",
+            "kind": "good",
+            "col": 2,
+            "row": 0,
+            "sub": "TRUE"
+          },
+          {
+            "id": "b",
+            "label": "3 <> NULL",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": "UNKNOWN"
+          },
+          {
+            "id": "and",
+            "label": "TRUE AND UNKNOWN",
+            "kind": "state",
+            "col": 4,
+            "row": 1,
+            "sub": "= UNKNOWN"
+          },
+          {
+            "id": "out",
+            "label": "row filtered",
+            "kind": "bad",
+            "col": 4,
+            "row": 3,
+            "sub": "WHERE needs TRUE"
+          },
+          {
+            "id": "ne",
+            "label": "NOT EXISTS",
+            "kind": "client",
+            "col": 0,
+            "row": 4,
+            "sub": "product_id = 3?"
+          },
+          {
+            "id": "kept",
+            "label": "row kept",
+            "kind": "good",
+            "col": 2,
+            "row": 4,
+            "sub": "NULL never matches"
+          }
+        ],
+        "edges": [
+          {
+            "from": "q",
+            "to": "a",
+            "label": "x <> 1"
+          },
+          {
+            "from": "q",
+            "to": "b",
+            "label": "x <> NULL"
+          },
+          {
+            "from": "a",
+            "to": "and"
+          },
+          {
+            "from": "b",
+            "to": "and"
+          },
+          {
+            "from": "and",
+            "to": "out",
+            "style": "fail"
+          },
+          {
+            "from": "ne",
+            "to": "kept",
+            "label": "no matching row"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`x NOT IN (1, NULL)` means `x <> 1 AND x <> NULL`."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "`3 <> 1` is TRUE but `3 <> NULL` is UNKNOWN, and TRUE AND UNKNOWN is UNKNOWN."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "WHERE keeps only TRUE, so the row is dropped. This happens for every x, so the result is empty."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "`NOT EXISTS` asks whether any recall row has `product_id = 3`. The NULL row does not match, so product 3 is kept."
+          }
+        ]
+      },
+      {
+        "id": "sqb-ties",
+        "type": "sequence",
+        "title": "Paging without a tie-breaker",
+        "alt": "Sequence between an app and Postgres. The app asks for page 1 ordered by priority only and gets tickets 4 and 7. It asks for page 2 with OFFSET 2 and gets tickets 7 and 2, so ticket 7 repeats and ticket 9 is never shown. After adding id to ORDER BY, pages come back as 4, 7 then 9, 2.",
+        "caption": "Rows that tie on every sort key have no defined order, so separate LIMIT/OFFSET queries can disagree. A unique last sort key fixes it.",
+        "actors": [
+          {
+            "id": "app",
+            "label": "App"
+          },
+          {
+            "id": "pg",
+            "label": "Postgres"
+          }
+        ],
+        "messages": [
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "p1: ORDER BY priority DESC LIMIT 2",
+            "note": "Tickets 4, 7 and 9 all have priority 5. Any two of them are a correct answer to this query."
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "tickets 4, 7",
+            "style": "reply"
+          },
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "p2: same query, OFFSET 2",
+            "note": "A separate execution. A different plan, or a top-N sort that keeps different ties, may order 4, 7 and 9 differently."
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "tickets 7, 2",
+            "style": "fail",
+            "note": "Ticket 7 appears twice and ticket 9 is never shown. Nothing errored; the query was simply underspecified."
+          },
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "ORDER BY priority DESC, id",
+            "note": "The unique id gives every row exactly one position: a total order."
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "p1: 4, 7 then p2: 9, 2",
+            "style": "reply",
+            "note": "Every run and every page now agree."
+          }
+        ]
+      },
+      {
+        "id": "sqb-offset",
+        "type": "bars",
+        "title": "Rows read to serve one page of 20",
+        "alt": "Bar chart of rows read per request with 20 rows per page. OFFSET paging reads 20 rows for page 1, 200 for page 10, 2000 for page 100 and 20000 for page 1000. Keyset paging reads 20 rows for any page.",
+        "caption": "Arithmetic, not a benchmark: OFFSET paging produces offset + limit rows (page × 20) and throws most away; keyset paging with a matching index reads only the 20 it returns.",
+        "unit": "rows read",
+        "bars": [
+          {
+            "label": "OFFSET page 1",
+            "value": 20
+          },
+          {
+            "label": "OFFSET page 10",
+            "value": 200
+          },
+          {
+            "label": "OFFSET page 100",
+            "value": 2000
+          },
+          {
+            "label": "OFFSET page 1000",
+            "value": 20000
+          },
+          {
+            "label": "keyset, any page",
+            "value": 20,
+            "highlight": true
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE tickets (\n  id        int PRIMARY KEY,\n  title     text NOT NULL,\n  status    text,          -- 'open', 'pending', 'on hold', 'closed'; NULL = not triaged\n  priority  int,           -- 1 (low) .. 5 (urgent); NULL = not set\n  opened_on date NOT NULL\n);",
+        "starter": "-- Return id, title, priority: up to 5 not-closed tickets, most urgent first,\n-- NULL priority last, ties by id.\nSELECT id, title, priority\nFROM tickets\nWHERE status <> 'closed'\nORDER BY priority DESC\nLIMIT 5;",
+        "solution": "SELECT id, title, priority\nFROM tickets\nWHERE status IS DISTINCT FROM 'closed'\nORDER BY priority DESC NULLS LAST, id\nLIMIT 5;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "NULL priority goes last, closed ticket excluded",
+            "seed": "INSERT INTO tickets VALUES\n  (1, 'Login fails', 'open', 3, '2024-03-01'),\n  (2, 'Typo on pricing page', 'open', NULL, '2024-03-02'),\n  (3, 'Checkout returns 500', 'pending', 5, '2024-03-02'),\n  (4, 'Old export bug', 'closed', 5, '2024-02-10'),\n  (5, 'Slow search', 'open', 1, '2024-03-03');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  3,
+                  "Checkout returns 500",
+                  5
+                ],
+                [
+                  1,
+                  "Login fails",
+                  3
+                ],
+                [
+                  5,
+                  "Slow search",
+                  1
+                ],
+                [
+                  2,
+                  "Typo on pricing page",
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "seven open tickets, ties broken by id, top five kept",
+            "seed": "INSERT INTO tickets VALUES\n  (10, 'Broken avatar upload', 'open', 2, '2024-04-01'),\n  (11, 'Payments timeout', 'open', 4, '2024-04-01'),\n  (12, 'Wrong VAT rate', 'open', 4, '2024-04-02'),\n  (13, 'Footer link 404', 'open', NULL, '2024-04-02'),\n  (14, 'CSV export slow', 'open', 2, '2024-04-03'),\n  (15, 'Password reset loop', 'open', 4, '2024-04-03'),\n  (16, 'Tooltip misaligned', 'open', 1, '2024-04-04');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  11,
+                  "Payments timeout",
+                  4
+                ],
+                [
+                  12,
+                  "Wrong VAT rate",
+                  4
+                ],
+                [
+                  15,
+                  "Password reset loop",
+                  4
+                ],
+                [
+                  10,
+                  "Broken avatar upload",
+                  2
+                ],
+                [
+                  14,
+                  "CSV export slow",
+                  2
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "untriaged ticket with NULL status still counts",
+            "seed": "INSERT INTO tickets VALUES\n  (1, 'Crash on upload', NULL, 4, '2024-05-01'),\n  (2, 'Dark mode contrast', 'open', 2, '2024-05-01'),\n  (3, 'Fixed already', 'closed', 5, '2024-04-20');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Crash on upload",
+                  4
+                ],
+                [
+                  2,
+                  "Dark mode contrast",
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "six-way tie at the cut-off resolved by id",
+            "seed": "INSERT INTO tickets VALUES\n  (9, 'Ticket nine', 'open', 3, '2024-05-02'),\n  (4, 'Ticket four', 'open', 3, '2024-05-02'),\n  (7, 'Ticket seven', 'pending', 3, '2024-05-02'),\n  (1, 'Ticket one', 'open', 3, '2024-05-02'),\n  (8, 'Ticket eight', 'on hold', 3, '2024-05-02'),\n  (2, 'Ticket two', 'open', 3, '2024-05-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Ticket one",
+                  3
+                ],
+                [
+                  2,
+                  "Ticket two",
+                  3
+                ],
+                [
+                  4,
+                  "Ticket four",
+                  3
+                ],
+                [
+                  7,
+                  "Ticket seven",
+                  3
+                ],
+                [
+                  8,
+                  "Ticket eight",
+                  3
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every priority unset, so id decides",
+            "seed": "INSERT INTO tickets VALUES\n  (3, 'Rename button', 'open', NULL, '2024-06-01'),\n  (1, 'Add dark logo', 'open', NULL, '2024-06-01'),\n  (2, 'Update FAQ', NULL, NULL, '2024-06-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Add dark logo",
+                  null
+                ],
+                [
+                  2,
+                  "Update FAQ",
+                  null
+                ],
+                [
+                  3,
+                  "Rename button",
+                  null
+                ]
+              ]
+            }
+          },
+          {
+            "name": "all tickets closed",
+            "seed": "INSERT INTO tickets VALUES\n  (1, 'Done one', 'closed', 5, '2024-01-01'),\n  (2, 'Done two', 'closed', NULL, '2024-01-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "single open ticket among closed ones",
+            "seed": "INSERT INTO tickets VALUES\n  (5, 'Last open issue', 'open', 1, '2024-02-01'),\n  (6, 'Closed urgent', 'closed', 5, '2024-02-01'),\n  (7, 'Closed unset', 'closed', NULL, '2024-02-02');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  5,
+                  "Last open issue",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "mixed statuses and NULLs with more than five eligible",
+            "seed": "INSERT INTO tickets VALUES\n  (1, 'A', 'on hold', NULL, '2024-03-01'),\n  (2, 'B', NULL, 5, '2024-03-01'),\n  (3, 'C', 'pending', 1, '2024-03-01'),\n  (4, 'D', 'closed', 5, '2024-03-01'),\n  (5, 'E', 'open', 5, '2024-03-01'),\n  (6, 'F', NULL, NULL, '2024-03-01'),\n  (7, 'G', 'open', 2, '2024-03-01'),\n  (8, 'H', 'pending', 1, '2024-03-01');",
+            "expected": {
+              "columns": [
+                "id",
+                "title",
+                "priority"
+              ],
+              "rows": [
+                [
+                  2,
+                  "B",
+                  5
+                ],
+                [
+                  5,
+                  "E",
+                  5
+                ],
+                [
+                  7,
+                  "G",
+                  2
+                ],
+                [
+                  3,
+                  "C",
+                  1
+                ],
+                [
+                  8,
+                  "H",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE members (\n  id    int PRIMARY KEY,\n  name  text NOT NULL,\n  email text,      -- may be NULL, '' or blank\n  phone text       -- NULL when unknown\n);",
+        "starter": "-- Return id, name, contact for members with no usable email\n-- (NULL, empty or only spaces); contact = phone, or '(none)'.\nSELECT id, name, phone AS contact\nFROM members\nWHERE email = NULL;",
+        "solution": "SELECT id, name, COALESCE(phone, '(none)') AS contact\nFROM members\nWHERE NULLIF(trim(email), '') IS NULL;",
+        "tests": [
+          {
+            "name": "NULL email with and without a phone",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Ana', 'ana@x.io', '555-0101'),\n  (2, 'Bo', NULL, '555-0102'),\n  (3, 'Cy', NULL, NULL);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  2,
+                  "Bo",
+                  "555-0102"
+                ],
+                [
+                  3,
+                  "Cy",
+                  "(none)"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "empty and blank emails count as missing",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Dee', '', NULL),\n  (2, 'Eli', '   ', '555-0199'),\n  (3, 'Fay', 'fay@x.io', NULL);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Dee",
+                  "(none)"
+                ],
+                [
+                  2,
+                  "Eli",
+                  "555-0199"
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "everyone has an email",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Gus', 'gus@x.io', NULL),\n  (2, 'Hal', 'hal@x.io', '555-0111');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "address with surrounding spaces is usable",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Ivy', ' ivy@x.io ', NULL),\n  (2, 'Jo', NULL, '555-0123');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  2,
+                  "Jo",
+                  "555-0123"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "the text 'null' is not a NULL",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Kit', 'null', NULL),\n  (2, 'Lou', NULL, NULL);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  2,
+                  "Lou",
+                  "(none)"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every member is missing an email",
+            "seed": "INSERT INTO members VALUES\n  (1, 'Max', NULL, '555-0001'),\n  (2, 'Ned', '', '555-0002'),\n  (3, 'Oli', '  ', NULL),\n  (4, 'Pam', NULL, NULL);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  1,
+                  "Max",
+                  "555-0001"
+                ],
+                [
+                  2,
+                  "Ned",
+                  "555-0002"
+                ],
+                [
+                  3,
+                  "Oli",
+                  "(none)"
+                ],
+                [
+                  4,
+                  "Pam",
+                  "(none)"
+                ]
+              ]
+            }
+          },
+          {
+            "name": "single member with blank email and a phone",
+            "seed": "INSERT INTO members VALUES\n  (7, 'Quinn', ' ', '555-0777');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "contact"
+              ],
+              "rows": [
+                [
+                  7,
+                  "Quinn",
+                  "555-0777"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE products (\n  id     int PRIMARY KEY,\n  name   text NOT NULL,\n  price  numeric(10,2) NOT NULL,\n  active boolean NOT NULL\n);\nCREATE TABLE recalls (\n  id         int PRIMARY KEY,\n  product_id int,   -- NULL when the report did not name a product\n  reason     text\n);",
+        "starter": "-- Page 2 (rows 4-6, 3 per page) of active, non-recalled products,\n-- price high to low then id; return id, name, price.\nSELECT id, name, price\nFROM products\nWHERE active\n  AND id NOT IN (SELECT product_id FROM recalls)\nORDER BY price DESC\nLIMIT 3 OFFSET 3;",
+        "solution": "SELECT p.id, p.name, p.price\nFROM products AS p\nWHERE p.active\n  AND NOT EXISTS (SELECT 1 FROM recalls AS r WHERE r.product_id = p.id)\nORDER BY p.price DESC, p.id\nLIMIT 3 OFFSET 3;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "recall report that names no product",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Desk lamp', 40.00, true),\n  (2, 'Kettle', 55.00, true),\n  (3, 'Toaster', 35.00, true),\n  (4, 'Blender', 80.00, true),\n  (5, 'Mug', 8.50, true),\n  (6, 'Fan', 25.00, true),\n  (7, 'Scale', 30.00, true),\n  (8, 'Heater', 99.00, false);\nINSERT INTO recalls VALUES\n  (1, 2, 'battery swelling'),\n  (2, NULL, 'unknown item');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  7,
+                  "Scale",
+                  30
+                ],
+                [
+                  6,
+                  "Fan",
+                  25
+                ],
+                [
+                  5,
+                  "Mug",
+                  8.5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "equal prices ordered by id across pages",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Pen', 2.00, true),\n  (2, 'Pencil', 2.00, true),\n  (3, 'Notebook', 5.00, true),\n  (4, 'Eraser', 2.00, true),\n  (5, 'Ruler', 3.00, true),\n  (6, 'Stapler', 9.00, true),\n  (7, 'Tape', 2.00, true);\nINSERT INTO recalls VALUES\n  (1, 3, 'loose binding');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  2,
+                  "Pencil",
+                  2
+                ],
+                [
+                  4,
+                  "Eraser",
+                  2
+                ],
+                [
+                  7,
+                  "Tape",
+                  2
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "only three eligible products, so page 2 is empty",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Chair', 120.00, true),\n  (2, 'Stool', 45.00, true),\n  (3, 'Bench', 90.00, true),\n  (4, 'Sofa', 700.00, false);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "inactive products are removed before paging",
+            "seed": "INSERT INTO products VALUES\n  (1, 'P1', 60.00, false),\n  (2, 'P2', 50.00, true),\n  (3, 'P3', 40.00, false),\n  (4, 'P4', 30.00, true),\n  (5, 'P5', 20.00, true),\n  (6, 'P6', 10.00, true),\n  (7, 'P7', 5.00, true),\n  (8, 'P8', 1.00, true);",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  6,
+                  "P6",
+                  10
+                ],
+                [
+                  7,
+                  "P7",
+                  5
+                ],
+                [
+                  8,
+                  "P8",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "same product recalled twice and a NULL report",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Desk lamp', 40.00, true),\n  (2, 'Kettle', 55.00, true),\n  (3, 'Toaster', 35.00, true),\n  (4, 'Blender', 80.00, true),\n  (5, 'Mug', 8.50, true),\n  (6, 'Fan', 25.00, true),\n  (7, 'Scale', 30.00, true),\n  (8, 'Heater', 99.00, false);\nINSERT INTO recalls VALUES\n  (1, 4, 'motor'),\n  (2, 4, 'motor again'),\n  (3, NULL, 'no label'),\n  (4, 1, 'wiring');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  6,
+                  "Fan",
+                  25
+                ],
+                [
+                  5,
+                  "Mug",
+                  8.5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "only NULL recall rows hide nothing",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Desk lamp', 40.00, true),\n  (2, 'Kettle', 55.00, true),\n  (3, 'Toaster', 35.00, true),\n  (4, 'Blender', 80.00, true),\n  (5, 'Mug', 8.50, true),\n  (6, 'Fan', 25.00, true),\n  (7, 'Scale', 30.00, true),\n  (8, 'Heater', 99.00, false);\nINSERT INTO recalls VALUES\n  (1, NULL, 'anonymous'),\n  (2, NULL, 'photo only');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  3,
+                  "Toaster",
+                  35
+                ],
+                [
+                  7,
+                  "Scale",
+                  30
+                ],
+                [
+                  6,
+                  "Fan",
+                  25
+                ]
+              ]
+            }
+          },
+          {
+            "name": "recall for a product id that does not exist",
+            "seed": "INSERT INTO products VALUES\n  (1, 'Cup', 4.00, true),\n  (2, 'Plate', 6.00, true),\n  (3, 'Bowl', 5.00, true),\n  (4, 'Fork', 1.50, true),\n  (5, 'Spoon', 1.50, true),\n  (6, 'Knife', 2.00, true);\nINSERT INTO recalls VALUES\n  (1, 99, 'typo in report');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  6,
+                  "Knife",
+                  2
+                ],
+                [
+                  4,
+                  "Fork",
+                  1.5
+                ],
+                [
+                  5,
+                  "Spoon",
+                  1.5
+                ]
+              ]
+            }
+          },
+          {
+            "name": "tie spanning the page boundary",
+            "seed": "INSERT INTO products VALUES\n  (1, 'A', 10.00, true),\n  (2, 'B', 7.00, true),\n  (3, 'C', 7.00, true),\n  (4, 'D', 7.00, true),\n  (5, 'E', 7.00, true),\n  (6, 'F', 3.00, true);\nINSERT INTO recalls VALUES\n  (1, NULL, 'unnamed');",
+            "expected": {
+              "columns": [
+                "id",
+                "name",
+                "price"
+              ],
+              "rows": [
+                [
+                  4,
+                  "D",
+                  7
+                ],
+                [
+                  5,
+                  "E",
+                  7
+                ],
+                [
+                  6,
+                  "F",
+                  3
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "SELECT NULL = NULL AS eq, NULL IS NULL AS is_null",
+        "choices": [
+          "true | true",
+          "NULL | true",
+          "false | true"
+        ],
+        "answer": 1,
+        "explain": "Comparing anything with NULL, even another NULL, is UNKNOWN, shown as NULL. `IS NULL` is the test that answers TRUE or FALSE."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (1), (2), (3))\nSELECT count(*) FROM t WHERE x NOT IN (1, NULL)",
+        "choices": [
+          "2",
+          "0",
+          "3"
+        ],
+        "answer": 1,
+        "explain": "`x NOT IN (1, NULL)` is `x <> 1 AND x <> NULL`. The second part is UNKNOWN, so no row is ever TRUE: 2 and 3 are dropped too."
+      },
+      {
+        "code": "SELECT 7 / 2, 7 / 2.0, 7::numeric / 2, -7 / 2",
+        "choices": [
+          "3.5 | 3.5 | 3.5 | -3.5",
+          "3 | 3.5 | 3.5 | -3",
+          "3 | 3.5 | 3.5 | -4",
+          "3 | 3 | 3.5 | -3"
+        ],
+        "answer": 1,
+        "explain": "Two integers give integer division, truncated toward zero (so -7 / 2 is -3, not -4). A numeric literal or cast on either side gives 3.5."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (2), (NULL), (5))\nSELECT x FROM t ORDER BY x DESC LIMIT 1",
+        "choices": [
+          "5",
+          "NULL",
+          "2"
+        ],
+        "answer": 1,
+        "explain": "Postgres sorts NULL as larger than any value, so it comes first in descending order. Add `NULLS LAST` to get 5."
+      },
+      {
+        "code": "SELECT price * qty AS total\nFROM (VALUES (4, 3)) AS t(price, qty)\nWHERE total > 10",
+        "choices": [
+          "12",
+          "(no rows)",
+          "ERROR: column \"total\" does not exist"
+        ],
+        "answer": 2,
+        "explain": "WHERE is evaluated before SELECT creates the alias. Repeat `price * qty` in WHERE or filter in an outer query."
+      },
+      {
+        "code": "SELECT NULL AND FALSE, NULL OR TRUE, NULL AND TRUE",
+        "choices": [
+          "NULL | NULL | NULL",
+          "false | true | NULL",
+          "false | true | true"
+        ],
+        "answer": 1,
+        "explain": "Three-valued logic: FALSE decides an AND and TRUE decides an OR whatever the unknown side is. `NULL AND TRUE` depends on the unknown, so it stays NULL."
+      },
+      {
+        "code": "SELECT 5 BETWEEN 10 AND 1, 5 BETWEEN SYMMETRIC 10 AND 1",
+        "choices": [
+          "true | true",
+          "false | true",
+          "false | false"
+        ],
+        "answer": 1,
+        "explain": "`BETWEEN a AND b` is `x >= a AND x <= b`, so reversed bounds match nothing. Postgres's `BETWEEN SYMMETRIC` swaps them for you."
+      }
+    ],
+    "tip": "Before typing, say the grain and the edge rules out loud: \"one row per ticket, at most five; NULL status counts as open; NULL priority sorts last; ties by id.\" After writing the query, point at each NULL-able column and say what your WHERE and ORDER BY do with a NULL there. Interviewers plant exactly those rows.",
+    "links": {
+      "guides": [
+        "pagination",
+        "database-indexes"
+      ],
+      "lessons": [
+        "design-databases-indexes"
+      ]
+    }
+  }
+}

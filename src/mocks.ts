@@ -26,7 +26,7 @@ export interface Mock {
   questions: MockQuestion[]
 }
 
-export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30, python: 30, typescript: 30 }
+export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30, python: 30, typescript: 30, sql: 30 }
 export const STAR_RUBRIC = [
   'Set the situation in two or three sentences',
   'Made your own role and the stakes clear',
@@ -129,7 +129,7 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
     for (const { lesson: item, predict } of items) {
       questions.push({
         kind: 'trivia', ref: item.id, title: `Trivia: ${item.title}`,
-        prompt: 'What does this print?', code: predict.code,
+        prompt: lab?.lang === 'sql' ? 'What does this query return? Rows are shown one per line, cells joined by \u201C | \u201D.' : 'What does this print?', code: predict.code,
         answer: `${predict.choices[predict.answer]}\n\n${predict.explain}`, rubric: TRIVIA_RUBRIC,
       })
     }

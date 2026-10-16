@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 /** Interview tracks first, then language tracks (track.json "kind": "language"). */
-export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript']
+export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript', 'sql']
 const read = path => JSON.parse(readFileSync(path, 'utf8'))
 
 export function buildCurriculum(root = 'content') {

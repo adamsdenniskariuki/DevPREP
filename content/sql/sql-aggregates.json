@@ -1,0 +1,534 @@
+{
+  "id": "sql-aggregates",
+  "track": "sql",
+  "title": "Aggregates, GROUP BY and HAVING",
+  "minutes": 45,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "How aggregates treat NULLs and empty input, how GROUP BY fixes the grain of a result, when to filter with WHERE versus HAVING, and how FILTER and CASE turn one pass over a table into a full per-group report.",
+  "prerequisites": ["sql-select-basics"],
+  "prerequisiteNotes": "Comfort with SELECT, WHERE, ORDER BY and inner joins, and with three-valued logic: a comparison with NULL is unknown, and WHERE keeps only rows where the condition is true.",
+  "objectives": [
+    "Predict what `count(*)`, `count(col)`, `count(DISTINCT col)`, `sum`, `avg`, `min` and `max` return when the input has NULLs or no rows at all.",
+    "State the grain of a result before writing it, and know which columns may appear in SELECT once you GROUP BY.",
+    "Choose between WHERE and HAVING from the logical order of a query, and explain why an aggregate cannot appear in WHERE.",
+    "Build several measures in one pass with `FILTER (WHERE ...)` or `CASE` inside an aggregate, instead of one query per measure."
+  ],
+  "concepts": [
+    {
+      "title": "Aggregates collapse rows, and most of them skip NULLs",
+      "body": "An aggregate takes many input values and returns one. `count(*)` counts **rows**, whatever they contain. `count(col)` counts rows where `col` is **not NULL**, and `count(DISTINCT col)` counts distinct non-NULL values. `sum`, `avg`, `min` and `max` also ignore NULL inputs: `avg` divides by the number of non-NULL values, not by the row count, so a NULL is not treated as 0. If you want NULL to count as zero in an average, say so explicitly with `avg(coalesce(col, 0))`. Interviewers love this distinction because `count(*)` and `count(col)` look interchangeable and silently differ.",
+      "code": "WITH scores(x) AS (VALUES (10), (10), (NULL), (20), (NULL), (30))\nSELECT count(*)          AS row_count,      -- 6\n       count(x)          AS non_null,       -- 4\n       count(DISTINCT x) AS distinct_vals,  -- 3\n       sum(x)            AS total,          -- 70\n       avg(x)            AS mean            -- 17.5 (70 / 4, not 70 / 6)\nFROM scores;",
+      "diagram": "sqa-counts"
+    },
+    {
+      "title": "Empty input: sum is NULL, count is 0",
+      "body": "Every aggregate except `count` returns **NULL over zero rows** (or over only NULLs): there is no sum of nothing, no max of nothing. `count` returns 0. This bites in reports: a seller with no paid orders gets `NULL` revenue, and `NULL + 5` is still NULL. Wrap the aggregate, not the column: `coalesce(sum(amount), 0)`. A query with aggregates and **no GROUP BY** always returns exactly one row, even when the WHERE clause removes everything; with a GROUP BY it returns one row per group, so no input means no rows. Two numeric traps: `avg` of an integer column returns `numeric` (round it with `round(avg(x), 2)`), while `sum(x) / count(*)` on integers is integer division and truncates.",
+      "code": "SELECT count(*)                    AS n,         -- 0\n       sum(amount)                 AS raw_total, -- NULL\n       coalesce(sum(amount), 0)    AS total      -- 0\nFROM (VALUES (5.00)) AS t(amount)\nWHERE amount > 10;\n\nSELECT sum(x) / count(*)   AS int_div,   -- 1 (bigint / bigint)\n       round(avg(x), 2)    AS mean       -- 1.50\nFROM (VALUES (1), (2)) AS t(x);",
+      "diagram": "sqa-state"
+    },
+    {
+      "title": "GROUP BY sets the grain",
+      "body": "The **grain** is what one output row means: one row per seller, per seller per month, per category. GROUP BY lists the columns (or expressions) that define it, and every row with equal values lands in the same group; NULL keys form one group of their own. After grouping, each SELECT item must be a grouped column, an aggregate, or something computed from those. Anything else is ambiguous, because a group has many values for it, and Postgres raises `column ... must appear in the GROUP BY clause or be used in an aggregate function`. One standard exception that Postgres implements: if you group by a table's **primary key**, you may select that table's other columns, because they are functionally dependent on it. You can also group by an expression such as `date_trunc('month', placed_at)`; Postgres additionally accepts an output alias or a position (`GROUP BY 1`), which is convenient but not portable.",
+      "code": "-- one row per customer: c.name is allowed because c.id is the primary key\nSELECT c.id, c.name, count(o.id) AS orders\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nGROUP BY c.id;\n\n-- one row per month\nSELECT date_trunc('month', placed_at) AS month, sum(amount) AS revenue\nFROM orders\nGROUP BY date_trunc('month', placed_at)\nORDER BY month;",
+      "diagram": "sqa-grain"
+    },
+    {
+      "title": "WHERE filters rows, HAVING filters groups",
+      "body": "SQL is written SELECT-first but evaluated in a different **logical order**: FROM and joins, then WHERE, then GROUP BY, then HAVING, then SELECT, then ORDER BY and LIMIT. WHERE runs before any group exists, so it cannot mention an aggregate (`aggregate functions are not allowed in WHERE`). HAVING runs after aggregation, so it can. Put every condition that is about a single row in WHERE: it shrinks the input early and the planner can use an index. Use HAVING only for conditions on the group, like `count(*) >= 2`. Because SELECT runs after HAVING, an output alias such as `n` is **not** visible in HAVING in Postgres; repeat the aggregate. The same order explains why `ORDER BY` can use aliases: it runs last.",
+      "code": "SELECT seller_id, count(*) AS n\nFROM orders\nWHERE placed_at >= DATE '2024-01-01'   -- row filter, before grouping\nGROUP BY seller_id\nHAVING count(*) >= 2                     -- group filter (HAVING n >= 2 fails)\nORDER BY n DESC, seller_id;              -- aliases are fine here",
+      "diagram": "sqa-order"
+    },
+    {
+      "title": "Conditional aggregation: FILTER and CASE",
+      "body": "A report usually needs several measures over different subsets of the same rows: all orders, paid revenue, refunds. Filtering in WHERE would remove rows that other measures need. Instead, filter **inside** each aggregate. `count(*) FILTER (WHERE status = 'refunded')` is the SQL-standard form, which Postgres supports; it reads well and works with any aggregate. The portable older idiom is a CASE that yields NULL for rows you do not want, which the aggregate then skips: `sum(CASE WHEN status = 'paid' THEN amount END)`. Do not write `ELSE 0` inside a `count`, because `count` counts zeros too. Either form scans the table once, which is the point: one GROUP BY, many measures.",
+      "code": "SELECT seller_id,\n       count(*)                                          AS orders,\n       count(*) FILTER (WHERE status = 'refunded')       AS refunds,\n       coalesce(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_revenue,\n       -- the same measure, portable CASE form\n       coalesce(sum(CASE WHEN status = 'paid' THEN amount END), 0) AS paid_revenue_case\nFROM orders\nGROUP BY seller_id;"
+    },
+    {
+      "title": "Collecting values: string_agg, array_agg, bool_and",
+      "body": "`string_agg(expr, ', ' ORDER BY expr)` and `array_agg(expr ORDER BY expr)` gather a group's values into one text or array. Without the `ORDER BY` inside the call, the order is whatever the plan produces, so tests that compare strings become flaky; always order inside the aggregate. `string_agg` skips NULLs, `array_agg` keeps them as array elements. `bool_and` and `bool_or` answer \"do all / does any row satisfy this\", but like other aggregates they **ignore NULL inputs**: `bool_and(status = 'paid')` is true for a group of one paid order and one NULL status. When NULL must count as a failure, compare counts instead: `count(*) = count(*) FILTER (WHERE status = 'paid')`.",
+      "code": "SELECT seller_id,\n       string_agg(DISTINCT status, ',' ORDER BY status) AS statuses,\n       array_agg(amount ORDER BY placed_at, id)         AS amounts_in_order,\n       bool_or(status = 'refunded')                     AS any_refund\nFROM orders\nGROUP BY seller_id;"
+    },
+    {
+      "title": "Subtotals with ROLLUP and GROUPING SETS (SSE)",
+      "body": "`GROUP BY ROLLUP (region, seller_id)` computes three groupings in one statement: per region and seller, per region, and a grand total. `GROUPING SETS ((region), (seller_id), ())` lets you list exactly the groupings you want, and `CUBE` produces every combination. In subtotal rows the rolled-up columns are NULL, which collides with genuine NULL keys; `grouping(region)` returns 1 when the NULL comes from the rollup, so use it to label totals. Senior interviewers bring this up for dashboard queries; the alternative is several queries glued with UNION ALL, which scans the table once per grouping.",
+      "code": "SELECT region,\n       seller_id,\n       sum(amount) AS revenue,\n       grouping(region, seller_id) AS level  -- 0 detail, 1 region subtotal, 3 grand total\nFROM orders\nGROUP BY ROLLUP (region, seller_id)\nORDER BY region NULLS LAST, seller_id NULLS LAST;"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Say the grain, then the measures",
+      "body": "Before typing, say one sentence: \"one row per seller, with order count, paid revenue and refund count, keeping only sellers with at least two orders\". The grain gives you the GROUP BY. Each measure becomes one aggregate, with a FILTER if it covers a subset. Conditions on single rows that apply to **every** measure go in WHERE; conditions on the group go in HAVING. Finally decide what an empty measure should show: 0 needs `coalesce`, NULL is the default."
+    },
+    {
+      "title": "Solve the core task in one pass",
+      "body": "The tempting version puts `WHERE status = 'paid'` at the top. That removes refunded and pending rows before grouping, so the order count, the refund count and the HAVING threshold are all computed on the wrong rows. Keep every order in the input, group by `seller_id`, and filter inside the aggregates: `count(*)` for all orders, `sum(amount) FILTER (WHERE status = 'paid')` wrapped in `coalesce(..., 0)` for revenue, `count(*) FILTER (WHERE status = 'refunded')` for refunds. Then `HAVING count(*) >= 2`. Check the cases that break naive answers: a seller whose orders are all refunded (revenue 0, not NULL), a paid order with a NULL amount, a seller with one order.",
+      "diagram": "sqa-filter"
+    }
+  ],
+  "example": "-- Per month and team: tickets opened, tickets closed, average logged hours, priorities seen.\nSELECT date_trunc('month', opened_at)              AS month,\n       team,\n       count(*)                                    AS opened,\n       count(*) FILTER (WHERE closed_at IS NOT NULL) AS closed,\n       round(avg(hours_spent), 1)                  AS avg_hours,   -- ignores unlogged (NULL) hours\n       string_agg(DISTINCT priority, ',' ORDER BY priority) AS priorities\nFROM tickets\nWHERE opened_at >= DATE '2024-01-01'\nGROUP BY date_trunc('month', opened_at), team\nHAVING count(*) >= 5\nORDER BY month, team;",
+  "task": "Table `orders(id, seller_id, amount, status)` holds one row per order; `status` is one of `'paid'`, `'refunded'` or `'pending'` (never NULL), and `amount` may be NULL. Return one row per seller that has **at least two orders** (of any status), with columns `seller_id`, `order_count` (all orders), `paid_revenue` (sum of `amount` over paid orders; 0 when there is nothing to sum) and `refunded_count` (number of refunded orders). A NULL amount counts as an order but adds nothing to revenue. Row order does not matter.",
+  "starter": "-- One row per seller with at least two orders:\n-- seller_id, order_count, paid_revenue, refunded_count\nSELECT seller_id,\n       count(*)    AS order_count,\n       sum(amount) AS paid_revenue,\n       count(*)    AS refunded_count\nFROM orders\nWHERE status = 'paid'\nGROUP BY seller_id\nHAVING count(*) >= 2;",
+  "hints": [
+    "`WHERE status = 'paid'` throws away refunded and pending orders before grouping, so `order_count`, `refunded_count` and the HAVING threshold see too few rows. Keep all orders and filter inside each aggregate instead.",
+    "`count(*) FILTER (WHERE status = 'refunded')` counts a subset of the group; `sum(amount) FILTER (WHERE status = 'paid')` is NULL when no paid order has an amount, so wrap it in `coalesce(..., 0)`."
+  ],
+  "solution": "SELECT seller_id,\n       count(*)                                                AS order_count,\n       coalesce(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_revenue,\n       count(*) FILTER (WHERE status = 'refunded')             AS refunded_count\nFROM orders\nGROUP BY seller_id\nHAVING count(*) >= 2;\n\nThe grain is one row per seller, so the query groups by `seller_id` and keeps every order in the input. Each measure filters its own subset: `count(*)` sees all orders, the revenue sum sees only paid ones, the refund count only refunded ones. `sum` skips NULL amounts, and when a seller has no paid order with an amount it returns NULL, which `coalesce` turns into 0. HAVING runs after grouping, so `count(*) >= 2` counts all orders of the seller. The table is scanned once; the portable equivalent replaces each FILTER with `CASE WHEN status = 'paid' THEN amount END` inside the aggregate.",
+  "checklist": [
+    "I stated the grain (one row per seller) and grouped by exactly that.",
+    "No WHERE clause removes rows that some measure still needs; subsets are filtered inside each aggregate.",
+    "Sums that may cover zero rows are wrapped in `coalesce(..., 0)`, outside the aggregate.",
+    "The two-order threshold is in HAVING with `count(*)`, not an output alias.",
+    "Output columns are named and ordered exactly as asked."
+  ],
+  "pitfalls": [
+    "Using `count(col)` when you mean `count(*)`: rows with a NULL in `col` silently drop out of the count.",
+    "Assuming `sum` over no rows is 0. It is NULL; `coalesce(sum(x), 0)` fixes it, `sum(coalesce(x, 0))` does not help when there are no rows at all.",
+    "Filtering a subset in WHERE when only one measure needs it, which corrupts every other measure in the same query.",
+    "Writing `count(CASE WHEN ok THEN 1 ELSE 0 END)`: `count` counts the zeros. Drop the ELSE, or use `sum(...)`, or `FILTER`.",
+    "Referencing a SELECT alias in HAVING or WHERE. Postgres resolves aliases in GROUP BY and ORDER BY, but not in HAVING.",
+    "Selecting a non-grouped column and expecting the database to pick one; Postgres rejects it unless you grouped by the table's primary key.",
+    "Dividing `sum(x) / count(*)` on integer columns and getting truncated integer division; use `avg(x)` or cast to numeric.",
+    "Trusting `bool_and(cond)` when `cond` can be NULL: NULLs are skipped, so the group can come out true."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Estimate coverage per team",
+      "prompt": "Table `tasks(id, team, hours)` lists work items; `hours` is the estimate and may be NULL (not estimated), and `team` may be NULL. Return one row per team with columns `team`, `task_count` (all tasks), `estimated_count` (tasks with an estimate) and `total_hours` (sum of estimates, 0 when no task in the team has one). Tasks without a team form their own group, shown with `team` NULL. Row order does not matter.",
+      "hints": [
+        "`count(*)` counts every task; `count(hours)` counts only tasks whose estimate is not NULL. You need both.",
+        "`sum(hours)` is NULL for a team whose estimates are all NULL; `coalesce(sum(hours), 0)` makes it 0."
+      ],
+      "solution": "SELECT team,\n       count(*)                AS task_count,\n       count(hours)            AS estimated_count,\n       coalesce(sum(hours), 0) AS total_hours\nFROM tasks\nGROUP BY team;",
+      "checklist": [
+        "`task_count` uses `count(*)` and `estimated_count` uses `count(hours)`.",
+        "A team whose estimates are all NULL shows 0 hours, not NULL.",
+        "A 0-hour estimate counts as estimated.",
+        "Tasks with no team appear as one group with `team` NULL."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Customers who always paid",
+      "prompt": "Tables `customers(id, name)` and `orders(id, customer_id, status)`. `status` is free text and may be NULL (unknown), which does **not** count as paid. Return the customers who placed at least one order and whose every order has status exactly `'paid'`, with columns `customer_id`, `name` and `order_count`. Customers without orders are excluded. Names are not unique. Row order does not matter.",
+      "hints": [
+        "Join customers to orders and group by `c.id` (the primary key lets you select `c.name`). The inner join already drops customers without orders.",
+        "`bool_and(status = 'paid')` skips NULL statuses, so it is wrong here. Compare `count(*)` with `count(*) FILTER (WHERE status = 'paid')` in HAVING."
+      ],
+      "solution": "SELECT c.id     AS customer_id,\n       c.name,\n       count(*) AS order_count\nFROM customers c\nJOIN orders o ON o.customer_id = c.id\nGROUP BY c.id\nHAVING count(*) = count(*) FILTER (WHERE o.status = 'paid');",
+      "checklist": [
+        "Customers without orders do not appear (no vacuous truth).",
+        "An order with a NULL status disqualifies its customer.",
+        "Two customers with the same name stay separate rows because I grouped by id.",
+        "I can give the NOT EXISTS formulation as an alternative."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "How does Postgres actually execute a GROUP BY, and can an index help?",
+      "answer": "It picks HashAggregate (build a hash table keyed by the group columns, one pass, memory grows with the number of groups and spills to disk past `work_mem`) or GroupAggregate (read rows sorted by the group key and emit each group when the key changes). An index on the group key can supply that order and avoid a sort, and a covering index enables an index-only scan. The bigger win is usually a selective WHERE with an index, so fewer rows reach the aggregate at all."
+    },
+    {
+      "question": "Why is `SELECT count(*) FROM big_table` slow in Postgres, and what can you do?",
+      "answer": "Under MVCC each transaction may see a different set of live rows, so there is no stored row count; Postgres must scan the table or an index (an index-only scan helps when the visibility map is current). If an estimate is enough, read `reltuples` from `pg_class` or use `EXPLAIN`'s estimate. If an exact number is needed often, maintain it in a counter table updated by the application or a trigger, accepting the write contention, or precompute in a materialized view."
+    },
+    {
+      "question": "Rewrite \"customers whose every order was paid\" without GROUP BY.",
+      "answer": "Use existence tests: `SELECT c.id, c.name FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id AND o.status IS DISTINCT FROM 'paid')`. `IS DISTINCT FROM` treats a NULL status as not paid. It can stop at the first bad order per customer, but it does not give the order count; the HAVING version computes the count in the same pass."
+    },
+    {
+      "question": "The dashboard needs per-seller, per-region and overall revenue. One query or three?",
+      "answer": "One: `GROUP BY GROUPING SETS ((region, seller_id), (region), ())` or `ROLLUP (region, seller_id)`, with `grouping()` to tell subtotal rows from genuine NULL keys. It reads the table once instead of three times with UNION ALL. If the dashboard is hit constantly, precompute daily totals into a summary table or materialized view and roll those up."
+    }
+  ],
+  "takeaways": [
+    "`count(*)` counts rows; `count(col)` and every other aggregate skip NULLs, so `avg` divides by the non-NULL count.",
+    "Over zero rows `count` is 0 and everything else is NULL: write `coalesce(sum(x), 0)`.",
+    "Say the grain first; GROUP BY is that grain, and every other SELECT column must be aggregated or functionally dependent on a grouped primary key.",
+    "WHERE filters rows before grouping, HAVING filters groups after; aggregates belong only in HAVING, SELECT and ORDER BY.",
+    "`FILTER (WHERE ...)` or a NULL-yielding `CASE` builds many measures in one pass; never filter a subset in WHERE when other measures need the rest.",
+    "Order inside `string_agg`/`array_agg`, round `avg`, and remember `bool_and` ignores NULLs."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqa-counts",
+        "type": "bars",
+        "title": "Three counts over the same six rows",
+        "alt": "Bar chart over a column holding 10, 10, NULL, 20, NULL and 30. count(*) is 6 because it counts rows, count(x) is 4 because the two NULLs are skipped, and count(DISTINCT x) is 3 because the two 10s count once.",
+        "caption": "Exact values for the six-row example in the code above. Only count(*) sees the NULL rows; DISTINCT then also folds duplicates.",
+        "unit": "rows counted",
+        "bars": [
+          { "label": "count(*)", "value": 6, "highlight": true },
+          { "label": "count(x)", "value": 4 },
+          { "label": "count(DISTINCT x)", "value": 3 }
+        ]
+      },
+      {
+        "id": "sqa-state",
+        "type": "sequence",
+        "title": "How sum() builds its answer for one group",
+        "alt": "Sequence diagram of an aggregate. The executor starts a group with a NULL state; the group's rows send 20.00, NULL and 15.50; the NULL is skipped and sum returns 35.50. For a next group where no rows qualify, nothing arrives, the state is never set, and sum returns NULL.",
+        "caption": "sum starts from 'no value yet' and skips NULL inputs, so zero inputs give NULL. count starts at 0, which is why it is the only aggregate that returns 0 on empty input.",
+        "actors": [
+          { "id": "exec", "label": "executor" },
+          { "id": "scan", "label": "group rows" },
+          { "id": "agg", "label": "sum(amount)" }
+        ],
+        "messages": [
+          { "from": "exec", "to": "agg", "label": "new group: NULL", "note": "Before any input the state means 'no value yet', not zero." },
+          { "from": "scan", "to": "agg", "label": "20.00", "note": "The first non-NULL value becomes the state: 20.00." },
+          { "from": "scan", "to": "agg", "label": "NULL", "note": "sum is strict: a NULL input is skipped and the state stays 20.00." },
+          { "from": "scan", "to": "agg", "label": "15.50", "note": "State becomes 35.50." },
+          { "from": "agg", "to": "exec", "label": "35.50", "style": "reply", "note": "At the end of the group the final state is the result." },
+          { "from": "exec", "to": "agg", "label": "new group: NULL", "note": "Next group. All of its rows are excluded by FILTER (WHERE status = 'paid'), so nothing arrives." },
+          { "from": "agg", "to": "exec", "label": "NULL", "style": "reply", "note": "The state was never set, so sum returns NULL. Wrap it: coalesce(sum(...), 0)." }
+        ]
+      },
+      {
+        "id": "sqa-grain",
+        "type": "flow",
+        "title": "GROUP BY seller_id: six rows become two",
+        "alt": "Flow diagram. Six order rows on the left feed three seller groups in the middle: three rows into seller 10, one into seller 20 and two into seller 30. On the right, seller 10 and seller 30 each become one result row with their counts and revenue, while seller 20 is dropped by HAVING because it has only one order.",
+        "caption": "The grain is one row per seller. Each group becomes at most one output row, and HAVING decides which groups survive.",
+        "nodes": [
+          { "id": "r1", "label": "#1 s10 paid", "kind": "state", "col": 0, "row": 0, "sub": "20.00" },
+          { "id": "r2", "label": "#2 s10 paid", "kind": "state", "col": 0, "row": 1, "sub": "15.50" },
+          { "id": "r3", "label": "#3 s10 refunded", "kind": "state", "col": 0, "row": 2, "sub": "40.00" },
+          { "id": "r4", "label": "#4 s20 paid", "kind": "state", "col": 0, "row": 3, "sub": "99.00" },
+          { "id": "r5", "label": "#5 s30 refunded", "kind": "state", "col": 0, "row": 4, "sub": "12.00" },
+          { "id": "r6", "label": "#6 s30 pending", "kind": "state", "col": 0, "row": 5, "sub": "8.00" },
+          { "id": "g10", "label": "group s10", "kind": "service", "col": 2, "row": 1, "sub": "3 rows" },
+          { "id": "g20", "label": "group s20", "kind": "service", "col": 2, "row": 3, "sub": "1 row" },
+          { "id": "g30", "label": "group s30", "kind": "service", "col": 2, "row": 5, "sub": "2 rows" },
+          { "id": "o10", "label": "s10: 3 orders", "kind": "good", "col": 4, "row": 1, "sub": "35.50 paid, 1 ref" },
+          { "id": "o20", "label": "s20 dropped", "kind": "bad", "col": 4, "row": 3, "sub": "HAVING count < 2" },
+          { "id": "o30", "label": "s30: 2 orders", "kind": "good", "col": 4, "row": 5, "sub": "0 paid, 1 refund" }
+        ],
+        "edges": [
+          { "from": "r1", "to": "g10" },
+          { "from": "r2", "to": "g10" },
+          { "from": "r3", "to": "g10" },
+          { "from": "r4", "to": "g20" },
+          { "from": "r5", "to": "g30" },
+          { "from": "r6", "to": "g30" },
+          { "from": "g10", "to": "o10", "label": "aggregate" },
+          { "from": "g20", "to": "o20", "label": "1 order", "style": "fail" },
+          { "from": "g30", "to": "o30", "label": "aggregate" }
+        ],
+        "steps": [
+          { "edges": [0, 1, 2, 3, 4, 5], "text": "GROUP BY seller_id puts rows with equal keys in the same bucket. Row order does not matter, and a NULL key would form its own bucket." },
+          { "edges": [6, 8], "text": "Each bucket is folded into one row: count(*), the filtered paid sum (0 for s30 thanks to coalesce) and the refund count." },
+          { "edges": [7], "text": "HAVING count(*) >= 2 removes whole groups after aggregation. s20 had one order, so it never reaches the output." }
+        ]
+      },
+      {
+        "id": "sqa-order",
+        "type": "flow",
+        "title": "The logical order of a grouped query",
+        "alt": "Flow diagram of clause evaluation order. FROM and joins feed WHERE, which feeds GROUP BY, then HAVING, then SELECT, then ORDER BY, then LIMIT. Notes under WHERE and HAVING say that WHERE sees single rows and HAVING sees groups.",
+        "caption": "WHERE runs before groups exist and HAVING after, which is why aggregates are illegal in WHERE and why SELECT aliases are not visible in HAVING.",
+        "nodes": [
+          { "id": "from", "label": "FROM / JOIN", "kind": "storage", "col": 0, "row": 0, "sub": "build input rows" },
+          { "id": "where", "label": "WHERE", "kind": "decision", "col": 1, "row": 0, "sub": "keep rows" },
+          { "id": "group", "label": "GROUP BY", "kind": "service", "col": 2, "row": 0, "sub": "form groups" },
+          { "id": "having", "label": "HAVING", "kind": "decision", "col": 3, "row": 0, "sub": "keep groups" },
+          { "id": "select", "label": "SELECT", "kind": "service", "col": 4, "row": 0, "sub": "aggregates, alias" },
+          { "id": "order", "label": "ORDER BY", "kind": "state", "col": 4, "row": 2, "sub": "aliases visible" },
+          { "id": "limit", "label": "LIMIT", "kind": "good", "col": 4, "row": 4, "sub": "final rows" },
+          { "id": "wnote", "label": "single rows", "kind": "note", "col": 1, "row": 2, "sub": "no aggregates" },
+          { "id": "hnote", "label": "whole groups", "kind": "note", "col": 3, "row": 2, "sub": "count(*) >= 2" }
+        ],
+        "edges": [
+          { "from": "from", "to": "where" },
+          { "from": "where", "to": "group" },
+          { "from": "group", "to": "having" },
+          { "from": "having", "to": "select" },
+          { "from": "select", "to": "order" },
+          { "from": "order", "to": "limit" },
+          { "from": "where", "to": "wnote", "label": "sees", "style": "async" },
+          { "from": "having", "to": "hnote", "label": "sees", "style": "async" }
+        ],
+        "steps": [
+          { "edges": [0, 1, 6], "text": "FROM and joins build the input; WHERE tests one row at a time. No group exists yet, so `count(*)` in WHERE is an error." },
+          { "edges": [2, 7], "text": "GROUP BY folds rows into groups, and HAVING keeps or drops whole groups using aggregates." },
+          { "edges": [3], "text": "SELECT computes the output columns and names them. Because it runs after HAVING, `HAVING n >= 2` cannot see the alias `n` in Postgres." },
+          { "edges": [4, 5], "text": "ORDER BY and LIMIT run last, so they can sort by aliases and aggregates." }
+        ]
+      },
+      {
+        "id": "sqa-filter",
+        "type": "compare",
+        "title": "Filtering paid orders: WHERE versus FILTER",
+        "alt": "Comparison for seller 10, who has two paid orders and one refunded order. On the left, WHERE status = 'paid' drops the refunded row before grouping, so the order count is 2 and the refund count is 0, both wrong. On the right, all three rows are grouped and each aggregate applies its own FILTER, giving 3 orders, 35.50 paid revenue and 1 refund.",
+        "caption": "A WHERE condition applies to every measure. When only one measure needs a subset, filter inside that aggregate.",
+        "before": {
+          "label": "WHERE status = 'paid'",
+          "nodes": [
+            { "id": "in", "label": "s10: 3 orders", "kind": "state", "col": 0, "row": 0, "sub": "2 paid, 1 refund" },
+            { "id": "where", "label": "WHERE paid", "kind": "bad", "col": 1, "row": 0, "sub": "drops the refund" },
+            { "id": "agg", "label": "count(*) = 2", "kind": "bad", "col": 2, "row": 0, "sub": "should be 3" },
+            { "id": "ref", "label": "refunds = 0", "kind": "bad", "col": 2, "row": 2, "sub": "should be 1" }
+          ],
+          "edges": [
+            { "from": "in", "to": "where" },
+            { "from": "where", "to": "agg", "label": "2 rows" },
+            { "from": "agg", "to": "ref", "style": "fail" }
+          ]
+        },
+        "after": {
+          "label": "FILTER inside each aggregate",
+          "nodes": [
+            { "id": "in", "label": "s10: 3 orders", "kind": "state", "col": 0, "row": 1, "sub": "2 paid, 1 refund" },
+            { "id": "grp", "label": "GROUP BY seller", "kind": "service", "col": 1, "row": 1, "sub": "all 3 rows" },
+            { "id": "cnt", "label": "count(*) = 3", "kind": "good", "col": 2, "row": 0 },
+            { "id": "rev", "label": "paid = 35.50", "kind": "good", "col": 2, "row": 1, "sub": "FILTER paid" },
+            { "id": "ref", "label": "refunds = 1", "kind": "good", "col": 2, "row": 2, "sub": "FILTER refunded" }
+          ],
+          "edges": [
+            { "from": "in", "to": "grp" },
+            { "from": "grp", "to": "cnt" },
+            { "from": "grp", "to": "rev" },
+            { "from": "grp", "to": "ref" }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE orders (\n  id        int PRIMARY KEY,\n  seller_id int NOT NULL,\n  amount    numeric(10,2),\n  status    text NOT NULL CHECK (status IN ('paid', 'refunded', 'pending'))\n);",
+        "starter": "-- One row per seller with at least two orders:\n-- seller_id, order_count, paid_revenue, refunded_count\nSELECT seller_id,\n       count(*)    AS order_count,\n       sum(amount) AS paid_revenue,\n       count(*)    AS refunded_count\nFROM orders\nWHERE status = 'paid'\nGROUP BY seller_id\nHAVING count(*) >= 2;",
+        "solution": "SELECT seller_id,\n       count(*)                                                AS order_count,\n       coalesce(sum(amount) FILTER (WHERE status = 'paid'), 0) AS paid_revenue,\n       count(*) FILTER (WHERE status = 'refunded')             AS refunded_count\nFROM orders\nGROUP BY seller_id\nHAVING count(*) >= 2;",
+        "tests": [
+          {
+            "name": "three sellers with mixed statuses",
+            "seed": "INSERT INTO orders VALUES\n  (1, 10, 20.00, 'paid'), (2, 10, 15.50, 'paid'), (3, 10, 40.00, 'refunded'),\n  (4, 20, 99.00, 'paid'),\n  (5, 30, 12.00, 'refunded'), (6, 30, 8.00, 'pending');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[10, 3, 35.5, 1], [30, 2, 0, 1]] }
+          },
+          {
+            "name": "seller with exactly two paid orders",
+            "seed": "INSERT INTO orders VALUES\n  (1, 7, 10.00, 'paid'), (2, 7, 5.25, 'paid'),\n  (3, 8, 1.00, 'paid');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[7, 2, 15.25, 0]] }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "paid order with a NULL amount",
+            "seed": "INSERT INTO orders VALUES (1, 5, NULL, 'paid'), (2, 5, 10.00, 'paid');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[5, 2, 10, 0]] }
+          },
+          {
+            "name": "all paid amounts are NULL",
+            "seed": "INSERT INTO orders VALUES (1, 5, NULL, 'paid'), (2, 5, NULL, 'paid');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[5, 2, 0, 0]] }
+          },
+          {
+            "name": "every order refunded",
+            "seed": "INSERT INTO orders VALUES (1, 3, 10.00, 'refunded'), (2, 3, 20.00, 'refunded'), (3, 3, 30.00, 'refunded');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[3, 3, 0, 3]] }
+          },
+          {
+            "name": "only pending orders",
+            "seed": "INSERT INTO orders VALUES (1, 4, 50.00, 'pending'), (2, 4, 60.00, 'pending');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[4, 2, 0, 0]] }
+          },
+          {
+            "name": "no seller reaches two orders",
+            "seed": "INSERT INTO orders VALUES (1, 1, 5.00, 'paid'), (2, 2, 6.00, 'refunded'), (3, 3, 7.00, 'pending');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [] }
+          },
+          {
+            "name": "four sellers, one excluded",
+            "seed": "INSERT INTO orders VALUES\n  (1, 1, 10.00, 'paid'), (2, 1, 20.00, 'paid'), (3, 1, 5.00, 'refunded'),\n  (4, 2, 7.00, 'refunded'), (5, 2, 8.00, 'refunded'),\n  (6, 3, 100.00, 'paid'),\n  (7, 4, 1.00, 'pending'), (8, 4, 2.50, 'paid'), (9, 4, 2.50, 'paid'), (10, 4, 3.00, 'refunded');",
+            "expected": { "columns": ["seller_id", "order_count", "paid_revenue", "refunded_count"], "rows": [[1, 3, 30, 1], [2, 2, 0, 2], [4, 4, 5, 1]] }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE tasks (\n  id    int PRIMARY KEY,\n  team  text,\n  hours int\n);",
+        "starter": "-- One row per team: team, task_count, estimated_count, total_hours\nSELECT team,\n       count(hours) AS task_count,\n       count(hours) AS estimated_count,\n       sum(hours)   AS total_hours\nFROM tasks\nGROUP BY team;",
+        "solution": "SELECT team,\n       count(*)                AS task_count,\n       count(hours)            AS estimated_count,\n       coalesce(sum(hours), 0) AS total_hours\nFROM tasks\nGROUP BY team;",
+        "tests": [
+          {
+            "name": "one team has no estimates at all",
+            "seed": "INSERT INTO tasks VALUES (1, 'web', 3), (2, 'web', NULL), (3, 'web', 5), (4, 'data', NULL), (5, 'data', NULL);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [["web", 3, 2, 8], ["data", 2, 0, 0]] }
+          },
+          {
+            "name": "every task estimated",
+            "seed": "INSERT INTO tasks VALUES (1, 'ops', 2), (2, 'ops', 2);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [["ops", 2, 2, 4]] }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "tasks without a team",
+            "seed": "INSERT INTO tasks VALUES (1, NULL, 4), (2, NULL, NULL), (3, 'web', 1);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [[null, 2, 1, 4], ["web", 1, 1, 1]] }
+          },
+          {
+            "name": "zero-hour estimate counts as estimated",
+            "seed": "INSERT INTO tasks VALUES (1, 'qa', 0), (2, 'qa', NULL);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [["qa", 2, 1, 0]] }
+          },
+          {
+            "name": "team names are case-sensitive",
+            "seed": "INSERT INTO tasks VALUES (1, 'Web', 1), (2, 'web', 2), (3, 'web', NULL);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [["Web", 1, 1, 1], ["web", 2, 1, 2]] }
+          },
+          {
+            "name": "single unestimated task",
+            "seed": "INSERT INTO tasks VALUES (1, 'x', NULL);",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [["x", 1, 0, 0]] }
+          },
+          {
+            "name": "empty table",
+            "seed": "",
+            "expected": { "columns": ["team", "task_count", "estimated_count", "total_hours"], "rows": [] }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE customers (\n  id   int PRIMARY KEY,\n  name text NOT NULL\n);\nCREATE TABLE orders (\n  id          int PRIMARY KEY,\n  customer_id int NOT NULL REFERENCES customers(id),\n  status      text\n);",
+        "starter": "-- Customers with at least one order whose every order is 'paid':\n-- customer_id, name, order_count\nSELECT c.id     AS customer_id,\n       c.name,\n       count(*) AS order_count\nFROM customers c\nJOIN orders o ON o.customer_id = c.id\nWHERE o.status = 'paid'\nGROUP BY c.id, c.name;",
+        "solution": "SELECT c.id     AS customer_id,\n       c.name,\n       count(*) AS order_count\nFROM customers c\nJOIN orders o ON o.customer_id = c.id\nGROUP BY c.id\nHAVING count(*) = count(*) FILTER (WHERE o.status = 'paid');",
+        "tests": [
+          {
+            "name": "one customer has a refund, one has no orders",
+            "seed": "INSERT INTO customers VALUES (1, 'Ana'), (2, 'Bo'), (3, 'Cy');\nINSERT INTO orders VALUES (1, 1, 'paid'), (2, 1, 'paid'), (3, 2, 'paid'), (4, 2, 'refunded');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[1, "Ana", 2]] }
+          },
+          {
+            "name": "NULL status is not paid",
+            "seed": "INSERT INTO customers VALUES (1, 'Dee'), (2, 'Eli');\nINSERT INTO orders VALUES (1, 1, 'paid'), (2, 1, NULL), (3, 2, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[2, "Eli", 1]] }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "customer with no orders is excluded",
+            "seed": "INSERT INTO customers VALUES (1, 'Fay'), (2, 'Gus');\nINSERT INTO orders VALUES (1, 2, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[2, "Gus", 1]] }
+          },
+          {
+            "name": "nobody qualifies",
+            "seed": "INSERT INTO customers VALUES (1, 'Hal');\nINSERT INTO orders VALUES (1, 1, 'pending');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [] }
+          },
+          {
+            "name": "two customers share a name",
+            "seed": "INSERT INTO customers VALUES (1, 'Ivy'), (2, 'Ivy');\nINSERT INTO orders VALUES (1, 1, 'paid'), (2, 2, 'paid'), (3, 2, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[1, "Ivy", 1], [2, "Ivy", 2]] }
+          },
+          {
+            "name": "only NULL statuses",
+            "seed": "INSERT INTO customers VALUES (1, 'Jo'), (2, 'Kim');\nINSERT INTO orders VALUES (1, 1, NULL), (2, 1, NULL), (3, 2, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[2, "Kim", 1]] }
+          },
+          {
+            "name": "status must match exactly",
+            "seed": "INSERT INTO customers VALUES (1, 'Lee'), (2, 'Mo'), (3, 'Nia');\nINSERT INTO orders VALUES (1, 1, 'Paid'), (2, 2, 'paid'), (3, 2, 'paid '), (4, 3, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[3, "Nia", 1]] }
+          },
+          {
+            "name": "several customers, mixed histories",
+            "seed": "INSERT INTO customers VALUES (1, 'Lu'), (2, 'Max'), (3, 'Ned'), (4, 'Ola'), (5, 'Pia');\nINSERT INTO orders VALUES\n  (1, 1, 'paid'), (2, 1, 'paid'), (3, 1, 'paid'),\n  (4, 2, 'paid'), (5, 2, 'pending'),\n  (6, 3, 'refunded'),\n  (7, 4, 'paid');",
+            "expected": { "columns": ["customer_id", "name", "order_count"], "rows": [[1, "Lu", 3], [4, "Ola", 1]] }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "WITH t(x) AS (VALUES (1), (NULL), (3))\nSELECT count(*), count(x), sum(x), avg(x) FROM t",
+        "choices": [
+          "3 | 2 | 4 | 2",
+          "3 | 3 | 4 | 1.3333333333333333",
+          "2 | 2 | 4 | 2",
+          "3 | 2 | NULL | NULL"
+        ],
+        "answer": 0,
+        "explain": "`count(*)` counts all three rows; `count(x)`, `sum` and `avg` skip the NULL, so the average is 4 / 2, not 4 / 3."
+      },
+      {
+        "code": "SELECT count(*), sum(amount)\nFROM (VALUES (5.00)) AS t(amount)\nWHERE amount > 10",
+        "choices": [
+          "0 | 0",
+          "0 | NULL",
+          "(no rows)"
+        ],
+        "answer": 1,
+        "explain": "Without GROUP BY an aggregate query returns exactly one row even when WHERE removes everything. `count` of nothing is 0; `sum` of nothing is NULL."
+      },
+      {
+        "code": "SELECT team, owner, count(*)\nFROM (VALUES ('web', 'ana')) AS t(team, owner)\nGROUP BY team",
+        "choices": [
+          "web | ana | 1",
+          "ERROR: column \"t.owner\" must appear in the GROUP BY clause or be used in an aggregate function",
+          "web | NULL | 1"
+        ],
+        "answer": 1,
+        "explain": "Postgres does not pick an arbitrary value for a non-grouped column, even when the group has one row. Group by it, aggregate it, or group by a primary key it depends on."
+      },
+      {
+        "code": "SELECT sum(x) / count(*), round(avg(x), 2)\nFROM (VALUES (1), (2)) AS t(x)",
+        "choices": [
+          "1.5 | 1.5",
+          "1 | 1.5",
+          "1 | 2",
+          "2 | 1.5"
+        ],
+        "answer": 1,
+        "explain": "`sum` of an int column is bigint and `count` is bigint, so 3 / 2 is integer division: 1. `avg` of integers returns numeric: 1.50."
+      },
+      {
+        "code": "WITH o(status) AS (VALUES ('paid'), (NULL))\nSELECT bool_and(status = 'paid'), count(*) FILTER (WHERE status = 'paid')\nFROM o",
+        "choices": [
+          "false | 1",
+          "NULL | 1",
+          "true | 1",
+          "true | 2"
+        ],
+        "answer": 2,
+        "explain": "`status = 'paid'` is NULL for the second row, and `bool_and` skips NULL inputs like every aggregate, so it sees only `true`. That is why \"every order paid\" is safer as a count comparison."
+      },
+      {
+        "code": "SELECT x, count(*)\nFROM (VALUES (1), (1), (2)) AS t(x)\nWHERE count(*) > 1\nGROUP BY x",
+        "choices": [
+          "1 | 2",
+          "ERROR: aggregate functions are not allowed in WHERE",
+          "(no rows)"
+        ],
+        "answer": 1,
+        "explain": "WHERE runs before grouping, when no aggregate value exists. Move the condition to `HAVING count(*) > 1`."
+      },
+      {
+        "code": "SELECT count(DISTINCT x), string_agg(x, ',' ORDER BY x)\nFROM (VALUES ('b'), ('a'), ('b'), (NULL)) AS t(x)",
+        "choices": [
+          "2 | a,b,b",
+          "3 | a,b,b,",
+          "2 | b,a,b",
+          "3 | a,b"
+        ],
+        "answer": 0,
+        "explain": "DISTINCT ignores the NULL and folds the two 'b's, giving 2. `string_agg` skips the NULL, keeps duplicates, and follows the ORDER BY inside the call."
+      }
+    ],
+    "tip": "Before writing anything, say the grain out loud: \"one row per seller, keeping sellers with two or more orders\". Then list each measure and its subset. That sentence tells the interviewer you know where GROUP BY, FILTER and HAVING go, and it is where you catch the 'should zero show as 0 or NULL?' question.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "edge-case-checklist"
+      ],
+      "lessons": [
+        "sql-select-basics"
+      ]
+    }
+  }
+}

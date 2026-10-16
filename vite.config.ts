@@ -8,8 +8,9 @@ import { resolve } from 'node:path'
 import type { Plugin } from 'vite'
 import { PYODIDE_VERSION } from './src/runner/pyodide-version'
 import { TYPESCRIPT_VERSION } from './src/runner/ts-version'
+import { PGLITE_VERSION } from './src/runner/pglite-version'
 import { libClosure } from './src/runner/ts-core'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 let outputDirectory = resolve('dist')
 
@@ -71,6 +72,35 @@ function typescriptAssets(): Plugin {
   }
 }
 
+// Postgres (PGlite) is served unbundled from pglite/<version>/ so its loader finds pglite.wasm and pglite.data
+// next to index.js. The SQL lab worker imports it on first use; the service worker caches it at runtime.
+const PGLITE_DIST = resolve('node_modules/@electric-sql/pglite/dist')
+const PGLITE_TYPES: Record<string, string> = { js: 'text/javascript', wasm: 'application/wasm', data: 'application/octet-stream' }
+function pgliteFiles() {
+  const top = readdirSync(PGLITE_DIST).filter(name => name === 'index.js' || /^chunk-\w+\.js$/.test(name) || ['pglite.wasm', 'pglite.data', 'initdb.wasm'].includes(name))
+  return [...top, ...readdirSync(resolve(PGLITE_DIST, 'fs')).filter(name => name.endsWith('.js')).map(name => `fs/${name}`)]
+}
+function pgliteAssets(): Plugin {
+  const prefix = `pglite/${PGLITE_VERSION}/`
+  return {
+    name: 'devprep-pglite-assets',
+    configureServer(server) {
+      const files = new Set(pgliteFiles())
+      server.middlewares.use((request, response, next) => {
+        const path = new URL(request.url ?? '/', 'http://localhost').pathname
+        const at = path.indexOf(`/${prefix}`)
+        const name = at >= 0 ? path.slice(at + prefix.length + 1) : ''
+        if (!files.has(name)) return next()
+        response.setHeader('Content-Type', PGLITE_TYPES[name.split('.').pop()!])
+        createReadStream(resolve(PGLITE_DIST, name)).pipe(response)
+      })
+    },
+    async generateBundle() {
+      for (const name of pgliteFiles()) this.emitFile({ type: 'asset', fileName: `${prefix}${name}`, source: await readFile(resolve(PGLITE_DIST, name)) })
+    },
+  }
+}
+
 export default defineConfig({
   base: './',
   define: {
@@ -80,6 +110,7 @@ export default defineConfig({
     react(),
     pyodideAssets(),
     typescriptAssets(),
+    pgliteAssets(),
     { name: 'devprep-output-directory', configResolved(config) { outputDirectory = resolve(config.root, config.build.outDir) } },
     VitePWA({
       strategies: 'injectManifest',
@@ -105,7 +136,7 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'],
-        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**', '**/typescript/**'],
+        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**', '**/typescript/**', '**/pglite/**'],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         rollupFormat: 'iife',
         manifestTransforms: [async entries => ({

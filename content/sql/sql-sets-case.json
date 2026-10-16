@@ -1,0 +1,538 @@
+{
+  "id": "sql-sets-case",
+  "track": "sql",
+  "title": "Set operations and CASE",
+  "minutes": 50,
+  "level": "se",
+  "paths": ["swe", "senior"],
+  "summary": "`UNION` versus `UNION ALL` and what the dedup costs, `INTERSECT` and `EXCEPT` with their `ALL` multiset forms, the rules for combining queries (columns, names, `ORDER BY`, precedence, NULLs), `EXCEPT` as an anti-join, and `CASE` for bands, pivots and custom sort orders, plus `COALESCE`, `NULLIF`, `GREATEST` and `LEAST`.",
+  "prerequisites": ["sql-select-basics"],
+  "prerequisiteNotes": "sql-select-basics: SELECT, WHERE, GROUP BY with COUNT/SUM, and three-valued NULL logic. Set operations combine whole SELECT results, and CASE inside aggregates only makes sense once grouping and `count(col)` skipping NULLs are second nature.",
+  "objectives": [
+    "Choose between `UNION` and `UNION ALL` on semantics and cost, and explain what the dedup step does in the plan.",
+    "Compute `INTERSECT`, `EXCEPT` and their `ALL` forms by hand, including duplicates and NULLs, and say why set operations treat NULLs as equal.",
+    "Apply the combining rules: matching column count and types, names from the first branch, `ORDER BY`/`LIMIT` on the whole result, and `INTERSECT` binding tighter.",
+    "Use `EXCEPT` as an anti-join and compare it with `NOT EXISTS` and `NOT IN`.",
+    "Write searched and simple `CASE` expressions correctly: first match wins, a missing `ELSE` gives NULL, half-open bands with NULL handled first.",
+    "Build a pivot report with conditional aggregation and a custom sort order with `CASE` in `ORDER BY`, and use `COALESCE`, `NULLIF`, `GREATEST` and `LEAST` safely."
+  ],
+  "concepts": [
+    {
+      "title": "UNION versus UNION ALL",
+      "body": "Both stack the rows of two queries. `UNION` (short for `UNION DISTINCT`) then removes duplicate rows from the **whole combined result**, including duplicates that were already inside one branch; `UNION ALL` just appends. The dedup is not free: Postgres must hash or sort every row (a `HashAggregate` or `Sort` + `Unique` above the `Append` in `EXPLAIN`), which needs memory, may spill to disk past `work_mem`, and cannot stream the first row out until it has seen every input row. So say the semantics first: use `UNION` when the same row can come from both branches and you want it once; use `UNION ALL` when the branches cannot overlap (different partitions, a label column that differs per branch) or when duplicates are meaningful, as in counting. Dedup compares entire rows, so adding a `source` label makes rows from different branches distinct and `UNION` then removes nothing across branches.",
+      "code": "-- every address we have ever contacted, once each\nSELECT email FROM customers\nUNION\nSELECT email FROM newsletter_signups;\n\n-- disjoint by construction: skip the dedup\nSELECT id, total FROM orders_2025\nUNION ALL\nSELECT id, total FROM orders_archive\nWHERE created_at < DATE '2025-01-01';   -- this WHERE belongs to the second SELECT only",
+      "diagram": "sqc-union-cost"
+    },
+    {
+      "title": "INTERSECT, EXCEPT and the ALL variants",
+      "body": "`INTERSECT` returns rows present in both inputs; `EXCEPT` returns rows of the left input that are absent from the right. Without `ALL` both return distinct rows. With `ALL` they do **multiset arithmetic**: if a row appears `m` times on the left and `n` times on the right, `UNION ALL` gives `m + n` copies, `INTERSECT ALL` gives `min(m, n)` and `EXCEPT ALL` gives `max(m - n, 0)`. That last one is exactly what reconciliation needs: each copy on the right cancels one copy on the left. `EXCEPT` is not symmetric, so `A EXCEPT B` and `B EXCEPT A` answer different questions. All six forms are standard SQL and Postgres supports them; some engines (SQL Server, for one) offer only the distinct forms.",
+      "code": "WITH a(x) AS (VALUES (1), (1), (2), (3), (NULL)),\n     b(x) AS (VALUES (1), (3), (3), (4), (NULL))\nSELECT x FROM a EXCEPT ALL SELECT x FROM b;   -- 1, 2\n\n-- same a and b:\n-- UNION         -> 1, 2, 3, 4, NULL   (5 rows)\n-- INTERSECT     -> 1, 3, NULL         (NULL matches NULL)\n-- INTERSECT ALL -> 1, 3, NULL         (min of the counts)\n-- EXCEPT        -> 2                  (1 appears in b, so it is gone)",
+      "diagram": "sqc-set-counts"
+    },
+    {
+      "title": "The rules for combining queries",
+      "body": "Every branch must return the **same number of columns**, and each column position must resolve to one type (`SELECT 1 UNION SELECT 'a'` fails because `'a'` cannot be read as an integer). Output **names come from the first branch**; aliases in later branches are ignored. A trailing `ORDER BY`, `LIMIT` or `OFFSET` applies to the **whole result**, and that `ORDER BY` may use only output column names or positions, not expressions: `ORDER BY x + 0` errors. To sort or limit one branch, wrap it in parentheses or a subquery. **Precedence**: `INTERSECT` binds tighter than `UNION` and `EXCEPT`, which are evaluated left to right, so `A UNION B INTERSECT C` means `A UNION (B INTERSECT C)`; add parentheses rather than relying on it. Finally, set operations compare rows as **not distinct**, so two NULLs count as equal, unlike `=` in `WHERE` or `JOIN ... ON`, where `NULL = NULL` is unknown.",
+      "code": "SELECT id, 'customer' AS kind FROM customers\nUNION ALL\nSELECT id, 'supplier' FROM suppliers          -- name 'kind' comes from branch 1\nORDER BY kind, id;                            -- sorts the combined rows\n\n(SELECT id FROM tickets ORDER BY opened_at DESC LIMIT 5)   -- per-branch limit\nUNION ALL\n(SELECT id FROM tickets WHERE priority = 1);\n\n-- A UNION B INTERSECT C  =  A UNION (B INTERSECT C)\n-- A EXCEPT B UNION C     =  (A EXCEPT B) UNION C"
+    },
+    {
+      "title": "EXCEPT as an anti-join",
+      "body": "\"Customers who never ordered\" is an anti-join, and `EXCEPT` is one of four ways to write it. `SELECT id FROM customers EXCEPT SELECT customer_id FROM orders` is short and **NULL-safe**: a NULL `customer_id` in `orders` does nothing, while `NOT IN` with that NULL returns no rows at all. Its limits: it returns only the compared columns (join back for the name), it deduplicates, and both inputs are read in full and hashed or sorted. `NOT EXISTS` returns any columns you like, keeps the outer rows as they are, and the planner turns it into a `Hash Anti Join` that can use an index on `orders(customer_id)`. Prefer `NOT EXISTS` in production queries and reach for `EXCEPT` when you are comparing whole rows, which is where it shines: \"which rows of this table are not in that one\" across several columns, NULLs included.",
+      "code": "-- ids only, NULL-safe, distinct\nSELECT id FROM customers\nEXCEPT\nSELECT customer_id FROM orders;\n\n-- any columns, index-friendly, the usual production choice\nSELECT c.id, c.name\nFROM customers c\nWHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id);\n\n-- broken if orders.customer_id contains a NULL: returns nothing\nSELECT id FROM customers WHERE id NOT IN (SELECT customer_id FROM orders);"
+    },
+    {
+      "title": "CASE: searched, simple, first match wins",
+      "body": "A **searched** `CASE WHEN cond THEN ...` tests conditions top to bottom and returns the result of the **first** condition that is true; later branches are not considered, even if they would also be true. A condition that is NULL is not true, so the row falls through to the next branch. With no `ELSE`, a row that matches nothing gets **NULL**. A **simple** `CASE expr WHEN v THEN ...` compares with `=`, so `CASE x WHEN NULL` never matches; use `WHEN x IS NULL` in a searched CASE. For **bands**, test NULL first, then use half-open intervals in ascending order with `<` (`< 50`, `< 200`, `ELSE`), so every boundary value lands in exactly one band and no gap appears between `49.99` and `50.00`. All branches must share a type, and Postgres evaluates only the branches it needs, so `CASE WHEN qty = 0 THEN 0 ELSE total / qty END` is safe (aggregates inside a branch are still computed for all rows first). Postgres also has `width_bucket(amount, ARRAY[50, 200]::numeric[])`, which returns band numbers 0, 1, 2 for the same thresholds.",
+      "code": "SELECT id,\n       CASE priority WHEN 1 THEN 'urgent'\n                     WHEN 2 THEN 'high'\n                     ELSE 'normal' END        AS label,  -- simple: compares with =\n       CASE WHEN amount IS NULL THEN 'unknown'\n            WHEN amount < 50    THEN 'small'\n            WHEN amount < 200   THEN 'medium'\n            ELSE 'large' END                  AS band    -- searched: first true wins\nFROM orders;",
+      "diagram": "sqc-case-chain"
+    },
+    {
+      "title": "CASE inside aggregates and in ORDER BY",
+      "body": "A **pivot** (crosstab) turns row values into columns: one output row per group, one column per value. Write one aggregate per column with a CASE that keeps only the rows for that column: `count(CASE WHEN status = 'open' THEN 1 END)` counts open tickets because rows that do not match produce NULL and `count` skips NULLs. The classic bug is `ELSE 0` inside `count`: zero is not NULL, so every row is counted. With `sum` the `ELSE 0` is harmless and makes a group with no matching rows show 0 instead of NULL. Postgres and the SQL standard also offer `count(*) FILTER (WHERE status = 'open')`, which reads better. Columns are fixed when the query is parsed, so a pivot over values you do not know in advance needs generated SQL or a long-format result. CASE in `ORDER BY` gives a **custom sort order** for labels that do not sort alphabetically, with a tie-breaker for a total order.",
+      "code": "SELECT agent_id,\n       count(CASE WHEN status = 'open' THEN 1 END)          AS open_count,\n       count(*) FILTER (WHERE status = 'closed')            AS closed_count,\n       sum(CASE WHEN status = 'closed' THEN minutes ELSE 0 END) AS closed_minutes\nFROM tickets\nGROUP BY agent_id;\n\nSELECT id, status\nFROM tickets\nORDER BY CASE status WHEN 'open' THEN 1\n                     WHEN 'pending' THEN 2\n                     WHEN 'closed' THEN 3\n                     ELSE 4 END,\n         id;                                                -- tie-breaker",
+      "diagram": "sqc-pivot"
+    },
+    {
+      "title": "COALESCE, NULLIF, GREATEST and LEAST",
+      "body": "`COALESCE(a, b, c)` returns the first non-NULL argument and stops evaluating there; all arguments must resolve to one type, so `coalesce(int_col, 'n/a')` fails until you cast the number to text. `NULLIF(a, b)` returns NULL when `a = b`, else `a`: `total / NULLIF(qty, 0)` turns a division-by-zero error into NULL, and `NULLIF(trim(s), '')` turns blank strings into NULL before a `COALESCE`. `GREATEST` and `LEAST` pick the largest or smallest argument. In Postgres they **ignore NULLs** and return NULL only when every argument is NULL; MySQL and Oracle return NULL if any argument is NULL, so mention the dialect if you rely on it. The arithmetic operators do not ignore NULLs: `3 + NULL` is NULL.",
+      "code": "SELECT coalesce(nickname, first_name, 'guest')     AS display_name,\n       round(revenue / NULLIF(visits, 0), 2)        AS revenue_per_visit,\n       GREATEST(last_login_at, last_order_at)       AS last_seen,     -- NULLs ignored (Postgres)\n       LEAST(discount, 0.30)                        AS capped_discount,\n       coalesce(NULLIF(trim(phone), ''), 'none')    AS phone\nFROM accounts;"
+    }
+  ],
+  "example": "-- Segment recent customers by whether they bought and whether they opened tickets\nWITH buyers AS (\n  SELECT customer_id FROM orders WHERE ordered_on >= DATE '2025-06-01'\n),\naskers AS (\n  SELECT customer_id FROM tickets WHERE opened_on >= DATE '2025-06-01'\n),\nsegments AS (\n  SELECT customer_id, 'buying, no tickets' AS segment\n  FROM (SELECT customer_id FROM buyers EXCEPT SELECT customer_id FROM askers) s\n  UNION ALL\n  SELECT customer_id, 'buying with tickets'\n  FROM (SELECT customer_id FROM buyers INTERSECT SELECT customer_id FROM askers) s\n  UNION ALL\n  SELECT customer_id, 'tickets, no orders'\n  FROM (SELECT customer_id FROM askers EXCEPT SELECT customer_id FROM buyers) s\n)\nSELECT segment, count(*) AS customers\nFROM segments\nGROUP BY segment\nORDER BY CASE segment WHEN 'tickets, no orders' THEN 1\n                      WHEN 'buying with tickets' THEN 2\n                      ELSE 3 END;\n-- The three branches are disjoint by construction, so UNION ALL is correct and skips a dedup.",
+  "task": "Tables `agents(id, name)` and `tickets(id, agent_id, status, opened_on)`. Build a status board with **one row per agent**, including agents with no tickets. Return `agent_id`, `agent_name`, `open_count`, `pending_count`, `closed_count`, `total`, in that order. The three count columns count that agent's tickets whose `status` is exactly `'open'`, `'pending'` or `'closed'`; tickets with any other status or a NULL status count only in `total`. Agents with no tickets show 0 in every count column. Tickets with a NULL `agent_id` (unassigned) are ignored. Two agents can share a name; they are still separate rows. Row order does not matter.",
+  "starter": "-- Status board: agent_id, agent_name, open_count, pending_count, closed_count, total\nSELECT a.id AS agent_id,\n       a.name AS agent_name,\n       count(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END)    AS open_count,\n       count(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,\n       count(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END)  AS closed_count,\n       count(*) AS total\nFROM agents a\nJOIN tickets t ON t.agent_id = a.id\nGROUP BY a.id, a.name;\n",
+  "hints": [
+    "`count` skips NULLs, not zeros. What does `CASE WHEN t.status = 'open' THEN 1 ELSE 0 END` produce for a closed ticket, and does `count` skip it? And which join keeps an agent who has no tickets?",
+    "Start `FROM agents a LEFT JOIN tickets t ON t.agent_id = a.id`, drop the `ELSE 0` from each counted CASE (or use `count(*) FILTER (WHERE ...)`), and compute `total` as `count(t.id)` so the NULL-filled row of an agent without tickets counts as 0."
+  ],
+  "solution": "SELECT a.id   AS agent_id,\n       a.name AS agent_name,\n       count(CASE WHEN t.status = 'open' THEN 1 END)    AS open_count,\n       count(CASE WHEN t.status = 'pending' THEN 1 END) AS pending_count,\n       count(CASE WHEN t.status = 'closed' THEN 1 END)  AS closed_count,\n       count(t.id) AS total\nFROM agents a\nLEFT JOIN tickets t ON t.agent_id = a.id\nGROUP BY a.id, a.name;\n\nThe grain is one row per agent, so the query starts from `agents` and `LEFT JOIN`s the tickets: an agent with no tickets survives as one row whose ticket columns are all NULL. Each pivot column is a conditional count: the CASE yields 1 for a matching ticket and NULL otherwise (no `ELSE`), and `count` counts only non-NULL values, so other statuses, NULL statuses and the NULL filler row all count as 0. `total` uses `count(t.id)` rather than `count(*)`, because `count(*)` would count the filler row of a ticketless agent as 1. Grouping by `a.id` keeps two agents with the same name apart, and unassigned tickets never join to any agent. The starter fails on both fronts: `ELSE 0` makes every count equal the total, and the inner join drops agents without tickets. `count(*) FILTER (WHERE t.status = 'open')` is an equivalent Postgres spelling. One pass over the tickets, one hash aggregate: O(agents + tickets).",
+  "checklist": [
+    "The result has exactly one row per agent, including agents with no tickets, and two agents with the same name stay separate.",
+    "Conditional counts have no `ELSE 0` (or use `FILTER`), so tickets of other statuses and NULL statuses are not counted.",
+    "`total` counts tickets, not joined rows: an agent without tickets shows 0, not 1.",
+    "Columns are named and ordered exactly as asked: `agent_id`, `agent_name`, `open_count`, `pending_count`, `closed_count`, `total`.",
+    "I can say why `UNION` costs more than `UNION ALL` and when each is correct."
+  ],
+  "pitfalls": [
+    "Writing `UNION` out of habit when the branches cannot overlap, paying for a hash or sort of every row and sometimes silently collapsing rows that were legitimately duplicated.",
+    "Putting `ELSE 0` inside `count(CASE ...)`: zero is not NULL, so every row is counted.",
+    "Using `count(*)` after a `LEFT JOIN` and reporting 1 instead of 0 for groups with no matching rows.",
+    "Ordering band conditions wrongly: `WHEN amount > 50 ... WHEN amount > 200` never reaches the second branch, because the first true WHEN wins.",
+    "Forgetting NULL in a CASE: `WHEN amount < 50` is not true for NULL, so the row falls to `ELSE` and a missing amount is labelled `'large'`.",
+    "Writing `CASE x WHEN NULL THEN ...`, which compares with `=` and never matches.",
+    "Expecting `ORDER BY` or `LIMIT` after the last branch to apply only to that branch; it applies to the whole combined result.",
+    "Assuming `GREATEST(a, NULL)` is NULL in Postgres (it ignores NULLs) or that it ignores NULLs in MySQL (it does not)."
+  ],
+  "walkthrough": [
+    {
+      "title": "Read a set operation as row matching, not a Venn diagram",
+      "body": "Venn circles suggest that each value is either in a set or not. SQL set operations work on **rows** and, with `ALL`, on **copies of rows**: line up each row of the left input with an equal row of the right input (whole row, column by column, NULL equal to NULL), cross off matched pairs, and see what is left. `INTERSECT ALL` keeps the matched pairs, `EXCEPT ALL` keeps the left rows that found no partner, and the distinct forms do the same on deduplicated inputs. Drawing it this way also makes the difference from a join obvious: a join pairs rows by a condition and can multiply them; a set operation never adds columns and never multiplies rows.",
+      "diagram": "sqc-set-rows"
+    },
+    {
+      "title": "Solve the pivot in three moves",
+      "body": "First, state the grain out loud: \"one row per agent, including agents with no tickets\". That decides the driving table (`agents`) and the join (`LEFT JOIN tickets`). Second, write one conditional aggregate per output column and check each against the NULL filler row a ticketless agent produces: `count(CASE WHEN t.status = 'open' THEN 1 END)` gives 0 there, and so does `count(t.id)`, while `count(*)` would give 1. Third, group by the agent's key, not the name. Before running it, test the edge cases mentally: an unknown status, a NULL status, an unassigned ticket, two agents named Sam.",
+      "code": "SELECT a.id AS agent_id, a.name AS agent_name,\n       count(*) FILTER (WHERE t.status = 'open')    AS open_count,\n       count(*) FILTER (WHERE t.status = 'pending') AS pending_count,\n       count(*) FILTER (WHERE t.status = 'closed')  AS closed_count,\n       count(t.id) AS total\nFROM agents a\nLEFT JOIN tickets t ON t.agent_id = a.id\nGROUP BY a.id, a.name;"
+    },
+    {
+      "title": "Reconcile two tables with EXCEPT ALL",
+      "body": "Reconciliation asks for the **symmetric difference** with a label: rows only in the ledger, rows only in the bank feed. A join on `l.ref = b.ref AND l.amount = b.amount` looks natural but fails twice: NULL amounts never satisfy `=`, so identical rows are reported as missing, and with duplicates every ledger copy matches the single bank copy, so the extra copies vanish. `EXCEPT ALL` fixes both: it compares whole rows with NULLs equal, and each copy on one side cancels exactly one copy on the other. Run it in both directions, label each direction, and combine with `UNION ALL` (the labels make the branches disjoint, and `UNION` would collapse legitimate duplicates). An equivalent formulation that scales to more sources: `UNION ALL` both tables with a `+1`/`-1` side marker, `GROUP BY` every column (grouping also treats NULLs as one group) and keep groups whose sum is not zero.",
+      "code": "SELECT 'ledger_only' AS source, txn_ref, amount\nFROM (SELECT txn_ref, amount FROM ledger_entries\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM bank_lines) l\nUNION ALL\nSELECT 'bank_only', txn_ref, amount\nFROM (SELECT txn_ref, amount FROM bank_lines\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM ledger_entries) b;",
+      "diagram": "sqc-reconcile"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Order size bands",
+      "prompt": "Table `orders(id, customer, amount)`. Put each order into a band: `'small'` when `amount` is under 50.00, `'medium'` from 50.00 up to but not including 200.00, `'large'` at 200.00 and above, and `'unknown'` when `amount` is NULL. Return `band`, `order_count`, `total_amount`: the number of orders in the band and the sum of their amounts (0 for the `'unknown'` band). Only bands that contain at least one order appear. Row order does not matter.",
+      "hints": [
+        "Test `amount IS NULL` first, then use `<` thresholds in ascending order so 50.00 and 200.00 each land in exactly one band.",
+        "Compute the band in a subquery (or repeat the CASE in `GROUP BY`), then `count(*)` and `coalesce(sum(amount), 0)` per band."
+      ],
+      "solution": "SELECT band,\n       count(*) AS order_count,\n       coalesce(sum(amount), 0) AS total_amount\nFROM (\n  SELECT amount,\n         CASE WHEN amount IS NULL THEN 'unknown'\n              WHEN amount < 50    THEN 'small'\n              WHEN amount < 200   THEN 'medium'\n              ELSE 'large' END AS band\n  FROM orders\n) o\nGROUP BY band;",
+      "checklist": [
+        "50.00 is medium, 200.00 is large, 49.99 is small and 199.99 is medium.",
+        "A NULL amount lands in `'unknown'`, not in the ELSE band, and that band's total is 0, not NULL.",
+        "Bands with no orders do not appear, and an empty table returns no rows."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Reconcile the ledger with the bank feed",
+      "prompt": "Tables `ledger_entries(txn_ref, amount)` and `bank_lines(txn_ref, amount)`, neither with a key. Return `source`, `txn_ref`, `amount` for every row that has no identical partner on the other side, with `source` = `'ledger_only'` or `'bank_only'`. Rows are identical when both `txn_ref` and `amount` are equal, treating two NULLs as equal. Duplicates count: each copy needs its own partner, so a row three times in the ledger and once in the bank appears twice as `'ledger_only'`. References are compared exactly (no trimming or case folding). Row order does not matter.",
+      "hints": [
+        "Which set operation subtracts copies (`m - n`) and treats NULLs as equal? Use it in each direction.",
+        "`(ledger EXCEPT ALL bank)` labelled `'ledger_only'`, `UNION ALL`, `(bank EXCEPT ALL ledger)` labelled `'bank_only'`. Put the label outside the `EXCEPT ALL`, in an outer SELECT."
+      ],
+      "solution": "SELECT 'ledger_only' AS source, txn_ref, amount\nFROM (SELECT txn_ref, amount FROM ledger_entries\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM bank_lines) l\nUNION ALL\nSELECT 'bank_only', txn_ref, amount\nFROM (SELECT txn_ref, amount FROM bank_lines\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM ledger_entries) b;",
+      "checklist": [
+        "Rows with NULL amounts or NULL references match identical rows on the other side.",
+        "Extra duplicate copies are reported once per unmatched copy, in the right direction.",
+        "The two directions are combined with `UNION ALL`, so legitimate duplicate differences are not collapsed."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "A nightly report does `UNION` over two 50-million-row queries and is slow. What do you check?",
+      "answer": "First whether the dedup is needed: if the branches cannot overlap (different partitions, a label column) switch to `UNION ALL`, which only appends and streams. If dedup is needed, `EXPLAIN (ANALYZE, BUFFERS)` shows a `HashAggregate` or `Sort` + `Unique` over the `Append`; check whether it spills (raise `work_mem` for that session) and push filters and column pruning into each branch so fewer and narrower rows reach the dedup. Sometimes dedup on a key is cheaper than on the whole row, for example `NOT EXISTS` from the second branch against the first."
+    },
+    {
+      "question": "Product wants the pivot to grow a column whenever a new status appears. How?",
+      "answer": "SQL fixes the result columns when the query is parsed, so a plain query cannot invent columns from data. Options: return the long format (`agent_id, status, count`) and pivot in the application or BI tool; return one `jsonb` column with `jsonb_object_agg(status, n)`; or generate the SQL from `SELECT DISTINCT status` and run it dynamically. Postgres's `tablefunc` extension has `crosstab`, but it still needs the column list spelled out in the call."
+    },
+    {
+      "question": "When would you pick `EXCEPT` over `NOT EXISTS` for an anti-join?",
+      "answer": "`EXCEPT` when you compare whole rows across several columns, want NULLs treated as equal without writing `IS NOT DISTINCT FROM` per column, and only need the compared columns back, as in data diffs and reconciliation. `NOT EXISTS` for the usual \"rows of A with no match in B\" in application queries: it returns any columns, keeps duplicates of A, and becomes an anti-join that can use an index on B's key. Avoid `NOT IN` against a nullable column."
+    },
+    {
+      "question": "The reconciliation has to run on 200 million rows per side. Does EXCEPT ALL still work?",
+      "answer": "It works but each direction hashes or sorts both full inputs, so it does the work twice and needs a lot of memory or temp disk. The single-pass version is `UNION ALL` both sides with a `+1`/`-1` marker, `GROUP BY` all compared columns and keep `sum <> 0`, which also tells you the direction and the copy count. At larger scale, partition by business date and compare per-partition counts and sums (or hashes) first, then diff only partitions that disagree."
+    }
+  ],
+  "takeaways": [
+    "`UNION` deduplicates the whole result and costs a hash or sort; `UNION ALL` appends. Choose on semantics, and default to `UNION ALL` when branches cannot overlap.",
+    "`INTERSECT ALL` keeps `min(m, n)` copies and `EXCEPT ALL` keeps `max(m - n, 0)`; set operations compare whole rows and treat NULLs as equal.",
+    "Names come from the first branch, `ORDER BY`/`LIMIT` apply to the whole result, and `INTERSECT` binds tighter than `UNION` and `EXCEPT`.",
+    "Searched CASE returns the first true branch; NULL conditions fall through and a missing `ELSE` gives NULL, so handle NULL first and use half-open bands.",
+    "Pivot with `count(CASE WHEN ... THEN 1 END)` or `FILTER`, never `ELSE 0` inside `count`; in Postgres `GREATEST`/`LEAST` ignore NULLs, arithmetic does not."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqc-union-cost",
+        "type": "compare",
+        "title": "UNION versus UNION ALL in the plan",
+        "alt": "Comparison of two plans over the same two tables of one million rows each. On the left, UNION appends both inputs into two million rows and then runs a HashAggregate that must hash every row before emitting distinct rows. On the right, UNION ALL only appends and streams all two million rows, duplicates kept.",
+        "caption": "UNION adds a dedup step over every row; UNION ALL is a plain append that streams. Pay for the dedup only when overlap is possible and unwanted.",
+        "before": {
+          "label": "UNION: append, then dedup",
+          "nodes": [
+            {"id": "a", "label": "orders_2025", "kind": "db", "col": 0, "row": 0, "sub": "1M rows"},
+            {"id": "b", "label": "orders_archive", "kind": "db", "col": 0, "row": 2, "sub": "1M rows"},
+            {"id": "app", "label": "Append", "kind": "service", "col": 1, "row": 1, "sub": "2M rows"},
+            {"id": "dedup", "label": "HashAggregate", "kind": "bad", "col": 2, "row": 1, "sub": "hash all 2M rows"},
+            {"id": "out", "label": "distinct rows", "kind": "state", "col": 2, "row": 3, "sub": "after last input"}
+          ],
+          "edges": [
+            {"from": "a", "to": "app"},
+            {"from": "b", "to": "app"},
+            {"from": "app", "to": "dedup", "label": "every row"},
+            {"from": "dedup", "to": "out", "label": "emit"}
+          ]
+        },
+        "after": {
+          "label": "UNION ALL: append only",
+          "nodes": [
+            {"id": "a", "label": "orders_2025", "kind": "db", "col": 0, "row": 0, "sub": "1M rows"},
+            {"id": "b", "label": "orders_archive", "kind": "db", "col": 0, "row": 2, "sub": "1M rows"},
+            {"id": "app", "label": "Append", "kind": "good", "col": 1, "row": 1, "sub": "streams rows"},
+            {"id": "out", "label": "all 2M rows", "kind": "good", "col": 2, "row": 1, "sub": "duplicates kept"}
+          ],
+          "edges": [
+            {"from": "a", "to": "app"},
+            {"from": "b", "to": "app"},
+            {"from": "app", "to": "out", "label": "as they come"}
+          ]
+        }
+      },
+      {
+        "id": "sqc-set-counts",
+        "type": "bars",
+        "title": "Rows returned by each set operation for the same inputs",
+        "alt": "Bar chart of row counts for A = {1, 1, 2, 3, NULL} and B = {1, 3, 3, 4, NULL}. UNION ALL returns 10 rows, UNION 5, INTERSECT 3, INTERSECT ALL 3, EXCEPT 1 and EXCEPT ALL 2. The EXCEPT ALL bar is highlighted.",
+        "caption": "With A = {1,1,2,3,NULL} and B = {1,3,3,4,NULL}: ALL forms count copies, distinct forms count values, and NULL pairs with NULL. EXCEPT ALL keeps one 1 because A has two and B cancels one.",
+        "unit": "rows returned",
+        "bars": [
+          {"label": "UNION ALL", "value": 10},
+          {"label": "UNION", "value": 5},
+          {"label": "INTERSECT", "value": 3},
+          {"label": "INTERSECT ALL", "value": 3},
+          {"label": "EXCEPT", "value": 1},
+          {"label": "EXCEPT ALL", "value": 2, "highlight": true}
+        ]
+      },
+      {
+        "id": "sqc-set-rows",
+        "type": "flow",
+        "title": "A EXCEPT ALL B as row matching",
+        "alt": "Flow diagram matching rows. Left input A has rows 1, 1 and NULL; right input B has rows 1, NULL and 4. The first A row 1 pairs with B row 1, A's NULL pairs with B's NULL, the second A row 1 has no partner left and becomes the result of A EXCEPT ALL B, and B's row 4 has no partner and is the result of B EXCEPT ALL A.",
+        "caption": "Set operations pair whole rows, NULL with NULL, one copy at a time. Whatever is left unpaired on the left is EXCEPT ALL; the pairs are INTERSECT ALL.",
+        "nodes": [
+          {"id": "a1", "label": "A: 1", "kind": "state", "col": 0, "row": 0, "sub": "copy 1"},
+          {"id": "a2", "label": "A: 1", "kind": "state", "col": 0, "row": 2, "sub": "copy 2"},
+          {"id": "a3", "label": "A: NULL", "kind": "state", "col": 0, "row": 4},
+          {"id": "b1", "label": "B: 1", "kind": "storage", "col": 2, "row": 0},
+          {"id": "b2", "label": "B: NULL", "kind": "storage", "col": 2, "row": 4},
+          {"id": "b3", "label": "B: 4", "kind": "storage", "col": 2, "row": 5},
+          {"id": "r1", "label": "1", "kind": "bad", "col": 4, "row": 2, "sub": "A EXCEPT ALL B"},
+          {"id": "r2", "label": "4", "kind": "bad", "col": 4, "row": 5, "sub": "B EXCEPT ALL A"}
+        ],
+        "edges": [
+          {"from": "a1", "to": "b1", "label": "pair"},
+          {"from": "a3", "to": "b2", "label": "NULL pairs NULL"},
+          {"from": "a2", "to": "r1", "label": "no partner left"},
+          {"from": "b3", "to": "r2", "label": "no partner"}
+        ],
+        "steps": [
+          {"edges": [0], "text": "The first `1` in A pairs with the only `1` in B. Pairs are what `INTERSECT ALL` returns."},
+          {"edges": [1], "text": "A's NULL pairs with B's NULL: set operations treat NULLs as not distinct, unlike `=` in a join."},
+          {"edges": [2], "text": "The second `1` in A finds no unused partner, so `A EXCEPT ALL B` returns it. Plain `EXCEPT` would return nothing for `1`, because the value exists in B."},
+          {"edges": [3], "text": "Run the other direction and B's `4` is left over: that is `B EXCEPT ALL A`. Both directions together are the symmetric difference."}
+        ]
+      },
+      {
+        "id": "sqc-case-chain",
+        "type": "flow",
+        "title": "How a searched CASE picks a band",
+        "alt": "Flow diagram of a searched CASE. An amount enters the first test, amount IS NULL; true leads to 'unknown', otherwise it moves down to amount < 50 leading to 'small', then amount < 200 leading to 'medium', and finally ELSE leading to 'large'. Each test is only reached when every earlier test was not true.",
+        "caption": "Conditions are tried top to bottom and the first true one wins. Testing NULL first stops missing amounts from falling through to ELSE.",
+        "nodes": [
+          {"id": "in", "label": "amount", "kind": "client", "col": 0, "row": 0},
+          {"id": "d1", "label": "IS NULL?", "kind": "decision", "col": 0, "row": 1},
+          {"id": "d2", "label": "< 50?", "kind": "decision", "col": 0, "row": 2},
+          {"id": "d3", "label": "< 200?", "kind": "decision", "col": 0, "row": 3},
+          {"id": "el", "label": "ELSE", "kind": "decision", "col": 0, "row": 4},
+          {"id": "r1", "label": "'unknown'", "kind": "good", "col": 2, "row": 1},
+          {"id": "r2", "label": "'small'", "kind": "good", "col": 2, "row": 2, "sub": "0 to 49.99"},
+          {"id": "r3", "label": "'medium'", "kind": "good", "col": 2, "row": 3, "sub": "50.00 to 199.99"},
+          {"id": "r4", "label": "'large'", "kind": "good", "col": 2, "row": 4, "sub": "200.00 and up"}
+        ],
+        "edges": [
+          {"from": "in", "to": "d1"},
+          {"from": "d1", "to": "r1", "label": "true"},
+          {"from": "d1", "to": "d2", "label": "not true"},
+          {"from": "d2", "to": "r2", "label": "true"},
+          {"from": "d2", "to": "d3", "label": "not true"},
+          {"from": "d3", "to": "r3", "label": "true"},
+          {"from": "d3", "to": "el", "label": "not true"},
+          {"from": "el", "to": "r4"}
+        ],
+        "steps": [
+          {"edges": [0, 1], "text": "NULL is tested first. Without this branch, `NULL < 50` is NULL (not true) and a missing amount would slide all the way to `ELSE 'large'`."},
+          {"edges": [2, 3], "text": "`49.99 < 50` is true, so it is `'small'` and no later branch is evaluated."},
+          {"edges": [4, 5], "text": "`50.00` fails `< 50` and passes `< 200`: half-open bands put each boundary in exactly one band."},
+          {"edges": [6, 7], "text": "`200.00` fails every test and takes `ELSE`. Drop the ELSE and it would be NULL instead."}
+        ]
+      },
+      {
+        "id": "sqc-pivot",
+        "type": "flow",
+        "title": "Conditional aggregation turns statuses into columns",
+        "alt": "Flow diagram of a pivot. Ticket rows for Mira (open, closed, open) and Tomas (pending), plus a NULL-filled row for Ines who has no tickets, pass through a CASE that yields 1 for the column's status and NULL otherwise. A count per agent then produces Mira 2 open, 0 pending, 1 closed; Tomas 0, 1, 0; and Ines 0, 0, 0.",
+        "caption": "Each pivot column is its own aggregate over a CASE that keeps only matching rows; count skips the NULLs, so non-matching rows and LEFT JOIN filler rows add nothing.",
+        "nodes": [
+          {"id": "t1", "label": "Mira · open", "kind": "state", "col": 0, "row": 0},
+          {"id": "t2", "label": "Mira · closed", "kind": "state", "col": 0, "row": 1},
+          {"id": "t3", "label": "Mira · open", "kind": "state", "col": 0, "row": 2},
+          {"id": "t4", "label": "Tomas · pending", "kind": "state", "col": 0, "row": 3},
+          {"id": "t5", "label": "Ines · NULL", "kind": "note", "col": 0, "row": 5, "sub": "LEFT JOIN filler"},
+          {"id": "case", "label": "CASE per column", "kind": "service", "col": 2, "row": 1, "sub": "1 or NULL"},
+          {"id": "agg", "label": "count per agent", "kind": "service", "col": 2, "row": 3, "sub": "skips NULLs"},
+          {"id": "o1", "label": "Mira 2 · 0 · 1", "kind": "good", "col": 4, "row": 1},
+          {"id": "o2", "label": "Tomas 0 · 1 · 0", "kind": "good", "col": 4, "row": 3},
+          {"id": "o3", "label": "Ines 0 · 0 · 0", "kind": "good", "col": 4, "row": 5}
+        ],
+        "edges": [
+          {"from": "t1", "to": "case"},
+          {"from": "t2", "to": "case"},
+          {"from": "t3", "to": "case"},
+          {"from": "t4", "to": "case"},
+          {"from": "t5", "to": "case"},
+          {"from": "case", "to": "agg", "label": "GROUP BY agent"},
+          {"from": "agg", "to": "o1"},
+          {"from": "agg", "to": "o2"},
+          {"from": "agg", "to": "o3"}
+        ],
+        "steps": [
+          {"edges": [0, 1, 2, 3], "text": "Every joined ticket row is evaluated once per pivot column: for `open_count`, the open rows give 1 and the others give NULL."},
+          {"edges": [4], "text": "Ines has no tickets, so the LEFT JOIN gives her one row with a NULL status. Every CASE yields NULL for it."},
+          {"edges": [5], "text": "Rows are grouped by agent and each column's `count` skips NULLs. With `ELSE 0` the zeros would be counted too."},
+          {"edges": [6, 7, 8], "text": "One row per agent, one column per status. Ines shows zeros, provided `total` is `count(t.id)` and not `count(*)`."}
+        ]
+      },
+      {
+        "id": "sqc-reconcile",
+        "type": "sequence",
+        "title": "Reconciling two feeds with EXCEPT ALL in both directions",
+        "alt": "Sequence diagram with actors ledger_entries, bank_lines, EXCEPT ALL and result. The ledger sends T1 10.00 three times and T2 with a NULL amount; the bank sends T1 10.00 once, T2 NULL and T9 1.00. EXCEPT ALL cancels pairs, sends two copies of T1 10.00 labelled ledger_only to the result, cancels the NULL pair, and sends T9 1.00 labelled bank_only.",
+        "caption": "Each copy cancels one copy on the other side and NULL pairs with NULL; run it both ways and label the leftovers.",
+        "actors": [
+          {"id": "led", "label": "ledger_entries"},
+          {"id": "bank", "label": "bank_lines"},
+          {"id": "ex", "label": "EXCEPT ALL"},
+          {"id": "out", "label": "result"}
+        ],
+        "messages": [
+          {"from": "led", "to": "ex", "label": "T1 10.00 ×3, T2 NULL"},
+          {"from": "bank", "to": "ex", "label": "T1 10.00 ×1, T2 NULL, T9 1.00"},
+          {"from": "ex", "to": "out", "label": "ledger_only T1 10.00 ×2", "note": "Ledger minus bank: 3 - 1 = 2 copies survive."},
+          {"from": "ex", "to": "out", "label": "T2 NULL: cancelled", "style": "reply", "note": "Set operations treat the two NULL amounts as equal, so this pair cancels; a join on = would report both."},
+          {"from": "ex", "to": "out", "label": "bank_only T9 1.00", "note": "Bank minus ledger, the second direction, combined with UNION ALL."}
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE agents (\n  id   int PRIMARY KEY,\n  name text NOT NULL\n);\nCREATE TABLE tickets (\n  id        int PRIMARY KEY,\n  agent_id  int REFERENCES agents (id),\n  status    text,\n  opened_on date NOT NULL\n);",
+        "starter": "-- Status board: agent_id, agent_name, open_count, pending_count, closed_count, total\nSELECT a.id AS agent_id,\n       a.name AS agent_name,\n       count(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END)    AS open_count,\n       count(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,\n       count(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END)  AS closed_count,\n       count(*) AS total\nFROM agents a\nJOIN tickets t ON t.agent_id = a.id\nGROUP BY a.id, a.name;\n",
+        "solution": "SELECT a.id   AS agent_id,\n       a.name AS agent_name,\n       count(CASE WHEN t.status = 'open' THEN 1 END)    AS open_count,\n       count(CASE WHEN t.status = 'pending' THEN 1 END) AS pending_count,\n       count(CASE WHEN t.status = 'closed' THEN 1 END)  AS closed_count,\n       count(t.id) AS total\nFROM agents a\nLEFT JOIN tickets t ON t.agent_id = a.id\nGROUP BY a.id, a.name;\n",
+        "tests": [
+          {
+            "name": "two agents with mixed statuses",
+            "seed": "INSERT INTO agents VALUES (1, 'Mira'), (2, 'Tomas');\nINSERT INTO tickets VALUES\n  (1, 1, 'open', '2025-03-01'),\n  (2, 1, 'open', '2025-03-02'),\n  (3, 1, 'closed', '2025-03-02'),\n  (4, 2, 'pending', '2025-03-03'),\n  (5, 2, 'closed', '2025-03-04');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Mira", 2, 0, 1, 3], [2, "Tomas", 0, 1, 1, 2]]}
+          },
+          {
+            "name": "agents with no tickets show zeros",
+            "seed": "INSERT INTO agents VALUES (1, 'Mira'), (2, 'Tomas'), (3, 'Ines');\nINSERT INTO tickets VALUES\n  (1, 1, 'open', '2025-03-01'),\n  (2, 1, 'pending', '2025-03-02');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Mira", 1, 1, 0, 2], [2, "Tomas", 0, 0, 0, 0], [3, "Ines", 0, 0, 0, 0]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "NULL and unknown statuses count only in total",
+            "seed": "INSERT INTO agents VALUES (1, 'Mira');\nINSERT INTO tickets VALUES\n  (1, 1, 'open', '2025-03-01'),\n  (2, 1, NULL, '2025-03-01'),\n  (3, 1, 'spam', '2025-03-02'),\n  (4, 1, 'Open', '2025-03-02'),\n  (5, 1, 'closed', '2025-03-03');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Mira", 1, 0, 1, 5]]}
+          },
+          {
+            "name": "unassigned tickets are ignored",
+            "seed": "INSERT INTO agents VALUES (1, 'Mira');\nINSERT INTO tickets VALUES\n  (1, 1, 'pending', '2025-03-01'),\n  (2, NULL, 'open', '2025-03-01'),\n  (3, NULL, 'open', '2025-03-02');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Mira", 0, 1, 0, 1]]}
+          },
+          {
+            "name": "agents but no tickets at all",
+            "seed": "INSERT INTO agents VALUES (1, 'Mira'), (2, 'Tomas');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Mira", 0, 0, 0, 0], [2, "Tomas", 0, 0, 0, 0]]}
+          },
+          {
+            "name": "two agents with the same name stay separate",
+            "seed": "INSERT INTO agents VALUES (1, 'Sam'), (2, 'Sam');\nINSERT INTO tickets VALUES\n  (1, 1, 'open', '2025-03-01'),\n  (2, 2, 'closed', '2025-03-01'),\n  (3, 2, 'closed', '2025-03-02');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[1, "Sam", 1, 0, 0, 1], [2, "Sam", 0, 0, 2, 2]]}
+          },
+          {
+            "name": "one busy agent",
+            "seed": "INSERT INTO agents VALUES (7, 'Ines');\nINSERT INTO tickets VALUES\n  (1, 7, 'closed', '2025-02-28'),\n  (2, 7, 'closed', '2025-02-28'),\n  (3, 7, 'closed', '2025-03-01'),\n  (4, 7, 'open', '2025-03-01'),\n  (5, 7, 'open', '2025-03-02'),\n  (6, 7, 'pending', '2025-03-03');",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": [[7, "Ines", 2, 1, 3, 6]]}
+          },
+          {
+            "name": "no agents",
+            "seed": "",
+            "expected": {"columns": ["agent_id", "agent_name", "open_count", "pending_count", "closed_count", "total"], "rows": []}
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE orders (\n  id       int PRIMARY KEY,\n  customer text NOT NULL,\n  amount   numeric(10,2)\n);",
+        "starter": "-- Bands: small < 50.00 <= medium < 200.00 <= large; NULL amount -> unknown\n-- Return band, order_count, total_amount\nSELECT CASE WHEN amount > 200 THEN 'large'\n            WHEN amount > 50  THEN 'medium'\n            ELSE 'small' END AS band,\n       count(*) AS order_count,\n       sum(amount) AS total_amount\nFROM orders\nGROUP BY 1;\n",
+        "solution": "SELECT band,\n       count(*) AS order_count,\n       coalesce(sum(amount), 0) AS total_amount\nFROM (\n  SELECT amount,\n         CASE WHEN amount IS NULL THEN 'unknown'\n              WHEN amount < 50    THEN 'small'\n              WHEN amount < 200   THEN 'medium'\n              ELSE 'large' END AS band\n  FROM orders\n) o\nGROUP BY band;\n",
+        "tests": [
+          {
+            "name": "one order in each band",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 12.50),\n  (2, 'ben', 75.00),\n  (3, 'cho', 480.00);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["small", 1, 12.5], ["medium", 1, 75], ["large", 1, 480]]}
+          },
+          {
+            "name": "boundary values and a missing amount",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 50.00),\n  (2, 'ben', 200.00),\n  (3, 'cho', NULL),\n  (4, 'dev', 49.99);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["small", 1, 49.99], ["medium", 1, 50], ["large", 1, 200], ["unknown", 1, 0]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "199.99 is still medium",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 199.99),\n  (2, 'ben', 200.00),\n  (3, 'cho', 200.01);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["medium", 1, 199.99], ["large", 2, 400.01]]}
+          },
+          {
+            "name": "zero and one cent are small",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 0.00),\n  (2, 'ben', 0.01);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["small", 2, 0.01]]}
+          },
+          {
+            "name": "only missing amounts",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', NULL),\n  (2, 'ben', NULL);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["unknown", 2, 0]]}
+          },
+          {
+            "name": "several orders in one band",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 60.00),\n  (2, 'ana', 70.00),\n  (3, 'ben', 80.25),\n  (4, 'cho', 199.00);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["medium", 4, 409.25]]}
+          },
+          {
+            "name": "largest storable amount",
+            "seed": "INSERT INTO orders VALUES\n  (1, 'ana', 99999999.99),\n  (2, 'ben', 50.01);",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": [["large", 1, 99999999.99], ["medium", 1, 50.01]]}
+          },
+          {
+            "name": "no orders",
+            "seed": "",
+            "expected": {"columns": ["band", "order_count", "total_amount"], "rows": []}
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE ledger_entries (\n  txn_ref text,\n  amount  numeric(10,2)\n);\nCREATE TABLE bank_lines (\n  txn_ref text,\n  amount  numeric(10,2)\n);",
+        "starter": "-- Return source ('ledger_only' / 'bank_only'), txn_ref, amount for unmatched rows\nSELECT 'ledger_only' AS source, l.txn_ref, l.amount\nFROM ledger_entries l\nLEFT JOIN bank_lines b ON b.txn_ref = l.txn_ref AND b.amount = l.amount\nWHERE b.txn_ref IS NULL\nUNION\nSELECT 'bank_only', b.txn_ref, b.amount\nFROM bank_lines b\nLEFT JOIN ledger_entries l ON l.txn_ref = b.txn_ref AND l.amount = b.amount\nWHERE l.txn_ref IS NULL;\n",
+        "solution": "SELECT 'ledger_only' AS source, txn_ref, amount\nFROM (SELECT txn_ref, amount FROM ledger_entries\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM bank_lines) l\nUNION ALL\nSELECT 'bank_only', txn_ref, amount\nFROM (SELECT txn_ref, amount FROM bank_lines\n      EXCEPT ALL\n      SELECT txn_ref, amount FROM ledger_entries) b;\n",
+        "tests": [
+          {
+            "name": "amount mismatch and missing lines",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', 10.00), ('T2', 25.50), ('T3', 7.00);\nINSERT INTO bank_lines VALUES ('T1', 10.00), ('T2', 25.05), ('T4', 3.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["ledger_only", "T2", 25.5], ["ledger_only", "T3", 7], ["bank_only", "T2", 25.05], ["bank_only", "T4", 3]]}
+          },
+          {
+            "name": "NULL amounts on both sides match",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', NULL), ('T2', 5.00);\nINSERT INTO bank_lines VALUES ('T1', NULL), ('T2', 5.00), ('T9', 1.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["bank_only", "T9", 1]]}
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "three ledger copies against one bank copy",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', 10.00), ('T1', 10.00), ('T1', 10.00);\nINSERT INTO bank_lines VALUES ('T1', 10.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["ledger_only", "T1", 10], ["ledger_only", "T1", 10]]}
+          },
+          {
+            "name": "duplicated bank line missing from the ledger",
+            "seed": "INSERT INTO ledger_entries VALUES ('T6', 1.00);\nINSERT INTO bank_lines VALUES ('T5', 4.00), ('T5', 4.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["ledger_only", "T6", 1], ["bank_only", "T5", 4], ["bank_only", "T5", 4]]}
+          },
+          {
+            "name": "NULL references match each other",
+            "seed": "INSERT INTO ledger_entries VALUES (NULL, 9.99);\nINSERT INTO bank_lines VALUES (NULL, 9.99), (NULL, 1.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["bank_only", null, 1]]}
+          },
+          {
+            "name": "case and trailing spaces make different references",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', 5.00);\nINSERT INTO bank_lines VALUES ('t1', 5.00), ('T1 ', 5.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["ledger_only", "T1", 5], ["bank_only", "t1", 5], ["bank_only", "T1 ", 5]]}
+          },
+          {
+            "name": "empty bank feed",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', 1.00), ('T2', 2.00), ('T2', 2.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": [["ledger_only", "T1", 1], ["ledger_only", "T2", 2], ["ledger_only", "T2", 2]]}
+          },
+          {
+            "name": "tables already agree, duplicates and NULLs included",
+            "seed": "INSERT INTO ledger_entries VALUES ('T1', 3.00), ('T1', 3.00), (NULL, NULL), ('T2', 8.00);\nINSERT INTO bank_lines VALUES ('T2', 8.00), (NULL, NULL), ('T1', 3.00), ('T1', 3.00);",
+            "expected": {"columns": ["source", "txn_ref", "amount"], "rows": []}
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "SELECT 1\nUNION\nSELECT 1\nUNION ALL\nSELECT 1;",
+        "choices": ["1", "1\n1", "1\n1\n1"],
+        "answer": 1,
+        "explain": "`UNION` and `UNION ALL` are evaluated left to right: `(1 UNION 1)` collapses to one row, then `UNION ALL` appends another `1` without deduplicating."
+      },
+      {
+        "code": "SELECT 1\nUNION\nSELECT 2\nINTERSECT\nSELECT 3;",
+        "choices": ["1", "(no rows)", "1\n2"],
+        "answer": 0,
+        "explain": "`INTERSECT` binds tighter than `UNION`, so this is `1 UNION (2 INTERSECT 3)`. The intersection is empty and the result is just `1`. Read left to right it would have been empty."
+      },
+      {
+        "code": "WITH t(x) AS (VALUES (1), (2), (3))\nSELECT count(CASE WHEN x > 1 THEN 1 END),\n       count(CASE WHEN x > 1 THEN 1 ELSE 0 END)\nFROM t;",
+        "choices": ["2 | 2", "2 | 3", "3 | 3"],
+        "answer": 1,
+        "explain": "Without `ELSE` the CASE yields NULL for `x = 1`, and `count` skips it. With `ELSE 0` it yields 0, which is a value, so all three rows are counted."
+      },
+      {
+        "code": "WITH a(x) AS (VALUES (1), (NULL)),\n     b(x) AS (VALUES (NULL::int))\nSELECT x FROM a\nEXCEPT\nSELECT x FROM b;",
+        "choices": ["1", "1\nNULL", "(no rows)"],
+        "answer": 0,
+        "explain": "Set operations compare rows as not distinct, so the NULL in `a` matches the NULL in `b` and is removed. A `LEFT JOIN ... ON a.x = b.x` anti-join would have kept it, because `NULL = NULL` is not true."
+      },
+      {
+        "code": "SELECT 1 AS a\nUNION ALL\nSELECT 2 AS b\nORDER BY b;",
+        "choices": ["1\n2", "2\n1", "ERROR: column \"b\" does not exist"],
+        "answer": 2,
+        "explain": "Output column names come from the first branch, so the result has a column `a` only. The alias `b` in the second branch is ignored, and `ORDER BY` applies to the combined result."
+      },
+      {
+        "code": "SELECT GREATEST(3, NULL, 7), 3 + NULL;",
+        "choices": ["NULL | NULL", "7 | NULL", "7 | 3"],
+        "answer": 1,
+        "explain": "In Postgres `GREATEST` and `LEAST` ignore NULL arguments and return NULL only if all are NULL. Arithmetic does not: `3 + NULL` is NULL. MySQL's `GREATEST` would return NULL here."
+      },
+      {
+        "code": "SELECT CASE NULL WHEN NULL THEN 'match' ELSE 'no match' END;",
+        "choices": ["match", "no match", "NULL"],
+        "answer": 1,
+        "explain": "A simple CASE compares with `=`, and `NULL = NULL` is not true, so it falls to `ELSE`. Write `CASE WHEN x IS NULL THEN ...` instead."
+      }
+    ],
+    "tip": "Before writing a set operation, say the comparison unit out loud: \"whole rows, NULLs equal, duplicates matter or not\". That one sentence picks between `UNION`/`UNION ALL` and `EXCEPT`/`EXCEPT ALL` and shows the interviewer you know they are not joins. For a pivot, say the grain (\"one row per agent, including idle agents\") and name each output column before touching the keyboard.",
+    "links": {
+      "guides": ["edge-case-checklist", "database-indexes"],
+      "lessons": ["sql-select-basics"]
+    }
+  }
+}

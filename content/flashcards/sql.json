@@ -1,0 +1,234 @@
+{
+  "track": "sql",
+  "title": "SQL & Postgres interview essentials",
+  "cards": [
+    {
+      "id": "sql-where-alias",
+      "front": "Why does `SELECT price * qty AS total ... WHERE total > 100` fail in Postgres, while `ORDER BY total` works?",
+      "back": "Logical order is FROM → WHERE → SELECT → ORDER BY → LIMIT. The alias is created in SELECT, so WHERE (earlier) cannot see it and ORDER BY (later) can, as a bare name only. Repeat the expression or filter in a subquery/CTE.",
+      "level": "se"
+    },
+    {
+      "id": "sql-null-three-valued",
+      "front": "What do `NULL = NULL`, `NULL AND FALSE` and `NULL OR TRUE` return, and what does WHERE keep?",
+      "back": "NULL (UNKNOWN), false, true. FALSE decides an AND, TRUE decides an OR; anything else involving UNKNOWN stays UNKNOWN. WHERE keeps only TRUE rows, so `col = NULL` and `status <> 'closed'` silently drop NULL rows. Use `IS NULL` / `IS DISTINCT FROM`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-not-in-null",
+      "front": "Why can `WHERE id NOT IN (SELECT product_id FROM recalls)` return no rows at all?",
+      "back": "`NOT IN` is `id <> v1 AND id <> v2 ...`. If any `product_id` is NULL, one comparison is UNKNOWN, so the condition is never TRUE. Use `NOT EXISTS (SELECT 1 FROM recalls r WHERE r.product_id = p.id)`, which ignores NULLs and plans as an anti-join.",
+      "level": "se"
+    },
+    {
+      "id": "sql-nulls-sort-order",
+      "front": "Where does Postgres put NULLs in `ORDER BY priority DESC`, and how do you control it?",
+      "back": "First: Postgres treats NULL as larger than every value, so NULLs are last ascending and first descending. Write `NULLS LAST` / `NULLS FIRST` explicitly (MySQL sorts NULLs the other way and lacks this syntax).",
+      "level": "se"
+    },
+    {
+      "id": "sql-limit-tie-breaker",
+      "front": "Why must a LIMIT or OFFSET query end its ORDER BY with a unique column?",
+      "back": "Rows that tie on every sort key have no defined order, so LIMIT may pick different rows per run and OFFSET pages can repeat or skip rows. Add `, id` for a total order, or use `FETCH FIRST n ROWS WITH TIES` (Postgres 13+) to return all tied rows.",
+      "level": "se"
+    },
+    {
+      "id": "sql-count-star-vs-col",
+      "front": "`count(*)`, `count(col)` and `count(DISTINCT col)`: what does each count?",
+      "back": "`count(*)` counts rows, NULLs included. `count(col)` counts rows where `col` is not NULL. `count(DISTINCT col)` counts distinct non-NULL values. `sum`, `avg`, `min` and `max` also skip NULLs, so `avg` divides by the non-NULL count.",
+      "level": "se"
+    },
+    {
+      "id": "sql-sum-empty-null",
+      "front": "What does `sum(x)` return over zero rows, and how do you report 0 instead?",
+      "back": "NULL: every aggregate except `count` returns NULL over no rows (or only NULLs); `count` returns 0. Wrap the aggregate: `coalesce(sum(x), 0)`. `sum(coalesce(x, 0))` does not help when there are no rows at all.",
+      "level": "se"
+    },
+    {
+      "id": "sql-where-vs-having",
+      "front": "WHERE versus HAVING: which runs first, and which may use aggregates?",
+      "back": "Logical order: FROM, WHERE, GROUP BY, HAVING, SELECT, ORDER BY, LIMIT. WHERE filters single rows before groups exist, so aggregates are not allowed there. HAVING filters whole groups after aggregation. In Postgres a SELECT alias is visible in GROUP BY and ORDER BY but not in HAVING.",
+      "level": "se"
+    },
+    {
+      "id": "sql-filter-clause",
+      "front": "How do you compute several measures over different subsets in one GROUP BY?",
+      "back": "Filter inside each aggregate: `count(*) FILTER (WHERE status = 'refunded')`, or the portable `sum(CASE WHEN status = 'paid' THEN amount END)`. A WHERE condition would remove rows the other measures need. Never use `ELSE 0` inside `count`; it counts the zeros.",
+      "level": "se"
+    },
+    {
+      "id": "sql-group-by-pk",
+      "front": "When may you SELECT a column that is not in GROUP BY in Postgres?",
+      "back": "When it is aggregated, or when you grouped by the primary key of its table: the other columns are functionally dependent on the key, so `GROUP BY c.id` allows `c.name`. Otherwise Postgres errors: the column must appear in GROUP BY or be used in an aggregate.",
+      "level": "se"
+    },
+    {
+      "id": "sql-left-join-where-trap",
+      "front": "Why does `LEFT JOIN orders o ... WHERE o.status = 'paid'` lose customers with no paid orders?",
+      "back": "WHERE runs after the join. Unmatched customers have NULL in every `o` column, `NULL = 'paid'` is unknown, and WHERE keeps only true, so the LEFT JOIN becomes an inner join. Put right-table filters in ON: `ON o.customer_id = c.id AND o.status = 'paid'`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-join-fan-out",
+      "front": "Your `sum(o.total)` doubled after joining `order_items`. Why, and what is the fix?",
+      "back": "Orders to items is one-to-many, so each order row (and its total) repeats once per item. Aggregate the many side to the join key first (a CTE with `GROUP BY order_id`), then join, so each side has one row per key. `count(DISTINCT)` fixes counts, not sums.",
+      "level": "se"
+    },
+    {
+      "id": "sql-self-join-pairs",
+      "front": "How do you list each pair of same-team employees once in a self join?",
+      "back": "`FROM staff a JOIN staff b ON b.team_id = a.team_id AND a.id < b.id`. Equality alone returns self-pairs and both (A,B) and (B,A); `<>` removes only the self-pairs. NULL team ids never match.",
+      "level": "se"
+    },
+    {
+      "id": "sql-count-after-left-join",
+      "front": "After `customers LEFT JOIN orders`, why use `count(o.id)` instead of `count(*)`?",
+      "back": "A customer with no orders still has one NULL-padded row, so `count(*)` reports 1. `count(o.id)` ignores NULLs and reports 0. Wrap sums in `coalesce(sum(o.total), 0)` because SUM over no values is NULL.",
+      "level": "se"
+    },
+    {
+      "id": "sql-scalar-subquery-rows",
+      "front": "What happens when a scalar subquery returns zero rows? Two rows?",
+      "back": "Zero rows: the value is NULL, so comparisons with it are unknown and `WHERE` drops the row. Two or more rows: a runtime error, `more than one row returned by a subquery used as an expression`, which only appears when the data has a second match. Guarantee one row with an aggregate, a unique key or `ORDER BY ... LIMIT 1`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-recursive-cte-evaluation",
+      "front": "How does `WITH RECURSIVE` evaluate, and when does it stop?",
+      "back": "The anchor runs once; its rows are output and form the working table. The recursive member joins against the working table only (the previous iteration's rows), its new rows are output and replace the working table, and it repeats. It stops when an iteration produces no rows, so termination depends on the data and your join.",
+      "level": "se"
+    },
+    {
+      "id": "sql-recursive-cycle-guard",
+      "front": "How do you make a recursive CTE terminate on a graph with cycles?",
+      "back": "Carry a visited array (`ARRAY[start]`, then `visited || next`) and only step where `next <> ALL(visited)`; or use the standard `CYCLE id SET is_cycle USING path` (Postgres 14+) and filter `WHERE NOT is_cycle`; or bound the depth. `UNION` instead of `UNION ALL` only helps when rows repeat exactly, not when you carry depth.",
+      "level": "se"
+    },
+    {
+      "id": "sql-cte-inlining",
+      "front": "Is a CTE an optimisation fence in Postgres?",
+      "back": "Not since Postgres 12: a non-recursive, side-effect-free CTE referenced once is inlined, so outer filters push into it. It is materialised (computed once, `CTE Scan` in EXPLAIN) when referenced more than once, when recursive, or when written `AS MATERIALIZED`; `AS NOT MATERIALIZED` forces inlining.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-rank-vs-dense-rank",
+      "front": "Salaries 300, 250, 250, 200 ordered high to low: what do `row_number`, `rank` and `dense_rank` give?",
+      "back": "`row_number`: 1, 2, 3, 4, with the two 250s split arbitrarily. `rank`: 1, 2, 2, 4, because the rank is the row's position and a tie leaves a gap. `dense_rank`: 1, 2, 2, 3, with no gaps. Choose from the task's tie rule: exactly N rows, positions, or distinct values.",
+      "level": "se"
+    },
+    {
+      "id": "sql-top-n-per-group",
+      "front": "How do you return the top 2 earners per team in Postgres?",
+      "back": "Rank in a CTE: `dense_rank() OVER (PARTITION BY team_id ORDER BY salary DESC)` (or `rank`/`row_number`, depending on ties), then filter `WHERE rnk <= 2` in the outer query. A window function can't go in `WHERE` because windows run after it, and Postgres has no `QUALIFY`. Filter out NULL salaries, because `DESC` sorts NULLs first.",
+      "level": "se"
+    },
+    {
+      "id": "sql-default-window-frame",
+      "front": "Why does `sum(amount) OVER (ORDER BY day)` give two rows from the same day the same running total?",
+      "back": "With `ORDER BY` and no frame clause, the frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. In `RANGE` mode the current row includes all its peers, meaning rows with equal sort keys. Make the order total (`ORDER BY day, id`) or use `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-last-value-frame",
+      "front": "Why does `last_value(x) OVER (ORDER BY t)` just return the current row's `x`?",
+      "back": "`last_value` reads the last row of the frame, and the default frame ends at the current row (plus its peers). Use `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, or use `first_value(x) OVER (ORDER BY t DESC)`. `lag`/`lead` ignore the frame.",
+      "level": "se"
+    },
+    {
+      "id": "sql-gaps-and-islands",
+      "front": "How do you find runs of consecutive days (streaks) with window functions?",
+      "back": "Deduplicate to one row per entity per day, then compute `day - row_number() OVER (PARTITION BY id ORDER BY day)`. The result stays constant within a consecutive run and changes after a gap, so it works as an island key. `GROUP BY id, key` then gives each streak's length with `count(*)` and its start with `min(day)`. For gap-based sessions, use a running `sum` of flags set with `lag`.",
+      "level": "sse"
+    },
+    {
+      "id": "sql-union-vs-union-all",
+      "front": "What is the difference between `UNION` and `UNION ALL`, and which is cheaper?",
+      "back": "`UNION` removes duplicate rows from the whole combined result, which needs a hash or sort of every row (`HashAggregate` or `Sort` + `Unique` over `Append`). `UNION ALL` only appends and streams. Use `UNION ALL` when branches cannot overlap or duplicates matter.",
+      "level": "se"
+    },
+    {
+      "id": "sql-except-all-counts",
+      "front": "A row appears m times on the left and n times on the right. How many copies do `UNION ALL`, `INTERSECT ALL` and `EXCEPT ALL` return?",
+      "back": "`UNION ALL`: m + n. `INTERSECT ALL`: min(m, n). `EXCEPT ALL`: max(m - n, 0). The distinct forms return at most one copy.",
+      "level": "se"
+    },
+    {
+      "id": "sql-set-ops-nulls",
+      "front": "Does `SELECT NULL::int EXCEPT SELECT NULL::int` return a row?",
+      "back": "No. Set operations (and GROUP BY, DISTINCT) treat NULLs as not distinct, so the NULLs match. In `WHERE` or `JOIN ... ON`, `NULL = NULL` is unknown and never matches.",
+      "level": "se"
+    },
+    {
+      "id": "sql-count-case-else-zero",
+      "front": "Why is `count(CASE WHEN status = 'open' THEN 1 ELSE 0 END)` wrong for a pivot?",
+      "back": "`count` skips NULLs, not zeros, so `ELSE 0` counts every row. Drop the `ELSE` (non-matches become NULL), use `sum(... ELSE 0)`, or `count(*) FILTER (WHERE status = 'open')`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-greatest-nulls",
+      "front": "What does `GREATEST(3, NULL, 7)` return in Postgres?",
+      "back": "7. Postgres `GREATEST`/`LEAST` ignore NULLs and return NULL only when every argument is NULL. MySQL and Oracle return NULL if any argument is NULL. `3 + NULL` is NULL everywhere.",
+      "level": "se"
+    },
+    {
+      "id": "sql-timestamptz-stores",
+      "front": "What does a Postgres `timestamptz` column actually store, and what does the session TimeZone change?",
+      "back": "One UTC instant (8 bytes); the input offset is used to convert and then discarded, no zone name is kept. The session TimeZone only changes how it is printed and what `ts::date` returns. `ts AT TIME ZONE 'Europe/Paris'` gives the local wall-clock `timestamp` there.",
+      "level": "se"
+    },
+    {
+      "id": "sql-half-open-range",
+      "front": "Why is `ts BETWEEN '2024-03-01' AND '2024-03-31'` wrong on a timestamptz column, and what do you write instead?",
+      "back": "The date bounds become midnight, so everything after 00:00 on the 31st is dropped. Use a half-open range: `ts >= '2024-03-01' AND ts < '2024-04-01'`. No gaps, no double-counted boundaries, and it stays sargable for a B-tree on `ts`.",
+      "level": "se"
+    },
+    {
+      "id": "sql-month-clamp",
+      "front": "What is `date '2024-01-31' + interval '1 month'`, and is month arithmetic associative?",
+      "back": "`2024-02-29 00:00:00` (clamped to month end; a timestamp because date + interval). Not associative: +1 month twice gives Mar 29, +2 months gives Mar 31. Compute from the original anchor date.",
+      "level": "se"
+    },
+    {
+      "id": "sql-calendar-fill",
+      "front": "How do you make a daily report show days with no events as 0?",
+      "back": "Drive it from a calendar: `generate_series(start, end, interval '1 day')`, LEFT JOIN events ON `ts >= day AND ts < day + 1`, GROUP BY day and use `count(e.id)` (not `count(*)`, which gives 1 for an empty day). Keep the event filter in ON, not WHERE.",
+      "level": "se"
+    },
+    {
+      "id": "sql-jsonb-arrow-text",
+      "front": "`->` versus `->>` in JSONB, and why does `(doc->>'qty') + 1` fail?",
+      "back": "`->` returns jsonb (keep navigating), `->>` returns text. Text + integer has no operator: cast first, `(doc->>'qty')::int + 1`. Missing key and JSON null both give NULL from `->>`; `doc ? 'qty'` tells them apart. `@>` and `?` can use a GIN index.",
+      "level": "se"
+    },
+    {
+      "id": "sql-unique-nulls",
+      "front": "Does a UNIQUE column accept two NULLs in PostgreSQL?",
+      "back": "Yes. NULLs are treated as distinct, so many rows may hold NULL. Write `UNIQUE NULLS NOT DISTINCT` (PG15+) to allow at most one NULL.",
+      "level": "se"
+    },
+    {
+      "id": "sql-check-null",
+      "front": "Does `CHECK (grade BETWEEN 0 AND 100)` reject a NULL grade?",
+      "back": "No. A CHECK only rejects FALSE. NULL makes the test UNKNOWN, which passes. Add NOT NULL if the value is required.",
+      "level": "se"
+    },
+    {
+      "id": "sql-on-delete",
+      "front": "What do ON DELETE CASCADE, RESTRICT and SET NULL do when you delete a parent row?",
+      "back": "CASCADE deletes the child rows too. RESTRICT refuses the delete at once (23001). SET NULL keeps the children and sets their FK column to NULL, so that column must be nullable.",
+      "level": "se"
+    },
+    {
+      "id": "sql-junction-table",
+      "front": "How do you model a many-to-many relationship?",
+      "back": "Use a junction table with one FK to each side, for example `enrolments(student_id, course_code)`, and make the pair the composite PRIMARY KEY so a pair can't appear twice.",
+      "level": "se"
+    },
+    {
+      "id": "sql-money-numeric",
+      "front": "Why store money as `numeric` rather than `float8`?",
+      "back": "float8 is binary floating point, so `0.1::float8 + 0.2` gives 0.30000000000000004. `numeric` is exact decimal; use something like `numeric(12,2)`.",
+      "level": "se"
+    }
+  ]
+}

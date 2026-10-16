@@ -1,0 +1,1293 @@
+{
+  "id": "sql-dates-strings-json",
+  "track": "sql",
+  "title": "Dates, strings and JSONB",
+  "minutes": 55,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "The data-cleaning toolkit interviewers probe: `date` versus `timestamptz`, intervals and month arithmetic, half-open ranges, a `generate_series` calendar that fills missing days with 0, string functions and their NULL rules, LIKE escaping and regex, and JSONB extraction, containment and unnesting.",
+  "prerequisites": [
+    "sql-aggregates"
+  ],
+  "prerequisiteNotes": "sql-aggregates: GROUP BY, COUNT(*) versus COUNT(col), and LEFT JOIN with aggregates. Every report here is a GROUP BY over cleaned-up dates, strings or JSON fields, and the empty-day trick relies on COUNT(col) ignoring NULLs.",
+  "objectives": [
+    "Choose between `date`, `timestamp` and `timestamptz`, and explain what `timestamptz` actually stores and how the session TimeZone and `AT TIME ZONE` change what you see.",
+    "Do calendar arithmetic with intervals, `date_trunc`, `extract` and `age`, and predict month-end results such as Jan 31 + 1 month.",
+    "Filter time ranges with half-open predicates (`>= start AND < next_start`) instead of BETWEEN, and explain why that also keeps the query index-friendly.",
+    "Build a calendar with `generate_series` and LEFT JOIN facts to it so days with no rows report 0.",
+    "Clean and group text with `lower`, `trim`, `split_part`, `replace`, LIKE/ILIKE with escaping, regex and `string_agg`, knowing how each handles NULL.",
+    "Query JSONB with `->`, `->>`, `#>>`, `@>` and `?`, unnest arrays with `jsonb_array_elements`, build JSON with `jsonb_build_object` and `jsonb_agg`, and cast extracted text before doing arithmetic."
+  ],
+  "concepts": [
+    {
+      "title": "date, timestamp and timestamptz",
+      "body": "`date` is a calendar day with no time. `timestamp` (without time zone) is a wall-clock reading such as 09:30 with no idea where it was taken. `timestamptz` is an **instant**: on input Postgres uses the given offset (or the session `TimeZone` if there is none) to convert to UTC and stores 8 bytes; the zone itself is **not** stored. On output it is printed in the session `TimeZone`, so the same row shows `06:30+00` in a UTC session and `01:30-05` in a New York one. Use `timestamptz` for things that happened (events, orders, logins) and `date` for calendar facts (birthdays, billing days). `ts AT TIME ZONE 'Europe/Paris'` converts a `timestamptz` into the local wall-clock `timestamp` there; applied to a `timestamp` it does the reverse. `ts::date` takes the date in the session zone, so a report's day boundaries depend on that setting: always say which zone your days are in.",
+      "code": "SHOW TimeZone;                                     -- UTC in this lab\nSELECT timestamptz '2024-03-10 01:30:00-05';        -- 2024-03-10 06:30:00+00\nSELECT timestamptz '2024-03-10 06:30:00+00'\n         AT TIME ZONE 'America/New_York';           -- 2024-03-10 01:30:00 (timestamp)\nSELECT timestamp '2024-03-01 09:00'\n         AT TIME ZONE 'Europe/Paris';               -- 2024-03-01 08:00:00+00 (timestamptz)\nSELECT (timestamptz '2024-03-01 02:00:00+00'\n          AT TIME ZONE 'America/New_York')::date;   -- 2024-02-29: still yesterday in New York",
+      "diagram": "sqd-tz"
+    },
+    {
+      "title": "Intervals, month arithmetic, date_trunc, extract and age",
+      "body": "An `interval` keeps months, days and microseconds separately, because a month has no fixed length. Adding `interval '1 month'` moves the month field and **clamps** to the last valid day: Jan 31 + 1 month is Feb 29 in 2024, adding another month gives Mar 29, yet Jan 31 + 2 months gives Mar 31, so month arithmetic is not associative (bill on the original anchor date, not on last month's result). `date + integer` adds days and returns a `date`; `date + interval` returns a `timestamp`; `date - date` returns an integer number of days, while `timestamptz - timestamptz` returns an interval. `date_trunc('month', ts)` rounds down to the start of the bucket, the standard way to group by month or hour; `extract(field FROM ts)` returns one part as `numeric` (`dow` is 0 for Sunday, `isodow` is 7). `age(later, earlier)` gives a calendar-style `years mons days` difference.",
+      "code": "SELECT date '2024-01-31' + interval '1 month';                     -- 2024-02-29 00:00:00\nSELECT date '2024-01-31' + interval '1 month' + interval '1 month'; -- 2024-03-29 00:00:00\nSELECT date '2024-01-31' + interval '2 months';                    -- 2024-03-31 00:00:00\nSELECT date '2024-03-01' + 1, date '2024-03-01' - date '2024-02-01'; -- 2024-03-02 | 29\n\nSELECT date_trunc('month', timestamptz '2024-02-29 13:45:00+00');  -- 2024-02-01 00:00:00+00\nSELECT extract(isodow FROM date '2024-03-03');                     -- 7 (Sunday)\nSELECT age(date '2024-03-31', date '2024-02-29');                  -- 1 mon 2 days\n\n-- monthly revenue buckets\nSELECT date_trunc('month', paid_at) AS month, sum(amount) AS revenue\nFROM payments\nGROUP BY 1\nORDER BY 1;"
+    },
+    {
+      "title": "Half-open ranges instead of BETWEEN",
+      "body": "`BETWEEN a AND b` is inclusive on both ends. With a `timestamptz` column and date bounds, `'2024-03-31'` becomes midnight, so `ts BETWEEN '2024-03-01' AND '2024-03-31'` silently drops everything after 00:00:00 on the 31st. Patching the end to `'23:59:59'` still loses the last fraction of a second (timestamps have microseconds), and BETWEEN on adjacent buckets counts a row at exactly midnight twice. The fix is the **half-open** range `ts >= start AND ts < next_start`, which tiles time with no gaps and no overlaps, and works the same for days, months and hours. `WHERE ts::date = '2024-03-01'` is also correct but wraps the column in a cast, so a plain B-tree index on `ts` cannot be used (the predicate is not **sargable**); the half-open form uses the index directly.",
+      "code": "-- Loses the 31st after midnight\nSELECT count(*) FROM events\nWHERE occurred_at BETWEEN '2024-03-01' AND '2024-03-31';\n\n-- All of March, index-friendly, no boundary double counting\nSELECT count(*) FROM events\nWHERE occurred_at >= date '2024-03-01'\n  AND occurred_at <  date '2024-03-01' + interval '1 month';",
+      "diagram": "sqd-range"
+    },
+    {
+      "title": "String functions and their NULL rules",
+      "body": "`||` is strict: if any operand is NULL the result is NULL. `concat(a, b, ...)` treats NULL as an empty string, and `concat_ws(sep, ...)` skips NULLs without leaving a doubled separator. The everyday cleaners: `lower`/`upper`; `trim` (spaces only by default, `btrim(s, 'x')` for other characters); `length` (characters, not bytes); `position('@' IN s)` (1-based, 0 if absent); `substring(s FROM 1 FOR 4)`, `left` and `right`; `replace(s, from, to)`; and `split_part(s, '@', 2)`, which returns an **empty string**, not NULL, when the part does not exist. `string_agg(x, ', ' ORDER BY x)` joins a group's values and skips NULLs; without ORDER BY the order is unspecified. Normalise once in a subquery or CTE (`lower(trim(email))`) and group by the cleaned value, or ' Ann@Mail.com' and 'ann@mail.com' count as two people.",
+      "code": "SELECT 'a' || NULL;                         -- NULL\nSELECT concat('a', NULL, 'b');              -- ab\nSELECT concat_ws(' ', 'Ada', NULL);         -- Ada\nSELECT split_part('ann@mail.com', '@', 2);  -- mail.com\nSELECT split_part('no-at-sign', '@', 2);    -- '' (empty string, not NULL)\nSELECT position('@' IN 'ann@mail.com');     -- 4\n\nSELECT customer_id,\n       string_agg(DISTINCT lower(trim(tag)), ', ' ORDER BY lower(trim(tag))) AS tags\nFROM customer_tags\nGROUP BY customer_id;",
+      "diagram": "sqd-concat"
+    },
+    {
+      "title": "LIKE, ILIKE, escaping and regular expressions",
+      "body": "In LIKE, `%` matches any run of characters and `_` matches exactly **one** character, so `'Report_%'` also matches `'ReportX2024'`. To match a literal `_` or `%`, escape it: backslash is the default escape character (`'Report\\_%'`), or pick your own with `ESCAPE '!'`. `ILIKE` is the Postgres-specific case-insensitive LIKE. For real patterns use POSIX regular expressions: `~` (matches), `~*` (case-insensitive), `!~` (does not match), and `regexp_replace(s, pattern, replacement, 'g')`; without the `'g'` flag only the first match is replaced. A leading-wildcard `LIKE '%term%'` cannot use a B-tree index; that needs a trigram (`pg_trgm`) GIN index or full-text search.",
+      "code": "SELECT 'ReportX2024' LIKE 'Report_%';         -- true: _ is a wildcard\nSELECT 'ReportX2024' LIKE 'Report\\_%';        -- false: escaped underscore\nSELECT 'a%b' LIKE 'a!%b' ESCAPE '!';          -- true\nSELECT 'ABC' ILIKE 'a%';                      -- true (Postgres-specific)\n\nSELECT 'SKU-0042' ~ '^SKU-[0-9]{4}$';         -- true\nSELECT regexp_replace('  Ann   Lee ', '\\s+', ' ', 'g');  -- ' Ann Lee '\nSELECT regexp_replace(phone, '[^0-9+]', '', 'g') AS phone_digits FROM contacts;"
+    },
+    {
+      "title": "JSONB operators: -> versus ->>, #>>, @> and ?",
+      "body": "`->` returns **jsonb** (keep navigating: `doc->'items'->0`), `->>` returns **text** (compare it or cast it), and `#>` / `#>>` take a path (`doc #>> '{shipping,city}'`). Text from `->>` cannot be added to a number: `(doc->>'qty') + 1` fails with `operator does not exist: text + integer`, so cast first with `(doc->>'qty')::int`. A missing key gives SQL NULL; a key holding JSON `null` also gives NULL from `->>`, and `doc ? 'key'` (key exists) tells the two apart. `@>` is containment: `doc @> '{\"status\": \"cancelled\"}'` is true when the document includes that structure, and an array contains any subset of its elements. `@>` and `?` can use a GIN index on the column; `->>` comparisons need an expression index. Prefer `jsonb` to `json`: `json` keeps the input text exactly (whitespace, key order, duplicate keys) and re-parses it on every access, while `jsonb` is parsed once into a binary form, keeps only the last duplicate key, and supports indexing.",
+      "code": "SELECT doc->'customer'           AS customer_json,  -- jsonb: \"c1\"\n       doc->>'customer'          AS customer_text,  -- text: c1\n       doc #>> '{shipping,city}' AS city,\n       (doc->>'total')::numeric  AS total\nFROM orders\nWHERE doc @> '{\"status\": \"paid\"}'   -- containment, GIN-indexable\n  AND doc ? 'coupon';                -- key exists, even if its value is null\n\nSELECT '{\"tags\": [\"a\", \"b\"]}'::jsonb @> '{\"tags\": [\"a\"]}';  -- true\nCREATE INDEX orders_doc_gin ON orders USING gin (doc jsonb_path_ops);  -- serves @>"
+    },
+    {
+      "title": "Unnesting and building JSON",
+      "body": "Set-returning functions turn JSON into rows: `jsonb_array_elements(arr)` gives one jsonb value per element, `jsonb_array_elements_text` gives text, and `jsonb_each(obj)` / `jsonb_each_text(obj)` give `(key, value)` pairs. Put them in FROM with `CROSS JOIN LATERAL` (LATERAL is implicit for functions, but writing it shows intent) so each element row stays linked to its parent. A parent whose array is empty or whose key is missing produces **no** rows, so use `LEFT JOIN LATERAL ... ON true` if the parent must survive. A JSON `null` or a scalar in place of the array raises `cannot extract elements from a scalar`, so guard with `jsonb_typeof(x) = 'array'` when the data is messy. In the other direction, `jsonb_build_object('sku', sku, 'qty', qty)` makes an object and `jsonb_agg(expr ORDER BY ...)` aggregates rows into an array, which is how one query returns a nested, API-shaped result.",
+      "code": "SELECT o.id, item->>'sku' AS sku, (item->>'qty')::int AS qty\nFROM orders o\nCROSS JOIN LATERAL jsonb_array_elements(o.doc->'items') AS item;\n\nSELECT key, value FROM jsonb_each('{\"a\": 1, \"b\": \"x\"}');  -- a | 1, b | \"x\"\n\nSELECT customer_id,\n       jsonb_agg(jsonb_build_object('id', id, 'total', total) ORDER BY id) AS orders\nFROM order_totals\nGROUP BY customer_id;",
+      "diagram": "sqd-json"
+    }
+  ],
+  "example": "-- Weekly sign-ups with empty weeks, a pro count and the domains seen.\nWITH weeks AS (\n  SELECT g AS week_start\n  FROM generate_series(timestamptz '2024-02-26 00:00:00+00',\n                       timestamptz '2024-03-18 00:00:00+00',\n                       interval '1 week') AS g\n),\nclean AS (\n  SELECT lower(trim(email))              AS email,\n         coalesce(meta->>'plan', 'free') AS plan,\n         created_at\n  FROM accounts\n  WHERE email LIKE '%@%'\n)\nSELECT to_char(w.week_start, 'YYYY-MM-DD')                    AS week,\n       count(c.email)                                         AS signups,\n       count(c.email) FILTER (WHERE c.plan = 'pro')           AS pro_signups,\n       string_agg(DISTINCT split_part(c.email, '@', 2), ', ') AS domains\nFROM weeks w\nLEFT JOIN clean c\n  ON c.created_at >= w.week_start\n AND c.created_at <  w.week_start + interval '1 week'\nGROUP BY w.week_start\nORDER BY w.week_start;",
+  "task": "Tables: `report_range(start_day date, end_day date)` holds exactly one row, and `events(id, user_id, kind, occurred_at timestamptz)` holds activity in UTC. Return one row **per calendar day** from `start_day` to `end_day` inclusive with columns `day` (a `date`), `event_count` (events during that UTC day) and `user_count` (distinct non-NULL `user_id`s that day), in that order, sorted by `day` ascending. Days with no events still appear with 0 and 0. An event belongs to a day when `day <= occurred_at < day + 1`, so an event at exactly midnight belongs to the new day, and events outside the range are ignored. Events with a NULL `user_id` count as events but not as users.",
+  "starter": "-- Daily activity for the report range: one row per day, oldest first.\n-- Bug hunt: empty days vanish, and the last day stops at midnight.\nSELECT occurred_at::date AS day,\n       count(*) AS event_count,\n       count(DISTINCT user_id) AS user_count\nFROM events\nCROSS JOIN report_range r\nWHERE occurred_at BETWEEN r.start_day AND r.end_day\nGROUP BY occurred_at::date\nORDER BY day;",
+  "hints": [
+    "The result's rows come from the calendar, not from `events`. Generate the days with `generate_series(start_day, end_day, interval '1 day')` and cast each value back to `date`.",
+    "LEFT JOIN events to each day with `e.occurred_at >= d.day AND e.occurred_at < d.day + 1` in the ON clause, then use `count(e.id)` and `count(DISTINCT e.user_id)`, which ignore the NULLs a quiet day produces."
+  ],
+  "solution": "WITH days AS (\n  SELECT g::date AS day\n  FROM report_range r\n  CROSS JOIN generate_series(r.start_day, r.end_day, interval '1 day') AS g\n)\nSELECT d.day,\n       count(e.id) AS event_count,\n       count(DISTINCT e.user_id) AS user_count\nFROM days d\nLEFT JOIN events e\n  ON e.occurred_at >= d.day\n AND e.occurred_at <  d.day + 1\nGROUP BY d.day\nORDER BY d.day;\n\nThe result has one row per day, so the calendar drives the query: `generate_series` over the report range yields every day, including quiet ones, and `::date` turns each generated `timestamptz` back into a day. Events LEFT JOIN to the day whose half-open range contains them, which handles a 23:30 event on the last day and an event at exactly midnight (it belongs to the next day) without any `23:59:59` hacks. A quiet day keeps one NULL-extended row, so `count(e.id)` gives 0 where `count(*)` would give 1, and `count(DISTINCT e.user_id)` ignores both the NULLs from the join and anonymous events. The range test lives in ON, not WHERE: a WHERE on `e.` columns would discard the NULL rows and turn the query back into an inner join. With a B-tree index on `events(occurred_at)` each day's join is a range scan; for long ranges it is cheaper to aggregate events once by `occurred_at::date` in a subquery and LEFT JOIN that to the calendar.",
+  "checklist": [
+    "Every day in the range appears exactly once, including days with no events.",
+    "I count `e.id`, not `*`, so quiet days report 0.",
+    "The day test is half-open (`>= day AND < day + 1`), so the last day is complete and midnight belongs to the new day.",
+    "The range test is in ON, not WHERE, and the result is sorted by `day`."
+  ],
+  "pitfalls": [
+    "Using BETWEEN with date bounds on a `timestamptz` column, which ends the range at midnight of the last day.",
+    "Grouping the events table by `occurred_at::date`, which can never produce a row for a day with no events.",
+    "Writing `count(*)` after a LEFT JOIN, which reports 1 for a quiet day.",
+    "Building strings with `||` when a part can be NULL, which blanks the whole value; use `concat_ws` or `coalesce`.",
+    "Forgetting that `_` is a LIKE wildcard, so `LIKE 'user_%'` also matches 'userX1'.",
+    "Doing arithmetic on `->>` output without a cast, or comparing a `->` result (jsonb) with a plain text value.",
+    "Assuming `split_part` returns NULL when the delimiter is missing; it returns an empty string, which then forms its own group.",
+    "Storing event times in `timestamp` and losing which zone the wall-clock values were in."
+  ],
+  "walkthrough": [
+    {
+      "title": "Build the daily report in three moves",
+      "body": "First, say the grain: one row per day in the range, whatever the events table contains. That tells you the FROM clause starts at a calendar, which `generate_series` builds from the two dates. Second, attach facts with a LEFT JOIN whose ON clause is a half-open range, so each event lands in exactly one day. Third, aggregate with functions that ignore NULL (`count(e.id)`, `count(DISTINCT e.user_id)`, `coalesce(sum(e.amount), 0)` for sums), because a quiet day carries one row of NULLs. Step through the diagram to see where every result row comes from.",
+      "code": "WITH days AS (\n  SELECT g::date AS day\n  FROM report_range r\n  CROSS JOIN generate_series(r.start_day, r.end_day, interval '1 day') AS g\n)\nSELECT d.day,\n       count(e.id) AS event_count,\n       count(DISTINCT e.user_id) AS user_count\nFROM days d\nLEFT JOIN events e\n  ON e.occurred_at >= d.day\n AND e.occurred_at <  d.day + 1\nGROUP BY d.day\nORDER BY d.day;",
+      "diagram": "sqd-calendar"
+    },
+    {
+      "title": "Keep date and JSON filters index-friendly",
+      "body": "Interviewers often follow up with 'and how does this perform?'. A predicate is index-friendly when the bare column is compared with a constant. `occurred_at >= $1 AND occurred_at < $2` uses a B-tree on `occurred_at`; `occurred_at::date = $1`, `date_trunc('day', occurred_at) = $1` and `extract(year FROM occurred_at) = 2024` do not, unless you index exactly that expression, and casting a `timestamptz` to `date` depends on the TimeZone setting, so Postgres refuses to index it directly. For JSONB, `doc @> '{\"status\": \"paid\"}'` can use a GIN index, and a hot `->>` field is better promoted to a generated column with its own B-tree.",
+      "code": "-- Sargable: a range scan on the B-tree\nCREATE INDEX events_occurred_at ON events (occurred_at);\nSELECT count(*) FROM events\nWHERE occurred_at >= timestamptz '2024-03-01 00:00:00+00'\n  AND occurred_at <  timestamptz '2024-03-02 00:00:00+00';\n\n-- A hot JSON field promoted to a real column\nALTER TABLE orders\n  ADD COLUMN status text GENERATED ALWAYS AS (doc->>'status') STORED;\nCREATE INDEX orders_status ON orders (status);"
+    },
+    {
+      "title": "Reading messy JSON defensively",
+      "body": "Real documents are inconsistent, and the interviewer will ask what happens when they are. List the cases before writing SQL: key missing (`->` gives NULL, unnesting gives no rows); key present but JSON `null` or a scalar (`jsonb_array_elements` raises an error); element missing a field (`->>` gives NULL, so `coalesce` a default); numbers stored as strings (`'9.50'::numeric` still works); documents to exclude (`NOT doc @> '{\"status\": \"cancelled\"}'`). Each case maps to one guard: `jsonb_typeof` before unnesting, `coalesce` for defaults, `IS NOT NULL` for required keys. Saying these out loud is most of what the stretch exercise tests.",
+      "code": "SELECT o.id, item->>'sku' AS sku, coalesce((item->>'qty')::int, 1) AS qty\nFROM orders o\nCROSS JOIN LATERAL jsonb_array_elements(\n  CASE WHEN jsonb_typeof(o.doc->'items') = 'array' THEN o.doc->'items' ELSE '[]'::jsonb END\n) AS item\nWHERE item->>'sku' IS NOT NULL;"
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Subscribers per email domain",
+      "prompt": "Table `newsletter_signups(id, email, signed_up_at)`. Emails were typed by hand, with mixed case and leading or trailing spaces. Normalise each email with `lower(trim(email))`, ignore NULLs and values without an `@`, and count **distinct** normalised addresses per domain (the part after `@`). Return `domain`, `subscribers` in that order; row order does not matter.",
+      "hints": [
+        "Clean once in a subquery, `SELECT lower(trim(email)) AS clean_email FROM newsletter_signups`, then filter and group the cleaned value.",
+        "`split_part(clean_email, '@', 2)` is the domain and `count(DISTINCT clean_email)` merges the same person typed twice. `clean_email LIKE '%@%'` drops NULLs and malformed values in one go."
+      ],
+      "solution": "SELECT split_part(clean_email, '@', 2) AS domain,\n       count(DISTINCT clean_email) AS subscribers\nFROM (\n  SELECT lower(trim(email)) AS clean_email\n  FROM newsletter_signups\n) s\nWHERE clean_email LIKE '%@%'\nGROUP BY split_part(clean_email, '@', 2);",
+      "checklist": [
+        "' Ann@Mail.com' and 'ann@mail.com' count once, under `mail.com`.",
+        "NULL, empty and '@'-less emails do not create a group with an empty or NULL domain.",
+        "Subdomains such as `eu.mail.com` are separate domains."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Units and revenue per SKU from order documents",
+      "prompt": "Table `orders(id, placed_at, doc jsonb)`. `doc` may have `status` (orders whose status is \"cancelled\" are excluded; a missing status counts) and `items`, an array of objects with `sku`, `qty` and `price` (a JSON number). `items` may be missing, JSON `null` or empty; an item without `qty` counts as 1 unit; an item with a missing or null `sku` is ignored. Return `sku`, `units` (total quantity) and `revenue` (sum of qty × price, rounded to 2 decimals) in that order; row order does not matter.",
+      "hints": [
+        "Unnest with `CROSS JOIN LATERAL jsonb_array_elements(...) AS item`, but pass it `CASE WHEN jsonb_typeof(o.doc->'items') = 'array' THEN o.doc->'items' ELSE '[]'::jsonb END` so a JSON null does not raise an error.",
+        "Exclude cancelled orders with `NOT o.doc @> '{\"status\": \"cancelled\"}'`, default the quantity with `coalesce((item->>'qty')::int, 1)`, cast the price with `::numeric`, and wrap the revenue sum in `round(..., 2)`."
+      ],
+      "solution": "SELECT item->>'sku' AS sku,\n       sum(coalesce((item->>'qty')::int, 1)) AS units,\n       round(sum(coalesce((item->>'qty')::int, 1) * (item->>'price')::numeric), 2) AS revenue\nFROM orders o\nCROSS JOIN LATERAL jsonb_array_elements(\n  CASE WHEN jsonb_typeof(o.doc->'items') = 'array' THEN o.doc->'items' ELSE '[]'::jsonb END\n) AS item\nWHERE NOT o.doc @> '{\"status\": \"cancelled\"}'\n  AND item->>'sku' IS NOT NULL\nGROUP BY item->>'sku';",
+      "checklist": [
+        "Missing, null and empty `items` neither raise an error nor add rows.",
+        "Cancelled orders are excluded but orders with no status are included.",
+        "A missing `qty` counts as 1 and items without a sku are skipped.",
+        "Revenue is computed in `numeric` and rounded to 2 decimals."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "The business wants days in the customer's local time zone, not UTC. What changes?",
+      "answer": "The day boundaries move. Convert before bucketing: `(occurred_at AT TIME ZONE 'Europe/Paris')::date` for grouping, or keep the half-open join and build the calendar in that zone: `generate_series(start_day::timestamp, end_day::timestamp, interval '1 day') AT TIME ZONE 'Europe/Paris'` gives the UTC instants of local midnights, so DST days are 23 or 25 hours long automatically. Postgres also accepts `date_trunc('day', ts, 'Europe/Paris')`. Per-customer zones mean joining each event to its customer's zone column. Never hard-code an offset such as +01, which ignores DST."
+    },
+    {
+      "question": "This report runs over a year of events with 500 million rows. How would you make it fast?",
+      "answer": "Keep the range filter sargable and indexed (`occurred_at >= $1 AND occurred_at < $2` with a B-tree, or a small BRIN index on an append-only table), aggregate events once per day instead of joining every event to the calendar (`GROUP BY occurred_at::date` in a subquery, then LEFT JOIN that to `generate_series`), and for dashboards maintain a daily rollup table or a materialized view. Range partitioning by month lets the planner skip whole partitions. `count(DISTINCT user_id)` is the expensive part; at very large scale an approximate distinct count (HyperLogLog) is the usual trade-off."
+    },
+    {
+      "question": "When would you keep data in a JSONB column and when would you promote it to real columns?",
+      "answer": "JSONB suits sparse, variable or externally defined attributes (webhook payloads, per-tenant custom fields) that you mostly store and fetch whole. Fields you filter, join, sort or aggregate on often, or that need constraints (NOT NULL, foreign keys, CHECK), belong in typed columns: they get proper statistics, smaller storage and ordinary indexes. A middle ground is a generated column from `doc->>'field'` with a B-tree, or a GIN index for `@>` lookups."
+    },
+    {
+      "question": "How do you make `name ILIKE '%smith%'` fast?",
+      "answer": "A B-tree cannot help with a leading wildcard. Enable `pg_trgm` and create `CREATE INDEX ON people USING gin (name gin_trgm_ops)`; it serves LIKE, ILIKE and regex matches. For word search with ranking use full-text search (`to_tsvector` with a GIN index). For prefix-only searches (`LIKE 'smi%'`) a B-tree with `text_pattern_ops` (or the C collation) works."
+    }
+  ],
+  "takeaways": [
+    "Use `timestamptz` for events: it stores a UTC instant, and the session TimeZone or `AT TIME ZONE` only changes how it is shown and which local day it falls on.",
+    "Filter time with half-open ranges (`>= start AND < next_start`); BETWEEN with date bounds drops most of the last day.",
+    "Month arithmetic clamps to the month end (Jan 31 + 1 month = Feb 29 in 2024), so it is not associative.",
+    "When every day must appear, drive the query from `generate_series` and LEFT JOIN facts to it, counting a column, not `*`.",
+    "`||` returns NULL if any part is NULL, `concat` and `concat_ws` skip NULLs, `split_part` returns '' for a missing part, and `_` is a LIKE wildcard.",
+    "`->` returns jsonb and `->>` returns text: cast before arithmetic, use `@>` and `?` for indexable containment and key checks, and guard arrays before unnesting."
+  ],
+  "lab": {
+    "lang": "sql",
+    "diagrams": [
+      {
+        "id": "sqd-tz",
+        "type": "sequence",
+        "title": "What timestamptz stores and what you see",
+        "alt": "Sequence diagram with a client, Postgres and the stored row. The client inserts 2024-03-10 01:30 with offset -05. Postgres converts it to the UTC instant 06:30 and stores only that instant. A SELECT in a UTC session shows 06:30+00; AT TIME ZONE America/New_York turns it back into the wall-clock timestamp 01:30 without a zone.",
+        "caption": "timestamptz stores one instant in UTC and no zone name; the session TimeZone only decides how it is printed.",
+        "actors": [
+          {
+            "id": "app",
+            "label": "Client"
+          },
+          {
+            "id": "pg",
+            "label": "Postgres"
+          },
+          {
+            "id": "row",
+            "label": "Stored row"
+          }
+        ],
+        "messages": [
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "INSERT '2024-03-10 01:30-05'"
+          },
+          {
+            "from": "pg",
+            "to": "row",
+            "label": "8-byte instant 06:30 UTC",
+            "note": "The offset is used to convert, then thrown away. No zone name is kept."
+          },
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "SELECT ts (TimeZone = UTC)"
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "2024-03-10 06:30:00+00",
+            "style": "reply",
+            "note": "Same instant, printed in the session zone."
+          },
+          {
+            "from": "app",
+            "to": "pg",
+            "label": "ts AT TIME ZONE 'America/New_York'"
+          },
+          {
+            "from": "pg",
+            "to": "app",
+            "label": "2024-03-10 01:30:00 (timestamp)",
+            "style": "reply",
+            "note": "A wall-clock value with no zone: good for display and for grouping by local day."
+          }
+        ]
+      },
+      {
+        "id": "sqd-range",
+        "type": "compare",
+        "title": "BETWEEN dates versus a half-open range",
+        "alt": "Comparison of two filters for events on 1 March. On the left, ts BETWEEN '2024-03-01' AND '2024-03-01' turns both dates into midnight, so only an event at exactly 00:00 matches and the 15:00 event is lost. On the right, ts >= '2024-03-01' AND ts < '2024-03-02' covers the whole day, keeps the 15:00 event and excludes midnight of the next day.",
+        "caption": "On timestamps, use >= start AND < next start: it covers every fraction of a second, never double-counts a boundary, and uses a plain B-tree index.",
+        "before": {
+          "label": "BETWEEN '03-01' AND '03-01'",
+          "nodes": [
+            {
+              "id": "f",
+              "label": "BETWEEN d AND d",
+              "kind": "bad",
+              "col": 0,
+              "row": 0,
+              "sub": "end = 00:00:00"
+            },
+            {
+              "id": "m",
+              "label": "00:00 event",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "matches"
+            },
+            {
+              "id": "l",
+              "label": "15:00 event",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "lost"
+            }
+          ],
+          "edges": [
+            {
+              "from": "f",
+              "to": "m",
+              "label": "kept"
+            },
+            {
+              "from": "f",
+              "to": "l",
+              "label": "15:00 > end",
+              "style": "fail"
+            }
+          ]
+        },
+        "after": {
+          "label": ">= '03-01' AND < '03-02'",
+          "nodes": [
+            {
+              "id": "f",
+              "label": ">= d AND < d+1",
+              "kind": "good",
+              "col": 0,
+              "row": 0,
+              "sub": "half-open"
+            },
+            {
+              "id": "m",
+              "label": "00:00 event",
+              "kind": "state",
+              "col": 2,
+              "row": 0,
+              "sub": "matches"
+            },
+            {
+              "id": "l",
+              "label": "15:00 event",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "kept"
+            },
+            {
+              "id": "n",
+              "label": "03-02 00:00",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "next day: out"
+            }
+          ],
+          "edges": [
+            {
+              "from": "f",
+              "to": "m",
+              "label": "kept"
+            },
+            {
+              "from": "f",
+              "to": "l",
+              "label": "kept"
+            },
+            {
+              "from": "n",
+              "to": "l",
+              "label": "not this day"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqd-calendar",
+        "type": "flow",
+        "title": "Filling missing days with a generated calendar",
+        "alt": "Flow diagram of the daily report. The report range feeds generate_series, which produces one row per day. Events join to those days with a LEFT JOIN on a half-open range. Days with matching events become rows with their counts; days without events still produce a row and count(e.id) gives 0. An inner join, shown as a bad branch, would drop the empty days.",
+        "caption": "Drive the report from the calendar, not from the events: the calendar decides which rows exist, the events only fill in counts.",
+        "nodes": [
+          {
+            "id": "rr",
+            "label": "report_range",
+            "kind": "storage",
+            "col": 0,
+            "row": 0,
+            "sub": "start_day, end_day"
+          },
+          {
+            "id": "gs",
+            "label": "generate_series",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "one row per day"
+          },
+          {
+            "id": "ev",
+            "label": "events",
+            "kind": "db",
+            "col": 0,
+            "row": 2,
+            "sub": "occurred_at"
+          },
+          {
+            "id": "lj",
+            "label": "LEFT JOIN",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": ">= day, < day+1"
+          },
+          {
+            "id": "hit",
+            "label": "busy day",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "count(e.id) = n"
+          },
+          {
+            "id": "miss",
+            "label": "quiet day",
+            "kind": "good",
+            "col": 4,
+            "row": 3,
+            "sub": "count(e.id) = 0"
+          },
+          {
+            "id": "ij",
+            "label": "INNER JOIN",
+            "kind": "bad",
+            "col": 2,
+            "row": 4,
+            "sub": "quiet days vanish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "rr",
+            "to": "gs",
+            "label": "bounds"
+          },
+          {
+            "from": "gs",
+            "to": "lj",
+            "label": "calendar rows"
+          },
+          {
+            "from": "ev",
+            "to": "lj",
+            "label": "match rows"
+          },
+          {
+            "from": "lj",
+            "to": "hit",
+            "label": "has events"
+          },
+          {
+            "from": "lj",
+            "to": "miss",
+            "label": "NULL side"
+          },
+          {
+            "from": "lj",
+            "to": "ij",
+            "label": "if inner",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "`generate_series(start_day, end_day, interval '1 day')` makes one row per day, including days with no events."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "Each event joins to the day whose half-open range contains it: `>= day AND < day + 1`."
+          },
+          {
+            "edges": [
+              3,
+              4
+            ],
+            "text": "A busy day yields one row per event; a quiet day yields one row whose event columns are NULL. `count(e.id)` skips NULLs, so it reports 0, while `count(*)` would report 1."
+          },
+          {
+            "edges": [
+              5
+            ],
+            "text": "An inner join (or a WHERE on `e.` columns) removes the NULL-extended rows, and quiet days disappear again."
+          }
+        ]
+      },
+      {
+        "id": "sqd-concat",
+        "type": "compare",
+        "title": "|| versus concat_ws when a part is NULL",
+        "alt": "Comparison of building a display name when last_name is NULL. On the left, first_name || ' ' || last_name returns NULL because any NULL operand makes || return NULL, so the label is blank. On the right, concat_ws(' ', first_name, last_name) skips the NULL argument and returns Ada.",
+        "caption": "|| is strict: one NULL part blanks the whole string. concat and concat_ws treat NULL as missing.",
+        "before": {
+          "label": "first || ' ' || last",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "'Ada' + NULL",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "last_name is NULL"
+            },
+            {
+              "id": "out",
+              "label": "NULL",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "whole value lost"
+            },
+            {
+              "id": "ui",
+              "label": "blank label",
+              "kind": "bad",
+              "col": 2,
+              "row": 2,
+              "sub": "in the report"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "out",
+              "label": "||"
+            },
+            {
+              "from": "out",
+              "to": "ui",
+              "label": "displayed"
+            }
+          ]
+        },
+        "after": {
+          "label": "concat_ws(' ', first, last)",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "'Ada' + NULL",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "last_name is NULL"
+            },
+            {
+              "id": "out",
+              "label": "'Ada'",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "NULL skipped"
+            },
+            {
+              "id": "ui",
+              "label": "Ada",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "no trailing space"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "out",
+              "label": "concat_ws"
+            },
+            {
+              "from": "out",
+              "to": "ui",
+              "label": "displayed"
+            }
+          ]
+        }
+      },
+      {
+        "id": "sqd-json",
+        "type": "flow",
+        "title": "From an order document to rows you can SUM",
+        "alt": "Flow diagram of unnesting JSONB. An order document's items key is read with -> and stays jsonb. jsonb_array_elements turns the array into one row per item. ->> extracts qty and price as text, which are cast to int and numeric before SUM by sku. A bad branch shows that a JSON null items value makes jsonb_array_elements raise an error unless jsonb_typeof is checked first.",
+        "caption": "-> keeps jsonb for further navigation, ->> gives text for comparison and casting; guard the array before unnesting it.",
+        "nodes": [
+          {
+            "id": "doc",
+            "label": "orders.doc",
+            "kind": "storage",
+            "col": 0,
+            "row": 0,
+            "sub": "jsonb document"
+          },
+          {
+            "id": "arr",
+            "label": "doc->'items'",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "jsonb array"
+          },
+          {
+            "id": "rows",
+            "label": "array_elements",
+            "kind": "state",
+            "col": 4,
+            "row": 0,
+            "sub": "one row per item"
+          },
+          {
+            "id": "txt",
+            "label": "item->>'qty'",
+            "kind": "state",
+            "col": 4,
+            "row": 2,
+            "sub": "text '2'"
+          },
+          {
+            "id": "cast",
+            "label": "::int, ::numeric",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": "typed values"
+          },
+          {
+            "id": "sum",
+            "label": "SUM by sku",
+            "kind": "good",
+            "col": 0,
+            "row": 2,
+            "sub": "GROUP BY"
+          },
+          {
+            "id": "nul",
+            "label": "items: null",
+            "kind": "bad",
+            "col": 2,
+            "row": 4,
+            "sub": "scalar: ERROR"
+          },
+          {
+            "id": "typ",
+            "label": "jsonb_typeof",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "= 'array' guard"
+          }
+        ],
+        "edges": [
+          {
+            "from": "doc",
+            "to": "arr",
+            "label": "->"
+          },
+          {
+            "from": "arr",
+            "to": "rows",
+            "label": "unnest"
+          },
+          {
+            "from": "rows",
+            "to": "txt",
+            "label": "->>"
+          },
+          {
+            "from": "txt",
+            "to": "cast",
+            "label": "cast"
+          },
+          {
+            "from": "cast",
+            "to": "sum",
+            "label": "aggregate"
+          },
+          {
+            "from": "nul",
+            "to": "typ",
+            "label": "guard with"
+          },
+          {
+            "from": "cast",
+            "to": "nul",
+            "label": "if items null",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0
+            ],
+            "text": "`->` returns jsonb, so you can keep navigating (`doc->'items'->0`)."
+          },
+          {
+            "edges": [
+              1
+            ],
+            "text": "`jsonb_array_elements` is a set-returning function: in a LATERAL join it emits one row per array element."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "`->>` returns text. Text cannot be summed, so cast it: `(item->>'qty')::int`, `(item->>'price')::numeric`."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Now it is ordinary relational data: GROUP BY the sku and aggregate."
+          },
+          {
+            "edges": [
+              6,
+              5
+            ],
+            "text": "A missing key gives SQL NULL and unnests to nothing, but a JSON `null` or a scalar raises `cannot extract elements from a scalar`. Check `jsonb_typeof(...) = 'array'` first."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "schema": "CREATE TABLE report_range (start_day date NOT NULL, end_day date NOT NULL);\nCREATE TABLE events (\n  id          int PRIMARY KEY,\n  user_id     int,\n  kind        text NOT NULL,\n  occurred_at timestamptz NOT NULL\n);",
+        "starter": "-- Daily activity for the report range: one row per day, oldest first.\n-- Bug hunt: empty days vanish, and the last day stops at midnight.\nSELECT occurred_at::date AS day,\n       count(*) AS event_count,\n       count(DISTINCT user_id) AS user_count\nFROM events\nCROSS JOIN report_range r\nWHERE occurred_at BETWEEN r.start_day AND r.end_day\nGROUP BY occurred_at::date\nORDER BY day;",
+        "solution": "WITH days AS (\n  SELECT g::date AS day\n  FROM report_range r\n  CROSS JOIN generate_series(r.start_day, r.end_day, interval '1 day') AS g\n)\nSELECT d.day,\n       count(e.id) AS event_count,\n       count(DISTINCT e.user_id) AS user_count\nFROM days d\nLEFT JOIN events e\n  ON e.occurred_at >= d.day\n AND e.occurred_at <  d.day + 1\nGROUP BY d.day\nORDER BY d.day;",
+        "ordered": true,
+        "tests": [
+          {
+            "name": "quiet days appear with 0",
+            "seed": "INSERT INTO report_range VALUES ('2024-03-01', '2024-03-04');\nINSERT INTO events VALUES\n  (1, 1, 'login', '2024-03-01 09:30:00+00'),\n  (2, 2, 'login', '2024-03-01 18:05:00+00'),\n  (3, 1, 'login', '2024-03-03 07:00:00+00'),\n  (4, 1, 'purchase', '2024-03-03 07:12:00+00'),\n  (5, 3, 'login', '2024-03-03 21:40:00+00'),\n  (6, 4, 'login', '2024-02-29 23:59:00+00'),\n  (7, 4, 'login', '2024-03-05 00:00:00+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-03-01",
+                  2,
+                  2
+                ],
+                [
+                  "2024-03-02",
+                  0,
+                  0
+                ],
+                [
+                  "2024-03-03",
+                  3,
+                  2
+                ],
+                [
+                  "2024-03-04",
+                  0,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "events late on the last day count",
+            "seed": "INSERT INTO report_range VALUES ('2024-03-02', '2024-03-04');\nINSERT INTO events VALUES\n  (1, 5, 'login', '2024-03-02 00:00:00+00'),\n  (2, 5, 'login', '2024-03-04 23:30:00+00'),\n  (3, 6, 'signup', '2024-03-04 12:00:00+00'),\n  (4, 6, 'login', '2024-03-01 23:59:59+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-03-02",
+                  1,
+                  1
+                ],
+                [
+                  "2024-03-03",
+                  0,
+                  0
+                ],
+                [
+                  "2024-03-04",
+                  2,
+                  2
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "range crosses the leap day",
+            "seed": "INSERT INTO report_range VALUES ('2024-02-27', '2024-03-01');\nINSERT INTO events VALUES\n  (1, 1, 'login', '2024-02-29 12:00:00+00'),\n  (2, 2, 'login', '2024-02-29 12:00:00+00'),\n  (3, 1, 'login', '2024-03-01 00:00:00+00'),\n  (4, 3, 'login', '2024-02-26 23:59:59+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-02-27",
+                  0,
+                  0
+                ],
+                [
+                  "2024-02-28",
+                  0,
+                  0
+                ],
+                [
+                  "2024-02-29",
+                  2,
+                  2
+                ],
+                [
+                  "2024-03-01",
+                  1,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "no events at all",
+            "seed": "INSERT INTO report_range VALUES ('2024-05-01', '2024-05-03');\n",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-05-01",
+                  0,
+                  0
+                ],
+                [
+                  "2024-05-02",
+                  0,
+                  0
+                ],
+                [
+                  "2024-05-03",
+                  0,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "anonymous events with NULL user_id",
+            "seed": "INSERT INTO report_range VALUES ('2024-04-10', '2024-04-11');\nINSERT INTO events VALUES\n  (1, NULL, 'pageview', '2024-04-10 08:00:00+00'),\n  (2, NULL, 'pageview', '2024-04-10 09:00:00+00'),\n  (3, 7, 'pageview', '2024-04-10 10:00:00+00'),\n  (4, NULL, 'pageview', '2024-04-11 10:00:00+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-04-10",
+                  3,
+                  1
+                ],
+                [
+                  "2024-04-11",
+                  1,
+                  0
+                ]
+              ]
+            }
+          },
+          {
+            "name": "single day with events just outside it",
+            "seed": "INSERT INTO report_range VALUES ('2024-06-15', '2024-06-15');\nINSERT INTO events VALUES\n  (1, 1, 'login', '2024-06-14 23:59:59+00'),\n  (2, 1, 'login', '2024-06-15 00:00:00+00'),\n  (3, 2, 'login', '2024-06-15 23:59:59.999+00'),\n  (4, 2, 'login', '2024-06-16 00:00:00+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-06-15",
+                  2,
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "same user many times in a day",
+            "seed": "INSERT INTO report_range VALUES ('2024-07-01', '2024-07-02');\nINSERT INTO events VALUES\n  (1, 9, 'login', '2024-07-01 01:00:00+00'),\n  (2, 9, 'click', '2024-07-01 02:00:00+00'),\n  (3, 9, 'click', '2024-07-01 03:00:00+00'),\n  (4, 9, 'logout', '2024-07-02 04:00:00+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2024-07-01",
+                  3,
+                  1
+                ],
+                [
+                  "2024-07-02",
+                  1,
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "range spans the new year",
+            "seed": "INSERT INTO report_range VALUES ('2023-12-30', '2024-01-02');\nINSERT INTO events VALUES\n  (1, 1, 'login', '2023-12-31 23:59:00+00'),\n  (2, 2, 'login', '2024-01-01 00:01:00+00'),\n  (3, 3, 'login', '2024-01-01 00:02:00+00');",
+            "expected": {
+              "columns": [
+                "day",
+                "event_count",
+                "user_count"
+              ],
+              "rows": [
+                [
+                  "2023-12-30",
+                  0,
+                  0
+                ],
+                [
+                  "2023-12-31",
+                  1,
+                  1
+                ],
+                [
+                  "2024-01-01",
+                  2,
+                  2
+                ],
+                [
+                  "2024-01-02",
+                  0,
+                  0
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "schema": "CREATE TABLE newsletter_signups (\n  id           int PRIMARY KEY,\n  email        text,\n  signed_up_at timestamptz NOT NULL\n);",
+        "starter": "-- Subscribers per email domain.\n-- Bug hunt: ' Ann@Mail.com' and 'ann@mail.com' are the same person.\nSELECT split_part(email, '@', 2) AS domain,\n       count(*) AS subscribers\nFROM newsletter_signups\nGROUP BY split_part(email, '@', 2);",
+        "solution": "SELECT split_part(clean_email, '@', 2) AS domain,\n       count(DISTINCT clean_email) AS subscribers\nFROM (\n  SELECT lower(trim(email)) AS clean_email\n  FROM newsletter_signups\n) s\nWHERE clean_email LIKE '%@%'\nGROUP BY split_part(clean_email, '@', 2);",
+        "tests": [
+          {
+            "name": "same address in different case and spacing counts once",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, ' Ann@Mail.com', '2024-03-01 09:30:00+00'),\n  (2, 'ann@mail.com ', '2024-03-01 09:30:00+00'),\n  (3, 'bo@mail.com', '2024-03-01 09:30:00+00'),\n  (4, 'cy@work.io', '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "mail.com",
+                  2
+                ],
+                [
+                  "work.io",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "NULL and malformed emails are skipped",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, NULL, '2024-03-01 09:30:00+00'),\n  (2, 'not-an-email', '2024-03-01 09:30:00+00'),\n  (3, 'dee@Work.IO', '2024-03-01 09:30:00+00'),\n  (4, '', '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "work.io",
+                  1
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "empty table",
+            "seed": "",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "single signup",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, 'Zoe@Example.ORG', '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "example.org",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "subdomain is its own domain",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, 'a@mail.com', '2024-03-01 09:30:00+00'),\n  (2, 'b@eu.mail.com', '2024-03-01 09:30:00+00'),\n  (3, 'c@EU.mail.com', '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "mail.com",
+                  1
+                ],
+                [
+                  "eu.mail.com",
+                  2
+                ]
+              ]
+            }
+          },
+          {
+            "name": "duplicates and distinct people mixed",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, 'x@shop.io', '2024-03-01 09:30:00+00'),\n  (2, 'X@SHOP.IO', '2024-03-01 09:30:00+00'),\n  (3, '  x@shop.io  ', '2024-03-01 09:30:00+00'),\n  (4, 'y@shop.io', '2024-03-01 09:30:00+00'),\n  (5, 'z@other.net', '2024-03-01 09:30:00+00'),\n  (6, NULL, '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "shop.io",
+                  2
+                ],
+                [
+                  "other.net",
+                  1
+                ]
+              ]
+            }
+          },
+          {
+            "name": "plus addressing stays a separate address",
+            "seed": "INSERT INTO newsletter_signups VALUES\n  (1, 'kim+news@mail.com', '2024-03-01 09:30:00+00'),\n  (2, 'kim@mail.com', '2024-03-01 09:30:00+00'),\n  (3, 'nobody', '2024-03-01 09:30:00+00'),\n  (4, '   ', '2024-03-01 09:30:00+00');",
+            "expected": {
+              "columns": [
+                "domain",
+                "subscribers"
+              ],
+              "rows": [
+                [
+                  "mail.com",
+                  2
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "schema": "CREATE TABLE orders (\n  id        int PRIMARY KEY,\n  placed_at timestamptz NOT NULL,\n  doc       jsonb NOT NULL\n);",
+        "starter": "-- Units and revenue per SKU from the order documents.\n-- Bug hunt: cancelled orders, missing qty, items that are null.\nSELECT item->>'sku' AS sku,\n       sum((item->>'qty')::int) AS units,\n       sum((item->>'qty')::int * (item->>'price')::numeric) AS revenue\nFROM orders\nCROSS JOIN jsonb_array_elements(doc->'items') AS item\nGROUP BY item->>'sku';",
+        "solution": "SELECT item->>'sku' AS sku,\n       sum(coalesce((item->>'qty')::int, 1)) AS units,\n       round(sum(coalesce((item->>'qty')::int, 1) * (item->>'price')::numeric), 2) AS revenue\nFROM orders o\nCROSS JOIN LATERAL jsonb_array_elements(\n  CASE WHEN jsonb_typeof(o.doc->'items') = 'array' THEN o.doc->'items' ELSE '[]'::jsonb END\n) AS item\nWHERE NOT o.doc @> '{\"status\": \"cancelled\"}'\n  AND item->>'sku' IS NOT NULL\nGROUP BY item->>'sku';",
+        "tests": [
+          {
+            "name": "cancelled orders are left out",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"paid\", \"items\": [{\"sku\": \"MUG\", \"qty\": 2, \"price\": 8.5}, {\"sku\": \"TEA\", \"qty\": 1, \"price\": 4.25}]}'),\n  (2, '2024-03-02 09:30:00+00', '{\"status\": \"paid\", \"items\": [{\"sku\": \"MUG\", \"qty\": 1, \"price\": 8.5}]}'),\n  (3, '2024-03-03 09:30:00+00', '{\"status\": \"cancelled\", \"items\": [{\"sku\": \"MUG\", \"qty\": 10, \"price\": 8.5}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "MUG",
+                  3,
+                  25.5
+                ],
+                [
+                  "TEA",
+                  1,
+                  4.25
+                ]
+              ]
+            }
+          },
+          {
+            "name": "missing qty means one unit",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"paid\", \"items\": [{\"sku\": \"PEN\", \"price\": 1.2}, {\"sku\": \"PEN\", \"qty\": 4, \"price\": 1.2}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "PEN",
+                  5,
+                  6.0
+                ]
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "name": "items missing, null or empty",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"paid\"}'),\n  (2, '2024-03-02 09:30:00+00', '{\"status\": \"paid\", \"items\": null}'),\n  (3, '2024-03-03 09:30:00+00', '{\"status\": \"paid\", \"items\": []}'),\n  (4, '2024-03-04 09:30:00+00', '{\"status\": \"paid\", \"items\": [{\"sku\": \"CAP\", \"qty\": 2, \"price\": 15}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "CAP",
+                  2,
+                  30
+                ]
+              ]
+            }
+          },
+          {
+            "name": "item without a sku is ignored",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"items\": [{\"qty\": 3, \"price\": 2}, {\"sku\": null, \"qty\": 1, \"price\": 2}, {\"sku\": \"BAG\", \"qty\": 1, \"price\": 19.99}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "BAG",
+                  1,
+                  19.99
+                ]
+              ]
+            }
+          },
+          {
+            "name": "order without a status still counts",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"items\": [{\"sku\": \"INK\", \"qty\": 3, \"price\": 19.99}]}'),\n  (2, '2024-03-02 09:30:00+00', '{\"status\": \"shipped\", \"items\": [{\"sku\": \"INK\", \"qty\": 1, \"price\": 18.5}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "INK",
+                  4,
+                  78.47
+                ]
+              ]
+            }
+          },
+          {
+            "name": "zero quantity line",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"paid\", \"items\": [{\"sku\": \"GIFT\", \"qty\": 0, \"price\": 5}, {\"sku\": \"CARD\", \"qty\": 2, \"price\": 0.99}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "GIFT",
+                  0,
+                  0
+                ],
+                [
+                  "CARD",
+                  2,
+                  1.98
+                ]
+              ]
+            }
+          },
+          {
+            "name": "every order cancelled",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"cancelled\", \"items\": [{\"sku\": \"MUG\", \"qty\": 1, \"price\": 8.5}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": []
+            }
+          },
+          {
+            "name": "many SKUs across orders",
+            "seed": "INSERT INTO orders VALUES\n  (1, '2024-03-01 09:30:00+00', '{\"status\": \"paid\", \"customer\": \"c1\", \"items\": [{\"sku\": \"A\", \"qty\": 1, \"price\": 1}, {\"sku\": \"B\", \"qty\": 2, \"price\": 2.5}]}'),\n  (2, '2024-03-02 09:30:00+00', '{\"status\": \"paid\", \"customer\": \"c2\", \"items\": [{\"sku\": \"B\", \"price\": 2.5}, {\"sku\": \"C\", \"qty\": 5, \"price\": 0.1}]}'),\n  (3, '2024-03-03 09:30:00+00', '{\"status\": \"refunded\", \"items\": [{\"sku\": \"A\", \"qty\": 2, \"price\": 1}]}');",
+            "expected": {
+              "columns": [
+                "sku",
+                "units",
+                "revenue"
+              ],
+              "rows": [
+                [
+                  "A",
+                  3,
+                  3
+                ],
+                [
+                  "B",
+                  3,
+                  7.5
+                ],
+                [
+                  "C",
+                  5,
+                  0.5
+                ]
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "SELECT date '2024-01-31' + interval '1 month';",
+        "choices": [
+          "2024-02-29 00:00:00",
+          "2024-03-02 00:00:00",
+          "2024-02-29",
+          "ERROR: date/time field value out of range"
+        ],
+        "answer": 0,
+        "explain": "Adding a month moves the month field and clamps to the last valid day, so Jan 31 becomes Feb 29 in a leap year. `date + interval` returns a `timestamp`, hence the time part."
+      },
+      {
+        "code": "WITH t(ts) AS (VALUES (timestamptz '2024-03-01 15:00:00+00'))\nSELECT count(*) FROM t\nWHERE ts BETWEEN '2024-03-01' AND '2024-03-01';",
+        "choices": [
+          "1",
+          "0",
+          "ERROR: operator does not exist: timestamp with time zone >= date"
+        ],
+        "answer": 1,
+        "explain": "Both bounds become midnight, so the range is the single instant 00:00:00 and 15:00 is outside it. Write `ts >= '2024-03-01' AND ts < '2024-03-02'`."
+      },
+      {
+        "code": "SELECT ('a' || NULL) IS NULL, concat('a', NULL, 'b');",
+        "choices": [
+          "true | ab",
+          "false | ab",
+          "true | NULL",
+          "false | aNULLb"
+        ],
+        "answer": 0,
+        "explain": "`||` returns NULL when any operand is NULL; `concat` treats NULL arguments as empty strings."
+      },
+      {
+        "code": "SELECT ('{\"qty\": \"3\"}'::jsonb ->> 'qty') + 1;",
+        "choices": [
+          "4",
+          "31",
+          "ERROR: operator does not exist: text + integer"
+        ],
+        "answer": 2,
+        "explain": "`->>` returns text and Postgres has no text + integer operator. Cast first: `(doc->>'qty')::int + 1`."
+      },
+      {
+        "code": "SELECT 'ReportX2024' LIKE 'Report_%',\n       'ReportX2024' LIKE 'Report\\_%';",
+        "choices": [
+          "true | false",
+          "false | false",
+          "true | true",
+          "false | true"
+        ],
+        "answer": 0,
+        "explain": "An unescaped `_` matches any single character, so the first pattern matches the 'X'. Escaping it with a backslash, the default LIKE escape character, makes it a literal underscore."
+      },
+      {
+        "code": "SELECT '{\"coupon\": null}'::jsonb ? 'coupon',\n       '{\"coupon\": null}'::jsonb ->> 'coupon';",
+        "choices": [
+          "true | NULL",
+          "false | NULL",
+          "true | null"
+        ],
+        "answer": 0,
+        "explain": "The key exists, so `?` is true, but `->>` turns a JSON null into SQL NULL, exactly like a missing key. Use `?` when you need to tell them apart."
+      }
+    ],
+    "tip": "Before writing a date report, say the grain and the boundaries out loud: \"one row per UTC day from start to end inclusive, an event counts when day <= ts < day + 1, empty days show 0.\" Then sketch the calendar on the left and the events on the right with a LEFT JOIN arrow; it shows the interviewer you know where the zero rows come from.",
+    "links": {
+      "guides": [
+        "database-indexes",
+        "edge-case-checklist"
+      ]
+    }
+  }
+}

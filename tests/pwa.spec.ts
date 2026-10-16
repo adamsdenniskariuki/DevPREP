@@ -82,7 +82,7 @@ async function inventory(release: 'v1' | 'v2') {
     for (const item of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, item.name)
       const relative = `${prefix}${item.name}`
-      if (item.isDirectory()) { if (relative !== 'pyodide' && relative !== 'typescript') await visit(path, `${relative}/`) }
+      if (item.isDirectory()) { if (!['pyodide', 'typescript', 'pglite'].includes(relative)) await visit(path, `${relative}/`) }
       else if (/\.(html|js|css|png|svg|webmanifest)$/.test(item.name) && relative !== 'sw.js') {
         files.push({ path: relative, sha256: createHash('sha256').update(await readFile(path)).digest('hex') })
       }
@@ -609,6 +609,39 @@ test('TypeScript labs run offline after the compiler\'s first online load', asyn
   await expect(offline.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
   await offline.getByRole('button', { name: 'Run tests' }).click()
   await expect(offline.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 60_000 })
+})
+
+test('SQL labs run offline after Postgres\'s first online load', async ({ page, context }) => {
+  test.setTimeout(240_000)
+  const track = JSON.parse(await readFile('content/sql/track.json', 'utf8'))
+  const lesson = JSON.parse(await readFile(`content/sql/${track.lessons[0]}.json`, 'utf8'))
+  const core = lesson.lab.exercises.find((exercise: { id: string }) => exercise.id === 'core')
+  const openPractice = async (target: Page) => {
+    await target.goto(`/DevPREP/#tracks/${track.id}`)
+    await target.locator('article', { has: target.getByRole('heading', { name: lesson.title, exact: true }) }).getByRole('button', { name: /Start lesson|Resume/ }).click()
+    await target.getByRole('navigation', { name: 'Study steps' }).getByRole('button', { name: /Practice/ }).click()
+  }
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await openPractice(page)
+  await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 150_000 })
+  const cached = await page.evaluate(async () => {
+    const names = (await caches.keys()).filter(name => name.startsWith('devprep-runtime-pglite:'))
+    const urls = (await Promise.all(names.map(async name => (await (await caches.open(name)).keys()).map(request => request.url)))).flat()
+    return { names, urls }
+  })
+  expect(cached.names).toHaveLength(1)
+  for (const file of ['/index.js', '/pglite.wasm', '/pglite.data', '/initdb.wasm']) expect(cached.urls.some(url => url.endsWith(file)), file).toBe(true)
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await openPractice(offline)
+  await expect(offline.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 90_000 })
 })
 
 test('the Field Guide, its diagrams and the anti-pattern gallery open offline from the precache', async ({ page, context }) => {

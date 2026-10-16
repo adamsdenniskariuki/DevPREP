@@ -4,8 +4,9 @@ import DiagramFigure from './Diagram'
 import CodeEditor from './CodeEditor'
 import Icon from './Icon'
 import RunResults from './RunResults'
+import SqlLabRunner from './SqlLab'
 import { lessons } from '../curriculum'
-import type { LabExercise, Lesson, LessonLab, TrackInfo } from '../curriculum-types'
+import { isSqlExercise, type AnyLabExercise, type LabExercise, type Lesson, type LessonLab, type TrackInfo } from '../curriculum-types'
 import { problemIndex } from '../problems'
 import { guideIndex } from '../guides'
 import { runCode, type RunLanguage, type RunPhase, type RunReport } from '../runner/runner'
@@ -16,7 +17,7 @@ import '../lab.css'
 
 /** Runner language for a lab: TypeScript is type-checked and transpiled in its own worker. */
 export function runLanguage(lab: LessonLab): RunLanguage {
-  return lab.lang
+  return lab.lang === 'ts' ? 'ts' : 'py'
 }
 /** Editor and result-formatting language: TypeScript reads as JavaScript. */
 function displayLanguage(lab: LessonLab): CodeLanguage {
@@ -40,11 +41,11 @@ export function PredictQuiz({ lab }: { lab: LessonLab }) {
   const ready = lab.predict.every((_, i) => answers[i] !== undefined)
   const correct = lab.predict.filter((item, i) => answers[i] === item.answer).length
   return <div className="lab-predict">
-    <p className="muted">Read each snippet and pick what it prints. Then check.</p>
+    <p className="muted">Read each snippet and pick what it {lab.lang === 'sql' ? 'returns' : 'prints'}. Then check.</p>
     <ol className="fg-questions">
       {lab.predict.map((item, q) => <li key={q}>
         <fieldset disabled={checked}>
-          <legend className="sr-only">Snippet {q + 1}: what does it print?</legend>
+          <legend className="sr-only">Snippet {q + 1}: what does it {lab.lang === 'sql' ? 'return' : 'print'}?</legend>
           <pre className="lab-code" tabIndex={0} aria-label={`Snippet ${q + 1}`}><code>{item.code}</code></pre>
           {item.choices.map((choice, c) => {
             const mark = checked ? c === item.answer ? 'right' : answers[q] === c ? 'wrong' : '' : ''
@@ -83,7 +84,19 @@ export function LabTakeaways({ lab, openLesson }: { lab: LessonLab; openLesson: 
  * Editor plus test runner for one exercise. The parent owns the code so the core exercise can live in
  * the saved session draft; `onPass` fires when every visible and hidden test passes.
  */
-export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
+export function LabRunner(props: {
+  lab: LessonLab
+  exercise: AnyLabExercise
+  value: string
+  onChange: (value: string) => void
+  onPass?: () => void
+  label: string
+}) {
+  const { exercise, ...rest } = props
+  return isSqlExercise(exercise) ? <SqlLabRunner exercise={exercise} {...rest} /> : <CodeLabRunner {...props} exercise={exercise} />
+}
+
+function CodeLabRunner({ lab, exercise, value, onChange, onPass, label }: {
   lab: LessonLab
   exercise: LabExercise
   value: string
@@ -119,11 +132,11 @@ export function LabRunner({ lab, exercise, value, onChange, onPass, label }: {
   const busy = phase !== 'idle'
   return <div className="lab-runner code-workspace">
     <div className="code-toolbar">
-      <label htmlFor={id}>{label} <span className="muted">· {LANGUAGE_NAME[lab.lang]}</span></label>
+      <label htmlFor={id}>{label} <span className="muted">· {LANGUAGE_NAME[lab.lang === 'ts' ? 'ts' : 'py']}</span></label>
       <button type="button" className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
     </div>
     <CodeEditor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
-    <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang]}</p>
+    <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang === 'ts' ? 'ts' : 'py']}</p>
     {exercise.typeChecks && <details className="type-checks"><summary>Type checks your types must pass</summary><pre><code>{exercise.typeChecks}</code></pre></details>}
     <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase]}</button></div>
     <div className="run-results" role="status" aria-live="polite">

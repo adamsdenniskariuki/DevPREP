@@ -1,12 +1,12 @@
-import type { Track } from './curriculum-types'
+import type { LabLanguage, Track } from './curriculum-types'
 import { PROBLEM_PATTERNS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
-export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript']
+export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript', 'sql']
 /** Language tracks and the lab language their lessons run. */
-export const LANGUAGE_TRACK_LANG: Partial<Record<Track, 'py' | 'ts'>> = { python: 'py', typescript: 'ts' }
+export const LANGUAGE_TRACK_LANG: Partial<Record<Track, LabLanguage>> = { python: 'py', typescript: 'ts', sql: 'sql' }
 
 type Rec = Record<string, unknown>
 const isRec = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -434,8 +434,37 @@ function labTests(check: Checker, list: unknown, path: string, min: number) {
   })
 }
 
+function sqlTests(check: Checker, list: unknown, path: string, min: number) {
+  if (!Array.isArray(list) || list.length < min) return check.fail(path, `expected at least ${min} tests`)
+  const names = new Set<string>()
+  list.forEach((item, index) => {
+    const at = `${path}[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['name', 'seed', 'expected'])
+    check.text(item.name, `${at}.name`)
+    if (typeof item.name === 'string') { if (names.has(item.name)) check.fail(`${at}.name`, 'duplicate test name'); names.add(item.name) }
+    if (typeof item.seed !== 'string') check.fail(`${at}.seed`, 'expected SQL text (may be empty)')
+    const expected = item.expected
+    if (!isRec(expected)) return check.fail(`${at}.expected`, 'expected object')
+    check.keys(expected, `${at}.expected`, ['columns', 'rows'])
+    const columns = expected.columns
+    if (!Array.isArray(columns) || !columns.length || columns.some(name => typeof name !== 'string' || !name)) return check.fail(`${at}.expected.columns`, 'expected column names')
+    if (!Array.isArray(expected.rows) || expected.rows.some(row => !Array.isArray(row) || row.length !== columns.length)) check.fail(`${at}.expected.rows`, `expected rows of ${columns.length} cells`)
+  })
+}
+
+/** A SQL exercise: schema DDL, starter and solution SQL, and test cases with seed rows and an expected result. */
+function sqlExercise(check: Checker, item: Rec, at: string) {
+  check.keys(item, at, ['id', 'schema', 'starter', 'solution', 'tests', 'hiddenTests'], ['ordered', 'check'])
+  check.text(item.schema, `${at}.schema`)
+  if ('ordered' in item && typeof item.ordered !== 'boolean') check.fail(`${at}.ordered`, 'expected boolean')
+  if ('check' in item) check.text(item.check, `${at}.check`)
+  sqlTests(check, item.tests, `${at}.tests`, 2)
+  sqlTests(check, item.hiddenTests, `${at}.hiddenTests`, 3)
+}
+
 /** Validates the lab of a language-track lesson: diagrams, runnable exercises, predict quiz, tip and links. */
-function lab(check: Checker, value: unknown, lang: 'py' | 'ts', lesson: Rec) {
+function lab(check: Checker, value: unknown, lang: LabLanguage, lesson: Rec) {
   if (!isRec(value)) return check.fail('lab', 'expected object')
   check.keys(value, 'lab', ['lang', 'diagrams', 'exercises', 'predict', 'tip', 'links'])
   if (value.lang !== lang) check.fail('lab.lang', `expected "${lang}" for this track`)
@@ -465,7 +494,14 @@ function lab(check: Checker, value: unknown, lang: 'py' | 'ts', lesson: Rec) {
     value.exercises.forEach((item, index) => {
       const at = `lab.exercises[${index}]`
       if (!isRec(item)) return check.fail(at, 'expected object')
-      check.keys(item, at, ['id', 'function', 'starter', 'solution', 'tests', 'hiddenTests'], ['typeChecks'])
+      if (lang === 'sql') {
+        sqlExercise(check, item, at)
+      } else {
+        check.keys(item, at, ['id', 'function', 'starter', 'solution', 'tests', 'hiddenTests'], ['typeChecks'])
+        if (!IDENT.test(String(item.function))) check.fail(`${at}.function`, 'expected identifier')
+        labTests(check, item.tests, `${at}.tests`, 2)
+        labTests(check, item.hiddenTests, `${at}.hiddenTests`, 3)
+      }
       if ('typeChecks' in item) {
         if (lang !== 'ts') check.fail(`${at}.typeChecks`, 'type checks are for TypeScript labs only')
         else check.text(item.typeChecks, `${at}.typeChecks`)
@@ -473,11 +509,8 @@ function lab(check: Checker, value: unknown, lang: 'py' | 'ts', lesson: Rec) {
       if (!stages.has(item.id as string)) check.fail(`${at}.id`, 'expected core or the id of an extra practice item')
       else if (seen.has(item.id as string)) check.fail(`${at}.id`, 'duplicate exercise')
       seen.add(item.id as string)
-      if (!IDENT.test(String(item.function))) check.fail(`${at}.function`, 'expected identifier')
       check.text(item.starter, `${at}.starter`)
       check.text(item.solution, `${at}.solution`)
-      labTests(check, item.tests, `${at}.tests`, 2)
-      labTests(check, item.hiddenTests, `${at}.hiddenTests`, 3)
     })
     if (!seen.has('core')) check.fail('lab.exercises', 'expected a core exercise')
   }
