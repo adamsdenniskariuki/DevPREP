@@ -139,7 +139,7 @@ test('section navigation works by keyboard and does not change the refresh-safe 
 
 for (const track of tracks) {
   test(`${track.title}: every lesson has reachable, narrow-screen-safe learning and practice`, async ({ page }) => {
-    test.setTimeout(120_000)
+    test.setTimeout(300_000)
     await page.setViewportSize({ width: 320, height: 780 })
     await page.goto('./#tracks')
     await page.getByRole('button', { name: track.title, exact: true }).click()

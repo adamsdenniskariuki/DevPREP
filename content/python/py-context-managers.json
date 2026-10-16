@@ -1,0 +1,1297 @@
+{
+  "id": "py-context-managers",
+  "track": "python",
+  "title": "Context managers: guaranteed cleanup",
+  "minutes": 45,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "What `with` really calls, how `__exit__` decides whether an error escapes, and the contextlib tools (contextmanager, suppress, ExitStack, nullcontext, closing) that make cleanup and transactions impossible to forget.",
+  "prerequisites": [
+    "py-errors-exceptions"
+  ],
+  "prerequisiteNotes": "You should already know how try/except/else/finally runs and how exceptions propagate. Basic classes with dunder methods are used throughout.",
+  "objectives": [
+    "Desugar a `with` statement into `__enter__`, the body and `__exit__(exc_type, exc, tb)`, and explain what the return value of `__exit__` controls.",
+    "Write a generator-based context manager with `@contextmanager` whose cleanup runs even when the body raises.",
+    "Manage a variable number of resources with `ExitStack` and predict its last-in, first-out cleanup order.",
+    "Implement commit/rollback as a context manager and say when a manager should suppress an exception and when it must re-raise.",
+    "Pick the right helper: `suppress`, `nullcontext`, `closing`, or a reentrant design."
+  ],
+  "concepts": [
+    {
+      "title": "What a with statement calls",
+      "body": "`with EXPR as name:` evaluates EXPR to get a **context manager**, calls its `__enter__()` and binds the **return value of `__enter__`** to `name` (not the manager itself, although many managers return `self`). Then the body runs. When the body finishes, by falling off the end, `return`, `break`, `continue` or an exception, Python calls `__exit__(exc_type, exc_value, traceback)`. On a clean exit all three are `None`. If `__enter__` itself raises, the body never runs and `__exit__` is **not** called, because nothing was acquired.",
+      "code": "class Tag:\n    def __init__(self, name):\n        self.name = name\n\n    def __enter__(self):\n        print(f'<{self.name}>')\n        return self.name.upper()   # this is what 'as' receives\n\n    def __exit__(self, exc_type, exc, tb):\n        print(f'</{self.name}>', exc_type)\n        return False               # do not swallow errors\n\nwith Tag('b') as label:\n    print(label)\n# <b>\n# B\n# </b> None",
+      "diagram": "pym-desugar"
+    },
+    {
+      "title": "__exit__ decides whether the error escapes",
+      "body": "If the body raised, `__exit__` receives the exception class, the exception object and its traceback. A **truthy** return value tells Python the exception is handled: it is discarded and execution continues after the `with` block. `False`, `None` or simply no `return` lets it propagate. Because a missing `return` means `None`, the safe default is to propagate. Do not re-raise the received exception yourself inside `__exit__`; just return a falsy value. If `__exit__` raises a **new** exception, that one replaces the original, which is kept as its `__context__`.",
+      "code": "class Ignore:\n    def __init__(self, *types):\n        self.types = types\n\n    def __enter__(self):\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        # True only for the listed types; None, False otherwise\n        return exc_type is not None and issubclass(exc_type, self.types)\n\nwith Ignore(KeyError):\n    {}['missing']\nprint('still running')",
+      "diagram": "pym-exit"
+    },
+    {
+      "title": "@contextmanager: setup, yield, cleanup",
+      "body": "`contextlib.contextmanager` turns a generator function into a context manager. Code before `yield` is `__enter__`; the yielded value is what `as` binds; code after `yield` is `__exit__`. If the body raises, the exception is **thrown into the generator at the `yield` line**. So cleanup after a bare `yield` is skipped on error: always wrap the `yield` in `try`/`finally` (or `try`/`except`/`else` when success and failure need different cleanup). Catching the exception and not re-raising it suppresses it, exactly like a truthy `__exit__`. The generator must yield exactly once.",
+      "code": "from contextlib import contextmanager\n\n@contextmanager\ndef acquired(lock_log, name):\n    lock_log.append(f'acquire {name}')\n    try:\n        yield name\n    finally:\n        lock_log.append(f'release {name}')   # runs on error too\n\nlog = []\ntry:\n    with acquired(log, 'db'):\n        raise TimeoutError\nexcept TimeoutError:\n    pass\nprint(log)   # ['acquire db', 'release db']",
+      "diagram": "pym-genfinally"
+    },
+    {
+      "title": "Files and locks: the everyday managers",
+      "body": "A file object is its own context manager: `__exit__` closes it, flushing buffered writes, whether or not the body raised. `threading.Lock` acquires in `__enter__` and releases in `__exit__`, so an exception inside a critical section cannot leave the lock held forever. Several managers can share one statement, `with open(a) as src, open(b, 'w') as dst:`, which is exactly equivalent to nesting them: entered left to right, exited right to left. Put many managers inside parentheses to split them across lines.",
+      "code": "import threading\n\nlock = threading.Lock()\ncounts = {}\n\ndef record(key):\n    with lock:                         # released even if the body raises\n        counts[key] = counts.get(key, 0) + 1\n\nrecord('a')\nprint(counts, lock.locked())           # {'a': 1} False"
+    },
+    {
+      "title": "suppress, nullcontext and closing",
+      "body": "`contextlib.suppress(*types)` ignores the listed exceptions, but it ends the **whole block** at the first one: later statements in the block do not run. Keep the block to the single statement you mean. `nullcontext(value)` is a do-nothing manager whose `__enter__` returns `value`; use it when a resource is optional so you can keep one `with` statement instead of duplicating code. `closing(obj)` calls `obj.close()` on exit for objects that have `close()` but are not context managers themselves.",
+      "code": "from contextlib import suppress, nullcontext, closing\n\nconfig = {}\nwith suppress(KeyError):\n    del config['cache']        # fine if it was never there\n\ndef process(items, lock=None):\n    with lock if lock is not None else nullcontext():\n        return sorted(items)\n\nclass Conn:\n    def close(self):\n        print('closed')\n\nwith closing(Conn()) as conn:\n    pass                       # prints closed"
+    },
+    {
+      "title": "ExitStack: a dynamic number of resources",
+      "body": "`ExitStack` is a context manager that collects other cleanups at run time. `stack.enter_context(cm)` enters `cm` and pushes its `__exit__`; `stack.callback(fn, *args)` pushes any function. When the stack closes, it runs them in **last-in, first-out** order, so a resource is released before the ones it was built on. If entering the third resource fails, the two already entered are still cleaned up. `stack.pop_all()` moves the pending cleanups to a new stack: the idiom for 'acquire everything, and only if all succeeded hand ownership to the caller'.",
+      "code": "from contextlib import ExitStack\n\nlog = []\nwith ExitStack() as stack:\n    for name in ['a', 'b', 'c']:\n        log.append(f'open {name}')\n        stack.callback(log.append, f'close {name}')\n    log.append('work')\nprint(log)\n# ['open a', 'open b', 'open c', 'work',\n#  'close c', 'close b', 'close a']",
+      "diagram": "pym-exitstack"
+    },
+    {
+      "title": "Single-use, reusable and reentrant",
+      "body": "A manager is **single-use** if it can be entered only once: every `@contextmanager` object is, because its generator is spent, so entering the same object twice fails. Call the function again to get a fresh one. It is **reusable** if it can be entered again after exiting (`ExitStack`, `threading.Lock`). It is **reentrant** if it can be entered again *while already inside* it: `suppress` and `threading.RLock` are; a plain `Lock` is not, and re-acquiring it in the same thread deadlocks. To make your own class reentrant, count depth and do the real setup and teardown only at the outermost level.",
+      "code": "import threading\n\nrlock = threading.RLock()\nwith rlock:\n    with rlock:            # same thread may re-enter an RLock\n        print('nested ok')\n\n# lock = threading.Lock()\n# with lock:\n#     with lock: ...       # deadlock: Lock is not reentrant"
+    },
+    {
+      "title": "Async context managers",
+      "body": "`async with` is the same protocol with awaitable hooks: `__aenter__` and `__aexit__` are coroutines, so setup and cleanup can await I/O such as opening a network connection or returning it to a pool. `contextlib.asynccontextmanager` decorates an async generator in the same setup/yield/cleanup shape, and `AsyncExitStack` mirrors `ExitStack`. A regular `with` cannot enter an async manager, and the same try/finally rule around `yield` applies.",
+      "code": "from contextlib import asynccontextmanager\n\n@asynccontextmanager\nasync def connection(pool):\n    conn = await pool.acquire()\n    try:\n        yield conn\n    finally:\n        await pool.release(conn)\n\n# async with connection(pool) as conn: ..."
+    }
+  ],
+  "example": "from contextlib import contextmanager\n\n@contextmanager\ndef transaction(store):\n    snapshot = dict(store)\n    try:\n        yield store\n    except Exception:\n        store.clear()\n        store.update(snapshot)   # roll back\n        raise                    # let the caller see the failure\n\naccounts = {'alice': 50, 'bob': 0}\ntry:\n    with transaction(accounts):\n        accounts['alice'] -= 80\n        if accounts['alice'] < 0:\n            raise ValueError('insufficient funds')\n        accounts['bob'] += 80\nexcept ValueError as err:\n    print(err)\nprint(accounts)   # {'alice': 50, 'bob': 0}",
+  "task": "Write `apply_batches(store, batches)`. `store` is a dict of string keys to values; `batches` is a list of batches, and each batch is a list of operations: `['set', key, value]`, `['add', key, n]` (adds n to the existing value), or `['del', key]`. Run each batch as a **transaction** using a context manager: if every operation succeeds, append `'commit'` to a log; if any operation raises, restore the store to exactly how it was before the batch, append `'rollback <ExceptionName>'` and carry on with the next batch. `add` on a missing key or `del` of a missing key raises `KeyError`, `add` on a non-number raises `TypeError`, and an unknown operation raises `ValueError`. Do not mutate the input dict. Return `{'store': final_store, 'log': log}`.",
+  "starter": "def apply_op(store, op):\n    kind = op[0]\n    if kind == 'set':\n        store[op[1]] = op[2]\n    elif kind == 'add':\n        store[op[1]] = store[op[1]] + op[2]\n    elif kind == 'del':\n        del store[op[1]]\n    else:\n        raise ValueError(f'unknown op {kind!r}')\n\n\ndef apply_batches(store, batches):\n    # Wrap each batch in a transaction that commits or rolls back.\n    store = dict(store)\n    log = []\n    for batch in batches:\n        try:\n            for op in batch:\n                apply_op(store, op)\n            log.append('commit')\n        except (KeyError, TypeError, ValueError) as err:\n            log.append(f'rollback {type(err).__name__}')\n    return {'store': store, 'log': log}",
+  "hints": [
+    "Write `transaction(store, log)` with `@contextmanager`: take `snapshot = dict(store)` before `yield`, and in the `except` branch restore with `store.clear(); store.update(snapshot)`.",
+    "Let the manager log and then re-raise with bare `raise`; the loop catches `(KeyError, TypeError, ValueError)` around the `with` so the next batch still runs. Log `commit` in an `else:` after the `try`/`except` around `yield`."
+  ],
+  "solution": "from contextlib import contextmanager\n\n\n@contextmanager\ndef transaction(store, log):\n    snapshot = dict(store)\n    try:\n        yield store\n    except Exception as err:\n        store.clear()\n        store.update(snapshot)\n        log.append(f'rollback {type(err).__name__}')\n        raise\n    else:\n        log.append('commit')\n\n\ndef apply_op(store, op):\n    kind = op[0]\n    if kind == 'set':\n        store[op[1]] = op[2]\n    elif kind == 'add':\n        store[op[1]] = store[op[1]] + op[2]\n    elif kind == 'del':\n        del store[op[1]]\n    else:\n        raise ValueError(f'unknown op {kind!r}')\n\n\ndef apply_batches(store, batches):\n    store = dict(store)\n    log = []\n    for batch in batches:\n        try:\n            with transaction(store, log):\n                for op in batch:\n                    apply_op(store, op)\n        except (KeyError, TypeError, ValueError):\n            pass\n    return {'store': store, 'log': log}\n\nThe transaction is a `@contextmanager` with `try`/`except`/`else` around `yield`: the snapshot is taken on entry, `else` logs the commit only when the body finished cleanly, and `except` restores the snapshot in place (callers holding the same dict see the rollback) before re-raising. Re-raising keeps the manager honest: it undoes its own work but does not decide that a failure is acceptable; the caller does, by catching only the three expected error types. Each batch costs O(k) for the snapshot where k is the store size, plus O(m) for its m operations. `dict(store)` is a shallow copy, which is enough here because values are replaced, never mutated in place.",
+  "checklist": [
+    "My cleanup sits in an `except`/`finally` around `yield`, so it runs when the body raises.",
+    "A failed batch leaves the store exactly as before it, including keys it added or deleted.",
+    "The manager re-raises; only the caller decides which errors are survivable.",
+    "I copy the input dict instead of mutating the caller's."
+  ],
+  "pitfalls": [
+    "Putting cleanup after a bare `yield` in a `@contextmanager`; it is skipped whenever the body raises.",
+    "Returning a truthy value from `__exit__` by accident (for example `return self.log`), which silently swallows every exception.",
+    "Wrapping several statements in `suppress(...)` and expecting the ones after the failure to run.",
+    "Opening resources in a loop with plain nested `with` or manual lists, so a failure halfway leaks the ones already opened; use `ExitStack`.",
+    "Re-using a `@contextmanager` object or nesting a plain `Lock` inside itself; one fails, the other deadlocks.",
+    "Snapshotting with a shallow copy when values are mutable containers that the body mutates in place; use `copy.deepcopy` or an undo log."
+  ],
+  "walkthrough": [
+    {
+      "title": "Transactions as a context manager",
+      "body": "Commit/rollback is the classic senior-interview use of `with`: snapshot (or begin) on entry, commit when the body succeeds, roll back and re-raise when it fails. Database APIs such as `sqlite3` connections follow the same shape. The decision to re-raise matters: a transaction that swallows errors makes failed writes look successful.",
+      "diagram": "pym-txn"
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "First write `apply_op` as plain code that raises on bad input; it knows nothing about transactions. Then write the `transaction` manager: snapshot, `try: yield`, `except: restore, log, raise`, `else: log commit`. Finally the loop: copy the store, wrap each batch in `with transaction(...)`, and catch the expected errors outside the `with` so one bad batch does not stop the rest."
+    },
+    {
+      "title": "Cleanup order with ExitStack",
+      "body": "Think of `ExitStack` as a literal stack of undo actions. Each successful `enter_context` pushes one; leaving the block pops them all, newest first. A failure while opening the fourth resource unwinds the three that exist and never touches the fourth, because its `__enter__` never succeeded. That is exactly what you would write by hand with three nested `try`/`finally` blocks, without knowing the count in advance."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Cleanup order with ExitStack",
+      "prompt": "Write `cleanup_order(names, fail_at)`. Open a resource for each name in order with an `ExitStack`; a resource logs `open <name>` on enter and `close <name>` on exit. If a name equals `fail_at`, raise `RuntimeError(name)` instead of opening it. After all opens succeed, log `work`. Catch the `RuntimeError` outside the stack and log `failed <name>`. Return the log; `fail_at` may be `None`.",
+      "hints": [
+        "A tiny class with `__enter__` and `__exit__` that append to a shared list is all a resource needs.",
+        "Raise inside the `with ExitStack()` block and catch outside it, so the stack unwinds before you log the failure."
+      ],
+      "solution": "from contextlib import ExitStack\n\n\nclass Resource:\n    def __init__(self, name, log):\n        self.name = name\n        self.log = log\n\n    def __enter__(self):\n        self.log.append(f'open {self.name}')\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        self.log.append(f'close {self.name}')\n        return False\n\n\ndef cleanup_order(names, fail_at):\n    log = []\n    try:\n        with ExitStack() as stack:\n            for name in names:\n                if name == fail_at:\n                    raise RuntimeError(name)\n                stack.enter_context(Resource(name, log))\n            log.append('work')\n    except RuntimeError as err:\n        log.append(f'failed {err}')\n    return log",
+      "checklist": [
+        "Resources close in reverse order of opening.",
+        "A failed open still closes everything opened before it.",
+        "The failure is logged after all closes."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "A reentrant session",
+      "prompt": "Write `session_log(script)`. A `Session` context manager may be entered while already entered. It logs `connect` only on the outermost enter and, on the outermost exit, `commit` (or `rollback` if an exception is passing through) followed by `disconnect`. The script is a nested list: a string runs a query that logs `<name>@<depth>`, the string `boom` raises `ValueError`, and a nested list is a nested `with session:` block using the same object. Wrap the whole script in one `with session:`, catch the `ValueError` outside it and log `error`. Return the log.",
+      "hints": [
+        "Keep a `depth` counter: increment in `__enter__`, decrement in `__exit__`, and act only when it is 1 on enter or 0 on exit.",
+        "`__exit__` receives `exc_type`; it is `None` on a clean exit, so `'rollback' if exc_type else 'commit'` decides the outcome. Return `False` so the error still reaches the caller."
+      ],
+      "solution": "class Session:\n    def __init__(self, log):\n        self.log = log\n        self.depth = 0\n\n    def __enter__(self):\n        self.depth += 1\n        if self.depth == 1:\n            self.log.append('connect')\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        self.depth -= 1\n        if self.depth == 0:\n            self.log.append('rollback' if exc_type else 'commit')\n            self.log.append('disconnect')\n        return False\n\n\ndef _run(session, block):\n    for item in block:\n        if isinstance(item, list):\n            with session:\n                _run(session, item)\n        elif item == 'boom':\n            raise ValueError(item)\n        else:\n            session.log.append(f'{item}@{session.depth}')\n\n\ndef session_log(script):\n    log = []\n    session = Session(log)\n    try:\n        with session:\n            _run(session, script)\n    except ValueError:\n        log.append('error')\n    return log",
+      "checklist": [
+        "Nested enters do not reconnect.",
+        "An error deep inside unwinds every level and rolls back once.",
+        "The depth counter is restored by `__exit__` even on error."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why use a context manager instead of writing try/finally each time?",
+      "answer": "It packages acquire and release into one reusable object, so callers cannot forget the cleanup or get the order wrong. It also names the pattern (`with transaction(db):` reads as intent), lets you change cleanup in one place, and composes: `ExitStack` can combine any number of them. try/finally is still right for a one-off cleanup that will never be reused."
+    },
+    {
+      "question": "What happens if `__enter__` raises, or if `__exit__` raises?",
+      "answer": "If `__enter__` raises, the body does not run and that manager's `__exit__` is not called; outer managers in the same `with` statement still exit normally. If `__exit__` raises, its new exception replaces whatever was propagating, and the original is attached as `__context__`. Cleanup code should therefore be simple and not fail."
+    },
+    {
+      "question": "How would you support nested transactions?",
+      "answer": "Either make the manager reentrant with a depth counter so only the outermost level commits (inner blocks join the outer transaction), or use savepoints: each nested level records its own snapshot or SAVEPOINT and rolls back only to it, while the outermost level commits. State which semantics you choose; SQL databases offer savepoints for the second."
+    },
+    {
+      "question": "When should a context manager suppress an exception?",
+      "answer": "Only when ignoring that specific exception is the manager's documented purpose, as with `suppress(FileNotFoundError)`. Resource managers (files, locks, transactions) should clean up and let the error propagate, because they cannot know whether the caller can continue. Suppress narrowly by type, never everything."
+    }
+  ],
+  "takeaways": [
+    "`as` binds what `__enter__` returns; `__exit__` always runs once `__enter__` succeeded.",
+    "A truthy return from `__exit__` swallows the exception; return a falsy value to propagate.",
+    "In `@contextmanager`, wrap `yield` in try/finally or the cleanup is skipped on error.",
+    "`ExitStack` handles a dynamic number of resources and unwinds them last-in, first-out.",
+    "Transactions: snapshot on enter, commit on success, roll back and re-raise on failure.",
+    "`suppress` ends the block at the first ignored error; keep it to one statement."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pym-desugar",
+        "type": "sequence",
+        "title": "What `with Tag() as x:` actually calls",
+        "alt": "Sequence diagram with three actors: the with statement, the manager and the block body. The with statement calls __enter__ on the manager, which returns the value bound by as. The body runs and raises ValueError. The with statement passes the exception to __exit__ with its type, value and traceback, and __exit__ returns False, so the error is re-raised.",
+        "caption": "`__enter__` supplies the `as` value; `__exit__` sees every exit, with the exception details if there was one.",
+        "actors": [
+          {
+            "id": "with",
+            "label": "with statement"
+          },
+          {
+            "id": "mgr",
+            "label": "manager"
+          },
+          {
+            "id": "body",
+            "label": "block body"
+          }
+        ],
+        "messages": [
+          {
+            "from": "with",
+            "to": "mgr",
+            "label": "__enter__()"
+          },
+          {
+            "from": "mgr",
+            "to": "with",
+            "label": "value bound by as",
+            "style": "reply",
+            "note": "Often self, but any object is allowed."
+          },
+          {
+            "from": "with",
+            "to": "body",
+            "label": "run the block"
+          },
+          {
+            "from": "body",
+            "to": "with",
+            "label": "raises ValueError",
+            "style": "fail"
+          },
+          {
+            "from": "with",
+            "to": "mgr",
+            "label": "__exit__(ValueError, err, tb)",
+            "note": "On a clean exit the three arguments are None."
+          },
+          {
+            "from": "mgr",
+            "to": "with",
+            "label": "returns False: re-raise",
+            "style": "reply",
+            "note": "A truthy value would discard the ValueError."
+          }
+        ]
+      },
+      {
+        "id": "pym-exit",
+        "type": "flow",
+        "title": "Does the exception escape the with block?",
+        "alt": "Flow diagram. The block body either finishes, which calls __exit__ with three Nones and continues to the next statement, or raises, which calls __exit__ with the type, value and traceback. A truthy return from __exit__ suppresses the error and continues to the next statement; a falsy return lets the exception propagate.",
+        "caption": "Only a truthy return value from `__exit__` stops an exception. No return at all means None, which propagates.",
+        "nodes": [
+          {
+            "id": "body",
+            "label": "block body",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "ok",
+            "label": "exit: no error",
+            "kind": "good",
+            "col": 2,
+            "row": 0,
+            "sub": "__exit__(None x3)"
+          },
+          {
+            "id": "err",
+            "label": "exit: error",
+            "kind": "bad",
+            "col": 2,
+            "row": 2,
+            "sub": "__exit__(t, v, tb)"
+          },
+          {
+            "id": "ret",
+            "label": "return value?",
+            "kind": "decision",
+            "col": 2,
+            "row": 4
+          },
+          {
+            "id": "next",
+            "label": "next statement",
+            "kind": "good",
+            "col": 4,
+            "row": 0
+          },
+          {
+            "id": "quiet",
+            "label": "suppressed",
+            "kind": "good",
+            "col": 4,
+            "row": 4,
+            "sub": "error discarded"
+          },
+          {
+            "id": "up",
+            "label": "propagates",
+            "kind": "bad",
+            "col": 0,
+            "row": 4,
+            "sub": "to the caller"
+          }
+        ],
+        "edges": [
+          {
+            "from": "body",
+            "to": "ok",
+            "label": "finished"
+          },
+          {
+            "from": "body",
+            "to": "err",
+            "label": "raised",
+            "style": "fail"
+          },
+          {
+            "from": "ok",
+            "to": "next"
+          },
+          {
+            "from": "err",
+            "to": "ret"
+          },
+          {
+            "from": "ret",
+            "to": "quiet",
+            "label": "truthy"
+          },
+          {
+            "from": "ret",
+            "to": "up",
+            "label": "False / None",
+            "style": "fail"
+          },
+          {
+            "from": "quiet",
+            "to": "next"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              2
+            ],
+            "text": "Clean exit: `__exit__(None, None, None)` runs and execution continues after the block."
+          },
+          {
+            "edges": [
+              1,
+              3,
+              4,
+              6
+            ],
+            "text": "The body raises and `__exit__` returns a truthy value, so the exception is discarded and the next statement runs."
+          },
+          {
+            "edges": [
+              1,
+              3,
+              5
+            ],
+            "text": "The body raises and `__exit__` returns False or None, so the original exception continues to the caller."
+          }
+        ]
+      },
+      {
+        "id": "pym-genfinally",
+        "type": "compare",
+        "title": "@contextmanager with and without try/finally",
+        "alt": "Side-by-side comparison. On the left a generator acquires, yields, and releases after a bare yield; when the body raises, the exception is thrown in at yield and the release is skipped. On the right the yield is wrapped in try/finally, so the release runs and then the error is re-raised.",
+        "caption": "The body's exception is thrown in at `yield`. Only try/finally (or except) around it guarantees the cleanup.",
+        "before": {
+          "label": "bare yield: cleanup skipped",
+          "nodes": [
+            {
+              "id": "acq",
+              "label": "acquire",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "y",
+              "label": "yield",
+              "kind": "decision",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "rel",
+              "label": "release",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "clean exit only"
+            },
+            {
+              "id": "skip",
+              "label": "release skipped",
+              "kind": "bad",
+              "col": 1,
+              "row": 1,
+              "sub": "error thrown here"
+            }
+          ],
+          "edges": [
+            {
+              "from": "acq",
+              "to": "y"
+            },
+            {
+              "from": "y",
+              "to": "rel",
+              "label": "body ok"
+            },
+            {
+              "from": "y",
+              "to": "skip",
+              "label": "body raised",
+              "style": "fail"
+            }
+          ]
+        },
+        "after": {
+          "label": "try: yield / finally: release",
+          "nodes": [
+            {
+              "id": "acq",
+              "label": "acquire",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "y",
+              "label": "try: yield",
+              "kind": "decision",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "rel",
+              "label": "finally: release",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "always runs"
+            },
+            {
+              "id": "up",
+              "label": "re-raised",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "after release"
+            }
+          ],
+          "edges": [
+            {
+              "from": "acq",
+              "to": "y"
+            },
+            {
+              "from": "y",
+              "to": "rel",
+              "label": "ok or raised"
+            },
+            {
+              "from": "rel",
+              "to": "up",
+              "label": "if it raised",
+              "style": "fail"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pym-exitstack",
+        "type": "flow",
+        "title": "ExitStack unwinds last-in, first-out",
+        "alt": "Flow diagram. Resources a, b and c are entered left to right along the top row and the body runs. On exit the cleanups run along the bottom row in reverse: close c, then close b, then close a.",
+        "caption": "Cleanups pop newest first, so each resource is released before the ones it may depend on.",
+        "nodes": [
+          {
+            "id": "a",
+            "label": "enter a",
+            "kind": "service",
+            "col": 0,
+            "row": 0,
+            "sub": "pushed 1st"
+          },
+          {
+            "id": "b",
+            "label": "enter b",
+            "kind": "service",
+            "col": 1,
+            "row": 0,
+            "sub": "pushed 2nd"
+          },
+          {
+            "id": "c",
+            "label": "enter c",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "pushed 3rd"
+          },
+          {
+            "id": "body",
+            "label": "body",
+            "kind": "decision",
+            "col": 3,
+            "row": 1,
+            "sub": "ok or raises"
+          },
+          {
+            "id": "xc",
+            "label": "close c",
+            "kind": "good",
+            "col": 2,
+            "row": 2,
+            "sub": "popped 1st"
+          },
+          {
+            "id": "xb",
+            "label": "close b",
+            "kind": "good",
+            "col": 1,
+            "row": 2,
+            "sub": "popped 2nd"
+          },
+          {
+            "id": "xa",
+            "label": "close a",
+            "kind": "good",
+            "col": 0,
+            "row": 2,
+            "sub": "popped 3rd"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b",
+            "label": "enter_context"
+          },
+          {
+            "from": "b",
+            "to": "c",
+            "label": "enter_context"
+          },
+          {
+            "from": "c",
+            "to": "body"
+          },
+          {
+            "from": "body",
+            "to": "xc",
+            "label": "stack closes"
+          },
+          {
+            "from": "xc",
+            "to": "xb"
+          },
+          {
+            "from": "xb",
+            "to": "xa"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Each `enter_context` enters a manager and pushes its exit onto the stack."
+          },
+          {
+            "edges": [
+              2
+            ],
+            "text": "The body runs with all three resources open."
+          },
+          {
+            "edges": [
+              3,
+              4,
+              5
+            ],
+            "text": "Leaving the block, by success or by error, pops the exits newest first: c, then b, then a."
+          }
+        ]
+      },
+      {
+        "id": "pym-txn",
+        "type": "flow",
+        "title": "A transaction context manager",
+        "alt": "Flow diagram. On entry the manager snapshots the store, then yields to the body. If the operations finish, it commits and keeps the changes. If an operation raises, it restores the snapshot and then re-raises the error to the caller.",
+        "caption": "Commit on success; on failure undo your own work, then let the caller decide what the error means.",
+        "nodes": [
+          {
+            "id": "snap",
+            "label": "snapshot",
+            "kind": "storage",
+            "col": 0,
+            "row": 1,
+            "sub": "dict(store)"
+          },
+          {
+            "id": "body",
+            "label": "yield store",
+            "kind": "decision",
+            "col": 2,
+            "row": 1,
+            "sub": "body runs ops"
+          },
+          {
+            "id": "commit",
+            "label": "commit",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "keep changes"
+          },
+          {
+            "id": "rollback",
+            "label": "rollback",
+            "kind": "bad",
+            "col": 4,
+            "row": 2,
+            "sub": "restore snapshot"
+          },
+          {
+            "id": "raise",
+            "label": "re-raise",
+            "kind": "bad",
+            "col": 4,
+            "row": 4,
+            "sub": "caller decides"
+          }
+        ],
+        "edges": [
+          {
+            "from": "snap",
+            "to": "body",
+            "label": "__enter__"
+          },
+          {
+            "from": "body",
+            "to": "commit",
+            "label": "no error"
+          },
+          {
+            "from": "body",
+            "to": "rollback",
+            "label": "op raised",
+            "style": "fail"
+          },
+          {
+            "from": "rollback",
+            "to": "raise",
+            "style": "fail"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "apply_batches",
+        "starter": "def apply_op(store, op):\n    kind = op[0]\n    if kind == 'set':\n        store[op[1]] = op[2]\n    elif kind == 'add':\n        store[op[1]] = store[op[1]] + op[2]\n    elif kind == 'del':\n        del store[op[1]]\n    else:\n        raise ValueError(f'unknown op {kind!r}')\n\n\ndef apply_batches(store, batches):\n    # Wrap each batch in a transaction that commits or rolls back.\n    store = dict(store)\n    log = []\n    for batch in batches:\n        try:\n            for op in batch:\n                apply_op(store, op)\n            log.append('commit')\n        except (KeyError, TypeError, ValueError) as err:\n            log.append(f'rollback {type(err).__name__}')\n    return {'store': store, 'log': log}\n",
+        "solution": "from contextlib import contextmanager\n\n\n@contextmanager\ndef transaction(store, log):\n    snapshot = dict(store)\n    try:\n        yield store\n    except Exception as err:\n        store.clear()\n        store.update(snapshot)\n        log.append(f'rollback {type(err).__name__}')\n        raise\n    else:\n        log.append('commit')\n\n\ndef apply_op(store, op):\n    kind = op[0]\n    if kind == 'set':\n        store[op[1]] = op[2]\n    elif kind == 'add':\n        store[op[1]] = store[op[1]] + op[2]\n    elif kind == 'del':\n        del store[op[1]]\n    else:\n        raise ValueError(f'unknown op {kind!r}')\n\n\ndef apply_batches(store, batches):\n    store = dict(store)\n    log = []\n    for batch in batches:\n        try:\n            with transaction(store, log):\n                for op in batch:\n                    apply_op(store, op)\n        except (KeyError, TypeError, ValueError):\n            pass\n    return {'store': store, 'log': log}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "alice": 50,
+                "bob": 0
+              },
+              [
+                [
+                  [
+                    "add",
+                    "alice",
+                    -30
+                  ],
+                  [
+                    "add",
+                    "bob",
+                    30
+                  ]
+                ],
+                [
+                  [
+                    "add",
+                    "alice",
+                    -10
+                  ],
+                  [
+                    "add",
+                    "carol",
+                    10
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {
+                "alice": 20,
+                "bob": 30
+              },
+              "log": [
+                "commit",
+                "rollback KeyError"
+              ]
+            }
+          },
+          {
+            "args": [
+              {},
+              [
+                [
+                  [
+                    "set",
+                    "a",
+                    1
+                  ],
+                  [
+                    "set",
+                    "b",
+                    2
+                  ]
+                ],
+                [
+                  [
+                    "del",
+                    "a"
+                  ],
+                  [
+                    "add",
+                    "b",
+                    "x"
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {
+                "a": 1,
+                "b": 2
+              },
+              "log": [
+                "commit",
+                "rollback TypeError"
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "k": 1
+              },
+              []
+            ],
+            "expected": {
+              "store": {
+                "k": 1
+              },
+              "log": []
+            }
+          },
+          {
+            "args": [
+              {
+                "k": 1
+              },
+              [
+                []
+              ]
+            ],
+            "expected": {
+              "store": {
+                "k": 1
+              },
+              "log": [
+                "commit"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "n": 5
+              },
+              [
+                [
+                  [
+                    "set",
+                    "m",
+                    1
+                  ],
+                  [
+                    "del",
+                    "n"
+                  ],
+                  [
+                    "frob",
+                    "n"
+                  ]
+                ],
+                [
+                  [
+                    "add",
+                    "n",
+                    -7
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {
+                "n": -2
+              },
+              "log": [
+                "rollback ValueError",
+                "commit"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "x": 1
+              },
+              [
+                [
+                  [
+                    "del",
+                    "x"
+                  ],
+                  [
+                    "del",
+                    "x"
+                  ]
+                ],
+                [
+                  [
+                    "del",
+                    "x"
+                  ]
+                ],
+                [
+                  [
+                    "add",
+                    "x",
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {},
+              "log": [
+                "rollback KeyError",
+                "commit",
+                "rollback KeyError"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "имя": "ок"
+              },
+              [
+                [
+                  [
+                    "set",
+                    "ключ",
+                    "значение"
+                  ]
+                ],
+                [
+                  [
+                    "add",
+                    "имя",
+                    1
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {
+                "имя": "ок",
+                "ключ": "значение"
+              },
+              "log": [
+                "commit",
+                "rollback TypeError"
+              ]
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              [
+                [
+                  [
+                    "set",
+                    "a",
+                    2
+                  ],
+                  [
+                    "set",
+                    "a",
+                    3
+                  ]
+                ],
+                [
+                  [
+                    "set",
+                    "a",
+                    9
+                  ],
+                  [
+                    "del",
+                    "zz"
+                  ]
+                ],
+                [
+                  [
+                    "add",
+                    "a",
+                    10
+                  ]
+                ]
+              ]
+            ],
+            "expected": {
+              "store": {
+                "a": 13
+              },
+              "log": [
+                "commit",
+                "rollback KeyError",
+                "commit"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "cleanup_order",
+        "starter": "def cleanup_order(names, fail_at):\n    log = []\n    opened = []\n    for name in names:\n        if name == fail_at:\n            log.append(f'failed {name}')\n            return log\n        log.append(f'open {name}')\n        opened.append(name)\n    log.append('work')\n    for name in opened:\n        log.append(f'close {name}')\n    return log\n",
+        "solution": "from contextlib import ExitStack\n\n\nclass Resource:\n    def __init__(self, name, log):\n        self.name = name\n        self.log = log\n\n    def __enter__(self):\n        self.log.append(f'open {self.name}')\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        self.log.append(f'close {self.name}')\n        return False\n\n\ndef cleanup_order(names, fail_at):\n    log = []\n    try:\n        with ExitStack() as stack:\n            for name in names:\n                if name == fail_at:\n                    raise RuntimeError(name)\n                stack.enter_context(Resource(name, log))\n            log.append('work')\n    except RuntimeError as err:\n        log.append(f'failed {err}')\n    return log\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "db",
+                "cache",
+                "log"
+              ],
+              null
+            ],
+            "expected": [
+              "open db",
+              "open cache",
+              "open log",
+              "work",
+              "close log",
+              "close cache",
+              "close db"
+            ]
+          },
+          {
+            "args": [
+              [
+                "db",
+                "cache",
+                "log"
+              ],
+              "log"
+            ],
+            "expected": [
+              "open db",
+              "open cache",
+              "close cache",
+              "close db",
+              "failed log"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [],
+              null
+            ],
+            "expected": [
+              "work"
+            ]
+          },
+          {
+            "args": [
+              [
+                "a"
+              ],
+              "a"
+            ],
+            "expected": [
+              "failed a"
+            ]
+          },
+          {
+            "args": [
+              [
+                "a"
+              ],
+              null
+            ],
+            "expected": [
+              "open a",
+              "work",
+              "close a"
+            ]
+          },
+          {
+            "args": [
+              [
+                "a",
+                "a",
+                "b"
+              ],
+              "b"
+            ],
+            "expected": [
+              "open a",
+              "open a",
+              "close a",
+              "close a",
+              "failed b"
+            ]
+          },
+          {
+            "args": [
+              [
+                "x",
+                "y"
+              ],
+              "z"
+            ],
+            "expected": [
+              "open x",
+              "open y",
+              "work",
+              "close y",
+              "close x"
+            ]
+          },
+          {
+            "args": [
+              [
+                "файл",
+                "сеть"
+              ],
+              "сеть"
+            ],
+            "expected": [
+              "open файл",
+              "close файл",
+              "failed сеть"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "session_log",
+        "starter": "class Session:\n    def __init__(self, log):\n        self.log = log\n        self.depth = 0\n\n    def __enter__(self):\n        self.depth += 1\n        self.log.append('connect')\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        self.depth -= 1\n        self.log.append('commit')\n        self.log.append('disconnect')\n        return False\n\n\ndef _run(session, block):\n    for item in block:\n        if isinstance(item, list):\n            with session:\n                _run(session, item)\n        elif item == 'boom':\n            raise ValueError(item)\n        else:\n            session.log.append(f'{item}@{session.depth}')\n\n\ndef session_log(script):\n    log = []\n    session = Session(log)\n    try:\n        with session:\n            _run(session, script)\n    except ValueError:\n        log.append('error')\n    return log\n",
+        "solution": "class Session:\n    def __init__(self, log):\n        self.log = log\n        self.depth = 0\n\n    def __enter__(self):\n        self.depth += 1\n        if self.depth == 1:\n            self.log.append('connect')\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        self.depth -= 1\n        if self.depth == 0:\n            self.log.append('rollback' if exc_type else 'commit')\n            self.log.append('disconnect')\n        return False\n\n\ndef _run(session, block):\n    for item in block:\n        if isinstance(item, list):\n            with session:\n                _run(session, item)\n        elif item == 'boom':\n            raise ValueError(item)\n        else:\n            session.log.append(f'{item}@{session.depth}')\n\n\ndef session_log(script):\n    log = []\n    session = Session(log)\n    try:\n        with session:\n            _run(session, script)\n    except ValueError:\n        log.append('error')\n    return log\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "a",
+                [
+                  "b",
+                  [
+                    "c"
+                  ]
+                ],
+                "d"
+              ]
+            ],
+            "expected": [
+              "connect",
+              "a@1",
+              "b@2",
+              "c@3",
+              "d@1",
+              "commit",
+              "disconnect"
+            ]
+          },
+          {
+            "args": [
+              [
+                "a",
+                [
+                  "boom",
+                  "x"
+                ],
+                "d"
+              ]
+            ],
+            "expected": [
+              "connect",
+              "a@1",
+              "rollback",
+              "disconnect",
+              "error"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": [
+              "connect",
+              "commit",
+              "disconnect"
+            ]
+          },
+          {
+            "args": [
+              [
+                "boom"
+              ]
+            ],
+            "expected": [
+              "connect",
+              "rollback",
+              "disconnect",
+              "error"
+            ]
+          },
+          {
+            "args": [
+              [
+                [],
+                [
+                  "q"
+                ]
+              ]
+            ],
+            "expected": [
+              "connect",
+              "q@2",
+              "commit",
+              "disconnect"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  "a"
+                ],
+                [
+                  "b"
+                ],
+                "c"
+              ]
+            ],
+            "expected": [
+              "connect",
+              "a@2",
+              "b@2",
+              "c@1",
+              "commit",
+              "disconnect"
+            ]
+          },
+          {
+            "args": [
+              [
+                [
+                  [
+                    [
+                      "deep",
+                      "boom"
+                    ]
+                  ]
+                ],
+                "never"
+              ]
+            ],
+            "expected": [
+              "connect",
+              "deep@4",
+              "rollback",
+              "disconnect",
+              "error"
+            ]
+          },
+          {
+            "args": [
+              [
+                "é",
+                [
+                  "ü"
+                ]
+              ]
+            ],
+            "expected": [
+              "connect",
+              "é@1",
+              "ü@2",
+              "commit",
+              "disconnect"
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "class Box:\n    def __enter__(self):\n        print('enter')\n\n    def __exit__(self, *exc):\n        pass\n\nwith Box() as b:\n    print(b)",
+        "choices": [
+          "enter\n<__main__.Box object>",
+          "enter\nNone",
+          "None\nenter"
+        ],
+        "answer": 1,
+        "explain": "`as` binds the return value of `__enter__`, not the manager. This `__enter__` has no `return`, so `b` is None. Return `self` when callers need the manager."
+      },
+      {
+        "code": "class Logged:\n    def __enter__(self):\n        return self\n\n    def __exit__(self, exc_type, exc, tb):\n        return 'logged'\n\nwith Logged():\n    raise ValueError('lost')\nprint('after')",
+        "choices": [
+          "after",
+          "ValueError: lost",
+          "logged\nafter"
+        ],
+        "answer": 0,
+        "explain": "Any truthy return value from `__exit__` suppresses the exception, and a non-empty string is truthy. The ValueError vanishes; return False or None unless suppression is the point."
+      },
+      {
+        "code": "from contextlib import contextmanager\n\n@contextmanager\ndef tag():\n    print('<')\n    yield\n    print('>')\n\ntry:\n    with tag():\n        raise KeyError('k')\nexcept KeyError:\n    print('caught')",
+        "choices": [
+          "<\n>\ncaught",
+          "<\ncaught",
+          "<\ncaught\n>"
+        ],
+        "answer": 1,
+        "explain": "The KeyError is thrown into the generator at `yield`. Nothing catches it there, so the line after `yield` never runs. Wrap `yield` in try/finally to guarantee cleanup."
+      },
+      {
+        "code": "from contextlib import ExitStack\n\nwith ExitStack() as stack:\n    for n in [1, 2, 3]:\n        stack.callback(print, n)\n    print('body')",
+        "choices": [
+          "body\n1\n2\n3",
+          "body\n3\n2\n1",
+          "1\n2\n3\nbody"
+        ],
+        "answer": 1,
+        "explain": "Callbacks are registered during the body and run when the stack closes, last-in, first-out: 3, then 2, then 1."
+      },
+      {
+        "code": "from contextlib import suppress\n\nwith suppress(KeyError):\n    print('a')\n    {}['missing']\n    print('b')\nprint('c')",
+        "choices": [
+          "a\nb\nc",
+          "a\nc",
+          "a"
+        ],
+        "answer": 1,
+        "explain": "`suppress` stops the exception at the end of the `with` block, so the rest of the block is skipped. Execution resumes after the block with `c`."
+      },
+      {
+        "code": "log = []\n\nclass R:\n    def __init__(self, name):\n        self.name = name\n\n    def __enter__(self):\n        log.append('in ' + self.name)\n        return self\n\n    def __exit__(self, *exc):\n        log.append('out ' + self.name)\n\nwith R('a'), R('b'):\n    pass\nprint(log)",
+        "choices": [
+          "['in a', 'in b', 'out a', 'out b']",
+          "['in a', 'in b', 'out b', 'out a']",
+          "['in a', 'out a', 'in b', 'out b']"
+        ],
+        "answer": 1,
+        "explain": "Several managers in one `with` behave like nested blocks: entered left to right and exited in reverse, so `b` closes before `a`."
+      }
+    ],
+    "tip": "When cleanup matters, say \"this needs a guaranteed release\" and reach for `with` before the interviewer asks. For a transaction, draw the snapshot, commit and rollback arrows, and state out loud that the manager re-raises so failures are never hidden.",
+    "links": {
+      "problems": [
+        "lock-order-deadlock",
+        "time-versioned-store"
+      ],
+      "guides": [
+        "transactions-isolation",
+        "clean-code",
+        "edge-case-checklist"
+      ],
+      "lessons": [
+        "py-errors-exceptions",
+        "py-oop-dataclasses",
+        "py-functions-closures"
+      ]
+    }
+  }
+}

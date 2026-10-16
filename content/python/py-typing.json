@@ -1,0 +1,1489 @@
+{
+  "id": "py-typing",
+  "track": "python",
+  "title": "Type hints that pay off",
+  "minutes": 45,
+  "level": "sse",
+  "paths": [
+    "senior"
+  ],
+  "summary": "What Python type hints do and do not do at runtime, the modern spellings, narrowing, TypedDict, Protocol and generics, and how to argue for typing in a review.",
+  "prerequisites": [
+    "py-oop-dataclasses"
+  ],
+  "prerequisiteNotes": "You should be comfortable with classes, dataclasses and inheritance from py-oop-dataclasses; Protocol is only interesting once you know what an ABC base class buys you.",
+  "objectives": [
+    "Explain that hints are metadata checked by tools such as mypy or pyright, never by CPython at call time.",
+    "Write modern annotations: built-in generics, `X | None`, `Literal`, `TypedDict`, `Callable` and generic functions, naming the minimum Python version for each spelling.",
+    "Narrow a union with `is None`, `isinstance` and tagged dicts so each branch sees a precise type.",
+    "Choose between `Protocol` and an ABC, and between `Any`, `object` and `cast`, and justify the choice in a code review."
+  ],
+  "concepts": [
+    {
+      "title": "Hints are metadata, not checks",
+      "body": "An annotation is an expression CPython evaluates (or stores as a string) and puts in `__annotations__`; it never inspects arguments at call time. Calling `double('ab')` on `def double(x: int) -> int` happily returns `'abab'`. The checking happens **before** runtime in a separate tool such as mypy or pyright, usually in the editor and CI. So hints buy you earlier bug reports, safer refactors and executable documentation, but anything that crosses a trust boundary (JSON, user input, env vars) still needs real runtime validation.",
+      "code": "def double(x: int) -> int:\n    return x * 2\n\nprint(double('ab'))          # 'abab' - CPython does not care\nprint(double.__annotations__)  # {'x': <class 'int'>, 'return': <class 'int'>}\n# mypy: Argument 1 to \"double\" has incompatible type \"str\"; expected \"int\"",
+      "diagram": "pyt-lifecycle"
+    },
+    {
+      "title": "Modern spellings and their minimum versions",
+      "body": "Since **3.9** the built-in containers are generic: write `list[int]`, `dict[str, int]`, `tuple[int, ...]` instead of `typing.List`. Since **3.10** `int | None` replaces `Optional[int]` and `int | str` replaces `Union[int, str]`; they mean exactly the same. `Optional[X]` means *may be None*, not *may be omitted*: a parameter is omittable only if it has a default. `Literal['r', 'w']` restricts a value to specific constants. **3.12** adds the `type` statement for aliases (`type Pair = tuple[int, int]`). Prefer abstract types for parameters (`Sequence`, `Mapping`, `Iterable` from `collections.abc`) and concrete ones for return values.",
+      "code": "from collections.abc import Iterable, Mapping\nfrom typing import Literal\n\nMode = Literal['r', 'w']\n\ndef open_all(paths: Iterable[str], mode: Mode = 'r') -> list[str]: ...\n\ndef lookup(table: Mapping[str, int], key: str) -> int | None:\n    return table.get(key)\n\ntype Pair = tuple[int, int]   # 3.12+; use Pair: TypeAlias = ... on older versions"
+    },
+    {
+      "title": "Narrowing a union",
+      "body": "A value typed `int | str | None` can only be used as all three at once until you **narrow** it. Checkers understand `x is None`, `isinstance(x, str)`, `callable(x)`, early `return`, and equality against a `Literal` tag. For records that differ by a `kind` key, a **tagged union** of TypedDicts plus `match` or `if shape['kind'] == 'circle'` lets each branch see exactly one shape. End an exhaustive chain with `assert_never(x)` (3.11+) so adding a new variant becomes a type error at every place that forgot it.",
+      "code": "def label(x: int | str | None) -> str:\n    if x is None:\n        return 'n/a'\n    if isinstance(x, str):\n        return x.strip()      # x: str here\n    return f'#{x:04d}'        # x: int here\n\nprint(label(None), label(' ok '), label(7))  # n/a ok #0007",
+      "diagram": "pyt-narrow"
+    },
+    {
+      "title": "TypedDict: types for dict-shaped data",
+      "body": "`TypedDict` describes a dict with fixed string keys, which is how JSON payloads arrive. At runtime it is a **plain dict**: `User(name='Ada', age='old')` builds `{'name': 'Ada', 'age': 'old'}` with no complaint, and `isinstance(u, User)` raises `TypeError`. Mark individual keys with `NotRequired[...]` (3.11+) or the whole class with `total=False`. Reach for a dataclass when the data has behaviour or invariants; reach for TypedDict when it must stay a dict (serialisation, `**kwargs`, existing APIs).",
+      "code": "from typing import Literal, NotRequired, TypedDict\n\nclass Circle(TypedDict):\n    kind: Literal['circle']\n    r: float\n\nclass Rect(TypedDict):\n    kind: Literal['rect']\n    w: float\n    h: float\n    label: NotRequired[str]\n\nShape = Circle | Rect          # tagged union on 'kind'\nr: Rect = {'kind': 'rect', 'w': 2, 'h': 3}\nprint(type(r).__name__)        # dict"
+    },
+    {
+      "title": "Protocol versus ABC",
+      "body": "An ABC is **nominal**: a class satisfies `Closer` only if it inherits from it (or is registered). A `Protocol` (3.8+) is **structural**: any class with a matching `close()` method satisfies it, including third-party classes you cannot edit. That is static duck typing, and it keeps dependencies pointing the right way: the consumer declares the tiny interface it needs. ABCs still win when you want shared implementation, `@abstractmethod` enforcement at instantiation, or an explicit opt-in. `@runtime_checkable` allows `isinstance` against a protocol, but it only checks that the attributes **exist**, not their signatures.",
+      "code": "from typing import Protocol\n\nclass Closer(Protocol):\n    def close(self) -> None: ...\n\ndef close_all(items: list[Closer]) -> int:\n    for item in items:\n        item.close()\n    return len(items)\n\nimport io\nprint(close_all([io.StringIO(), io.BytesIO()]))  # 2: neither inherits Closer",
+      "diagram": "pyt-protocol"
+    },
+    {
+      "title": "Generics, TypeVar and Callable",
+      "body": "A generic function keeps the link between input and output types: `first(xs: list[T]) -> T` tells the checker that `first([1, 2])` is an `int`. Before 3.12 you declare `T = TypeVar('T')` at module level; from **3.12** you can write `def first[T](xs: list[T]) -> T` and bound a parameter with `[K: Hashable]`. `Callable[[int, str], bool]` types a function argument by its parameters and return. Remember **variance**: `list[int]` is not a `list[float]` because lists are mutable, while the read-only `Sequence[int]` is accepted where `Sequence[float]` is expected.",
+      "code": "from collections.abc import Callable, Sequence\nfrom typing import TypeVar\n\nT = TypeVar('T')              # pre-3.12 spelling\n\ndef first(xs: Sequence[T], default: T) -> T:\n    return xs[0] if xs else default\n\ndef apply_all[A, B](xs: list[A], fn: Callable[[A], B]) -> list[B]:  # 3.12+\n    return [fn(x) for x in xs]\n\nprint(first([], 0), apply_all(['a', 'bb'], len))  # 0 [1, 2]"
+    },
+    {
+      "title": "Escape hatches: Any, object, cast, Final, overload",
+      "body": "`Any` switches checking **off**: every operation is allowed and it silently flows into typed code. `object` accepts any value but allows almost nothing until you narrow it, so it is the honest choice for 'I accept anything'. `cast(T, x)` returns `x` unchanged at runtime; it only tells the checker to trust you, so treat each one as an unverified claim. `Final` marks a name the checker will not let you rebind (CPython still lets you). `@overload` declares several signatures for one implementation, for example a parser that returns `int` for `int` input and `str` for `str` input.",
+      "code": "from typing import Any, Final, cast, overload\n\nRETRIES: Final = 3\n\ndef loose(x: Any) -> int:\n    return x.whatever()      # checker: fine. Runtime: may crash\n\ndef strict(x: object) -> int:\n    if isinstance(x, int):\n        return x             # narrowed: allowed\n    return 0\n\n@overload\ndef parse(raw: int) -> int: ...\n@overload\ndef parse(raw: str) -> str: ...\ndef parse(raw: int | str) -> int | str:\n    return raw\n\nn = cast(int, '42')\nprint(type(n).__name__)      # str: cast checks nothing",
+      "diagram": "pyt-any"
+    },
+    {
+      "title": "Reading hints at runtime",
+      "body": "Frameworks such as dataclasses, FastAPI and pydantic read hints at runtime. `f.__annotations__` returns the raw values, so a forward reference written as `'Node'` stays a string, and with `from __future__ import annotations` every hint is a string. `typing.get_type_hints(f)` evaluates those strings in the function's module namespace, turns a `None` return into `NoneType`, and raises `NameError` if a name cannot be resolved. Subscripted generics are for annotations only: `isinstance(x, list[int])` raises `TypeError`, so check `isinstance(x, list)` and then the items.",
+      "code": "from typing import get_type_hints\n\nclass Node:\n    def link(self, other: 'Node') -> None: ...\n\nprint(Node.link.__annotations__)   # {'other': 'Node', 'return': None}\nprint(get_type_hints(Node.link))   # {'other': <class '__main__.Node'>, 'return': <class 'NoneType'>}",
+      "diagram": "pyt-hints"
+    }
+  ],
+  "example": "from typing import Literal, TypedDict\n\nclass Deposit(TypedDict):\n    kind: Literal['deposit']\n    amount: int\n\nclass Fee(TypedDict):\n    kind: Literal['fee']\n    amount: int\n    reason: str\n\nEvent = Deposit | Fee\n\ndef balance(events: list[Event]) -> int:\n    total = 0\n    for event in events:\n        if event['kind'] == 'deposit':\n            total += event['amount']      # event: Deposit\n        else:\n            total -= event['amount']      # event: Fee\n    return total\n\nprint(balance([{'kind': 'deposit', 'amount': 50},\n               {'kind': 'fee', 'amount': 5, 'reason': 'atm'}]))  # 45",
+  "task": "Hints are not enforced, so data from outside needs a runtime check. Write `validate(record, schema)`. `schema` maps field names to a type name: `int`, `float`, `str`, `bool`, `list` or `dict`; a trailing `?` (as in `int?`) means the field may be missing or None. Return a **sorted** list of error strings, `[]` if valid: `'<field>: missing'` for an absent required field, `'<field>: expected <type>, got <actual>'` for a wrong type (actual is the Python type name, or `None`), and `'<field>: unexpected'` for keys not in the schema. Mirror the checker's rules: `bool` is not accepted as `int`, but an `int` is accepted where `float` is expected.",
+  "starter": "TYPES = {'int': int, 'float': float, 'str': str,\n         'bool': bool, 'list': list, 'dict': dict}\n\n\ndef validate(record, schema):\n    # Return a sorted list of 'field: problem' strings; [] means valid.\n    errors = []\n    for field, name in schema.items():\n        if not isinstance(record.get(field), TYPES[name]):\n            errors.append(f'{field}: expected {name}')\n    return sorted(errors)\n",
+  "hints": [
+    "`isinstance(True, int)` is True, so test for bool first and let only the `bool` schema type accept it. Accept `(int, float)` for `float`, which is how mypy treats ints passed to a float parameter.",
+    "Strip the optional marker with `spec.removesuffix('?')`. Check `field not in record` before reading the value so missing and None stay distinct, then loop over the record once more for unexpected keys."
+  ],
+  "solution": "Map each schema name to the runtime class (or tuple of classes) that `isinstance` should accept, and special-case bool because it subclasses int. For each schema field: a missing key is an error only if required; a None value is fine only if optional; otherwise compare against the class and report the actual `type(value).__name__`. A second pass over the record finds unexpected keys. Sorting at the end makes the output deterministic regardless of dict order. O(fields) time.\n\nTYPES = {'int': int, 'float': (int, float), 'str': str,\n         'bool': bool, 'list': list, 'dict': dict}\n\n\ndef type_name(value):\n    return 'None' if value is None else type(value).__name__\n\n\ndef matches(value, name):\n    if isinstance(value, bool):          # bool subclasses int: only 'bool' accepts it\n        return name == 'bool'\n    return isinstance(value, TYPES[name])\n\n\ndef validate(record: dict[str, object], schema: dict[str, str]) -> list[str]:\n    errors: list[str] = []\n    for field, spec in schema.items():\n        name = spec.removesuffix('?')\n        optional = spec.endswith('?')\n        if field not in record:\n            if not optional:\n                errors.append(f'{field}: missing')\n            continue\n        value = record[field]\n        if value is None and optional:\n            continue\n        if not matches(value, name):\n            errors.append(f'{field}: expected {name}, got {type_name(value)}')\n    errors.extend(f'{field}: unexpected' for field in record if field not in schema)\n    return sorted(errors)\n",
+  "checklist": [
+    "I reject `True` for an `int` field and accept `3` for a `float` field.",
+    "Missing, None and wrong-type are three different messages, and `?` relaxes only the first two.",
+    "Keys outside the schema are reported, and the result is sorted.",
+    "The function itself is annotated with `dict[str, object]` and `list[str]`."
+  ],
+  "pitfalls": [
+    "Believing hints validate input at runtime; untrusted data still needs a check or a library such as pydantic.",
+    "Reading `Optional[int]` as 'this argument can be omitted'; it means 'may be None'. Only a default makes it omittable.",
+    "Using `Any` to silence an error: it disables checking for everything that value touches. Prefer `object` plus narrowing.",
+    "Sprinkling `cast` instead of narrowing; a wrong cast is a lie the checker will never catch.",
+    "Calling `isinstance(x, list[int])` or `isinstance(d, MyTypedDict)`: both raise `TypeError` at runtime.",
+    "Annotating parameters as `list[float]` and then passing a `list[int]`; lists are invariant, so accept `Sequence[float]`."
+  ],
+  "walkthrough": [
+    {
+      "title": "Design the validator",
+      "body": "Separate the two questions: **is the key present** and **does the value have the right type**. Build the lookup table once (`'float': (int, float)` encodes the numeric widening), keep the bool exception in one helper, and generate messages in one place so their format cannot drift. The second pass for unexpected keys is the step candidates forget; mention it out loud. This is the core of what pydantic and similar libraries do with real annotations via `get_type_hints`."
+    },
+    {
+      "title": "Talking about typing in a review or interview",
+      "body": "Frame hints as a contract that tools verify: they catch whole classes of bugs (None handling, wrong argument order, renamed fields) before tests run, and they make refactors mechanical. Be pragmatic about adoption: type the boundaries first (public functions, data models), run the checker in CI with strictness raised per module, and track every `Any`, `cast` and `# type: ignore` as debt. In a coding interview, annotate the signature and key data structures; it shows intent in seconds and invites the interviewer to discuss None and edge cases. Do not spend minutes on perfect generics for throwaway helpers."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Total area of tagged shapes",
+      "prompt": "Each shape is a dict tagged by `kind`: `circle` with `r`, `rect` with `w` and `h`, or `square` with `side`. Write `total_area(shapes)` returning `{'area': <sum rounded to 2 places>, 'unknown': <count of shapes with an unknown kind or missing fields>}`.",
+      "hints": [
+        "A `match` mapping pattern such as `case {'kind': 'circle', 'r': r}:` checks the tag and the field in one go (3.10+).",
+        "Return None from a per-shape helper for anything unrecognised; the caller counts those."
+      ],
+      "solution": "import math\n\n\ndef shape_area(shape: dict) -> float | None:\n    match shape:\n        case {'kind': 'circle', 'r': r}:\n            return math.pi * r * r\n        case {'kind': 'rect', 'w': w, 'h': h}:\n            return w * h\n        case {'kind': 'square', 'side': side}:\n            return side * side\n        case _:\n            return None\n\n\ndef total_area(shapes: list[dict]) -> dict[str, float]:\n    total, unknown = 0, 0\n    for shape in shapes:\n        area = shape_area(shape)\n        if area is None:\n            unknown += 1\n        else:\n            total += area\n    return {'area': round(total, 2), 'unknown': unknown}\n",
+      "checklist": [
+        "Each branch reads only the fields of its own shape.",
+        "Unknown kinds and incomplete shapes are counted, not crashed on.",
+        "Only the final total is rounded."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Latest record per key, written generically",
+      "prompt": "Write `latest_by(records, key_field, time_field)` that keeps, for each distinct value of `key_field`, the record with the largest `time_field`. On a tie keep the earlier record. Output order is the order in which each key first appeared. Build it on a generic helper typed with `Callable` so it works for any item type, not just dicts.",
+      "hints": [
+        "A dict keyed by the key value keeps first-insertion order even when you overwrite the value for an existing key.",
+        "Replace only when the new rank is strictly greater, which keeps the earlier record on ties. `operator.itemgetter(name)` turns a field name into a key function."
+      ],
+      "solution": "from collections.abc import Callable, Hashable, Iterable\nfrom operator import itemgetter\n\n\ndef latest[T, K: Hashable](items: Iterable[T], key: Callable[[T], K],\n                           rank: Callable[[T], int]) -> list[T]:\n    best: dict[K, T] = {}\n    for item in items:\n        k = key(item)\n        if k not in best or rank(item) > rank(best[k]):\n            best[k] = item\n    return list(best.values())\n\n\ndef latest_by(records: list[dict], key_field: str, time_field: str) -> list[dict]:\n    return latest(records, itemgetter(key_field), itemgetter(time_field))\n",
+      "checklist": [
+        "The helper is generic: `T` for items, `K` bounded by `Hashable` for keys.",
+        "Ties keep the earlier record and output follows first appearance.",
+        "One pass, O(n) time."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you pick a Protocol over an ABC?",
+      "answer": "When the consumer only needs a small capability and the implementers are not under your control, such as third-party clients or test fakes. Protocols are structural, so nothing has to inherit. Pick an ABC when you want shared implementation, instantiation-time enforcement of `@abstractmethod`, or an explicit opt-in that documents intent."
+    },
+    {
+      "question": "How would you introduce type checking to a large untyped codebase?",
+      "answer": "Gradually. Start the checker in CI with lenient settings so it passes, then type the boundaries: public APIs, data models and the most-imported modules. Tighten strictness per module (mypy supports per-module config) and forbid new untyped code. Count `Any`, `cast` and `type: ignore` as debt and drive them down; add stubs or Protocols for untyped dependencies."
+    },
+    {
+      "question": "Why does mypy reject passing a `list[int]` to a parameter typed `list[float]`?",
+      "answer": "Lists are mutable and therefore invariant: the function could append a float, breaking the caller's `list[int]`. If the function only reads, type it `Sequence[float]`, which is covariant, and the call becomes valid. An `int` is accepted where a `float` is expected only for the bare types, by a special rule in PEP 484."
+    }
+  ],
+  "takeaways": [
+    "CPython stores hints but never enforces them; mypy or pyright do the checking, so validate untrusted data at runtime.",
+    "Use `list[int]` (3.9+), `X | None` (3.10+) and the `type` statement and `def f[T]` syntax (3.12+) when your minimum version allows.",
+    "Narrow unions with `is None`, `isinstance` and `Literal` tags; finish exhaustive branches with `assert_never`.",
+    "Protocol is structural, ABC is nominal; `object` is safe, `Any` turns checking off, `cast` is an unchecked promise."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyt-lifecycle",
+        "type": "flow",
+        "title": "Who looks at your hints?",
+        "alt": "Flow diagram. Source code with type hints goes two ways. A static checker such as mypy reads it without running it and reports an error in CI. Separately CPython runs the code, stores the hints in __annotations__, and calls f with a string without any type check.",
+        "caption": "The checker reads hints before runtime; the interpreter only stores them. A wrong call still runs.",
+        "nodes": [
+          {
+            "id": "src",
+            "label": "app.py + hints",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "def f(x: int)"
+          },
+          {
+            "id": "chk",
+            "label": "mypy / pyright",
+            "kind": "service",
+            "col": 2,
+            "row": 0,
+            "sub": "static analysis"
+          },
+          {
+            "id": "ci",
+            "label": "CI fails early",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "str is not int"
+          },
+          {
+            "id": "py",
+            "label": "CPython",
+            "kind": "worker",
+            "col": 2,
+            "row": 2,
+            "sub": "runs bytecode"
+          },
+          {
+            "id": "ann",
+            "label": "__annotations__",
+            "kind": "storage",
+            "col": 4,
+            "row": 2,
+            "sub": "stored, unchecked"
+          },
+          {
+            "id": "run",
+            "label": "f('ab') runs",
+            "kind": "bad",
+            "col": 2,
+            "row": 4,
+            "sub": "returns 'abab'"
+          }
+        ],
+        "edges": [
+          {
+            "from": "src",
+            "to": "chk",
+            "label": "read, never run"
+          },
+          {
+            "from": "chk",
+            "to": "ci",
+            "label": "reports error"
+          },
+          {
+            "from": "src",
+            "to": "py",
+            "label": "python app.py"
+          },
+          {
+            "from": "py",
+            "to": "ann",
+            "label": "stores hints"
+          },
+          {
+            "from": "py",
+            "to": "run",
+            "label": "no type check",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "The checker parses the source, infers types and reports `f('ab')` as an error. Nothing is executed."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "At runtime CPython evaluates each annotation once, when the `def` runs, and keeps it in `f.__annotations__`."
+          },
+          {
+            "edges": [
+              4
+            ],
+            "text": "Calls are never checked against the hints, so the bad call runs and returns `'abab'`."
+          }
+        ]
+      },
+      {
+        "id": "pyt-narrow",
+        "type": "flow",
+        "title": "Narrowing int | str | None",
+        "alt": "Decision flow. A value typed int or str or None first meets the check x is None, which returns a default. Otherwise it meets isinstance(x, str); the true branch sees a str and the false branch sees only int.",
+        "caption": "Each check removes one member of the union, so every branch works with a single precise type.",
+        "nodes": [
+          {
+            "id": "v",
+            "label": "x",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "int | str | None"
+          },
+          {
+            "id": "d1",
+            "label": "x is None?",
+            "kind": "decision",
+            "col": 1,
+            "row": 2
+          },
+          {
+            "id": "none",
+            "label": "return default",
+            "kind": "good",
+            "col": 1,
+            "row": 0,
+            "sub": "x: None"
+          },
+          {
+            "id": "d2",
+            "label": "isinstance str?",
+            "kind": "decision",
+            "col": 3,
+            "row": 2
+          },
+          {
+            "id": "s",
+            "label": "x.strip()",
+            "kind": "good",
+            "col": 3,
+            "row": 0,
+            "sub": "x: str"
+          },
+          {
+            "id": "i",
+            "label": "f'{x:04d}'",
+            "kind": "good",
+            "col": 3,
+            "row": 4,
+            "sub": "x: int (all left)"
+          }
+        ],
+        "edges": [
+          {
+            "from": "v",
+            "to": "d1"
+          },
+          {
+            "from": "d1",
+            "to": "none",
+            "label": "yes"
+          },
+          {
+            "from": "d1",
+            "to": "d2",
+            "label": "no: int | str"
+          },
+          {
+            "from": "d2",
+            "to": "s",
+            "label": "yes"
+          },
+          {
+            "from": "d2",
+            "to": "i",
+            "label": "no"
+          }
+        ]
+      },
+      {
+        "id": "pyt-protocol",
+        "type": "compare",
+        "title": "ABC versus Protocol",
+        "alt": "Side-by-side comparison. With an ABC, close_all accepts FileSink because it inherits from Closer, but rejects a third-party S3Client that has close() and no base class. With a Protocol, both FileSink and S3Client match because each has a close method.",
+        "caption": "An ABC needs inheritance; a Protocol only needs the right methods, so code you cannot edit fits too.",
+        "before": {
+          "label": "ABC: nominal, opt-in",
+          "nodes": [
+            {
+              "id": "fn",
+              "label": "close_all(x)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "abc",
+              "label": "Closer (ABC)",
+              "kind": "state",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "mine",
+              "label": "FileSink",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "class X(Closer)"
+            },
+            {
+              "id": "theirs",
+              "label": "S3Client",
+              "kind": "bad",
+              "col": 0,
+              "row": 1,
+              "sub": "no Closer base"
+            }
+          ],
+          "edges": [
+            {
+              "from": "fn",
+              "to": "abc",
+              "label": "x: Closer"
+            },
+            {
+              "from": "mine",
+              "to": "abc",
+              "label": "inherits"
+            },
+            {
+              "from": "theirs",
+              "to": "fn",
+              "label": "rejected",
+              "style": "fail"
+            }
+          ]
+        },
+        "after": {
+          "label": "Protocol: structural",
+          "nodes": [
+            {
+              "id": "fn",
+              "label": "close_all(x)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "pr",
+              "label": "Closer(Protocol)",
+              "kind": "state",
+              "col": 2,
+              "row": 0
+            },
+            {
+              "id": "mine",
+              "label": "FileSink",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "has close()"
+            },
+            {
+              "id": "theirs",
+              "label": "S3Client",
+              "kind": "good",
+              "col": 0,
+              "row": 1,
+              "sub": "has close()"
+            }
+          ],
+          "edges": [
+            {
+              "from": "fn",
+              "to": "pr",
+              "label": "x: Closer"
+            },
+            {
+              "from": "mine",
+              "to": "pr",
+              "label": "matches"
+            },
+            {
+              "from": "theirs",
+              "to": "pr",
+              "label": "matches"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyt-any",
+        "type": "compare",
+        "title": "Any versus object",
+        "alt": "Side-by-side comparison. A parameter typed Any lets x.upper() through with no error even when x is an int. A parameter typed object makes x.upper() a checker error until an isinstance(x, str) check narrows it, after which the call is allowed.",
+        "caption": "Both accept any value. `Any` stops checking; `object` forces you to narrow before you use it.",
+        "before": {
+          "label": "x: Any - checking switched off",
+          "nodes": [
+            {
+              "id": "x",
+              "label": "x: Any",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "m",
+              "label": "x.upper()",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "no error reported"
+            },
+            {
+              "id": "r",
+              "label": "return x",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "flows as any type"
+            }
+          ],
+          "edges": [
+            {
+              "from": "x",
+              "to": "m",
+              "label": "allowed"
+            },
+            {
+              "from": "x",
+              "to": "r",
+              "label": "allowed"
+            }
+          ]
+        },
+        "after": {
+          "label": "x: object - narrow first",
+          "nodes": [
+            {
+              "id": "x",
+              "label": "x: object",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "m",
+              "label": "x.upper()",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "checker error"
+            },
+            {
+              "id": "d",
+              "label": "isinstance str?",
+              "kind": "decision",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "ok",
+              "label": "x.upper()",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "x: str, allowed"
+            }
+          ],
+          "edges": [
+            {
+              "from": "x",
+              "to": "m",
+              "label": "rejected",
+              "style": "fail"
+            },
+            {
+              "from": "x",
+              "to": "d"
+            },
+            {
+              "from": "d",
+              "to": "ok",
+              "label": "narrowed"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyt-hints",
+        "type": "sequence",
+        "title": "What get_type_hints(f) does",
+        "alt": "Sequence diagram. Your code calls get_type_hints on f. It reads the raw annotations dict, which holds the string 'Node'. It evaluates that string in the module globals, gets the Node class back, and returns a resolved dict where the None return becomes NoneType.",
+        "caption": "`__annotations__` is raw; `get_type_hints` resolves strings in the defining module and normalises None.",
+        "actors": [
+          {
+            "id": "you",
+            "label": "your code"
+          },
+          {
+            "id": "gth",
+            "label": "get_type_hints"
+          },
+          {
+            "id": "ann",
+            "label": "__annotations__"
+          },
+          {
+            "id": "mod",
+            "label": "module globals"
+          }
+        ],
+        "messages": [
+          {
+            "from": "you",
+            "to": "gth",
+            "label": "get_type_hints(f)"
+          },
+          {
+            "from": "gth",
+            "to": "ann",
+            "label": "read raw dict"
+          },
+          {
+            "from": "ann",
+            "to": "gth",
+            "label": "{'n': 'Node', 'return': None}",
+            "style": "reply",
+            "note": "Forward references and `from __future__ import annotations` leave strings here."
+          },
+          {
+            "from": "gth",
+            "to": "mod",
+            "label": "eval 'Node'"
+          },
+          {
+            "from": "mod",
+            "to": "gth",
+            "label": "class Node",
+            "style": "reply",
+            "note": "An unknown name raises NameError instead."
+          },
+          {
+            "from": "gth",
+            "to": "you",
+            "label": "{'n': Node, 'return': NoneType}",
+            "style": "reply"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "validate",
+        "starter": "TYPES = {'int': int, 'float': float, 'str': str,\n         'bool': bool, 'list': list, 'dict': dict}\n\n\ndef validate(record, schema):\n    # Return a sorted list of 'field: problem' strings; [] means valid.\n    errors = []\n    for field, name in schema.items():\n        if not isinstance(record.get(field), TYPES[name]):\n            errors.append(f'{field}: expected {name}')\n    return sorted(errors)\n",
+        "solution": "TYPES = {'int': int, 'float': (int, float), 'str': str,\n         'bool': bool, 'list': list, 'dict': dict}\n\n\ndef type_name(value):\n    return 'None' if value is None else type(value).__name__\n\n\ndef matches(value, name):\n    if isinstance(value, bool):          # bool subclasses int: only 'bool' accepts it\n        return name == 'bool'\n    return isinstance(value, TYPES[name])\n\n\ndef validate(record: dict[str, object], schema: dict[str, str]) -> list[str]:\n    errors: list[str] = []\n    for field, spec in schema.items():\n        name = spec.removesuffix('?')\n        optional = spec.endswith('?')\n        if field not in record:\n            if not optional:\n                errors.append(f'{field}: missing')\n            continue\n        value = record[field]\n        if value is None and optional:\n            continue\n        if not matches(value, name):\n            errors.append(f'{field}: expected {name}, got {type_name(value)}')\n    errors.extend(f'{field}: unexpected' for field in record if field not in schema)\n    return sorted(errors)\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "id": 7,
+                "name": "Ada",
+                "score": 9.5
+              },
+              {
+                "id": "int",
+                "name": "str",
+                "score": "float"
+              }
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "id": "7",
+                "active": 1
+              },
+              {
+                "id": "int",
+                "name": "str",
+                "active": "bool"
+              }
+            ],
+            "expected": [
+              "active: expected bool, got int",
+              "id: expected int, got str",
+              "name: missing"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {},
+              {}
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "n": true
+              },
+              {
+                "n": "int"
+              }
+            ],
+            "expected": [
+              "n: expected int, got bool"
+            ]
+          },
+          {
+            "args": [
+              {
+                "x": 3,
+                "ok": false
+              },
+              {
+                "x": "float",
+                "ok": "bool"
+              }
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "nick": null
+              },
+              {
+                "nick": "str?",
+                "age": "int?"
+              }
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "age": null
+              },
+              {
+                "age": "int"
+              }
+            ],
+            "expected": [
+              "age: expected int, got None"
+            ]
+          },
+          {
+            "args": [
+              {
+                "age": "x"
+              },
+              {
+                "age": "int?"
+              }
+            ],
+            "expected": [
+              "age: expected int, got str"
+            ]
+          },
+          {
+            "args": [
+              {
+                "id": 1,
+                "extra": [
+                  1
+                ],
+                "zz": null
+              },
+              {
+                "id": "int"
+              }
+            ],
+            "expected": [
+              "extra: unexpected",
+              "zz: unexpected"
+            ]
+          },
+          {
+            "args": [
+              {
+                "tags": {
+                  "a": 1
+                },
+                "meta": []
+              },
+              {
+                "tags": "list",
+                "meta": "dict"
+              }
+            ],
+            "expected": [
+              "meta: expected dict, got list",
+              "tags: expected list, got dict"
+            ]
+          },
+          {
+            "args": [
+              {
+                "név": "Zoë",
+                "n": -4
+              },
+              {
+                "név": "str",
+                "n": "int"
+              }
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {},
+              {
+                "a": "int",
+                "b": "str?",
+                "c": "list"
+              }
+            ],
+            "expected": [
+              "a: missing",
+              "c: missing"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "total_area",
+        "starter": "def total_area(shapes):\n    total = 0\n    for shape in shapes:\n        total += shape['w'] * shape['h']\n    return {'area': total, 'unknown': 0}\n",
+        "solution": "import math\n\n\ndef shape_area(shape: dict) -> float | None:\n    match shape:\n        case {'kind': 'circle', 'r': r}:\n            return math.pi * r * r\n        case {'kind': 'rect', 'w': w, 'h': h}:\n            return w * h\n        case {'kind': 'square', 'side': side}:\n            return side * side\n        case _:\n            return None\n\n\ndef total_area(shapes: list[dict]) -> dict[str, float]:\n    total, unknown = 0, 0\n    for shape in shapes:\n        area = shape_area(shape)\n        if area is None:\n            unknown += 1\n        else:\n            total += area\n    return {'area': round(total, 2), 'unknown': unknown}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "kind": "rect",
+                  "w": 2,
+                  "h": 3
+                },
+                {
+                  "kind": "square",
+                  "side": 4
+                }
+              ]
+            ],
+            "expected": {
+              "area": 22,
+              "unknown": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "circle",
+                  "r": 1
+                },
+                {
+                  "kind": "triangle",
+                  "b": 2,
+                  "h": 2
+                }
+              ]
+            ],
+            "expected": {
+              "area": 3.14,
+              "unknown": 1
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "area": 0,
+              "unknown": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "circle",
+                  "r": 2
+                }
+              ]
+            ],
+            "expected": {
+              "area": 12.57,
+              "unknown": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "rect",
+                  "w": 2
+                },
+                {
+                  "w": 1,
+                  "h": 1
+                }
+              ]
+            ],
+            "expected": {
+              "area": 0,
+              "unknown": 2
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "rect",
+                  "w": 1.5,
+                  "h": 2,
+                  "label": "door"
+                },
+                {
+                  "kind": "square",
+                  "side": 0
+                }
+              ]
+            ],
+            "expected": {
+              "area": 3,
+              "unknown": 0
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                },
+                {
+                  "kind": "square",
+                  "side": 10
+                }
+              ]
+            ],
+            "expected": {
+              "area": 5000,
+              "unknown": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "latest_by",
+        "starter": "def latest_by(records, key_field, time_field):\n    # Keep the newest record per key, in order of first appearance.\n    return records\n",
+        "solution": "from collections.abc import Callable, Hashable, Iterable\nfrom operator import itemgetter\n\n\ndef latest[T, K: Hashable](items: Iterable[T], key: Callable[[T], K],\n                           rank: Callable[[T], int]) -> list[T]:\n    best: dict[K, T] = {}\n    for item in items:\n        k = key(item)\n        if k not in best or rank(item) > rank(best[k]):\n            best[k] = item\n    return list(best.values())\n\n\ndef latest_by(records: list[dict], key_field: str, time_field: str) -> list[dict]:\n    return latest(records, itemgetter(key_field), itemgetter(time_field))\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "id": "a",
+                  "t": 1,
+                  "v": 1
+                },
+                {
+                  "id": "b",
+                  "t": 5,
+                  "v": 2
+                },
+                {
+                  "id": "a",
+                  "t": 3,
+                  "v": 3
+                }
+              ],
+              "id",
+              "t"
+            ],
+            "expected": [
+              {
+                "id": "a",
+                "t": 3,
+                "v": 3
+              },
+              {
+                "id": "b",
+                "t": 5,
+                "v": 2
+              }
+            ]
+          },
+          {
+            "args": [
+              [],
+              "id",
+              "t"
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                {
+                  "k": 1,
+                  "at": 2,
+                  "v": "first"
+                },
+                {
+                  "k": 1,
+                  "at": 2,
+                  "v": "second"
+                }
+              ],
+              "k",
+              "at"
+            ],
+            "expected": [
+              {
+                "k": 1,
+                "at": 2,
+                "v": "first"
+              }
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "k": "x",
+                  "at": 9
+                },
+                {
+                  "k": "x",
+                  "at": 4
+                },
+                {
+                  "k": "x",
+                  "at": 7
+                }
+              ],
+              "k",
+              "at"
+            ],
+            "expected": [
+              {
+                "k": "x",
+                "at": 9
+              }
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "u": "Zoë",
+                  "ts": -5
+                },
+                {
+                  "u": "Ana",
+                  "ts": -9
+                },
+                {
+                  "u": "Zoë",
+                  "ts": -1
+                }
+              ],
+              "u",
+              "ts"
+            ],
+            "expected": [
+              {
+                "u": "Zoë",
+                "ts": -1
+              },
+              {
+                "u": "Ana",
+                "ts": -9
+              }
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "id": "solo",
+                  "t": 0
+                }
+              ],
+              "id",
+              "t"
+            ],
+            "expected": [
+              {
+                "id": "solo",
+                "t": 0
+              }
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "id": 0,
+                  "t": 0
+                },
+                {
+                  "id": 1,
+                  "t": 1
+                },
+                {
+                  "id": 2,
+                  "t": 2
+                },
+                {
+                  "id": 0,
+                  "t": 3
+                },
+                {
+                  "id": 1,
+                  "t": 4
+                },
+                {
+                  "id": 2,
+                  "t": 5
+                },
+                {
+                  "id": 0,
+                  "t": 6
+                },
+                {
+                  "id": 1,
+                  "t": 7
+                },
+                {
+                  "id": 2,
+                  "t": 8
+                },
+                {
+                  "id": 0,
+                  "t": 9
+                },
+                {
+                  "id": 1,
+                  "t": 10
+                },
+                {
+                  "id": 2,
+                  "t": 11
+                },
+                {
+                  "id": 0,
+                  "t": 12
+                },
+                {
+                  "id": 1,
+                  "t": 13
+                },
+                {
+                  "id": 2,
+                  "t": 14
+                },
+                {
+                  "id": 0,
+                  "t": 15
+                },
+                {
+                  "id": 1,
+                  "t": 16
+                },
+                {
+                  "id": 2,
+                  "t": 17
+                },
+                {
+                  "id": 0,
+                  "t": 18
+                },
+                {
+                  "id": 1,
+                  "t": 19
+                },
+                {
+                  "id": 2,
+                  "t": 20
+                },
+                {
+                  "id": 0,
+                  "t": 21
+                },
+                {
+                  "id": 1,
+                  "t": 22
+                },
+                {
+                  "id": 2,
+                  "t": 23
+                },
+                {
+                  "id": 0,
+                  "t": 24
+                },
+                {
+                  "id": 1,
+                  "t": 25
+                },
+                {
+                  "id": 2,
+                  "t": 26
+                },
+                {
+                  "id": 0,
+                  "t": 27
+                },
+                {
+                  "id": 1,
+                  "t": 28
+                },
+                {
+                  "id": 2,
+                  "t": 29
+                }
+              ],
+              "id",
+              "t"
+            ],
+            "expected": [
+              {
+                "id": 0,
+                "t": 27
+              },
+              {
+                "id": 1,
+                "t": 28
+              },
+              {
+                "id": 2,
+                "t": 29
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "def double(x: int) -> int:\n    return x * 2\n\nprint(double('ab'))",
+        "choices": [
+          "TypeError",
+          "abab",
+          "4"
+        ],
+        "answer": 1,
+        "explain": "CPython never checks arguments against annotations. `'ab' * 2` is `'abab'`; only a static checker would flag the call."
+      },
+      {
+        "code": "from typing import cast\n\nx = cast(int, '42')\nprint(type(x).__name__, x + '!')",
+        "choices": [
+          "int 43",
+          "str 42!",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "`cast` returns its argument unchanged. It only tells the type checker what to assume; nothing is converted or verified."
+      },
+      {
+        "code": "def link(a: int, b: 'Node' = None) -> None:\n    pass\n\nprint(link.__annotations__)",
+        "choices": [
+          "{'a': <class 'int'>, 'b': 'Node', 'return': None}",
+          "{'a': <class 'int'>, 'b': 'Node', 'return': <class 'NoneType'>}",
+          "NameError: name 'Node' is not defined"
+        ],
+        "answer": 0,
+        "explain": "`__annotations__` holds the raw values: the string forward reference stays a string and a `None` return stays `None`. `get_type_hints` would try to resolve 'Node' and convert None to NoneType."
+      },
+      {
+        "code": "from typing import TypedDict\n\nclass User(TypedDict):\n    name: str\n    age: int\n\nu = User(name='Ada', age='old')\nprint(type(u).__name__, u['age'])",
+        "choices": [
+          "User old",
+          "dict old",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "Calling a TypedDict class builds a plain dict with no validation. The wrong `age` type is only visible to a static checker."
+      },
+      {
+        "code": "from typing import Protocol, runtime_checkable\n\n@runtime_checkable\nclass Closer(Protocol):\n    def close(self) -> None: ...\n\nclass Door:\n    close = 'shut'\n\nprint(isinstance(Door(), Closer), isinstance(42, Closer))",
+        "choices": [
+          "False False",
+          "True False",
+          "TypeError"
+        ],
+        "answer": 1,
+        "explain": "A runtime-checkable protocol's `isinstance` only checks that the attribute exists. `Door.close` is a string, yet it passes; 42 has no `close` at all."
+      },
+      {
+        "code": "try:\n    print(isinstance([1, 2], list[int]))\nexcept TypeError:\n    print('TypeError')",
+        "choices": [
+          "True",
+          "False",
+          "TypeError"
+        ],
+        "answer": 2,
+        "explain": "Parameterised generics such as `list[int]` are for annotations only; `isinstance` refuses them. Check `isinstance(x, list)` and then each item."
+      }
+    ],
+    "tip": "Annotate the signature before you write the body: `def merge(a: list[Interval], b: list[Interval]) -> list[Interval]`. It takes ten seconds, settles the input and output shape with the interviewer, and makes 'what if this is None?' an explicit question rather than a late bug.",
+    "links": {
+      "problems": [
+        "lru-cache",
+        "time-versioned-store"
+      ],
+      "guides": [
+        "code-review",
+        "clean-code",
+        "testing-strategy"
+      ],
+      "lessons": [
+        "py-oop-dataclasses",
+        "py-functions-closures",
+        "py-errors-exceptions"
+      ]
+    }
+  }
+}
