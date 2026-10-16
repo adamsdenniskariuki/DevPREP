@@ -81,7 +81,9 @@ describe('content schema', () => {
   it('generated curriculum matches the content directory', async () => {
     // @ts-expect-error plain JS build script
     const { buildCurriculum } = await import('../scripts/build-content.mjs')
-    expect(JSON.parse(readFileSync('src/generated/curriculum.json', 'utf8'))).toEqual(buildCurriculum())
+    const { labs, ...curriculum } = buildCurriculum()
+    expect(JSON.parse(readFileSync('src/generated/curriculum.json', 'utf8'))).toEqual(curriculum)
+    expect(JSON.parse(readFileSync('src/generated/labs.json', 'utf8'))).toEqual(labs)
   })
 
   it('loads every lesson file into the bundled curriculum in track order', () => {

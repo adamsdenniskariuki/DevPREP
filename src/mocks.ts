@@ -1,5 +1,5 @@
-import { lessons } from './curriculum'
-import type { Lesson, Track } from './curriculum-types'
+import { isLanguageTrack, lessons } from './curriculum'
+import type { Lesson, LessonLab, Track } from './curriculum-types'
 import type { DesignCase } from './case-types'
 import type { Problem } from './problem-types'
 import type { FieldGuideEntry } from './guide-types'
@@ -8,11 +8,13 @@ import { COMPETENCIES, SSE_SIGNALS } from './stories'
 
 export type MockLevel = 'se' | 'sse'
 export interface MockQuestion {
-  kind: 'problem' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide'
+  kind: 'problem' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide' | 'trivia'
   /** Problem, case, lesson, Field Guide or competency id the question came from. */
   ref: string
   title: string
   prompt: string
+  /** Code shown under the prompt (trivia rounds). */
+  code?: string
   answer: string
   rubric: string[]
 }
@@ -24,7 +26,7 @@ export interface Mock {
   questions: MockQuestion[]
 }
 
-export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30 }
+export const MOCK_MINUTES: Record<Track, number> = { dsa: 45, 'system-design': 45, ml: 40, ai: 40, behavioral: 30, python: 30 }
 export const STAR_RUBRIC = [
   'Set the situation in two or three sentences',
   'Made your own role and the stakes clear',
@@ -73,7 +75,12 @@ export interface MockData {
   cases: Map<string, DesignCase>
   /** Field Guide entries. When given, technical mocks add one practice question from a guide on that track. */
   guides?: Map<string, FieldGuideEntry>
+  /** Language lesson labs. When given, language mocks become a coding task plus predict-the-output trivia rounds. */
+  labs?: Map<string, LessonLab>
 }
+
+export const TRIVIA_ROUNDS = 4
+const TRIVIA_RUBRIC = ['Predicted the exact output', 'Explained why in one or two sentences']
 
 /** Builds a mock interview for a track from existing content. The same seed always gives the same mock. */
 export function buildMock(track: Track, level: MockLevel, seed: number, data: MockData): Mock {
@@ -109,6 +116,21 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
         kind: 'behavioral', ref: item.id, title: item.title, prompt: item.prompt,
         answer: 'Use one story from your bank. Spend about 10% on the situation, 10% on the task, 60% on your actions and 20% on the result and what you learned.',
         rubric: level === 'sse' ? [...STAR_RUBRIC, SSE_STAR_RUBRIC] : STAR_RUBRIC,
+      })
+    }
+  } else if (isLanguageTrack(track) && data.labs) {
+    const pool = trackLessons.filter(lesson => level === 'sse' || lesson.level !== 'sse')
+    const usable = pool.length ? pool : trackLessons
+    const lesson = pick(usable, random)
+    const lab = data.labs.get(lesson.id)
+    const core = lab?.exercises.find(exercise => exercise.id === 'core')
+    questions.push({ kind: 'task', ref: lesson.id, title: lesson.title, prompt: lesson.task, answer: core ? `${lesson.solution}\n\n${core.solution}` : lesson.solution, rubric: lesson.checklist })
+    const items = shuffle(usable.flatMap(item => (data.labs!.get(item.id)?.predict ?? []).map(predict => ({ lesson: item, predict }))), random).slice(0, TRIVIA_ROUNDS)
+    for (const { lesson: item, predict } of items) {
+      questions.push({
+        kind: 'trivia', ref: item.id, title: `Trivia: ${item.title}`,
+        prompt: 'What does this print?', code: predict.code,
+        answer: `${predict.choices[predict.answer]}\n\n${predict.explain}`, rubric: TRIVIA_RUBRIC,
       })
     }
   } else {

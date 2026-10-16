@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lessons } from './curriculum'
+import { interviewLessons, lessons } from './curriculum'
 import { getLearningPath, isPathId, learningPaths, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import { beginSession, completeSession, dueLessons, emptyProgress, parseBackup, serializeBackup } from './progress'
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
@@ -24,7 +24,7 @@ describe('curated learning paths', () => {
     expect(pathLessonIds(swe)).toHaveLength(29)
     expect(pathLessonIds(senior)).toHaveLength(30)
     expect(pathLessonIds(swe)).not.toEqual(pathLessonIds(senior))
-    expect(lessons).toHaveLength(60)
+    expect(interviewLessons).toHaveLength(60)
     const counts = (path: typeof swe, track: string) => pathLessonIds(path).filter(id => lessons.find(lesson => lesson.id === id)?.track === track).length
     expect(counts(swe, 'dsa')).toBe(17)
     expect(counts(senior, 'dsa')).toBe(12)

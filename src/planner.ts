@@ -2,8 +2,9 @@ import { lessons } from './curriculum'
 import type { Track } from './curriculum-types'
 import { caseIndex } from './cases'
 import { isPathCore, patternProgress, problemIndex } from './problems'
-import { weakAreas } from './gamification'
+import { trackOptedIn, weakAreas } from './gamification'
 import { getLearningPath, pathLessonIds } from './learning-paths'
+import { knownLessons } from './progress'
 import type { Progress } from './progress'
 import { MOCK_MINUTES } from './mocks'
 import { guideIndex } from './guides'
@@ -34,7 +35,7 @@ export const DEFAULT_DAYS = 7
 export const MAX_PLAN_DAYS = 90
 export const MAX_LESSONS_PER_DAY = 3
 export const CARD_MINUTES = 10
-const TRACK_NAMES: Record<Track, string> = { dsa: 'DSA', 'system-design': 'System design', ml: 'ML', ai: 'AI/LLM', behavioral: 'Behavioral' }
+const TRACK_NAMES: Record<Track, string> = { dsa: 'DSA', 'system-design': 'System design', ml: 'ML', ai: 'AI/LLM', behavioral: 'Behavioral', python: 'Python' }
 
 function dayNumber(day: string): number {
   const [y, m, d] = day.split('-').map(Number)
@@ -44,16 +45,20 @@ function fromNumber(value: number): string {
   return new Date(value * 86_400_000).toISOString().slice(0, 10)
 }
 
-/** Unfinished lessons in study order: role path first, then focus tracks, then weakest tracks, then the rest. */
+/**
+ * Unfinished lessons in study order: role path first, then focus tracks, then weakest tracks, then the rest.
+ * Language tracks join only once opted in, and lessons a placement check marked as known are skipped.
+ */
 export function lessonQueue(progress: Progress): string[] {
-  const done = (id: string) => Object.hasOwn(progress.records, id)
+  const known = knownLessons(progress)
+  const done = (id: string) => Object.hasOwn(progress.records, id) || known.has(id)
   const order: string[] = []
   const add = (ids: string[]) => { for (const id of ids) if (!done(id) && !order.includes(id)) order.push(id) }
   const path = getLearningPath(progress.selectedPath)
   if (path) add(pathLessonIds(path))
   const tracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
   for (const track of tracks) add(lessons.filter(lesson => lesson.track === track).map(lesson => lesson.id))
-  add(lessons.map(lesson => lesson.id))
+  add(lessons.filter(lesson => trackOptedIn(progress, lesson.track)).map(lesson => lesson.id))
   return order
 }
 

@@ -1,0 +1,1406 @@
+{
+  "id": "py-sorting-keys",
+  "track": "python",
+  "title": "Sorting with keys: stable, multi-criteria ordering",
+  "minutes": 40,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Order anything in one line: sorted versus list.sort, key functions built from tuples, stability for multi-pass sorts, comparators when no key exists, and when min, max or heapq beat a full sort.",
+  "prerequisites": [
+    "py-collections"
+  ],
+  "prerequisiteNotes": "You should be comfortable with lists, tuples, dicts and lambda expressions from the collections lesson. Tuple comparison is the engine behind every multi-criteria key here.",
+  "objectives": [
+    "Choose between `sorted()` and `list.sort()` and never assign the `None` that `.sort()` returns.",
+    "Build a tuple key that orders by several criteria with mixed directions, using negation or stable multi-pass sorts.",
+    "Use `operator.itemgetter`, `attrgetter` and `functools.cmp_to_key` where each fits.",
+    "Pick `min`/`max`, `heapq.nsmallest`/`nlargest` or a full sort by what the question actually needs, and state the complexity."
+  ],
+  "concepts": [
+    {
+      "title": "sorted() returns, list.sort() mutates",
+      "body": "`sorted(iterable)` accepts any iterable (a dict, a set, a generator) and returns a **new list**. `xs.sort()` exists only on lists, reorders that list in place and returns **None**, a deliberate signal that it mutated. Both take the same keyword-only `key=` and `reverse=` arguments. Use `.sort()` when you own the list and want to avoid a copy; use `sorted()` when the caller's data must stay untouched or the input is not a list.",
+      "code": "xs = [3, 1, 2]\nys = sorted(xs)       # new list; xs unchanged\nprint(xs, ys)          # [3, 1, 2] [1, 2, 3]\nresult = xs.sort()     # in place\nprint(result, xs)      # None [1, 2, 3]\nprint(sorted('cab'))   # ['a', 'b', 'c']  any iterable\nprint(sorted({'b': 1, 'a': 2}))  # ['a', 'b']  dict keys",
+      "diagram": "pyk-inplace"
+    },
+    {
+      "title": "Key functions and tuple keys",
+      "body": "`key=f` calls `f` **once per element**, caches the results and compares only those. Return a **tuple** to sort by several criteria: tuples compare item by item, so `(-score, name)` means score descending, then name ascending. Negation flips one numeric field; `reverse=True` flips the whole order. Strings cannot be negated, so a descending string field needs a stable second pass (see below). Python 3 refuses to compare unrelated types, so a key that mixes `None` and ints raises `TypeError`; map `None` to a sentinel such as `(x is None, x)`.",
+      "code": "people = [('ana', 31), ('bo', 25), ('cy', 31)]\nprint(sorted(people, key=lambda p: (-p[1], p[0])))\n# [('ana', 31), ('cy', 31), ('bo', 25)]\nprint(sorted(['bb', 'A', 'c'], key=str.lower))   # ['A', 'bb', 'c']\nvals = [3, None, 1]\nprint(sorted(vals, key=lambda v: (v is None, v or 0)))  # [1, 3, None]",
+      "diagram": "pyk-keycalls"
+    },
+    {
+      "title": "Stability and multi-pass sorting",
+      "body": "CPython's sort is Timsort, an adaptive merge sort: O(n log n) worst case, close to O(n) on input that is already mostly ordered, and **stable**, meaning items with equal keys keep their original relative order. Stability lets you sort by the **least important key first** and the most important last; each later pass preserves the earlier order within its ties. `reverse=True` keeps stability too (equal items are not flipped), which is why it differs from `sorted(xs)[::-1]`.",
+      "code": "rows = [('cy', 7), ('ana', 9), ('bo', 7)]\nrows.sort(key=lambda r: r[0])                 # secondary: name\nrows.sort(key=lambda r: r[1], reverse=True)   # primary: score desc\nprint(rows)  # [('ana', 9), ('bo', 7), ('cy', 7)]\n# Name descending inside score descending, no negation possible:\nrows.sort(key=lambda r: r[0], reverse=True)\nrows.sort(key=lambda r: r[1], reverse=True)\nprint(rows)  # [('ana', 9), ('cy', 7), ('bo', 7)]",
+      "diagram": "pyk-multipass"
+    },
+    {
+      "title": "itemgetter, attrgetter and sorting dicts",
+      "body": "`operator.itemgetter(1)` is a fast, readable `lambda x: x[1]`; with several arguments, `itemgetter(2, 0)` returns a tuple key. `attrgetter('age', 'name')` does the same for attributes. Neither can negate, so use a lambda for mixed directions. To order a dict by value, sort its `items()`; `dict(sorted(...))` rebuilds a dict in that order because dicts keep insertion order. `sorted(d)` alone sorts the keys.",
+      "code": "from operator import itemgetter, attrgetter\nstock = {'pear': 4, 'fig': 9, 'kiwi': 4}\nprint(sorted(stock.items(), key=itemgetter(1, 0)))\n# [('kiwi', 4), ('pear', 4), ('fig', 9)]\nprint(dict(sorted(stock.items(), key=itemgetter(1), reverse=True)))\n# {'fig': 9, 'pear': 4, 'kiwi': 4}\nprint(sorted(stock, key=stock.get))   # keys by value: ['pear', 'kiwi', 'fig']"
+    },
+    {
+      "title": "cmp_to_key when only a comparator exists",
+      "body": "Sometimes the order is defined only between **pairs**, with no value you can compute per item. The classic case is arranging digit strings so their concatenation is largest: `a` goes before `b` when `a + b > b + a`. Write `cmp(a, b)` returning negative, zero or positive and wrap it with `functools.cmp_to_key`. Prefer a key whenever one exists: it is computed n times, while a comparator runs on every comparison. The comparator must be consistent (transitive), or the result is arbitrary.",
+      "code": "from functools import cmp_to_key\n\ndef concat_order(a, b):\n    if a + b > b + a:\n        return -1          # a first\n    if a + b < b + a:\n        return 1           # b first\n    return 0\n\nparts = ['34', '9', '3', '30']\nprint(''.join(sorted(parts, key=cmp_to_key(concat_order))))  # 934330",
+      "diagram": "pyk-cmp"
+    },
+    {
+      "title": "min, max and heapq instead of a full sort",
+      "body": "If you need one extreme, `min`/`max` with `key=` is a single O(n) pass; on ties they return the **first** maximal item, and `default=` avoids `ValueError` on an empty iterable. For the top k, `heapq.nlargest(k, xs, key=f)` runs in O(n log k) and gives the same result as `sorted(xs, key=f, reverse=True)[:k]`. When k is close to n, or you need everything in order anyway, a full sort is simpler and as fast.",
+      "code": "import heapq\nwords = ['fig', 'kiwi', 'pear', 'banana']\nprint(max(words, key=len))          # banana\nprint(min(words, key=len))          # fig\nprint(max([], default=None))        # None\nprint(heapq.nlargest(2, words, key=len))   # ['banana', 'kiwi']\nprint(heapq.nsmallest(2, [5, 1, 4, 1]))    # [1, 1]",
+      "diagram": "pyk-cost"
+    }
+  ],
+  "example": "from operator import itemgetter\n\norders = [\n    {'id': 'A7', 'priority': 2, 'placed': 1030},\n    {'id': 'B2', 'priority': 1, 'placed': 1100},\n    {'id': 'C9', 'priority': 2, 'placed': 1005},\n]\n# Highest priority first; among equals, the oldest order first.\nqueue = sorted(orders, key=lambda o: (-o['priority'], o['placed']))\nprint([o['id'] for o in queue])   # ['C9', 'A7', 'B2']\nprint(min(orders, key=itemgetter('placed'))['id'])   # C9",
+  "task": "Write `rank_players(records)`. Each record is a dict with `name` (str), `score` (int) and `time` (int, seconds). Higher score ranks better; on equal score, lower time ranks better. Players with the same score **and** time share a rank, and the next rank skips accordingly (1, 2, 2, 4). List tied players by name in ascending code-point order. Return a list of `[rank, name]` pairs in ranking order, and `[]` for no records. Do not modify the input.",
+  "starter": "def rank_players(records):\n    # Return [[rank, name], ...]: score desc, time asc, name asc; ties share a rank\n    ...",
+  "hints": [
+    "One `sorted()` call with the tuple key `(-r['score'], r['time'], r['name'])` produces the final order; the name only breaks ties within a group.",
+    "Walk the sorted list with `enumerate(..., start=1)`. Start a new rank only when `(score, time)` differs from the previous record's; otherwise reuse the previous rank."
+  ],
+  "solution": "def rank_players(records):\n    ordered = sorted(records, key=lambda r: (-r['score'], r['time'], r['name']))\n    result = []\n    previous = None\n    for position, record in enumerate(ordered, start=1):\n        group = (record['score'], record['time'])\n        if group != previous:\n            rank, previous = position, group\n        result.append([rank, record['name']])\n    return result\n\nThe tuple key encodes all three criteria in one sort: negating the score makes it descending while time and name stay ascending. `sorted()` leaves the caller's list alone. The ranking pass compares each record's `(score, time)` with the previous group; a new group takes its 1-based position, which produces the skip after a tie. Sorting dominates: O(n log n) time, O(n) space for the new list.",
+  "checklist": [
+    "I sort once with a tuple key and negate only the numeric field that runs descending.",
+    "Ties on score and time share a rank and the following rank skips (1, 2, 2, 4).",
+    "I use `sorted()`, so the input list is not reordered.",
+    "An empty input returns `[]` without special-casing the loop."
+  ],
+  "pitfalls": [
+    "Writing `xs = xs.sort()`: `.sort()` returns None, so the list is lost.",
+    "Using `sorted(xs)[::-1]` for descending order: it reverses equal items too, breaking stability. Use `reverse=True`.",
+    "Doing a multi-pass sort in the wrong order: the **primary** key must be sorted **last**.",
+    "Trying to negate a string in a key (`-name` raises `TypeError`); use a second stable pass with `reverse=True` instead.",
+    "Sorting a list that mixes types or contains None: Python 3 raises `TypeError` instead of guessing an order.",
+    "Sorting everything to get one item or the top 3, when `max` or `heapq.nlargest` would do."
+  ],
+  "walkthrough": [
+    {
+      "title": "From ordering to ranking",
+      "body": "Interviewers often ask for a **ranking**, not just an order. Get the order right first with one tuple key, then turn positions into ranks in a single pass. Keep the tie test separate from the sort key: names break ties for display, but they must not split a rank, so the group is `(score, time)` while the key also includes `name`. Say which ranking style you use (1, 2, 2, 4 versus dense 1, 2, 2, 3) before coding."
+    },
+    {
+      "title": "When negation is not available",
+      "body": "Negation works for numbers only. For a descending string or date-string field mixed with ascending fields, do two stable passes: sort by the ascending field, then by the descending one with `reverse=True`. For a field that can be any comparable type, a small wrapper class with a reversed `__lt__` also works, but two passes are easier to explain under pressure. Each pass is O(n log n), so a constant number of passes keeps the overall bound."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Words by frequency",
+      "prompt": "Write `by_count(counts)` for a dict mapping words to counts. Return the words ordered by count, highest first; words with the same count appear alphabetically (code-point order). Return [] for an empty dict.",
+      "hints": [
+        "Iterating a dict gives its keys, so `sorted(counts, key=...)` returns words directly.",
+        "The key `lambda w: (-counts[w], w)` sorts counts descending and words ascending in one pass."
+      ],
+      "solution": "def by_count(counts):\n    return sorted(counts, key=lambda word: (-counts[word], word))",
+      "checklist": [
+        "Equal counts come out alphabetically, not reversed.",
+        "Zero and negative counts sort correctly."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Newest release first",
+      "prompt": "Write `newest_first(versions)` for dotted version strings such as '1.10' or '2.0.3'. Return them newest first, comparing each component as a number, so '1.10' is newer than '1.9'. Trailing zero components do not matter ('2', '2.0' and '2.0.0' are equal); equal versions keep their input order.",
+      "hints": [
+        "Map each string to a list of ints: `[int(p) for p in v.split('.')]`. Lists compare item by item, and a shorter prefix sorts first.",
+        "Strip trailing zeros so equal releases get equal keys, then rely on `reverse=True` being stable to keep their input order."
+      ],
+      "solution": "def newest_first(versions):\n    def version_key(text):\n        parts = [int(part) for part in text.split('.')]\n        while parts and parts[-1] == 0:\n            parts.pop()   # '2.0' and '2' are the same release\n        return parts\n    return sorted(versions, key=version_key, reverse=True)",
+      "checklist": [
+        "'1.10' sorts above '1.9': components compare as numbers, not strings.",
+        "'2', '2.0' and '2.0.0' keep their input order.",
+        "I use `reverse=True`, not `[::-1]`, so ties are not flipped."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does Python sort compare keys rather than take a comparator by default?",
+      "answer": "A key is computed once per element (n calls) and the results are compared with fast built-in `<`, while a comparator is a Python call on every comparison (about n log n calls). Keys also cannot be inconsistent in the ways comparators can. Python 3 removed `cmp=`; `functools.cmp_to_key` remains for pairwise-only orders."
+    },
+    {
+      "question": "How would you get the 10 most frequent words from a stream of 100 million?",
+      "answer": "Count with a `Counter` (O(n) time, O(u) space for u distinct words), then `heapq.nlargest(10, counts.items(), key=itemgetter(1))` in O(u log 10) rather than sorting all u entries. `Counter.most_common(10)` does exactly this. If u itself is too large for memory, shard by hash of the word and merge per-shard top 10s."
+    },
+    {
+      "question": "Is the sort guaranteed stable, and when does that matter?",
+      "answer": "Yes, `list.sort` and `sorted` are documented as stable. It matters for multi-pass sorts, for keeping a previous order (such as arrival time) inside ties, and for `reverse=True`, which preserves the order of equal items."
+    }
+  ],
+  "takeaways": [
+    "`sorted()` returns a new list from any iterable; `list.sort()` mutates and returns None.",
+    "A tuple key orders by several criteria; negate numeric fields to flip just their direction.",
+    "The sort is stable: for multi-pass sorts, sort by the least important key first.",
+    "Use `cmp_to_key` only when the order is defined between pairs, not per item.",
+    "One extreme: `min`/`max`. Top k: `heapq.nlargest`. Everything ordered: sort."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pyk-inplace",
+        "type": "compare",
+        "title": "sort() mutates and returns None",
+        "alt": "Side-by-side comparison. On the left, xs = xs.sort() sorts the list in place and then rebinds xs to the None that sort returns, so the sorted list is lost. On the right, xs.sort() keeps xs on the sorted list, and ys = sorted(xs) builds a second, new list.",
+        "caption": "Use list.sort() as a statement and sorted() as an expression. Never assign the result of .sort().",
+        "before": {
+          "label": "xs = xs.sort(): list lost",
+          "nodes": [
+            {
+              "id": "xs",
+              "label": "name xs",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "none",
+              "label": "None",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "sort() returned"
+            },
+            {
+              "id": "list",
+              "label": "[1, 2, 3]",
+              "kind": "storage",
+              "col": 2,
+              "row": 1,
+              "sub": "sorted, orphaned"
+            }
+          ],
+          "edges": [
+            {
+              "from": "xs",
+              "to": "none",
+              "label": "rebound"
+            }
+          ]
+        },
+        "after": {
+          "label": "xs.sort() or ys = sorted(xs)",
+          "nodes": [
+            {
+              "id": "xs",
+              "label": "name xs",
+              "kind": "state",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "ys",
+              "label": "name ys",
+              "kind": "state",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "l1",
+              "label": "[1, 2, 3]",
+              "kind": "storage",
+              "col": 2,
+              "row": 0,
+              "sub": "same list, sorted"
+            },
+            {
+              "id": "l2",
+              "label": "[1, 2, 3]",
+              "kind": "good",
+              "col": 2,
+              "row": 1,
+              "sub": "new list"
+            }
+          ],
+          "edges": [
+            {
+              "from": "xs",
+              "to": "l1"
+            },
+            {
+              "from": "ys",
+              "to": "l2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pyk-keycalls",
+        "type": "sequence",
+        "title": "How sorted() uses a key function",
+        "alt": "Sequence diagram. The caller passes a list and a key to sorted. sorted calls the key function once for each element and stores the results, then Timsort compares only those stored keys with less-than, and finally sorted returns a new list of the original elements in key order.",
+        "caption": "The key runs exactly n times; comparisons use the cached keys. The original elements come back, not the keys.",
+        "actors": [
+          {
+            "id": "caller",
+            "label": "Caller"
+          },
+          {
+            "id": "sorted",
+            "label": "sorted()"
+          },
+          {
+            "id": "key",
+            "label": "key function"
+          },
+          {
+            "id": "tim",
+            "label": "Timsort"
+          }
+        ],
+        "messages": [
+          {
+            "from": "caller",
+            "to": "sorted",
+            "label": "sorted(rows, key=f)"
+          },
+          {
+            "from": "sorted",
+            "to": "key",
+            "label": "f(row) for each row",
+            "note": "Called once per element: n calls in total."
+          },
+          {
+            "from": "key",
+            "to": "sorted",
+            "label": "keys, e.g. (-score, name)",
+            "style": "reply"
+          },
+          {
+            "from": "sorted",
+            "to": "tim",
+            "label": "order rows by cached keys",
+            "note": "Only key < key comparisons; O(n log n) of them in the worst case."
+          },
+          {
+            "from": "tim",
+            "to": "sorted",
+            "label": "stable order",
+            "style": "reply"
+          },
+          {
+            "from": "sorted",
+            "to": "caller",
+            "label": "new list of original rows",
+            "style": "reply"
+          }
+        ]
+      },
+      {
+        "id": "pyk-multipass",
+        "type": "flow",
+        "title": "Two stable passes: secondary key first",
+        "alt": "Flow of a list of players through two sorts. The first pass sorts by name ascending. The second pass sorts by score descending; because the sort is stable, players with equal scores stay in name order, giving the final ranking.",
+        "caption": "Sort by the least important key first and the most important key last. Stability keeps earlier work inside each tie.",
+        "nodes": [
+          {
+            "id": "in",
+            "label": "input rows",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "cy 7, ana 9, bo 7"
+          },
+          {
+            "id": "p1",
+            "label": "pass 1: name",
+            "kind": "service",
+            "col": 1,
+            "row": 1,
+            "sub": "key=name"
+          },
+          {
+            "id": "mid",
+            "label": "ana9 bo7 cy7",
+            "kind": "storage",
+            "col": 2,
+            "row": 1,
+            "sub": "by name"
+          },
+          {
+            "id": "p2",
+            "label": "pass 2: score",
+            "kind": "service",
+            "col": 3,
+            "row": 1,
+            "sub": "reverse=True"
+          },
+          {
+            "id": "out",
+            "label": "ana9 bo7 cy7",
+            "kind": "good",
+            "col": 4,
+            "row": 1,
+            "sub": "ties stay by name"
+          }
+        ],
+        "edges": [
+          {
+            "from": "in",
+            "to": "p1"
+          },
+          {
+            "from": "p1",
+            "to": "mid",
+            "label": "ascending"
+          },
+          {
+            "from": "mid",
+            "to": "p2"
+          },
+          {
+            "from": "p2",
+            "to": "out",
+            "label": "stable"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              1
+            ],
+            "text": "Pass 1 sorts by the secondary key, name, ascending."
+          },
+          {
+            "edges": [
+              2,
+              3
+            ],
+            "text": "Pass 2 sorts by score with `reverse=True`. bo and cy tie on 7, so stability keeps them in the name order from pass 1. `reverse=True` also preserves the order of equal items."
+          }
+        ]
+      },
+      {
+        "id": "pyk-cmp",
+        "type": "flow",
+        "title": "A pairwise comparator for concatenation order",
+        "alt": "Decision diagram for a comparator wrapped by cmp_to_key. Given two digit strings a and b, it compares a+b with b+a. If a+b is larger, a goes first and the comparator returns -1; if b+a is larger, b goes first and it returns 1; if they are equal it returns 0.",
+        "caption": "Some orders are defined only between pairs, with no per-item key. cmp_to_key adapts such a comparator for sorted().",
+        "nodes": [
+          {
+            "id": "pair",
+            "label": "cmp(a, b)",
+            "kind": "client",
+            "col": 0,
+            "row": 2,
+            "sub": "a='9', b='34'"
+          },
+          {
+            "id": "test",
+            "label": "a+b vs b+a",
+            "kind": "decision",
+            "col": 2,
+            "row": 2,
+            "sub": "'934' vs '349'"
+          },
+          {
+            "id": "first",
+            "label": "a first",
+            "kind": "good",
+            "col": 4,
+            "row": 0,
+            "sub": "return -1"
+          },
+          {
+            "id": "same",
+            "label": "tie",
+            "kind": "note",
+            "col": 4,
+            "row": 2,
+            "sub": "return 0"
+          },
+          {
+            "id": "second",
+            "label": "b first",
+            "kind": "state",
+            "col": 4,
+            "row": 4,
+            "sub": "return 1"
+          }
+        ],
+        "edges": [
+          {
+            "from": "pair",
+            "to": "test"
+          },
+          {
+            "from": "test",
+            "to": "first",
+            "label": "a+b larger"
+          },
+          {
+            "from": "test",
+            "to": "same",
+            "label": "equal"
+          },
+          {
+            "from": "test",
+            "to": "second",
+            "label": "b+a larger"
+          }
+        ]
+      },
+      {
+        "id": "pyk-cost",
+        "type": "bars",
+        "title": "Picking the top k of n items",
+        "alt": "Bar chart of approximate comparison counts for n of one million items and k of ten. max or min needs about one million, heapq.nlargest needs about 3.3 million (n log2 k), and a full sort needs about 20 million (n log2 n).",
+        "caption": "Big-O estimates, not timings: one pass for one item, a heap of size k for a few, a full sort when you need everything ordered.",
+        "unit": "M compares, n=1M, k=10",
+        "bars": [
+          {
+            "label": "max(): n",
+            "value": 1
+          },
+          {
+            "label": "nlargest: n log k",
+            "value": 3.3,
+            "highlight": true
+          },
+          {
+            "label": "sorted: n log n",
+            "value": 20
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "rank_players",
+        "starter": "def rank_players(records):\n    # Return [[rank, name], ...]: score desc, time asc, name asc; ties share a rank\n    ordered = sorted(records, key=lambda r: r['score'], reverse=True)\n    return [[i + 1, r['name']] for i, r in enumerate(ordered)]\n",
+        "solution": "def rank_players(records):\n    ordered = sorted(records, key=lambda r: (-r['score'], r['time'], r['name']))\n    result = []\n    previous = None\n    for position, record in enumerate(ordered, start=1):\n        group = (record['score'], record['time'])\n        if group != previous:\n            rank, previous = position, group\n        result.append([rank, record['name']])\n    return result\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "name": "ana",
+                  "score": 90,
+                  "time": 30
+                },
+                {
+                  "name": "bo",
+                  "score": 95,
+                  "time": 40
+                },
+                {
+                  "name": "cy",
+                  "score": 90,
+                  "time": 25
+                },
+                {
+                  "name": "di",
+                  "score": 90,
+                  "time": 30
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "bo"
+              ],
+              [
+                2,
+                "cy"
+              ],
+              [
+                3,
+                "ana"
+              ],
+              [
+                3,
+                "di"
+              ]
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                {
+                  "name": "solo",
+                  "score": 0,
+                  "time": 0
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "solo"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "zed",
+                  "score": 5,
+                  "time": 5
+                },
+                {
+                  "name": "amy",
+                  "score": 5,
+                  "time": 5
+                },
+                {
+                  "name": "Max",
+                  "score": 5,
+                  "time": 5
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "Max"
+              ],
+              [
+                1,
+                "amy"
+              ],
+              [
+                1,
+                "zed"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "a",
+                  "score": -5,
+                  "time": 1
+                },
+                {
+                  "name": "b",
+                  "score": 0,
+                  "time": 9
+                },
+                {
+                  "name": "c",
+                  "score": -5,
+                  "time": 0
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "b"
+              ],
+              [
+                2,
+                "c"
+              ],
+              [
+                3,
+                "a"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "w",
+                  "score": 10,
+                  "time": 3
+                },
+                {
+                  "name": "x",
+                  "score": 10,
+                  "time": 3
+                },
+                {
+                  "name": "y",
+                  "score": 10,
+                  "time": 3
+                },
+                {
+                  "name": "z",
+                  "score": 5,
+                  "time": 1
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "w"
+              ],
+              [
+                1,
+                "x"
+              ],
+              [
+                1,
+                "y"
+              ],
+              [
+                4,
+                "z"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "Émile",
+                  "score": 70,
+                  "time": 12
+                },
+                {
+                  "name": "eve",
+                  "score": 70,
+                  "time": 12
+                },
+                {
+                  "name": "Zoë",
+                  "score": 70,
+                  "time": 11
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "Zoë"
+              ],
+              [
+                2,
+                "eve"
+              ],
+              [
+                2,
+                "Émile"
+              ]
+            ]
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "p00",
+                  "score": 0,
+                  "time": 0
+                },
+                {
+                  "name": "p01",
+                  "score": 2,
+                  "time": 1
+                },
+                {
+                  "name": "p02",
+                  "score": 4,
+                  "time": 2
+                },
+                {
+                  "name": "p03",
+                  "score": 6,
+                  "time": 3
+                },
+                {
+                  "name": "p04",
+                  "score": 1,
+                  "time": 4
+                },
+                {
+                  "name": "p05",
+                  "score": 3,
+                  "time": 0
+                },
+                {
+                  "name": "p06",
+                  "score": 5,
+                  "time": 1
+                },
+                {
+                  "name": "p07",
+                  "score": 0,
+                  "time": 2
+                },
+                {
+                  "name": "p08",
+                  "score": 2,
+                  "time": 3
+                },
+                {
+                  "name": "p09",
+                  "score": 4,
+                  "time": 4
+                },
+                {
+                  "name": "p10",
+                  "score": 6,
+                  "time": 0
+                },
+                {
+                  "name": "p11",
+                  "score": 1,
+                  "time": 1
+                },
+                {
+                  "name": "p12",
+                  "score": 3,
+                  "time": 2
+                },
+                {
+                  "name": "p13",
+                  "score": 5,
+                  "time": 3
+                },
+                {
+                  "name": "p14",
+                  "score": 0,
+                  "time": 4
+                },
+                {
+                  "name": "p15",
+                  "score": 2,
+                  "time": 0
+                },
+                {
+                  "name": "p16",
+                  "score": 4,
+                  "time": 1
+                },
+                {
+                  "name": "p17",
+                  "score": 6,
+                  "time": 2
+                },
+                {
+                  "name": "p18",
+                  "score": 1,
+                  "time": 3
+                },
+                {
+                  "name": "p19",
+                  "score": 3,
+                  "time": 4
+                },
+                {
+                  "name": "p20",
+                  "score": 5,
+                  "time": 0
+                },
+                {
+                  "name": "p21",
+                  "score": 0,
+                  "time": 1
+                },
+                {
+                  "name": "p22",
+                  "score": 2,
+                  "time": 2
+                },
+                {
+                  "name": "p23",
+                  "score": 4,
+                  "time": 3
+                },
+                {
+                  "name": "p24",
+                  "score": 6,
+                  "time": 4
+                },
+                {
+                  "name": "p25",
+                  "score": 1,
+                  "time": 0
+                },
+                {
+                  "name": "p26",
+                  "score": 3,
+                  "time": 1
+                },
+                {
+                  "name": "p27",
+                  "score": 5,
+                  "time": 2
+                },
+                {
+                  "name": "p28",
+                  "score": 0,
+                  "time": 3
+                },
+                {
+                  "name": "p29",
+                  "score": 2,
+                  "time": 4
+                },
+                {
+                  "name": "p30",
+                  "score": 4,
+                  "time": 0
+                },
+                {
+                  "name": "p31",
+                  "score": 6,
+                  "time": 1
+                },
+                {
+                  "name": "p32",
+                  "score": 1,
+                  "time": 2
+                },
+                {
+                  "name": "p33",
+                  "score": 3,
+                  "time": 3
+                },
+                {
+                  "name": "p34",
+                  "score": 5,
+                  "time": 4
+                },
+                {
+                  "name": "p35",
+                  "score": 0,
+                  "time": 0
+                },
+                {
+                  "name": "p36",
+                  "score": 2,
+                  "time": 1
+                },
+                {
+                  "name": "p37",
+                  "score": 4,
+                  "time": 2
+                },
+                {
+                  "name": "p38",
+                  "score": 6,
+                  "time": 3
+                },
+                {
+                  "name": "p39",
+                  "score": 1,
+                  "time": 4
+                }
+              ]
+            ],
+            "expected": [
+              [
+                1,
+                "p10"
+              ],
+              [
+                2,
+                "p31"
+              ],
+              [
+                3,
+                "p17"
+              ],
+              [
+                4,
+                "p03"
+              ],
+              [
+                4,
+                "p38"
+              ],
+              [
+                6,
+                "p24"
+              ],
+              [
+                7,
+                "p20"
+              ],
+              [
+                8,
+                "p06"
+              ],
+              [
+                9,
+                "p27"
+              ],
+              [
+                10,
+                "p13"
+              ],
+              [
+                11,
+                "p34"
+              ],
+              [
+                12,
+                "p30"
+              ],
+              [
+                13,
+                "p16"
+              ],
+              [
+                14,
+                "p02"
+              ],
+              [
+                14,
+                "p37"
+              ],
+              [
+                16,
+                "p23"
+              ],
+              [
+                17,
+                "p09"
+              ],
+              [
+                18,
+                "p05"
+              ],
+              [
+                19,
+                "p26"
+              ],
+              [
+                20,
+                "p12"
+              ],
+              [
+                21,
+                "p33"
+              ],
+              [
+                22,
+                "p19"
+              ],
+              [
+                23,
+                "p15"
+              ],
+              [
+                24,
+                "p01"
+              ],
+              [
+                24,
+                "p36"
+              ],
+              [
+                26,
+                "p22"
+              ],
+              [
+                27,
+                "p08"
+              ],
+              [
+                28,
+                "p29"
+              ],
+              [
+                29,
+                "p25"
+              ],
+              [
+                30,
+                "p11"
+              ],
+              [
+                31,
+                "p32"
+              ],
+              [
+                32,
+                "p18"
+              ],
+              [
+                33,
+                "p04"
+              ],
+              [
+                33,
+                "p39"
+              ],
+              [
+                35,
+                "p00"
+              ],
+              [
+                35,
+                "p35"
+              ],
+              [
+                37,
+                "p21"
+              ],
+              [
+                38,
+                "p07"
+              ],
+              [
+                39,
+                "p28"
+              ],
+              [
+                40,
+                "p14"
+              ]
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "by_count",
+        "starter": "def by_count(counts):\n    return sorted(counts, key=counts.get, reverse=True)\n",
+        "solution": "def by_count(counts):\n    return sorted(counts, key=lambda word: (-counts[word], word))\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "pear": 2,
+                "fig": 5,
+                "apple": 2
+              }
+            ],
+            "expected": [
+              "fig",
+              "apple",
+              "pear"
+            ]
+          },
+          {
+            "args": [
+              {}
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "only": 1
+              }
+            ],
+            "expected": [
+              "only"
+            ]
+          },
+          {
+            "args": [
+              {
+                "b": 3,
+                "a": 3,
+                "c": 3
+              }
+            ],
+            "expected": [
+              "a",
+              "b",
+              "c"
+            ]
+          },
+          {
+            "args": [
+              {
+                "x": 0,
+                "y": -2,
+                "z": 4
+              }
+            ],
+            "expected": [
+              "z",
+              "x",
+              "y"
+            ]
+          },
+          {
+            "args": [
+              {
+                "été": 2,
+                "eta": 2,
+                "Zulu": 1
+              }
+            ],
+            "expected": [
+              "eta",
+              "été",
+              "Zulu"
+            ]
+          },
+          {
+            "args": [
+              {
+                "w0": 0,
+                "w1": 1,
+                "w2": 2,
+                "w3": 3,
+                "w4": 0,
+                "w5": 1,
+                "w6": 2,
+                "w7": 3,
+                "w8": 0,
+                "w9": 1,
+                "w10": 2,
+                "w11": 3,
+                "w12": 0,
+                "w13": 1,
+                "w14": 2,
+                "w15": 3,
+                "w16": 0,
+                "w17": 1,
+                "w18": 2,
+                "w19": 3
+              }
+            ],
+            "expected": [
+              "w11",
+              "w15",
+              "w19",
+              "w3",
+              "w7",
+              "w10",
+              "w14",
+              "w18",
+              "w2",
+              "w6",
+              "w1",
+              "w13",
+              "w17",
+              "w5",
+              "w9",
+              "w0",
+              "w12",
+              "w16",
+              "w4",
+              "w8"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "newest_first",
+        "starter": "def newest_first(versions):\n    return sorted(versions, reverse=True)\n",
+        "solution": "def newest_first(versions):\n    def version_key(text):\n        parts = [int(part) for part in text.split('.')]\n        while parts and parts[-1] == 0:\n            parts.pop()   # '2.0' and '2' are the same release\n        return parts\n    return sorted(versions, key=version_key, reverse=True)\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "1.9",
+                "1.10",
+                "1.2.3"
+              ]
+            ],
+            "expected": [
+              "1.10",
+              "1.9",
+              "1.2.3"
+            ]
+          },
+          {
+            "args": [
+              []
+            ],
+            "expected": []
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              [
+                "3"
+              ]
+            ],
+            "expected": [
+              "3"
+            ]
+          },
+          {
+            "args": [
+              [
+                "2.0",
+                "2",
+                "2.0.0",
+                "1.99"
+              ]
+            ],
+            "expected": [
+              "2.0",
+              "2",
+              "2.0.0",
+              "1.99"
+            ]
+          },
+          {
+            "args": [
+              [
+                "0.0.1",
+                "0.1",
+                "0.0.10"
+              ]
+            ],
+            "expected": [
+              "0.1",
+              "0.0.10",
+              "0.0.1"
+            ]
+          },
+          {
+            "args": [
+              [
+                "10.0",
+                "9.9.9",
+                "10.0.1"
+              ]
+            ],
+            "expected": [
+              "10.0.1",
+              "10.0",
+              "9.9.9"
+            ]
+          },
+          {
+            "args": [
+              [
+                "1.0.0",
+                "1",
+                "0.9"
+              ]
+            ],
+            "expected": [
+              "1.0.0",
+              "1",
+              "0.9"
+            ]
+          },
+          {
+            "args": [
+              [
+                "0.0",
+                "1.1",
+                "2.2",
+                "0.3",
+                "1.4",
+                "2.5",
+                "0.6",
+                "1.7",
+                "2.8",
+                "0.9",
+                "1.10",
+                "2.11",
+                "0.12",
+                "1.13",
+                "2.14"
+              ]
+            ],
+            "expected": [
+              "2.14",
+              "2.11",
+              "2.8",
+              "2.5",
+              "2.2",
+              "1.13",
+              "1.10",
+              "1.7",
+              "1.4",
+              "1.1",
+              "0.12",
+              "0.9",
+              "0.6",
+              "0.3",
+              "0.0"
+            ]
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "nums = [3, 1, 2]\nresult = nums.sort()\nprint(result, nums)",
+        "choices": [
+          "[1, 2, 3] [1, 2, 3]",
+          "None [1, 2, 3]",
+          "None [3, 1, 2]"
+        ],
+        "answer": 1,
+        "explain": "`list.sort()` reorders the list in place and returns None."
+      },
+      {
+        "code": "pairs = [('b', 1), ('a', 2), ('c', 1)]\nprint(sorted(pairs, key=lambda p: p[1]))",
+        "choices": [
+          "[('b', 1), ('c', 1), ('a', 2)]",
+          "[('c', 1), ('b', 1), ('a', 2)]",
+          "[('a', 2), ('b', 1), ('c', 1)]"
+        ],
+        "answer": 0,
+        "explain": "The sort is stable: ('b', 1) and ('c', 1) have equal keys, so they keep their original order."
+      },
+      {
+        "code": "words = ['bb', 'a', 'cc', 'd']\nprint(sorted(words, key=len, reverse=True) == sorted(words, key=len)[::-1])",
+        "choices": [
+          "True",
+          "False"
+        ],
+        "answer": 1,
+        "explain": "`reverse=True` keeps equal items in input order (['bb', 'cc', 'a', 'd']); slicing reverses them too (['cc', 'bb', 'd', 'a'])."
+      },
+      {
+        "code": "print(sorted(['b', 'B', 'a', 'A']))",
+        "choices": [
+          "['a', 'A', 'b', 'B']",
+          "['A', 'B', 'a', 'b']",
+          "['A', 'a', 'B', 'b']"
+        ],
+        "answer": 1,
+        "explain": "Strings compare by code point and every uppercase ASCII letter comes before every lowercase one. Use `key=str.lower` (or `str.casefold`) for case-insensitive order."
+      },
+      {
+        "code": "print(max(['fig', 'kiwi', 'pear'], key=len))",
+        "choices": [
+          "kiwi",
+          "pear",
+          "fig"
+        ],
+        "answer": 0,
+        "explain": "'kiwi' and 'pear' tie on length 4; `max` returns the first maximal item it meets."
+      }
+    ],
+    "tip": "Before coding a sort, say the full order out loud as a tuple, e.g. \"score descending, then time ascending, then name\", and ask how ties should rank. Then write the key to match that sentence, and state O(n log n), or O(n log k) if you only need the top k.",
+    "links": {
+      "problems": [
+        "most-frequent-k",
+        "merge-overlaps",
+        "nearest-k-points"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "complexity-reasoning"
+      ],
+      "lessons": [
+        "sorting-stable-merge",
+        "heaps-top-k",
+        "greedy-interval-selection",
+        "py-basics"
+      ]
+    }
+  }
+}

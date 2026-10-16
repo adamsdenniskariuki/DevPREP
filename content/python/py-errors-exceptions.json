@@ -1,0 +1,1214 @@
+{
+  "id": "py-errors-exceptions",
+  "track": "python",
+  "title": "Errors and exceptions: raise, catch, chain, validate",
+  "minutes": 45,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How try/except/else/finally really runs, which exceptions to catch, how to chain and re-raise them, and how to validate input cleanly in interview code.",
+  "prerequisites": [
+    "py-functions-closures"
+  ],
+  "prerequisiteNotes": "You should be comfortable writing functions, returning values from them and reading a call stack. Classes are used only to subclass Exception.",
+  "objectives": [
+    "Predict the execution order of try, except, else and finally, including when the try block returns.",
+    "Catch the narrowest exception that describes the failure and explain why bare `except:` is a bug.",
+    "Re-raise with bare `raise`, translate errors with `raise ... from ...`, and define small custom exception classes.",
+    "Choose between EAFP and LBYL, and validate input at the boundary of a function so callers get a clear result."
+  ],
+  "concepts": [
+    {
+      "title": "The four clauses and their order",
+      "body": "The `try` body runs first. If it raises, Python checks each `except` clause top to bottom and runs the **first** one whose type matches. `else` runs only if the body finished without raising, so code there is not protected by the handlers. `finally` runs **last, no matter what**: after a normal finish, after a handled error, after an unhandled one, and even when the body executes `return`, `break` or `continue`. The return value is computed first, then `finally` runs, then the function actually returns.",
+      "code": "def read_number(text):\n    try:\n        value = int(text)\n    except ValueError:\n        print('except')\n        return None\n    else:\n        print('else')\n        return value\n    finally:\n        print('finally')   # runs before either return completes\n\nprint(read_number('42'))   # else, finally, 42\nprint(read_number('x'))    # except, finally, None",
+      "diagram": "pye-order"
+    },
+    {
+      "title": "return inside finally swallows errors",
+      "body": "Because `finally` runs while an exception is still in flight, a `return` (or `break`/`continue`) inside `finally` **discards** that exception silently and replaces any earlier return value. Callers never learn something failed. Treat it as an anti-pattern: keep `finally` for cleanup such as closing files or releasing locks, and prefer `with` blocks, which run cleanup for you. Python 3.14 emits a `SyntaxWarning` for exactly this pattern.",
+      "code": "def risky():\n    try:\n        raise ValueError('disk full')\n    finally:\n        return 'ok'        # the ValueError is gone\n\nprint(risky())             # ok  (the failure vanished)"
+    },
+    {
+      "title": "The exception hierarchy",
+      "body": "Every exception inherits from `BaseException`. Its direct children include `SystemExit` (raised by `sys.exit()`), `KeyboardInterrupt` (Ctrl-C) and `Exception`. Ordinary errors live under `Exception`: `ValueError` (right type, bad value), `TypeError` (wrong type), `LookupError` with its subclasses `KeyError` and `IndexError`, and so on. An `except` clause matches the named class **and all its subclasses**, so `except LookupError` catches both `KeyError` and `IndexError`. Put specific handlers before general ones; the first match wins.",
+      "code": "print(issubclass(KeyError, LookupError))         # True\nprint(issubclass(KeyboardInterrupt, Exception))  # False\ntry:\n    [1, 2][5]\nexcept LookupError as err:\n    print(type(err).__name__)                    # IndexError",
+      "diagram": "pye-hierarchy"
+    },
+    {
+      "title": "Catch narrowly; never bare except",
+      "body": "A bare `except:` (or `except BaseException:`) catches everything: your typo's `NameError`, a `KeyboardInterrupt` from the user and `SystemExit` from `sys.exit()`. The program keeps running in a broken state and the real bug is hidden. Name the exception you expect, wrap **only the line that can raise it**, and let everything else propagate. If you truly need a catch-all at a top-level boundary (a request handler or worker loop), use `except Exception` and log the error before continuing.",
+      "code": "def to_int(text):\n    try:\n        return int(text)\n    except ValueError:      # the one failure we expect\n        return None\n\n# Bad: hides typos and swallows Ctrl-C\n# try:\n#     return itn(text)\n# except:\n#     return None",
+      "diagram": "pye-bare"
+    },
+    {
+      "title": "Re-raise, translate and chain",
+      "body": "Inside a handler, bare `raise` re-raises the exception being handled with its original traceback; use it to log or clean up and then let the error continue. To translate a low-level error into one that fits your API, write `raise NewError(...) from err`: Python stores the original as `__cause__` and the traceback shows both, joined by 'The above exception was the direct cause of the following exception'. If you raise inside a handler **without** `from`, the original is still kept as `__context__` (implicit chaining). `raise NewError(...) from None` hides the original when it is pure noise.",
+      "code": "def port_from(text):\n    try:\n        return int(text)\n    except ValueError as err:\n        raise RuntimeError(f'bad port {text!r}') from err\n\ntry:\n    port_from('eighty')\nexcept RuntimeError as err:\n    print(err)                          # bad port 'eighty'\n    print(type(err.__cause__).__name__) # ValueError"
+    },
+    {
+      "title": "Custom exception classes",
+      "body": "Define your own exception when callers need to catch **your** failure separately from everything else. Subclass `Exception` (or a fitting built-in such as `ValueError`), give it a clear name ending in `Error`, and add attributes for the details a handler needs. One small base class per module (for example `ConfigError`) with a few subclasses lets callers choose how broadly to catch. Always pass a message to `super().__init__` so `str(err)` and tracebacks stay readable.",
+      "code": "class ConfigError(Exception):\n    pass\n\nclass MissingKeyError(ConfigError):\n    def __init__(self, key):\n        super().__init__(f'missing key {key!r}')\n        self.key = key\n\ntry:\n    raise MissingKeyError('port')\nexcept ConfigError as err:\n    print(err, err.key)   # missing key 'port' port"
+    },
+    {
+      "title": "EAFP versus LBYL",
+      "body": "**LBYL** (look before you leap) checks first: `if key in d:`. **EAFP** (easier to ask forgiveness than permission) just tries and handles the failure: `try: d[key] except KeyError:`. EAFP is idiomatic Python when the check would duplicate the real rule. `text.isdigit()` rejects `'-5'` and `' 7'` that `int()` accepts, and accepts `'²'` that `int()` rejects, so `try: int(text)` is the only exact test. For dict lookups with a default, `d.get(key, default)` beats both. EAFP also avoids races: a file can vanish between `os.path.exists()` and `open()`.",
+      "code": "def parse_int(text):\n    try:\n        return int(text)\n    except ValueError:\n        return None\n\nprint('-5'.isdigit(), parse_int('-5'))   # False -5\nprint('²'.isdigit(), parse_int('²'))     # True None\ncounts = {}\ncounts['a'] = counts.get('a', 0) + 1      # no try needed",
+      "diagram": "pye-eafp"
+    },
+    {
+      "title": "assert is not input validation",
+      "body": "`assert cond, msg` raises `AssertionError` when `cond` is false, but only while `__debug__` is true. Running `python -O` **removes every assert statement**, so a check written as an assert disappears in an optimized deployment. Use asserts for internal invariants that indicate a bug in your own code (`assert lo <= hi`). For anything that comes from a caller, a file or a user, use an explicit `if` and `raise ValueError(...)` or return an error result.",
+      "code": "def withdraw(balance, amount):\n    # Wrong: vanishes under python -O\n    # assert amount > 0, 'amount must be positive'\n    if amount <= 0:\n        raise ValueError('amount must be positive')\n    return balance - amount"
+    }
+  ],
+  "example": "class ParseError(ValueError):\n    pass\n\ndef parse_point(text):\n    parts = text.split(',')\n    if len(parts) != 2:\n        raise ParseError(f'expected x,y, got {text!r}')\n    try:\n        return int(parts[0]), int(parts[1])\n    except ValueError as err:\n        raise ParseError(f'non-integer in {text!r}') from err\n\ndef load_points(lines):\n    points, errors = [], []\n    for line in lines:\n        try:\n            points.append(parse_point(line))\n        except ParseError as err:\n            errors.append(str(err))\n    return points, errors\n\nprint(load_points(['1,2', '3', 'a,4']))\n# ([(1, 2)], [\"expected x,y, got '3'\", \"non-integer in 'a,4'\"])",
+  "task": "Write `parse_settings(lines)` for a list of config lines shaped like `key=value`, where every value must be an integer. Number lines from 1. Strip whitespace around the key and the value and split on the first `=` only. For each bad line add exactly one message, checking in this order: no `=` gives `line N: missing '='`; an empty key gives `line N: empty key`; a key already set by an earlier valid line gives `line N: duplicate key 'k'`; a value `int()` rejects gives `line N: bad number 'v'`. Return `{'ok': True, 'settings': {...}}` when there are no errors, otherwise `{'ok': False, 'errors': [...]}` with every message in line order.",
+  "starter": "def parse_settings(lines):\n    # Return {'ok': True, 'settings': {...}} or {'ok': False, 'errors': [...]}\n    settings = {}\n    return {'ok': True, 'settings': settings}",
+  "hints": [
+    "`line.partition('=')` splits on the first `=` and always returns three parts, so `key, _, raw = line.partition('=')` never raises.",
+    "Let `int(raw)` decide what a valid integer is: wrap only that call in `try`/`except ValueError` and append a message in the handler instead of raising."
+  ],
+  "solution": "def parse_settings(lines):\n    settings = {}\n    errors = []\n    for number, line in enumerate(lines, start=1):\n        if '=' not in line:\n            errors.append(f\"line {number}: missing '='\")\n            continue\n        key, _, raw = line.partition('=')\n        key, raw = key.strip(), raw.strip()\n        if not key:\n            errors.append(f'line {number}: empty key')\n        elif key in settings:\n            errors.append(f\"line {number}: duplicate key '{key}'\")\n        else:\n            try:\n                settings[key] = int(raw)\n            except ValueError:\n                errors.append(f\"line {number}: bad number '{raw}'\")\n    if errors:\n        return {'ok': False, 'errors': errors}\n    return {'ok': True, 'settings': settings}\n\nThe structural checks are cheap and explicit (LBYL), while the numeric check is EAFP: `int()` is the only exact definition of 'a valid integer', so it accepts `-12`, `+4`, `1_000` and even `'٣'` (Arabic-Indic three). The `try` wraps a single call, so no unrelated bug can be swallowed. Collecting every error instead of stopping at the first gives the caller a complete report in one pass: O(n) time over the lines, O(n) space for the result.",
+  "checklist": [
+    "My `try` block contains only the `int()` call, and I catch `ValueError`, not everything.",
+    "I collect all errors in line order and return them instead of raising.",
+    "I split on the first `=` only and strip both sides.",
+    "An empty input returns `{'ok': True, 'settings': {}}`."
+  ],
+  "pitfalls": [
+    "Writing a bare `except:` around a whole function, which hides typos and swallows Ctrl-C.",
+    "Putting `return` in `finally`, which silently discards the exception that was propagating.",
+    "Validating with `assert`, which disappears under `python -O`.",
+    "Using `str.isdigit()` as an integer check: it rejects `-5` and accepts `²`.",
+    "Raising a new exception in a handler without `from`, then losing track of the real cause when debugging.",
+    "Ordering `except Exception` before `except ValueError`, so the specific handler can never run."
+  ],
+  "walkthrough": [
+    {
+      "title": "How an exception travels up the stack",
+      "body": "When `int()` raises deep inside a call chain, Python unwinds frame by frame. Each frame either has a matching `except` (the search stops there) or it is abandoned, running any `finally` on the way out. A middle layer that knows the context can catch the low-level `ValueError` and raise a domain error `from` it. The top layer catches only that domain error. If no frame matches, the interpreter prints the traceback and exits.",
+      "diagram": "pye-propagate"
+    },
+    {
+      "title": "Validating input in interview code",
+      "body": "Interviewers often say 'assume valid input'. When they do not, state your assumptions aloud and validate at the **boundary**: check types and ranges once at the top, then write the core algorithm against clean data. Decide whether bad input should raise (`ValueError` with a clear message) or produce a result such as `None` or `{'ok': False, 'error': ...}`, and say which. Collecting all errors suits forms and config files; failing fast suits programmer errors."
+    },
+    {
+      "title": "Solve the task in three moves",
+      "body": "Loop with `enumerate(lines, start=1)` so line numbers come for free. Do the cheap structural checks (`=` present, key non-empty, key not seen) as plain `if` statements, then hand the value to `int()` inside a tiny `try`. Finally, branch on whether the error list is empty to build the result dict."
+    }
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Safe nested lookup",
+      "prompt": "Write `get_path(data, path, default)` that follows `path` (a list of dict keys and list indexes) into nested data and returns what it finds. If any step fails because a key is missing, an index is out of range, or the current value cannot be indexed that way, return `default`. A present value of `None` is a real value, not a miss.",
+      "hints": [
+        "Walk the path inside a single `try`: `for key in path: data = data[key]`.",
+        "Missing keys raise `KeyError`, bad indexes `IndexError`, and indexing an int or a list with a string raises `TypeError`."
+      ],
+      "solution": "def get_path(data, path, default):\n    try:\n        for key in path:\n            data = data[key]\n    except (KeyError, IndexError, TypeError):\n        return default\n    return data",
+      "checklist": [
+        "I catch a tuple of the three specific exceptions, not `Exception`.",
+        "An empty path returns `data` unchanged.",
+        "A stored `None` is returned, not replaced with `default`."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Order validation with chained errors",
+      "prompt": "Write `check_order(order)` for a dict with `sku` and `qty`. `sku` must be a non-empty string after stripping. `qty` must be an int (not a bool) or a string `int()` accepts, between 1 and 999. Raise a custom `ValidationError(field, message)` from small helpers, using `from err` when translating a `KeyError` (message `missing`) or a `ValueError` (message `not an integer`). Catch it once at the top and return `{'ok': False, 'field', 'error', 'cause'}` where `cause` is the name of `__cause__`'s type or `None`; on success return `{'ok': True, 'order': {'sku': stripped, 'qty': int}}`. Other messages: `must be a non-empty string`, `not an integer` (wrong type, no cause), `out of range`.",
+      "hints": [
+        "`_require(order, field)` can wrap `order[field]` and raise `ValidationError(field, 'missing') from err` in its `except KeyError as err:` handler.",
+        "Check `isinstance(raw, bool)` before `isinstance(raw, int)`: bool subclasses int, and `int(2.5)` would silently truncate, so reject floats by type."
+      ],
+      "solution": "class ValidationError(ValueError):\n    def __init__(self, field, message):\n        super().__init__(f'{field}: {message}')\n        self.field = field\n        self.message = message\n\n\ndef _require(order, field):\n    try:\n        return order[field]\n    except KeyError as err:\n        raise ValidationError(field, 'missing') from err\n\n\ndef _parse_qty(raw):\n    if isinstance(raw, bool) or not isinstance(raw, (int, str)):\n        raise ValidationError('qty', 'not an integer')\n    try:\n        qty = int(raw)\n    except ValueError as err:\n        raise ValidationError('qty', 'not an integer') from err\n    if not 1 <= qty <= 999:\n        raise ValidationError('qty', 'out of range')\n    return qty\n\n\ndef check_order(order):\n    try:\n        sku = _require(order, 'sku')\n        if not isinstance(sku, str) or not sku.strip():\n            raise ValidationError('sku', 'must be a non-empty string')\n        qty = _parse_qty(_require(order, 'qty'))\n    except ValidationError as err:\n        cause = type(err.__cause__).__name__ if err.__cause__ else None\n        return {'ok': False, 'field': err.field, 'error': err.message, 'cause': cause}\n    return {'ok': True, 'order': {'sku': sku.strip(), 'qty': qty}}",
+      "checklist": [
+        "Every translated error uses `from err`, so `__cause__` is set.",
+        "Only `ValidationError` is caught at the top; other bugs still surface.",
+        "Booleans and floats are rejected as quantities."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you use `except Exception` rather than a specific exception?",
+      "answer": "Only at a boundary that must keep running whatever fails: a request handler, a job-queue worker, a plugin host. There you log the full traceback (`logging.exception`) and turn the failure into an error response or a retry. Inside business logic, catch specific types so unexpected bugs still crash loudly. `Exception` still lets `KeyboardInterrupt` and `SystemExit` through, which a bare `except:` would not."
+    },
+    {
+      "question": "What is the difference between `raise`, `raise err` and `raise New() from err` inside a handler?",
+      "answer": "Bare `raise` re-raises the exception currently being handled, unchanged, which is the idiom for log-and-rethrow. `raise err` raises the same object again, adding the current line to its traceback. `raise New() from err` raises a different exception and records `err` as its `__cause__`, so the traceback shows both and callers can catch the higher-level type."
+    },
+    {
+      "question": "What is `except*` for?",
+      "answer": "Since Python 3.11, an `ExceptionGroup` can carry several unrelated exceptions at once, typically from concurrent tasks such as an `asyncio.TaskGroup`. `except* ValueError:` handles the `ValueError` members of the group and lets the remaining members continue to propagate. Ordinary code that raises one exception at a time keeps using plain `except`."
+    },
+    {
+      "question": "Is using exceptions for control flow slow in Python?",
+      "answer": "Entering a `try` block is very cheap in CPython (zero-cost on the happy path since 3.11). Raising and catching costs more than an `if`, so if failure is the common case, a check or `dict.get` can be faster. Pick EAFP when failure is rare or the check would duplicate the real rule, and measure before optimizing."
+    }
+  ],
+  "takeaways": [
+    "`else` runs only when the body did not raise; `finally` always runs, even after `return`.",
+    "Never `return` from `finally`: it silently discards an in-flight exception.",
+    "Catch the narrowest exception, wrap the smallest block, and never use bare `except:`.",
+    "Use bare `raise` to rethrow and `raise New(...) from err` to translate while keeping the cause.",
+    "`assert` is for invariants, not input: `python -O` strips it.",
+    "Let `int()` and `d[key]` define validity (EAFP) instead of re-implementing their rules."
+  ],
+  "lab": {
+    "lang": "py",
+    "diagrams": [
+      {
+        "id": "pye-order",
+        "type": "flow",
+        "title": "Which clauses run, and in what order",
+        "alt": "Flow diagram of a try statement. The try body leads to else when nothing is raised and to a matching except clause when an exception is raised. Both paths lead into finally. An exception that no except clause matches also passes through finally and then propagates to the caller.",
+        "caption": "Every path goes through finally. else is the no-error path; an unmatched exception still runs finally before it propagates.",
+        "nodes": [
+          {
+            "id": "try",
+            "label": "try body",
+            "kind": "decision",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "else",
+            "label": "else",
+            "kind": "good",
+            "col": 2,
+            "row": 0,
+            "sub": "only if no raise"
+          },
+          {
+            "id": "except",
+            "label": "matching except",
+            "kind": "bad",
+            "col": 2,
+            "row": 2,
+            "sub": "first match wins"
+          },
+          {
+            "id": "finally",
+            "label": "finally",
+            "kind": "state",
+            "col": 4,
+            "row": 1,
+            "sub": "always runs"
+          },
+          {
+            "id": "up",
+            "label": "propagate",
+            "kind": "bad",
+            "col": 4,
+            "row": 3,
+            "sub": "to the caller"
+          },
+          {
+            "id": "next",
+            "label": "next statement",
+            "kind": "good",
+            "col": 4,
+            "row": 0
+          }
+        ],
+        "edges": [
+          {
+            "from": "try",
+            "to": "else",
+            "label": "no exception"
+          },
+          {
+            "from": "try",
+            "to": "except",
+            "label": "raises, matched",
+            "style": "fail"
+          },
+          {
+            "from": "else",
+            "to": "finally"
+          },
+          {
+            "from": "except",
+            "to": "finally"
+          },
+          {
+            "from": "try",
+            "to": "finally",
+            "label": "raises, no match",
+            "style": "fail"
+          },
+          {
+            "from": "finally",
+            "to": "next",
+            "label": "handled or no error"
+          },
+          {
+            "from": "finally",
+            "to": "up",
+            "label": "still unhandled",
+            "style": "fail"
+          }
+        ],
+        "steps": [
+          {
+            "edges": [
+              0,
+              2,
+              5
+            ],
+            "text": "Happy path: the body finishes, `else` runs, then `finally`, then execution continues after the statement."
+          },
+          {
+            "edges": [
+              1,
+              3,
+              5
+            ],
+            "text": "The body raises and an `except` clause matches. The handler runs, then `finally`, then the next statement."
+          },
+          {
+            "edges": [
+              4,
+              6
+            ],
+            "text": "No clause matches. `finally` still runs, and the exception keeps travelling up to the caller."
+          }
+        ]
+      },
+      {
+        "id": "pye-hierarchy",
+        "type": "flow",
+        "title": "Part of the built-in exception tree",
+        "alt": "Tree diagram. BaseException is the root with three children: SystemExit, KeyboardInterrupt and Exception. Under Exception sit ValueError, TypeError and LookupError. LookupError has two children, KeyError and IndexError.",
+        "caption": "except catches a class and all its subclasses. Catch under Exception; SystemExit and Ctrl-C deliberately sit outside it.",
+        "nodes": [
+          {
+            "id": "base",
+            "label": "BaseException",
+            "kind": "note",
+            "col": 2,
+            "row": 0,
+            "sub": "root of everything"
+          },
+          {
+            "id": "exit",
+            "label": "SystemExit",
+            "kind": "state",
+            "col": 0,
+            "row": 2,
+            "sub": "sys.exit()"
+          },
+          {
+            "id": "kbd",
+            "label": "Ctrl-C",
+            "kind": "state",
+            "col": 1,
+            "row": 2,
+            "sub": "KeyboardInterrupt"
+          },
+          {
+            "id": "exc",
+            "label": "Exception",
+            "kind": "good",
+            "col": 3,
+            "row": 2,
+            "sub": "catch at or below"
+          },
+          {
+            "id": "value",
+            "label": "ValueError",
+            "kind": "service",
+            "col": 1,
+            "row": 4,
+            "sub": "int('x')"
+          },
+          {
+            "id": "type",
+            "label": "TypeError",
+            "kind": "service",
+            "col": 4,
+            "row": 3,
+            "sub": "len(5)"
+          },
+          {
+            "id": "lookup",
+            "label": "LookupError",
+            "kind": "service",
+            "col": 3,
+            "row": 4,
+            "sub": "base of key/index"
+          },
+          {
+            "id": "key",
+            "label": "KeyError",
+            "kind": "service",
+            "col": 2,
+            "row": 5,
+            "sub": "d['missing']"
+          },
+          {
+            "id": "index",
+            "label": "IndexError",
+            "kind": "service",
+            "col": 4,
+            "row": 5,
+            "sub": "[1, 2][5]"
+          }
+        ],
+        "edges": [
+          {
+            "from": "base",
+            "to": "exit"
+          },
+          {
+            "from": "base",
+            "to": "kbd"
+          },
+          {
+            "from": "base",
+            "to": "exc"
+          },
+          {
+            "from": "exc",
+            "to": "value"
+          },
+          {
+            "from": "exc",
+            "to": "type"
+          },
+          {
+            "from": "exc",
+            "to": "lookup"
+          },
+          {
+            "from": "lookup",
+            "to": "key"
+          },
+          {
+            "from": "lookup",
+            "to": "index"
+          }
+        ]
+      },
+      {
+        "id": "pye-bare",
+        "type": "compare",
+        "title": "Bare except versus a named exception",
+        "alt": "Side-by-side comparison. On the left, a typo's NameError, a Ctrl-C and a bad int('x') all flow into one bare except clause that swallows them. On the right, only the ValueError from int('x') is caught; the NameError surfaces as a traceback and Ctrl-C stops the program.",
+        "caption": "Name what you expect. Everything else should crash loudly or stop the program as the user asked.",
+        "before": {
+          "label": "except: catches everything",
+          "nodes": [
+            {
+              "id": "typo",
+              "label": "NameError",
+              "kind": "bad",
+              "col": 0,
+              "row": 0,
+              "sub": "typo: itn(x)"
+            },
+            {
+              "id": "ctrl",
+              "label": "Ctrl-C",
+              "kind": "bad",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "val",
+              "label": "ValueError",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "int('x')"
+            },
+            {
+              "id": "bare",
+              "label": "except:",
+              "kind": "bad",
+              "col": 2,
+              "row": 1,
+              "sub": "all swallowed"
+            }
+          ],
+          "edges": [
+            {
+              "from": "typo",
+              "to": "bare"
+            },
+            {
+              "from": "ctrl",
+              "to": "bare"
+            },
+            {
+              "from": "val",
+              "to": "bare"
+            }
+          ]
+        },
+        "after": {
+          "label": "except ValueError: only the expected",
+          "nodes": [
+            {
+              "id": "typo",
+              "label": "NameError",
+              "kind": "bad",
+              "col": 0,
+              "row": 0,
+              "sub": "typo: itn(x)"
+            },
+            {
+              "id": "ctrl",
+              "label": "Ctrl-C",
+              "kind": "bad",
+              "col": 0,
+              "row": 1
+            },
+            {
+              "id": "val",
+              "label": "ValueError",
+              "kind": "state",
+              "col": 0,
+              "row": 2,
+              "sub": "int('x')"
+            },
+            {
+              "id": "tb",
+              "label": "traceback",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "bug is visible"
+            },
+            {
+              "id": "stop",
+              "label": "program stops",
+              "kind": "good",
+              "col": 2,
+              "row": 1
+            },
+            {
+              "id": "handler",
+              "label": "handled",
+              "kind": "good",
+              "col": 2,
+              "row": 2,
+              "sub": "except ValueError"
+            }
+          ],
+          "edges": [
+            {
+              "from": "typo",
+              "to": "tb"
+            },
+            {
+              "from": "ctrl",
+              "to": "stop"
+            },
+            {
+              "from": "val",
+              "to": "handler"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pye-eafp",
+        "type": "compare",
+        "title": "Checking an integer: LBYL versus EAFP",
+        "alt": "Side-by-side comparison. On the left, the text '-5' goes through an isdigit() check, fails it and is wrongly rejected. On the right, the same text goes straight into int(), which returns -5; a non-number would land in the except ValueError branch instead.",
+        "caption": "The pre-check re-implements int() badly. Trying int() and handling ValueError uses the real rule.",
+        "before": {
+          "label": "LBYL: if text.isdigit()",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "text = '-5'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "check",
+              "label": "isdigit()?",
+              "kind": "decision",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "reject",
+              "label": "rejected",
+              "kind": "bad",
+              "col": 2,
+              "row": 0,
+              "sub": "wrong: -5 is valid"
+            },
+            {
+              "id": "ok",
+              "label": "int(text)",
+              "kind": "good",
+              "col": 1,
+              "row": 1,
+              "sub": "never reached"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "check"
+            },
+            {
+              "from": "check",
+              "to": "reject",
+              "label": "False"
+            },
+            {
+              "from": "check",
+              "to": "ok",
+              "label": "True"
+            }
+          ]
+        },
+        "after": {
+          "label": "EAFP: try int(text)",
+          "nodes": [
+            {
+              "id": "in",
+              "label": "text = '-5'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "try",
+              "label": "int(text)",
+              "kind": "service",
+              "col": 1,
+              "row": 0
+            },
+            {
+              "id": "val",
+              "label": "-5",
+              "kind": "good",
+              "col": 2,
+              "row": 0,
+              "sub": "returned"
+            },
+            {
+              "id": "exc",
+              "label": "except",
+              "kind": "bad",
+              "col": 1,
+              "row": 1,
+              "sub": "ValueError: 'abc'"
+            }
+          ],
+          "edges": [
+            {
+              "from": "in",
+              "to": "try"
+            },
+            {
+              "from": "try",
+              "to": "val",
+              "label": "ok"
+            },
+            {
+              "from": "try",
+              "to": "exc",
+              "label": "raises",
+              "style": "fail"
+            }
+          ]
+        }
+      },
+      {
+        "id": "pye-propagate",
+        "type": "sequence",
+        "title": "A ValueError bubbling up and being translated",
+        "alt": "Sequence diagram with four actors: main, load_config, parse_port and int. main calls load_config, which calls parse_port, which calls int('eighty'). int raises ValueError back to parse_port, which has no handler, so it passes up to load_config. load_config raises ConfigError from the ValueError, and main catches ConfigError and reports it.",
+        "caption": "Frames without a handler are skipped. Translate once, at the layer that knows the context, and catch the domain error at the top.",
+        "actors": [
+          {
+            "id": "main",
+            "label": "main()"
+          },
+          {
+            "id": "load",
+            "label": "load_config()"
+          },
+          {
+            "id": "parse",
+            "label": "parse_port()"
+          },
+          {
+            "id": "int",
+            "label": "int()"
+          }
+        ],
+        "messages": [
+          {
+            "from": "main",
+            "to": "load",
+            "label": "load_config(raw)"
+          },
+          {
+            "from": "load",
+            "to": "parse",
+            "label": "parse_port('eighty')"
+          },
+          {
+            "from": "parse",
+            "to": "int",
+            "label": "int('eighty')"
+          },
+          {
+            "from": "int",
+            "to": "parse",
+            "label": "raise ValueError",
+            "style": "fail",
+            "note": "parse_port has no try, so its frame is abandoned."
+          },
+          {
+            "from": "parse",
+            "to": "load",
+            "label": "ValueError propagates",
+            "style": "fail"
+          },
+          {
+            "from": "load",
+            "to": "main",
+            "label": "raise ConfigError from err",
+            "style": "fail",
+            "note": "The ValueError is kept as __cause__. main's except ConfigError matches, so unwinding stops there."
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "parse_settings",
+        "starter": "def parse_settings(lines):\n    # Return {'ok': True, 'settings': {...}} or {'ok': False, 'errors': [...]}\n    settings = {}\n    return {'ok': True, 'settings': settings}\n",
+        "solution": "def parse_settings(lines):\n    settings = {}\n    errors = []\n    for number, line in enumerate(lines, start=1):\n        if '=' not in line:\n            errors.append(f\"line {number}: missing '='\")\n            continue\n        key, _, raw = line.partition('=')\n        key, raw = key.strip(), raw.strip()\n        if not key:\n            errors.append(f'line {number}: empty key')\n        elif key in settings:\n            errors.append(f\"line {number}: duplicate key '{key}'\")\n        else:\n            try:\n                settings[key] = int(raw)\n            except ValueError:\n                errors.append(f\"line {number}: bad number '{raw}'\")\n    if errors:\n        return {'ok': False, 'errors': errors}\n    return {'ok': True, 'settings': settings}\n",
+        "tests": [
+          {
+            "args": [
+              [
+                "host_port = 8080",
+                "retries=3"
+              ]
+            ],
+            "expected": {
+              "ok": true,
+              "settings": {
+                "host_port": 8080,
+                "retries": 3
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                "a=1",
+                "b",
+                "c=x",
+                "a=2"
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "line 2: missing '='",
+                "line 3: bad number 'x'",
+                "line 4: duplicate key 'a'"
+              ]
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {
+              "ok": true,
+              "settings": {}
+            }
+          },
+          {
+            "args": [
+              [
+                "=5"
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "line 1: empty key"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "n=-12",
+                "m=+4",
+                "big=1_000_000"
+              ]
+            ],
+            "expected": {
+              "ok": true,
+              "settings": {
+                "n": -12,
+                "m": 4,
+                "big": 1000000
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                "n=٣"
+              ]
+            ],
+            "expected": {
+              "ok": true,
+              "settings": {
+                "n": 3
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                "x=",
+                "y=1.5",
+                "z=1=2"
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "line 1: bad number ''",
+                "line 2: bad number '1.5'",
+                "line 3: bad number '1=2'"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "a=x",
+                "a=1"
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "line 1: bad number 'x'"
+              ]
+            }
+          },
+          {
+            "args": [
+              [
+                "k=1",
+                " k = 2 ",
+                ""
+              ]
+            ],
+            "expected": {
+              "ok": false,
+              "errors": [
+                "line 2: duplicate key 'k'",
+                "line 3: missing '='"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "get_path",
+        "starter": "def get_path(data, path, default):\n    return data.get(path[0], default)\n",
+        "solution": "def get_path(data, path, default):\n    try:\n        for key in path:\n            data = data[key]\n    except (KeyError, IndexError, TypeError):\n        return default\n    return data\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "user": {
+                  "tags": [
+                    "a",
+                    "b"
+                  ]
+                }
+              },
+              [
+                "user",
+                "tags",
+                1
+              ],
+              null
+            ],
+            "expected": "b"
+          },
+          {
+            "args": [
+              {
+                "user": {}
+              },
+              [
+                "user",
+                "name"
+              ],
+              "?"
+            ],
+            "expected": "?"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              [],
+              null
+            ],
+            "expected": {
+              "a": 1
+            }
+          },
+          {
+            "args": [
+              [
+                10,
+                20
+              ],
+              [
+                5
+              ],
+              -1
+            ],
+            "expected": -1
+          },
+          {
+            "args": [
+              [
+                1,
+                2,
+                3
+              ],
+              [
+                -1
+              ],
+              null
+            ],
+            "expected": 3
+          },
+          {
+            "args": [
+              {
+                "a": 5
+              },
+              [
+                "a",
+                "b"
+              ],
+              "none"
+            ],
+            "expected": "none"
+          },
+          {
+            "args": [
+              {
+                "a": [
+                  1
+                ]
+              },
+              [
+                "a",
+                "0"
+              ],
+              "bad"
+            ],
+            "expected": "bad"
+          },
+          {
+            "args": [
+              {
+                "a": null
+              },
+              [
+                "a"
+              ],
+              1
+            ],
+            "expected": null
+          },
+          {
+            "args": [
+              {
+                "ключ": "значение"
+              },
+              [
+                "ключ"
+              ],
+              null
+            ],
+            "expected": "значение"
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "check_order",
+        "starter": "class ValidationError(ValueError):\n    def __init__(self, field, message):\n        super().__init__(f'{field}: {message}')\n        self.field = field\n        self.message = message\n\n\ndef check_order(order):\n    return {'ok': True, 'order': order}\n",
+        "solution": "class ValidationError(ValueError):\n    def __init__(self, field, message):\n        super().__init__(f'{field}: {message}')\n        self.field = field\n        self.message = message\n\n\ndef _require(order, field):\n    try:\n        return order[field]\n    except KeyError as err:\n        raise ValidationError(field, 'missing') from err\n\n\ndef _parse_qty(raw):\n    if isinstance(raw, bool) or not isinstance(raw, (int, str)):\n        raise ValidationError('qty', 'not an integer')\n    try:\n        qty = int(raw)\n    except ValueError as err:\n        raise ValidationError('qty', 'not an integer') from err\n    if not 1 <= qty <= 999:\n        raise ValidationError('qty', 'out of range')\n    return qty\n\n\ndef check_order(order):\n    try:\n        sku = _require(order, 'sku')\n        if not isinstance(sku, str) or not sku.strip():\n            raise ValidationError('sku', 'must be a non-empty string')\n        qty = _parse_qty(_require(order, 'qty'))\n    except ValidationError as err:\n        cause = type(err.__cause__).__name__ if err.__cause__ else None\n        return {'ok': False, 'field': err.field, 'error': err.message, 'cause': cause}\n    return {'ok': True, 'order': {'sku': sku.strip(), 'qty': qty}}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "sku": " AB-1 ",
+                "qty": "3"
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "order": {
+                "sku": "AB-1",
+                "qty": 3
+              }
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "AB-1",
+                "qty": "three"
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "not an integer",
+              "cause": "ValueError"
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "qty": 2
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "sku",
+              "error": "missing",
+              "cause": "KeyError"
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "X"
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "missing",
+              "cause": "KeyError"
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "   ",
+                "qty": 1
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "sku",
+              "error": "must be a non-empty string",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": 42,
+                "qty": 1
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "sku",
+              "error": "must be a non-empty string",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "X",
+                "qty": 0
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "out of range",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "X",
+                "qty": "1000"
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "out of range",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "X",
+                "qty": true
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "not an integer",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "X",
+                "qty": 2.5
+              }
+            ],
+            "expected": {
+              "ok": false,
+              "field": "qty",
+              "error": "not an integer",
+              "cause": null
+            }
+          },
+          {
+            "args": [
+              {
+                "sku": "Ünï",
+                "qty": 999
+              }
+            ],
+            "expected": {
+              "ok": true,
+              "order": {
+                "sku": "Ünï",
+                "qty": 999
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "log = []\n\ndef f():\n    try:\n        log.append('try')\n        return 'body'\n    finally:\n        log.append('finally')\n\nprint(f(), log)",
+        "choices": [
+          "body ['try']",
+          "body ['try', 'finally']",
+          "None ['try', 'finally']"
+        ],
+        "answer": 1,
+        "explain": "`return 'body'` computes the value, then `finally` runs before the function actually returns. By the time `log` is printed, both entries are there."
+      },
+      {
+        "code": "def f():\n    try:\n        raise ValueError('boom')\n    finally:\n        return 'swallowed'\n\nprint(f())",
+        "choices": [
+          "swallowed",
+          "ValueError: boom",
+          "None"
+        ],
+        "answer": 0,
+        "explain": "A `return` in `finally` replaces the in-flight exception. The ValueError is discarded silently, which is why this is an anti-pattern."
+      },
+      {
+        "code": "out = []\nfor text in ['7', 'x']:\n    try:\n        int(text)\n    except ValueError:\n        out.append('except')\n    else:\n        out.append('else')\n    finally:\n        out.append('finally')\nprint(out)",
+        "choices": [
+          "['else', 'finally', 'except', 'finally']",
+          "['else', 'except', 'finally']",
+          "['finally', 'else', 'finally', 'except']"
+        ],
+        "answer": 0,
+        "explain": "'7' parses, so `else` then `finally` run. 'x' raises, so the handler then `finally` run. `finally` runs on both iterations."
+      },
+      {
+        "code": "try:\n    {}['k']\nexcept LookupError:\n    print('lookup')\nexcept KeyError:\n    print('key')",
+        "choices": [
+          "key",
+          "lookup",
+          "lookup\nkey"
+        ],
+        "answer": 1,
+        "explain": "KeyError subclasses LookupError and the first matching clause wins. The `except KeyError` clause is unreachable here; specific handlers must come first."
+      },
+      {
+        "code": "try:\n    try:\n        int('x')\n    except ValueError as err:\n        raise KeyError('k') from err\nexcept KeyError as err:\n    print(type(err.__cause__).__name__, err.__suppress_context__)",
+        "choices": [
+          "ValueError True",
+          "ValueError False",
+          "NoneType True"
+        ],
+        "answer": 0,
+        "explain": "`from err` stores the ValueError as `__cause__` and sets `__suppress_context__` to True, so the traceback shows the explicit cause rather than the implicit context."
+      },
+      {
+        "code": "try:\n    {}['name']\nexcept KeyError as err:\n    print(str(err), err.args[0])",
+        "choices": [
+          "name name",
+          "'name' name",
+          "'name' 'name'"
+        ],
+        "answer": 1,
+        "explain": "`str()` of a KeyError with one argument is the repr of the key, so it gets quotes. `err.args[0]` is the key itself. Use `args[0]` when building your own messages."
+      }
+    ],
+    "tip": "When you add a try block in an interview, say which exception you expect and why, and keep the block to the one line that can raise it. If input validation is in scope, ask whether bad input should raise or return an error value, then validate once at the top of the function.",
+    "links": {
+      "problems": [
+        "evaluate-postfix",
+        "balanced-brackets"
+      ],
+      "guides": [
+        "edge-case-checklist",
+        "clean-code",
+        "api-error-format"
+      ],
+      "lessons": [
+        "py-basics",
+        "py-functions-closures"
+      ]
+    }
+  }
+}

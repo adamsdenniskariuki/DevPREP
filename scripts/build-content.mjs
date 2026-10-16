@@ -4,26 +4,32 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'ai', 'behavioral']
+/** Interview tracks first, then language tracks (track.json "kind": "language"). */
+export const TRACK_ORDER = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python']
 const read = path => JSON.parse(readFileSync(path, 'utf8'))
 
 export function buildCurriculum(root = 'content') {
   const tracks = []
   const lessons = []
+  const labs = {}
   for (const id of TRACK_ORDER) {
     const info = read(join(root, id, 'track.json'))
     const files = new Set(readdirSync(join(root, id)).filter(name => name.endsWith('.json') && name !== 'track.json'))
     for (const lessonId of info.lessons) {
       if (!files.delete(`${lessonId}.json`)) throw new Error(`content/${id}/track.json lists ${lessonId} but the file is missing`)
-      lessons.push(read(join(root, id, `${lessonId}.json`)))
+      // Labs (diagrams, runnable exercises, quizzes) are heavy, so they ship as a separate lazy chunk.
+      const { lab, ...lesson } = read(join(root, id, `${lessonId}.json`))
+      if (lab) { labs[lesson.id] = lab; lesson.lang = lab.lang }
+      lessons.push(lesson)
     }
     if (files.size) throw new Error(`content/${id} has lessons not listed in track.json: ${[...files].join(', ')}`)
-    tracks.push({ id: info.id, title: info.title, description: info.description })
+    tracks.push({ id: info.id, title: info.title, description: info.description, ...(info.kind ? { kind: info.kind } : {}), ...(info.placement ? { placement: info.placement } : {}) })
   }
-  return { tracks, lessons }
+  return { tracks, lessons, labs }
 }
 
 export const OUTPUT = 'src/generated/curriculum.json'
+export const LABS_OUTPUT = 'src/generated/labs.json'
 export const PROBLEMS_OUTPUT = 'src/generated/problems.json'
 export const PROBLEM_INDEX_OUTPUT = 'src/generated/problem-index.json'
 
@@ -138,7 +144,9 @@ function writeIfChanged(path, value) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  writeIfChanged(OUTPUT, buildCurriculum())
+  const { labs, ...curriculum } = buildCurriculum()
+  writeIfChanged(OUTPUT, curriculum)
+  writeIfChanged(LABS_OUTPUT, labs)
   const { problems, index } = buildProblems()
   writeIfChanged(PROBLEMS_OUTPUT, problems)
   writeIfChanged(PROBLEM_INDEX_OUTPUT, index)

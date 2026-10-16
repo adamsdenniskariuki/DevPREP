@@ -44,6 +44,8 @@ export interface AppModel {
   scoreDesign: (caseId: string, percent: number) => number
   /** Records a Field Guide quiz score (best kept) and returns the XP gained. */
   readGuide: (guideId: string, percent: number) => number
+  /** Saves a language placement check; returns the lessons it marked known. */
+  placeTrack: (track: Track, answers: (number | undefined)[]) => { percent: number; known: string[] }
   /** Grades a flashcard and returns the XP it earned. */
   gradeCard: (cardId: string, grade: Grade) => number
   /** Saves a finished mock interview and returns the XP it earned. */

@@ -6,7 +6,8 @@ import { lessons } from '../curriculum'
 import { clearDraft, readDraft, writeDraft } from '../code-drafts'
 import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from '../problems'
 import type { CodeLanguage, Problem, ProblemSummary } from '../problem-types'
-import { formatArgs, formatValue, TIMEOUT_MS, type CaseOutcome } from '../runner/core'
+import { formatArgs, formatValue } from '../runner/core'
+import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 
 const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
@@ -126,7 +127,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
   const [hints, setHints] = useState(0)
   const [saveFailed, setSaveFailed] = useState(false)
   const live = useRef(true)
-  useEffect(() => () => { live.current = false }, [])
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const lesson = lessons.find(item => item.id === problem.lessonId)
   const fn = problem.function[lang]
 
@@ -204,44 +205,8 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
         <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
       </div>
       <div className="run-results" role="status" aria-live="polite">
-        {result && <Results problem={problem} lang={result.lang} report={result.report} message={result.message} />}
+        {result && <RunResults tests={problem.tests} fn={problem.function[result.lang]} lang={result.lang} report={result.report} message={result.message} />}
       </div>
     </section>
   </div>
-}
-
-function describeActual(outcome: CaseOutcome, lang: CodeLanguage) {
-  return outcome.actual === undefined ? (lang === 'py' ? 'None' : 'undefined') : formatValue(JSON.parse(outcome.actual), lang)
-}
-
-function Results({ problem, lang, report, message }: { problem: Problem; lang: CodeLanguage; report: RunReport; message?: string }) {
-  if (report.kind === 'timeout') return <div className="run-summary fail"><strong>Stopped after {TIMEOUT_MS[lang] / 1000} seconds.</strong> Check for an infinite loop or a slower-than-needed approach.</div>
-  if (report.kind === 'load-error') return <div className="run-summary fail"><strong>Python could not start.</strong> {report.error}</div>
-  if (report.kind === 'error') return <><div className="run-summary fail"><strong>Your code didn’t run.</strong><pre>{report.error}</pre></div>{report.output && <Output text={report.output} />}</>
-  const visible = report.outcomes.slice(0, problem.tests.length)
-  const hidden = report.outcomes.slice(problem.tests.length)
-  const passed = report.outcomes.filter(outcome => outcome.pass).length
-  const fn = problem.function[lang]
-  return <>
-    <div className={message ? 'run-summary pass' : 'run-summary fail'}><strong>{message ?? `${passed} of ${report.outcomes.length} tests passed.`}</strong></div>
-    <ul className="test-results">
-      {visible.map((outcome, index) => <li key={index} className={outcome.pass ? 'pass' : 'fail'}>
-        <span className="test-status"><Icon name={outcome.pass ? 'check' : 'x'} size={16} />{outcome.pass ? 'Passed' : 'Failed'}</span>
-        <code className="test-call">{fn}({formatArgs(problem.tests[index].args, lang)})</code>
-        {!outcome.pass && <dl>
-          <div><dt>Expected</dt><dd><code>{formatValue(problem.tests[index].expected, lang)}</code></dd></div>
-          {outcome.error ? <div><dt>Error</dt><dd><pre>{outcome.error}</pre></dd></div> : <div><dt>Got</dt><dd><code>{describeActual(outcome, lang)}</code></dd></div>}
-        </dl>}
-      </li>)}
-      <li className={hidden.every(outcome => outcome.pass) ? 'pass' : 'fail'}>
-        <span className="test-status"><Icon name={hidden.every(outcome => outcome.pass) ? 'check' : 'x'} size={16} />Hidden tests</span>
-        <span>{hidden.filter(outcome => outcome.pass).length} of {hidden.length} passed{hidden.some(outcome => outcome.error) ? ' · some raised errors' : ''}</span>
-      </li>
-    </ul>
-    {report.output && <Output text={report.output} />}
-  </>
-}
-
-function Output({ text }: { text: string }) {
-  return <details className="run-output" open><summary>Console output</summary><pre>{text}</pre></details>
 }
