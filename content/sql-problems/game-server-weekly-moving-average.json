@@ -1,0 +1,65 @@
+{
+  "id": "game-server-weekly-moving-average",
+  "title": "Seven-day moving average with missing days",
+  "topic": "Window functions",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-window-functions",
+  "paths": ["senior"],
+  "prompt": "A game studio records each server's daily peak player count. The collector is flaky: some days have no row at all, and some rows have a NULL peak because the metric failed.\n\nFor every row, compute a 7-day moving average of the peak for that server, covering the row's day and the 6 calendar days before it.\n\n- Columns: server, day, avg_peak_7d, readings\n- The window is calendar days (day − 6 through day), not \"the last 7 rows\"\n- Missing days and NULL peaks are skipped, not treated as 0\n- avg_peak_7d is rounded to 2 decimals; NULL if the window has no non-NULL peak\n- readings is the number of non-NULL peaks in the window\n- One row per input row; any row order is fine",
+  "hints": [
+    "ROWS BETWEEN 6 PRECEDING AND CURRENT ROW counts rows. If two days are missing, that frame reaches back 9 days.",
+    "A RANGE frame can use an offset in the units of the ORDER BY column. For a date column the offset is an interval.",
+    "WINDOW w AS (PARTITION BY server ORDER BY day RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW), then round(avg(peak) OVER w, 2) and count(peak) OVER w."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE server_peaks (server text NOT NULL, day date NOT NULL, peak int, PRIMARY KEY (server, day));",
+    "starter": "-- 7-day moving average\nSELECT server, day,\n       round(avg(peak) OVER w, 2) AS avg_peak_7d,\n       count(peak) OVER w AS readings\nFROM server_peaks\nWINDOW w AS (PARTITION BY server ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW);",
+    "solution": "SELECT server, day,\n       round(avg(peak) OVER w, 2) AS avg_peak_7d,\n       count(peak) OVER w AS readings\nFROM server_peaks\nWINDOW w AS (PARTITION BY server ORDER BY day\n             RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW);",
+    "tests": [
+      {
+        "name": "gaps shrink the window",
+        "seed": "INSERT INTO server_peaks VALUES ('eu-1', '2026-07-01', 100), ('eu-1', '2026-07-02', 120), ('eu-1', '2026-07-04', 90), ('eu-1', '2026-07-08', 150), ('eu-1', '2026-07-09', 60), ('us-1', '2026-07-01', 40), ('us-1', '2026-07-10', 80);",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["eu-1", "2026-07-01", 100.0, 1], ["eu-1", "2026-07-02", 110.0, 2], ["eu-1", "2026-07-04", 103.33, 3], ["eu-1", "2026-07-08", 120.0, 3], ["eu-1", "2026-07-09", 100.0, 3], ["us-1", "2026-07-01", 40.0, 1], ["us-1", "2026-07-10", 80.0, 1]] }
+      },
+      {
+        "name": "eight consecutive days",
+        "seed": "INSERT INTO server_peaks SELECT 'ap-1', DATE '2026-07-01' + (g - 1), 10 * g FROM generate_series(1, 8) g;",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["ap-1", "2026-07-01", 10.0, 1], ["ap-1", "2026-07-02", 15.0, 2], ["ap-1", "2026-07-03", 20.0, 3], ["ap-1", "2026-07-04", 25.0, 4], ["ap-1", "2026-07-05", 30.0, 5], ["ap-1", "2026-07-06", 35.0, 6], ["ap-1", "2026-07-07", 40.0, 7], ["ap-1", "2026-07-08", 50.0, 7]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "NULL peaks are skipped",
+        "seed": "INSERT INTO server_peaks VALUES ('eu-2', '2026-07-01', NULL), ('eu-2', '2026-07-02', 30), ('eu-2', '2026-07-03', NULL);",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["eu-2", "2026-07-01", null, 0], ["eu-2", "2026-07-02", 30.0, 1], ["eu-2", "2026-07-03", 30.0, 1]] }
+      },
+      {
+        "name": "window crosses a month boundary and includes day minus 6",
+        "seed": "INSERT INTO server_peaks VALUES ('sa-1', '2026-06-28', 10), ('sa-1', '2026-07-04', 20), ('sa-1', '2026-07-05', 30);",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["sa-1", "2026-06-28", 10.0, 1], ["sa-1", "2026-07-04", 15.0, 2], ["sa-1", "2026-07-05", 25.0, 2]] }
+      },
+      {
+        "name": "every third day",
+        "seed": "INSERT INTO server_peaks VALUES ('oc-1', '2026-07-01', 3), ('oc-1', '2026-07-04', 6), ('oc-1', '2026-07-07', 9), ('oc-1', '2026-07-10', 12);",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["oc-1", "2026-07-01", 3.0, 1], ["oc-1", "2026-07-04", 4.5, 2], ["oc-1", "2026-07-07", 6.0, 3], ["oc-1", "2026-07-10", 9.0, 3]] }
+      },
+      {
+        "name": "servers do not mix",
+        "seed": "INSERT INTO server_peaks VALUES ('a', '2026-07-01', 10), ('a', '2026-07-02', 20), ('b', '2026-07-01', 100), ('b', '2026-07-02', 200);",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [["a", "2026-07-01", 10.0, 1], ["a", "2026-07-02", 15.0, 2], ["b", "2026-07-01", 100.0, 1], ["b", "2026-07-02", 150.0, 2]] }
+      },
+      {
+        "name": "no data",
+        "seed": "",
+        "expected": { "columns": ["server", "day", "avg_peak_7d", "readings"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "A ROWS frame of 6 PRECEDING always takes the previous 6 rows, so when days are missing it silently reaches back further than a week. A RANGE frame with an offset is value-based: RANGE BETWEEN INTERVAL '6 days' PRECEDING AND CURRENT ROW keeps exactly the rows whose day is between day − 6 and day, however many that is. avg() and count(peak) both skip NULLs, so NULL peaks neither drag the average down nor count as readings, and a window with only NULLs gives a NULL average and 0 readings. Treating missing days as 0 would need a generate_series calendar first; the prompt asks to skip them.",
+  "notes": "RANGE with an offset needs exactly one ORDER BY column whose type has an in_range support function; date with interval is supported since Postgres 11. The primary key on (server, day) gives the sort order for the WindowAgg, so the plan can be an index scan with no sort. For very long histories, precomputing daily rows in a rollup table keeps this query cheap.",
+  "followUps": [
+    "Treat missing days as 0 players instead of skipping them.",
+    "Only show the average once the window has at least 4 readings."
+  ]
+}

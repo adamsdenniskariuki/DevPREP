@@ -1,14 +1,14 @@
 import { isLanguageTrack, lessons } from './curriculum'
 import type { Lesson, LessonLab, Track } from './curriculum-types'
 import type { DesignCase } from './case-types'
-import type { Problem } from './problem-types'
+import type { Problem, SqlProblem } from './problem-types'
 import type { FieldGuideEntry } from './guide-types'
 import { TOPIC_TRACK } from './guide-types'
 import { COMPETENCIES, SSE_SIGNALS } from './stories'
 
 export type MockLevel = 'se' | 'sse'
 export interface MockQuestion {
-  kind: 'problem' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide' | 'trivia'
+  kind: 'problem' | 'sql' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide' | 'trivia'
   /** Problem, case, lesson, Field Guide or competency id the question came from. */
   ref: string
   title: string
@@ -77,6 +77,8 @@ export interface MockData {
   guides?: Map<string, FieldGuideEntry>
   /** Language lesson labs. When given, language mocks become a coding task plus predict-the-output trivia rounds. */
   labs?: Map<string, LessonLab>
+  /** SQL interview problems. When given, the SQL mock's coding task is one of them. */
+  sqlProblems?: Map<string, SqlProblem>
 }
 
 export const TRIVIA_ROUNDS = 4
@@ -124,7 +126,16 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
     const lesson = pick(usable, random)
     const lab = data.labs.get(lesson.id)
     const core = lab?.exercises.find(exercise => exercise.id === 'core')
-    questions.push({ kind: 'task', ref: lesson.id, title: lesson.title, prompt: lesson.task, answer: core ? `${lesson.solution}\n\n${core.solution}` : lesson.solution, rubric: lesson.checklist })
+    const sqlPool = track === 'sql' ? [...data.sqlProblems?.values() ?? []] : []
+    if (sqlPool.length) {
+      const fit = sqlPool.filter(problem => level === 'sse' ? problem.difficulty !== 'warm-up' : problem.level === 'se')
+      const problem = pick(fit.length ? fit : sqlPool, random)
+      questions.push({
+        kind: 'sql', ref: problem.id, title: problem.title, prompt: problem.prompt,
+        answer: `${problem.explanation}\n\n${problem.exercise.solution}\n\n${problem.notes}`,
+        rubric: ['Asked about duplicates, NULLs and ties before writing SQL', 'Named the tables, keys and grain of the result', 'Wrote a query that returns the right columns and rows', 'Checked an edge case by hand (empty group, NULL, tie)', 'Discussed an index or the cost at scale'],
+      })
+    } else questions.push({ kind: 'task', ref: lesson.id, title: lesson.title, prompt: lesson.task, answer: core ? `${lesson.solution}\n\n${core.solution}` : lesson.solution, rubric: lesson.checklist })
     const items = shuffle(usable.flatMap(item => (data.labs!.get(item.id)?.predict ?? []).map(predict => ({ lesson: item, predict }))), random).slice(0, TRIVIA_ROUNDS)
     for (const { lesson: item, predict } of items) {
       questions.push({

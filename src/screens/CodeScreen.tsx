@@ -9,19 +9,10 @@ import type { CodeLanguage, Problem, ProblemSummary } from '../problem-types'
 import { formatArgs, formatValue } from '../runner/core'
 import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
+import TextBlocks from '../components/TextBlocks'
 
 const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
 const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
-
-/** Renders plain prompt text: blank lines split paragraphs, "- " lines become a list. */
-function TextBlocks({ text }: { text: string }) {
-  return <>{text.split(/\n\s*\n/).map((block, index) => {
-    const lines = block.split('\n').map(line => line.trim()).filter(Boolean)
-    return lines.every(line => line.startsWith('- '))
-      ? <ul key={index}>{lines.map(line => <li key={line}>{line.slice(2)}</li>)}</ul>
-      : <p key={index}>{lines.join(' ')}</p>
-  })}</>
-}
 
 function SolvedMarks({ solved }: { solved: Partial<Record<CodeLanguage, string>> | undefined }) {
   if (!solved) return null

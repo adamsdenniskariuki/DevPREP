@@ -1,0 +1,163 @@
+{
+  "id": "greenhouse-status-changes",
+  "title": "When greenhouse sensors change status",
+  "topic": "Gaps & islands",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-window-functions",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "Soil sensors in a greenhouse report one status per day: 'ok', 'dry' or 'wet'. The gardener only cares about the days a sensor switched to a different status.\n\nFor each reading whose status differs from the same sensor's previous reading, return the sensor, the day, the previous status and the new status.\n\n- Columns: sensor_id, read_on, old_status, new_status\n- Any row order is fine\n- \"Previous\" means the same sensor's latest earlier reading, even if days were skipped\n- A sensor's first reading is never a change",
+  "hints": [
+    "You need to compare each row with the row before it. Which window function looks one row back?",
+    "lag(status) OVER (...) gives the previous status. Make sure 'previous' never reaches into another sensor's readings.",
+    "Compute lag(status) OVER (PARTITION BY sensor_id ORDER BY read_on) in a CTE, then keep rows where it is not NULL and differs from status."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE readings (\n  sensor_id int NOT NULL,\n  read_on date NOT NULL,\n  status text NOT NULL CHECK (status IN ('ok', 'dry', 'wet')),\n  PRIMARY KEY (sensor_id, read_on)\n);",
+    "starter": "-- Days a sensor changed status\nWITH r AS (\n  SELECT sensor_id, read_on,\n         lag(status) OVER (ORDER BY sensor_id, read_on) AS old_status,\n         status AS new_status\n  FROM readings\n)\nSELECT sensor_id, read_on, old_status, new_status\nFROM r\nWHERE old_status <> new_status;",
+    "solution": "WITH r AS (\n  SELECT sensor_id, read_on,\n         lag(status) OVER (PARTITION BY sensor_id ORDER BY read_on) AS old_status,\n         status AS new_status\n  FROM readings\n)\nSELECT sensor_id, read_on, old_status, new_status\nFROM r\nWHERE old_status <> new_status;",
+    "tests": [
+      {
+        "name": "one sensor switching twice",
+        "seed": "INSERT INTO readings VALUES (1, '2026-06-01', 'ok'), (1, '2026-06-02', 'ok'), (1, '2026-06-03', 'dry'), (1, '2026-06-04', 'dry'), (1, '2026-06-05', 'ok');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": [
+            [
+              1,
+              "2026-06-03",
+              "ok",
+              "dry"
+            ],
+            [
+              1,
+              "2026-06-05",
+              "dry",
+              "ok"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "two sensors do not compare with each other",
+        "seed": "INSERT INTO readings VALUES (1, '2026-06-01', 'ok'), (1, '2026-06-02', 'dry'), (2, '2026-06-01', 'ok'), (2, '2026-06-02', 'ok');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": [
+            [
+              1,
+              "2026-06-02",
+              "ok",
+              "dry"
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "single reading",
+        "seed": "INSERT INTO readings VALUES (9, '2026-06-01', 'wet');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "skipped days and out of order inserts",
+        "seed": "INSERT INTO readings VALUES (3, '2026-06-10', 'wet'), (3, '2026-06-01', 'ok'), (3, '2026-06-04', 'ok');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": [
+            [
+              3,
+              "2026-06-10",
+              "ok",
+              "wet"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "flapping every day",
+        "seed": "INSERT INTO readings VALUES (4, '2026-06-01', 'dry'), (4, '2026-06-02', 'wet'), (4, '2026-06-03', 'dry'), (5, '2026-06-01', 'dry');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": [
+            [
+              4,
+              "2026-06-02",
+              "dry",
+              "wet"
+            ],
+            [
+              4,
+              "2026-06-03",
+              "wet",
+              "dry"
+            ]
+          ]
+        }
+      },
+      {
+        "name": "never changes",
+        "seed": "INSERT INTO readings VALUES (6, '2026-06-01', 'ok'), (6, '2026-06-02', 'ok'), (7, '2026-06-01', 'dry');",
+        "expected": {
+          "columns": [
+            "sensor_id",
+            "read_on",
+            "old_status",
+            "new_status"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "A change is a boundary between two islands of equal status, and lag() finds it by putting the previous status next to the current one. PARTITION BY sensor_id is essential: without it the first reading of sensor 2 is compared with the last reading of sensor 1 and can produce a fake change. The first reading of each sensor has a NULL lag, and NULL <> 'ok' is NULL, so the WHERE drops it without extra code. Ordering by read_on (not by a date minus one day) means skipped days are handled correctly.",
+  "notes": "The primary key (sensor_id, read_on) matches the window's PARTITION BY and ORDER BY, so Postgres can feed the WindowAgg from an index scan without a separate sort. IS DISTINCT FROM is the safer comparison if status were nullable.",
+  "followUps": [
+    "Return how many days each status lasted before it changed.",
+    "Status can now be NULL when a sensor is offline. How do you treat NULL as its own status?"
+  ]
+}

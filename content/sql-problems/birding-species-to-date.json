@@ -1,0 +1,66 @@
+{
+  "id": "birding-species-to-date",
+  "title": "Cumulative distinct species count",
+  "topic": "Window functions",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-window-functions",
+  "paths": ["senior"],
+  "prompt": "A birding club logs every sighting. Common birds are seen again and again, and some sightings could not be identified, so their species is NULL.\n\nBuild a daily life-list report: one row per day that has at least one sighting.\n\n- Columns: day, sightings, new_species, species_to_date\n- sightings: all sightings that day, including unidentified ones\n- new_species: species first seen by the club on that day (a species seen twice that day counts once)\n- species_to_date: distinct species seen on or before that day\n- NULL species never count as a species\n- Order rows by day",
+  "hints": [
+    "Postgres does not allow count(DISTINCT ...) as a window function, and summing each day's distinct count double-counts repeat visitors.",
+    "A species adds 1 to the life list exactly once: on the first day it was seen. Find that day per species with min().",
+    "Count first days per date, LEFT JOIN that onto the per-day sighting counts, and take sum(new_species) OVER (ORDER BY day) for the running total."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE sightings (id int PRIMARY KEY, seen_on date NOT NULL, observer text NOT NULL, species text);",
+    "starter": "-- Daily life list\nSELECT seen_on AS day,\n       count(*) AS sightings,\n       count(DISTINCT species) AS new_species,\n       sum(count(DISTINCT species)) OVER (ORDER BY seen_on) AS species_to_date\nFROM sightings\nGROUP BY seen_on\nORDER BY seen_on;",
+    "solution": "WITH firsts AS (\n  SELECT species, min(seen_on) AS first_day\n  FROM sightings\n  WHERE species IS NOT NULL\n  GROUP BY species\n), new_by_day AS (\n  SELECT first_day AS day, count(*) AS new_species\n  FROM firsts\n  GROUP BY first_day\n), days AS (\n  SELECT seen_on AS day, count(*) AS sightings\n  FROM sightings\n  GROUP BY seen_on\n)\nSELECT d.day, d.sightings,\n       COALESCE(n.new_species, 0) AS new_species,\n       sum(COALESCE(n.new_species, 0)) OVER (ORDER BY d.day) AS species_to_date\nFROM days d\nLEFT JOIN new_by_day n USING (day)\nORDER BY d.day;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "repeat species and an unidentified bird",
+        "seed": "INSERT INTO sightings VALUES (1, '2026-06-01', 'Rui', 'robin'), (2, '2026-06-01', 'Kat', 'wren'), (3, '2026-06-01', 'Kat', 'robin'), (4, '2026-06-02', 'Rui', 'wren'), (5, '2026-06-02', 'Ola', 'heron'), (6, '2026-06-04', 'Ola', 'robin'), (7, '2026-06-04', 'Rui', NULL), (8, '2026-06-05', 'Kat', 'kite');",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-06-01", 3, 2, 2], ["2026-06-02", 2, 1, 3], ["2026-06-04", 2, 0, 3], ["2026-06-05", 1, 1, 4]] }
+      },
+      {
+        "name": "every bird is new",
+        "seed": "INSERT INTO sightings VALUES (1, '2026-06-10', 'Rui', 'owl'), (2, '2026-06-11', 'Kat', 'lark'), (3, '2026-06-11', 'Ola', 'finch');",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-06-10", 1, 1, 1], ["2026-06-11", 2, 2, 3]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "only unidentified sightings",
+        "seed": "INSERT INTO sightings VALUES (1, '2026-07-01', 'Rui', NULL), (2, '2026-07-01', 'Kat', NULL);",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-07-01", 2, 0, 0]] }
+      },
+      {
+        "name": "same species twice in a day then again",
+        "seed": "INSERT INTO sightings VALUES (1, '2026-07-01', 'Rui', 'crow'), (2, '2026-07-01', 'Kat', 'crow'), (3, '2026-07-02', 'Ola', 'crow');",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-07-01", 2, 1, 1], ["2026-07-02", 1, 0, 1]] }
+      },
+      {
+        "name": "unidentified-only day in the middle",
+        "seed": "INSERT INTO sightings VALUES (5, '2026-07-03', 'Rui', 'tern'), (4, '2026-07-03', 'Kat', 'gull'), (2, '2026-07-02', 'Ola', NULL), (1, '2026-07-01', 'Rui', 'gull');",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-07-01", 1, 1, 1], ["2026-07-02", 1, 0, 1], ["2026-07-03", 2, 1, 2]] }
+      },
+      {
+        "name": "many observers, larger log",
+        "seed": "INSERT INTO sightings SELECT g, DATE '2026-08-01' + (g % 5), 'obs' || (g % 3),         'sp' || (g % 7) FROM generate_series(1, 20) g;",
+                "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [["2026-08-01", 4, 4, 4], ["2026-08-02", 4, 2, 6], ["2026-08-03", 4, 1, 7], ["2026-08-04", 4, 0, 7], ["2026-08-05", 4, 0, 7]] }
+      },
+      {
+        "name": "no sightings",
+        "seed": "",
+        "expected": { "columns": ["day", "sightings", "new_species", "species_to_date"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "count(DISTINCT species) OVER (...) is rejected by Postgres, and adding up each day's distinct count counts a robin again every day it returns. The fix is to notice that a species joins the life list exactly once, on its first day, so min(seen_on) per species gives one event per species. Counting those events per day gives new_species, and a running sum over days gives species_to_date. The LEFT JOIN keeps days with no new species (and days with only unidentified birds) with 0, and filtering species IS NOT NULL before min() keeps NULL out of the species count.",
+  "notes": "Each CTE is one hash aggregate over sightings, so the query scans the table twice and sorts only the per-day rows for the window. An index on (species, seen_on) lets the first-day aggregate run as an index-only scan. An alternative is a self-join or a correlated count(DISTINCT) per day, which is O(days × rows) and much slower on long logs.",
+  "followUps": [
+    "Produce the same report per observer (each observer's own life list).",
+    "Include every calendar day between the first and last sighting, even days with none."
+  ]
+}

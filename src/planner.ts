@@ -8,12 +8,13 @@ import { knownLessons } from './progress'
 import type { Progress } from './progress'
 import { MOCK_MINUTES } from './mocks'
 import { guideIndex } from './guides'
+import { sqlProblemIndex, sqlTopicProgress } from './sql-problems'
 import { TOPIC_TRACK } from './guide-types'
 
-export type PlanKind = 'lesson' | 'cards' | 'problem' | 'case' | 'guide' | 'mock' | 'rest'
+export type PlanKind = 'lesson' | 'cards' | 'problem' | 'sql' | 'case' | 'guide' | 'mock' | 'rest'
 export interface PlanItem {
   kind: PlanKind
-  /** Lesson, problem, case or Field Guide id; the track for mocks. */
+  /** Lesson, problem, SQL problem, case or Field Guide id; the track for mocks. */
   ref?: string
   title: string
   minutes: number
@@ -82,6 +83,24 @@ export function problemQueue(progress: Progress) {
 }
 
 /**
+ * Unsolved SQL interview problems in plan order, only once the SQL track is opted in: path-core first,
+ * then topics with the lowest share solved, then easier first. SSE-only problems need the senior path.
+ */
+export function sqlProblemQueue(progress: Progress) {
+  if (!trackOptedIn(progress, 'sql')) return []
+  const path = progress.selectedPath
+  const share = new Map(sqlTopicProgress(progress).map(row => [row.topic as string, row.solved / row.total]))
+  return sqlProblemIndex
+    .filter(problem => !progress.sqlSolved?.[problem.id] && (path === 'senior' || problem.level === 'se'))
+    .map((problem, order) => ({ problem, order }))
+    .sort((a, b) => Number(isPathCore(b.problem, path)) - Number(isPathCore(a.problem, path))
+      || share.get(a.problem.topic)! - share.get(b.problem.topic)!
+      || DIFFICULTY_ORDER[a.problem.difficulty] - DIFFICULTY_ORDER[b.problem.difficulty]
+      || a.order - b.order)
+    .map(item => item.problem)
+}
+
+/**
  * Unread Field Guide entries in plan order: topics that feed focus or weak tracks first, then entries
  * at the user's level (SSE first on the senior path, SE first otherwise), then content order.
  */
@@ -101,7 +120,7 @@ export function guideQueue(progress: Progress) {
 /**
  * Builds a day-by-day plan from today until the interview (or a default week).
  * Every day has flashcards; lessons are spread evenly (up to 3 a day); coding problems and
- * design cases alternate; every third day adds a Field Guide entry; mocks land weekly and on the two days before the interview,
+ * design cases alternate; every third day adds a Field Guide entry (and a SQL problem once the SQL track is opted in); mocks land weekly and on the two days before the interview,
  * which itself is a light review day.
  */
 export function planStudy(progress: Progress, today: string): StudyPlan {
@@ -119,7 +138,8 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
   const cases = caseIndex.filter(item => !progress.designs?.[item.id]).sort((a, b) => Number(senior ? b.level === 'sse' : a.level === 'sse') - Number(senior ? a.level === 'sse' : b.level === 'sse'))
   const mockTracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
   const guides = guideQueue(progress)
-  let lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0, guideAt = 0
+  const sqlProblems = sqlProblemQueue(progress)
+  let sqlAt = 0, lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0, guideAt = 0
   const days: PlanDay[] = []
   for (let index = 0; index < total; index++) {
     const value = start + index
@@ -143,6 +163,10 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
     if (index % 3 === 2 && guideAt < guides.length) {
       const item = guides[guideAt++]
       items.push({ kind: 'guide', ref: item.id, title: item.title, minutes: item.minutes })
+    }
+    if (index % 3 === 1 && sqlAt < sqlProblems.length) {
+      const problem = sqlProblems[sqlAt++]
+      items.push({ kind: 'sql', ref: problem.id, title: `SQL: ${problem.title}`, minutes: 20 })
     }
     const daysLeft = dated ? dayNumber(saved!) - value : Infinity
     if (index % 7 === 6 || daysLeft === 1 || daysLeft === 2) {

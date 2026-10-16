@@ -1,0 +1,71 @@
+{
+  "id": "podcast-play-counter-upsert",
+  "title": "Fold a batch of plays into episode counters",
+  "topic": "Data changes & design",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-upserts",
+  "paths": ["swe", "senior"],
+  "prompt": "A podcast app keeps running totals per episode in episode_stats. Every few minutes the raw plays that arrived since the last run land in play_batch, one row per play.\n\nWrite SQL that folds play_batch into episode_stats. For an episode that already has a row, add the new plays and seconds and move last_played forward. For an episode with no row yet, insert one.\n\n- The check runs SELECT episode_id, plays, seconds_listened, last_played FROM episode_stats\n- plays grows by the number of batch rows for the episode\n- seconds can be NULL (the client did not report it); such a play still counts but adds 0 seconds\n- last_played becomes the later of the stored date and the newest played_on in the batch; a stored NULL counts as no date\n- One episode can appear many times in the batch\n- Any row order is fine",
+  "hints": [
+    "Insert-or-update in one statement is INSERT ... ON CONFLICT (episode_id) DO UPDATE. Inside DO UPDATE, EXCLUDED is the row you tried to insert.",
+    "If the batch has two rows for one episode, a single upsert would try to update the same row twice, which Postgres rejects. Aggregate the batch per episode first.",
+    "INSERT INTO episode_stats AS s SELECT episode_id, count(*), coalesce(sum(seconds), 0), max(played_on) FROM play_batch GROUP BY episode_id ON CONFLICT (episode_id) DO UPDATE SET plays = s.plays + EXCLUDED.plays, ... last_played = greatest(s.last_played, EXCLUDED.last_played);"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE episode_stats (episode_id int PRIMARY KEY, plays int NOT NULL, seconds_listened int NOT NULL, last_played date);\nCREATE TABLE play_batch (id int PRIMARY KEY, episode_id int NOT NULL, seconds int, played_on date NOT NULL);",
+    "starter": "-- Fold play_batch into episode_stats\nSELECT 1;",
+    "solution": "INSERT INTO episode_stats AS s (episode_id, plays, seconds_listened, last_played)\nSELECT episode_id, count(*), coalesce(sum(seconds), 0), max(played_on)\nFROM play_batch\nGROUP BY episode_id\nON CONFLICT (episode_id) DO UPDATE\nSET plays = s.plays + EXCLUDED.plays,\n    seconds_listened = s.seconds_listened + EXCLUDED.seconds_listened,\n    last_played = greatest(s.last_played, EXCLUDED.last_played);",
+    "check": "SELECT episode_id, plays, seconds_listened, last_played FROM episode_stats;",
+    "tests": [
+      {
+        "name": "existing and new episodes",
+        "seed": "INSERT INTO episode_stats VALUES (1, 10, 3000, '2026-03-01'), (2, 4, 800, '2026-03-05');\nINSERT INTO play_batch VALUES (1, 1, 120, '2026-03-06'), (2, 1, 60, '2026-03-07'), (3, 3, 200, '2026-03-07');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[1, 12, 3180, "2026-03-07"], [2, 4, 800, "2026-03-05"], [3, 1, 200, "2026-03-07"]] }
+      },
+      {
+        "name": "empty batch changes nothing",
+        "seed": "INSERT INTO episode_stats VALUES (5, 1, 10, '2026-01-01');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[5, 1, 10, "2026-01-01"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "plays with NULL seconds",
+        "seed": "INSERT INTO episode_stats VALUES (1, 2, 100, '2026-02-01');\nINSERT INTO play_batch VALUES (1, 1, NULL, '2026-02-02'), (2, 1, NULL, '2026-02-03'), (3, 4, NULL, '2026-02-03');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[1, 4, 100, "2026-02-03"], [4, 1, 0, "2026-02-03"]] }
+      },
+      {
+        "name": "late plays do not move last_played back",
+        "seed": "INSERT INTO episode_stats VALUES (1, 5, 500, '2026-04-10');\nINSERT INTO play_batch VALUES (1, 1, 50, '2026-04-01');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[1, 6, 550, "2026-04-10"]] }
+      },
+      {
+        "name": "stored last_played is NULL",
+        "seed": "INSERT INTO episode_stats VALUES (1, 0, 0, NULL);\nINSERT INTO play_batch VALUES (1, 1, 30, '2026-05-05');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[1, 1, 30, "2026-05-05"]] }
+      },
+      {
+        "name": "new episode played several times",
+        "seed": "INSERT INTO play_batch VALUES (1, 7, 10, '2026-06-01'), (2, 7, 20, '2026-06-03'), (3, 7, 30, '2026-06-02');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[7, 3, 60, "2026-06-03"]] }
+      },
+      {
+        "name": "mix of NULL and real seconds",
+        "seed": "INSERT INTO episode_stats VALUES (2, 1, 15, '2026-06-01');\nINSERT INTO play_batch VALUES (1, 2, NULL, '2026-06-02'), (2, 2, 45, '2026-06-02');",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [[2, 3, 60, "2026-06-02"]] }
+      },
+      {
+        "name": "both tables empty",
+        "seed": "",
+        "expected": { "columns": ["episode_id", "plays", "seconds_listened", "last_played"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "Aggregating the batch first gives one candidate row per episode, so ON CONFLICT can update each stored row at most once; feeding raw rows fails with 'ON CONFLICT DO UPDATE command cannot affect row a second time'. count(*) counts plays even when seconds is NULL, while count(seconds) would undercount. sum(seconds) is NULL when every value is NULL, and adding NULL would wipe the total, so coalesce it to 0. greatest() ignores NULL arguments in Postgres, so it handles both a stored NULL and late-arriving plays.",
+  "notes": "INSERT ... ON CONFLICT is atomic per row, so concurrent batches cannot both insert the same episode; one waits for the other and then takes the DO UPDATE path. Concurrent batches touching the same episodes can deadlock if they lock rows in different orders, so adding ORDER BY episode_id to the SELECT is a cheap safeguard. In production you would also delete or mark the batch rows in the same transaction, for example with a data-modifying CTE (WITH moved AS (DELETE FROM play_batch RETURNING *) ...).",
+  "followUps": [
+    "How would you make the job safe to re-run if it crashes after the upsert but before the batch is cleared?",
+    "When would you prefer MERGE over INSERT ... ON CONFLICT here?"
+  ]
+}

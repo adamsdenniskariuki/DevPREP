@@ -1,0 +1,66 @@
+{
+  "id": "keyset-match-history-page",
+  "title": "Next page of match history with a keyset cursor",
+  "topic": "Data changes & design",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-pagination",
+  "paths": ["swe"],
+  "prompt": "A game server shows each player's finished matches, newest first, four per page. OFFSET pages got slow and skipped rows when new matches finished, so the client now sends a cursor: the finished_at and id of the last match it already shows.\n\nThe cursor is stored in page_cursor (at most one row). Return the next page: the 4 matches that come after the cursor in the order finished_at newest first, then id highest first. If page_cursor is empty, return the first page.\n\n- Columns: id, map, finished_at (formatted as text 'YYYY-MM-DD HH24:MI')\n- Order: finished_at descending, then id descending\n- Several matches can finish at the same instant; none may be skipped or repeated across pages\n- The match the cursor points to may have been deleted; still continue from its position\n- Return fewer than 4 rows (or none) near the end",
+  "hints": [
+    "The page order is (finished_at DESC, id DESC). 'After the cursor' means strictly smaller in that pair order.",
+    "finished_at < cursor alone skips matches that tie with the cursor's time. Compare the pair: Postgres supports row comparisons like (a, b) < (x, y).",
+    "WHERE NOT EXISTS (SELECT 1 FROM page_cursor) OR (m.finished_at, m.id) < (SELECT last_finished_at, last_id FROM page_cursor) ORDER BY m.finished_at DESC, m.id DESC LIMIT 4"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE matches (id int PRIMARY KEY, map text NOT NULL, finished_at timestamp NOT NULL);\nCREATE INDEX matches_finished_id ON matches (finished_at DESC, id DESC);\nCREATE TABLE page_cursor (last_finished_at timestamp NOT NULL, last_id int NOT NULL);",
+    "starter": "-- Next page after the cursor in page_cursor\nSELECT id, map, to_char(finished_at, 'YYYY-MM-DD HH24:MI') AS finished_at\nFROM matches\nORDER BY finished_at DESC\nLIMIT 4;",
+    "solution": "SELECT m.id, m.map, to_char(m.finished_at, 'YYYY-MM-DD HH24:MI') AS finished_at\nFROM matches m\nWHERE NOT EXISTS (SELECT 1 FROM page_cursor)\n   OR (m.finished_at, m.id) < (SELECT c.last_finished_at, c.last_id FROM page_cursor c)\nORDER BY m.finished_at DESC, m.id DESC\nLIMIT 4;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "second page after a cursor",
+        "seed": "INSERT INTO matches VALUES (1, 'dunes', '2026-07-01 10:00'), (2, 'harbor', '2026-07-01 11:00'), (3, 'canyon', '2026-07-01 11:00'), (4, 'dunes', '2026-07-01 12:00'), (5, 'citadel', '2026-07-01 12:30'), (6, 'harbor', '2026-07-01 13:00'), (7, 'canyon', '2026-07-01 09:00');\nINSERT INTO page_cursor VALUES ('2026-07-01 12:00', 4);",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [[3, "canyon", "2026-07-01 11:00"], [2, "harbor", "2026-07-01 11:00"], [1, "dunes", "2026-07-01 10:00"], [7, "canyon", "2026-07-01 09:00"]] }
+      },
+      {
+        "name": "no cursor gives the first page",
+        "seed": "INSERT INTO matches VALUES (1, 'dunes', '2026-07-01 10:00'), (2, 'harbor', '2026-07-01 11:00'), (3, 'canyon', '2026-07-01 11:00'), (4, 'dunes', '2026-07-01 12:00'), (5, 'citadel', '2026-07-01 12:30'), (6, 'harbor', '2026-07-01 13:00');",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [[6, "harbor", "2026-07-01 13:00"], [5, "citadel", "2026-07-01 12:30"], [4, "dunes", "2026-07-01 12:00"], [3, "canyon", "2026-07-01 11:00"]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "cursor in the middle of a tie",
+        "seed": "INSERT INTO matches VALUES (10, 'a', '2026-08-01 10:00'), (11, 'b', '2026-08-01 10:00'), (12, 'c', '2026-08-01 10:00'), (13, 'd', '2026-08-01 09:00');\nINSERT INTO page_cursor VALUES ('2026-08-01 10:00', 12);",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [[11, "b", "2026-08-01 10:00"], [10, "a", "2026-08-01 10:00"], [13, "d", "2026-08-01 09:00"]] }
+      },
+      {
+        "name": "cursor at the last match",
+        "seed": "INSERT INTO matches VALUES (1, 'x', '2026-01-01 00:00');\nINSERT INTO page_cursor VALUES ('2026-01-01 00:00', 1);",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [] }
+      },
+      {
+        "name": "cursor match was deleted",
+        "seed": "INSERT INTO matches VALUES (20, 'a', '2026-09-01 08:00'), (21, 'b', '2026-09-01 09:00'), (22, 'c', '2026-09-01 10:00');\nINSERT INTO page_cursor VALUES ('2026-09-01 09:30', 99);",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [[21, "b", "2026-09-01 09:00"], [20, "a", "2026-09-01 08:00"]] }
+      },
+      {
+        "name": "many pages with paired ties",
+        "seed": "INSERT INTO matches SELECT i, 'm' || i, timestamp '2026-10-01 00:00' + (i / 2) * interval '1 hour' FROM generate_series(1, 20) AS i;\nINSERT INTO page_cursor VALUES ('2026-10-01 07:00', 14);",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [[13, "m13", "2026-10-01 06:00"], [12, "m12", "2026-10-01 06:00"], [11, "m11", "2026-10-01 05:00"], [10, "m10", "2026-10-01 05:00"]] }
+      },
+      {
+        "name": "no matches and no cursor",
+        "seed": "",
+        "expected": { "columns": ["id", "map", "finished_at"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "Keyset pagination continues from the last seen sort key instead of counting rows, so it needs a total order; id breaks ties on finished_at. The row comparison (finished_at, id) < (cursor_time, cursor_id) is true when finished_at is earlier, or equal with a smaller id, which is exactly 'after the cursor' in a descending order. The classic trap is WHERE finished_at < cursor_time, which silently skips the other matches that finished at the same instant; using <= repeats them. When page_cursor is empty the row subquery yields NULL, so the NOT EXISTS branch is what returns the first page.",
+  "notes": "With the index on (finished_at DESC, id DESC), Postgres can turn the row comparison into an index range scan that starts at the cursor and stops after 4 rows, so every page costs the same. OFFSET n must read and throw away n rows, so deep pages get slower, and rows shift when new matches finish. Row comparisons only use the index well when all columns sort in the same direction; mixed directions need the expanded OR form or a different index.",
+  "followUps": [
+    "How would you build a 'previous page' query from the first row currently shown?",
+    "The list must be sorted by score DESC but id ASC as the tie-breaker. How does the WHERE clause change?"
+  ]
+}

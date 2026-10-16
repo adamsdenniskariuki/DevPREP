@@ -1,0 +1,66 @@
+{
+  "id": "reprice-open-ferry-bookings",
+  "title": "Reprice open ferry bookings",
+  "topic": "Data changes & design",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-joins",
+  "paths": ["swe"],
+  "prompt": "A ferry operator publishes a new fare sheet each season. Every booking that has not sailed yet must be charged the new fare for its route and cabin class.\n\nWrite one statement that sets bookings.fare to the fare_sheet fare for the same route and cabin, but only for bookings whose status is 'open'.\n\n- The check runs SELECT id, fare FROM bookings after your SQL\n- Bookings with status 'sailed' keep their fare\n- An open booking with no matching (route, cabin) row in fare_sheet keeps its fare; never set it to NULL\n- A match needs both route and cabin to be equal\n- Any row order is fine",
+  "hints": [
+    "You are updating one table using values from another. Which UPDATE form lets you join?",
+    "UPDATE bookings b SET fare = f.fare FROM fare_sheet f WHERE ... only touches rows that find a match.",
+    "UPDATE bookings b SET fare = f.fare FROM fare_sheet f WHERE f.route = b.route AND f.cabin = b.cabin AND b.status = 'open';"
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE fare_sheet (route text NOT NULL, cabin text NOT NULL, fare numeric(7,2) NOT NULL, PRIMARY KEY (route, cabin));\nCREATE TABLE bookings (id int PRIMARY KEY, route text NOT NULL, cabin text NOT NULL, status text NOT NULL, fare numeric(7,2) NOT NULL);",
+    "starter": "-- Apply the new fare sheet to open bookings\nSELECT 1;",
+    "solution": "UPDATE bookings b\nSET fare = f.fare\nFROM fare_sheet f\nWHERE f.route = b.route\n  AND f.cabin = b.cabin\n  AND b.status = 'open';",
+    "check": "SELECT id, fare FROM bookings;",
+    "tests": [
+      {
+        "name": "open bookings get the new fare",
+        "seed": "INSERT INTO fare_sheet VALUES ('ARK-BAY', 'deck', 18.00), ('ARK-BAY', 'cabin', 55.00), ('BAY-ISL', 'deck', 12.50);\nINSERT INTO bookings VALUES (1, 'ARK-BAY', 'deck', 'open', 15.00), (2, 'ARK-BAY', 'cabin', 'open', 50.00), (3, 'ARK-BAY', 'deck', 'sailed', 15.00), (4, 'BAY-ISL', 'cabin', 'open', 30.00), (5, 'BAY-ISL', 'deck', 'open', 12.50);",
+        "expected": { "columns": ["id", "fare"], "rows": [[1, 18.00], [2, 55.00], [3, 15.00], [4, 30.00], [5, 12.50]] }
+      },
+      {
+        "name": "empty fare sheet changes nothing",
+        "seed": "INSERT INTO bookings VALUES (1, 'ARK-BAY', 'deck', 'open', 15.00), (2, 'BAY-ISL', 'cabin', 'sailed', 41.00);",
+        "expected": { "columns": ["id", "fare"], "rows": [[1, 15.00], [2, 41.00]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "route matches but cabin does not",
+        "seed": "INSERT INTO fare_sheet VALUES ('R1', 'deck', 10.00);\nINSERT INTO bookings VALUES (1, 'R1', 'cabin', 'open', 40.00), (2, 'R1', 'deck', 'open', 9.00);",
+        "expected": { "columns": ["id", "fare"], "rows": [[1, 40.00], [2, 10.00]] }
+      },
+      {
+        "name": "every booking has sailed",
+        "seed": "INSERT INTO fare_sheet VALUES ('R1', 'deck', 10.00), ('R2', 'deck', 20.00);\nINSERT INTO bookings VALUES (1, 'R1', 'deck', 'sailed', 8.00), (2, 'R2', 'deck', 'sailed', 18.00);",
+        "expected": { "columns": ["id", "fare"], "rows": [[1, 8.00], [2, 18.00]] }
+      },
+      {
+        "name": "new fare can be lower",
+        "seed": "INSERT INTO fare_sheet VALUES ('R9', 'cabin', 33.25);\nINSERT INTO bookings VALUES (7, 'R9', 'cabin', 'open', 60.00), (8, 'R9', 'cabin', 'open', 33.25);",
+        "expected": { "columns": ["id", "fare"], "rows": [[7, 33.25], [8, 33.25]] }
+      },
+      {
+        "name": "cabin row on another route is not used",
+        "seed": "INSERT INTO fare_sheet VALUES ('R1', 'cabin', 70.00), ('R2', 'deck', 11.00);\nINSERT INTO bookings VALUES (1, 'R2', 'cabin', 'open', 50.00), (2, 'R1', 'deck', 'open', 12.00);",
+        "expected": { "columns": ["id", "fare"], "rows": [[1, 50.00], [2, 12.00]] }
+      },
+      {
+        "name": "no bookings",
+        "seed": "INSERT INTO fare_sheet VALUES ('R1', 'deck', 10.00);",
+        "expected": { "columns": ["id", "fare"], "rows": [] }
+      }
+    ]
+  },
+  "explanation": "UPDATE ... FROM joins the target to fare_sheet and only updates bookings that find a matching row, so bookings with no fare stay as they are. The join must use both route and cabin; joining on route alone matches several fare rows and Postgres picks one of them unpredictably. The trap is the correlated-subquery form SET fare = (SELECT f.fare FROM fare_sheet f WHERE ...) without a WHERE EXISTS guard: it writes NULL (here, it fails the NOT NULL constraint) for unmatched bookings. Forgetting the status filter reprices bookings that already sailed.",
+  "notes": "Because fare_sheet has a primary key on (route, cabin), each booking matches at most one row and the update is deterministic. Postgres writes a new row version for every updated row, even when the fare does not change; adding AND b.fare IS DISTINCT FROM f.fare skips those writes and reduces bloat. The SQL-standard alternative is MERGE INTO bookings USING fare_sheet ... WHEN MATCHED AND status = 'open' THEN UPDATE.",
+  "followUps": [
+    "How would you return the old and new fare for each changed booking in the same statement?",
+    "What happens if fare_sheet had no primary key and contained two rows for the same route and cabin?"
+  ]
+}

@@ -1,0 +1,182 @@
+{
+  "id": "ferry-bookings-by-class",
+  "title": "Ferry bookings pivoted by class",
+  "topic": "Aggregation",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-aggregates",
+  "prompt": "A small ferry company sells three classes of ticket: deck, cabin and suite. Each booking is either paid or refunded.\n\nBuild a one-row-per-route summary: the number of paid bookings in each class as separate columns, and the total fare of paid bookings.\n\n- Columns: route, deck, cabin, suite, paid_revenue\n- Order by route ascending\n- Refunded bookings count for nothing, but a route that only has refunded bookings still appears with zeros\n- paid_revenue is 0, not NULL, when a route has no paid bookings",
+  "hints": [
+    "You need one row per route and several counts side by side. That is conditional aggregation.",
+    "Use count(*) FILTER (WHERE ...) for each class. If you put status = 'paid' in WHERE, routes with only refunds disappear.",
+    "count(*) FILTER (WHERE status = 'paid' AND class = 'deck') AS deck, ... and coalesce(sum(fare) FILTER (WHERE status = 'paid'), 0) AS paid_revenue, GROUP BY route ORDER BY route."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE bookings (id int PRIMARY KEY, route text NOT NULL, class text NOT NULL CHECK (class IN ('deck', 'cabin', 'suite')), fare numeric(8,2) NOT NULL, status text NOT NULL CHECK (status IN ('paid', 'refunded')));",
+    "starter": "-- Paid bookings per route and class\nSELECT route,\n       count(*) AS deck,\n       0 AS cabin,\n       0 AS suite,\n       sum(fare) AS paid_revenue\nFROM bookings\nGROUP BY route\nORDER BY route;",
+    "solution": "SELECT route,\n       count(*) FILTER (WHERE status = 'paid' AND class = 'deck') AS deck,\n       count(*) FILTER (WHERE status = 'paid' AND class = 'cabin') AS cabin,\n       count(*) FILTER (WHERE status = 'paid' AND class = 'suite') AS suite,\n       coalesce(sum(fare) FILTER (WHERE status = 'paid'), 0) AS paid_revenue\nFROM bookings\nGROUP BY route\nORDER BY route;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "two routes with a refund",
+        "seed": "INSERT INTO bookings VALUES (1, 'Alder Bay', 'deck', 12.50, 'paid'), (2, 'Alder Bay', 'deck', 12.50, 'paid'), (3, 'Alder Bay', 'suite', 80.00, 'paid'), (4, 'Alder Bay', 'cabin', 40.00, 'refunded'), (5, 'Cove Point', 'cabin', 45.00, 'paid');",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": [
+            [
+              "Alder Bay",
+              2,
+              0,
+              1,
+              105.0
+            ],
+            [
+              "Cove Point",
+              0,
+              1,
+              0,
+              45.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "route with only refunds",
+        "seed": "INSERT INTO bookings VALUES (1, 'Kelp Isle', 'deck', 10.00, 'refunded'), (2, 'Alder Bay', 'cabin', 30.00, 'paid');",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": [
+            [
+              "Alder Bay",
+              0,
+              1,
+              0,
+              30.0
+            ],
+            [
+              "Kelp Isle",
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "no bookings",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "single paid suite",
+        "seed": "INSERT INTO bookings VALUES (1, 'Gull Rock', 'suite', 99.99, 'paid');",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": [
+            [
+              "Gull Rock",
+              0,
+              0,
+              1,
+              99.99
+            ]
+          ]
+        }
+      },
+      {
+        "name": "all classes, mixed statuses",
+        "seed": "INSERT INTO bookings VALUES (1, 'Mist Harbour', 'deck', 9.10, 'paid'), (2, 'Mist Harbour', 'deck', 9.10, 'refunded'), (3, 'Mist Harbour', 'cabin', 33.30, 'paid'), (4, 'Mist Harbour', 'cabin', 33.30, 'paid'), (5, 'Mist Harbour', 'suite', 70.00, 'refunded'), (6, 'Mist Harbour', 'suite', 75.05, 'paid'), (7, 'Bramble', 'deck', 8.00, 'paid');",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": [
+            [
+              "Bramble",
+              1,
+              0,
+              0,
+              8.0
+            ],
+            [
+              "Mist Harbour",
+              1,
+              2,
+              1,
+              150.75
+            ]
+          ]
+        }
+      },
+      {
+        "name": "everything refunded",
+        "seed": "INSERT INTO bookings VALUES (1, 'Zephyr', 'deck', 5.00, 'refunded'), (2, 'Otter Cove', 'cabin', 25.00, 'refunded');",
+        "expected": {
+          "columns": [
+            "route",
+            "deck",
+            "cabin",
+            "suite",
+            "paid_revenue"
+          ],
+          "rows": [
+            [
+              "Otter Cove",
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              "Zephyr",
+              0,
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "Each output column is an aggregate over the same route group, restricted by its own FILTER clause, so one pass produces the pivot. Putting status = 'paid' in WHERE is the first trap: it removes refunded rows before grouping, so a route with only refunds vanishes. The second trap is sum(...) FILTER over zero matching rows, which returns NULL rather than 0; coalesce fixes it. count(*) FILTER returns 0 for no matches, so the class counts need no coalesce.",
+  "notes": "FILTER is standard SQL and reads better than sum(CASE WHEN ... THEN 1 ELSE 0 END), with the same single scan of the table. Postgres also has crosstab in the tablefunc extension, but plain conditional aggregation needs no extension and the column list is fixed in the query either way. An index does not help much here because every row is read; a hash aggregate on route is the usual plan.",
+  "followUps": [
+    "How would you write the same pivot without FILTER, for a database that lacks it?",
+    "A fourth class is added next month. What has to change, and how could you avoid hard-coding classes?"
+  ]
+}

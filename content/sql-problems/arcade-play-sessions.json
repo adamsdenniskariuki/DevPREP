@@ -1,0 +1,228 @@
+{
+  "id": "arcade-play-sessions",
+  "title": "Arcade play sessions with a 30-minute timeout",
+  "topic": "Gaps & islands",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-window-functions",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "An online arcade logs a row for every action a player takes. Analysts want play sessions: a player's session ends when more than 30 minutes pass before their next action. A gap of exactly 30 minutes stays in the same session.\n\nReturn one row per session.\n\n- Columns: player_id, session_start, session_end, events, minutes\n- session_start and session_end are the first and last action times as text 'YYYY-MM-DD HH24:MI'\n- events counts the action rows in the session (duplicates at the same instant each count)\n- minutes is the whole minutes from first to last action (0 for a single action)\n- Order by player_id, then session_start\n- Sessions can cross midnight",
+  "hints": [
+    "Look at the time since the same player's previous action. Which window function gives you that?",
+    "Mark a row 1 when it starts a new session (no previous action, or gap > 30 minutes), else 0. A running sum of those marks numbers the sessions.",
+    "CASE WHEN event_at - lag(event_at) OVER (PARTITION BY player_id ORDER BY event_at) <= interval '30 minutes' THEN 0 ELSE 1 END, then sum(...) OVER (PARTITION BY player_id ORDER BY event_at) with the default RANGE frame so rows at the same instant get the same session. Group and format with to_char."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE arcade_events (\n  id int PRIMARY KEY,\n  player_id int NOT NULL,\n  event_at timestamp NOT NULL,\n  action text NOT NULL\n);",
+    "starter": "-- Sessions per player (bucketed by clock hour for now)\nSELECT player_id,\n       to_char(min(event_at), 'YYYY-MM-DD HH24:MI') AS session_start,\n       to_char(max(event_at), 'YYYY-MM-DD HH24:MI') AS session_end,\n       count(*) AS events,\n       (extract(epoch FROM max(event_at) - min(event_at)) / 60)::int AS minutes\nFROM arcade_events\nGROUP BY player_id, date_trunc('hour', event_at)\nORDER BY player_id, min(event_at);",
+    "solution": "WITH e AS (\n  SELECT player_id, event_at,\n         CASE WHEN event_at - lag(event_at) OVER (PARTITION BY player_id ORDER BY event_at)\n                   <= interval '30 minutes'\n              THEN 0 ELSE 1 END AS is_new\n  FROM arcade_events\n), s AS (\n  SELECT player_id, event_at,\n         sum(is_new) OVER (PARTITION BY player_id ORDER BY event_at) AS session_no\n  FROM e\n)\nSELECT player_id,\n       to_char(min(event_at), 'YYYY-MM-DD HH24:MI') AS session_start,\n       to_char(max(event_at), 'YYYY-MM-DD HH24:MI') AS session_end,\n       count(*) AS events,\n       (extract(epoch FROM max(event_at) - min(event_at)) / 60)::int AS minutes\nFROM s\nGROUP BY player_id, session_no\nORDER BY player_id, min(event_at);",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "long session and a single action",
+        "seed": "INSERT INTO arcade_events VALUES (1, 1, '2026-03-02 10:00', 'start'), (2, 1, '2026-03-02 10:10', 'jump'), (3, 1, '2026-03-02 10:35', 'jump'), (4, 1, '2026-03-02 10:55', 'coin'), (5, 1, '2026-03-02 11:20', 'quit'), (6, 1, '2026-03-02 12:30', 'start'), (7, 2, '2026-03-02 09:00', 'start');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              1,
+              "2026-03-02 10:00",
+              "2026-03-02 11:20",
+              5,
+              80
+            ],
+            [
+              1,
+              "2026-03-02 12:30",
+              "2026-03-02 12:30",
+              1,
+              0
+            ],
+            [
+              2,
+              "2026-03-02 09:00",
+              "2026-03-02 09:00",
+              1,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "exactly 30 minutes stays in the session",
+        "seed": "INSERT INTO arcade_events VALUES (1, 3, '2026-03-02 20:00', 'start'), (2, 3, '2026-03-02 20:30', 'jump'), (3, 3, '2026-03-02 21:01', 'jump');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              3,
+              "2026-03-02 20:00",
+              "2026-03-02 20:30",
+              2,
+              30
+            ],
+            [
+              3,
+              "2026-03-02 21:01",
+              "2026-03-02 21:01",
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "session crosses midnight",
+        "seed": "INSERT INTO arcade_events VALUES (1, 4, '2026-12-31 23:50', 'start'), (2, 4, '2027-01-01 00:15', 'coin');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              4,
+              "2026-12-31 23:50",
+              "2027-01-01 00:15",
+              2,
+              25
+            ]
+          ]
+        }
+      },
+      {
+        "name": "duplicate timestamps starting a session",
+        "seed": "INSERT INTO arcade_events VALUES (1, 5, '2026-04-01 08:00', 'start'), (2, 5, '2026-04-01 09:00', 'start'), (3, 5, '2026-04-01 09:00', 'coin'), (4, 5, '2026-04-01 09:20', 'quit');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              5,
+              "2026-04-01 08:00",
+              "2026-04-01 08:00",
+              1,
+              0
+            ],
+            [
+              5,
+              "2026-04-01 09:00",
+              "2026-04-01 09:20",
+              3,
+              20
+            ]
+          ]
+        }
+      },
+      {
+        "name": "players interleave without merging",
+        "seed": "INSERT INTO arcade_events VALUES (1, 6, '2026-05-01 10:00', 'start'), (2, 7, '2026-05-01 10:20', 'start'), (3, 6, '2026-05-01 10:45', 'jump'), (4, 7, '2026-05-01 10:40', 'jump');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              6,
+              "2026-05-01 10:00",
+              "2026-05-01 10:00",
+              1,
+              0
+            ],
+            [
+              6,
+              "2026-05-01 10:45",
+              "2026-05-01 10:45",
+              1,
+              0
+            ],
+            [
+              7,
+              "2026-05-01 10:20",
+              "2026-05-01 10:40",
+              2,
+              20
+            ]
+          ]
+        }
+      },
+      {
+        "name": "31 minute gap splits and inserts out of order",
+        "seed": "INSERT INTO arcade_events VALUES (1, 8, '2026-06-01 14:31', 'jump'), (2, 8, '2026-06-01 14:00', 'start'), (3, 8, '2026-06-01 14:45', 'quit');",
+        "expected": {
+          "columns": [
+            "player_id",
+            "session_start",
+            "session_end",
+            "events",
+            "minutes"
+          ],
+          "rows": [
+            [
+              8,
+              "2026-06-01 14:00",
+              "2026-06-01 14:00",
+              1,
+              0
+            ],
+            [
+              8,
+              "2026-06-01 14:31",
+              "2026-06-01 14:45",
+              2,
+              14
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "Sessionization is gaps and islands on time: lag() measures the gap to the same player's previous action, a CASE turns 'no previous action or gap over 30 minutes' into a 1, and a running sum of those flags gives every row its session number. The comparison is <= interval '30 minutes', so an exact 30-minute gap stays inside; a NULL lag makes the comparison NULL and falls to ELSE 1. A subtle trap is duplicate timestamps: with a ROWS frame the two tied rows could get different running sums depending on peer order, while the default RANGE frame gives peers the same sum. Bucketing by clock hour or by date is the usual wrong answer; it splits sessions that cross the hour or midnight and merges unrelated actions.",
+  "notes": "An index on (player_id, event_at) lets both windows run without a sort. On big event tables, sessionization is often done incrementally: store each player's last event time and current session id, and only process new events. Timestamps here are timestamp without time zone; with timestamptz, to_char uses the session TimeZone, so set it explicitly when formatting.",
+  "followUps": [
+    "Return the average session length per player, excluding single-action sessions.",
+    "A 'quit' action should also end the session immediately. How does the flag change?"
+  ]
+}

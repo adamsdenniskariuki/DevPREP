@@ -1,0 +1,148 @@
+{
+  "id": "longest-podcast-listening-streak",
+  "title": "Longest podcast listening streak",
+  "topic": "Gaps & islands",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-window-functions",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "prompt": "A podcast app logs one row per episode played. To award streak badges it needs each listener's longest run of consecutive calendar days with at least one play.\n\nFor every user in listens, return the length in days of their longest streak.\n\n- Columns: user_id, longest_streak\n- Any row order is fine\n- Several plays on the same day count as one day\n- Streaks continue across month and year ends (2026-01-31 then 2026-02-01 is a 2-day streak)",
+  "hints": [
+    "First reduce the data to one row per user per day. Duplicates will break any counting trick.",
+    "Within a run of consecutive days, the day minus its row_number() (per user, ordered by day) is constant. That constant labels the island.",
+    "WITH d AS (SELECT DISTINCT user_id, listened_on FROM listens), g AS (SELECT user_id, listened_on - row_number() OVER (PARTITION BY user_id ORDER BY listened_on)::int AS grp FROM d) — then count per (user_id, grp) and take the max per user."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE listens (\n  id int PRIMARY KEY,\n  user_id int NOT NULL,\n  episode_id int NOT NULL,\n  listened_on date NOT NULL\n);",
+    "starter": "-- Longest streak per listener\n-- (this counts all listening days, not consecutive ones)\nSELECT user_id, count(DISTINCT listened_on) AS longest_streak\nFROM listens\nGROUP BY user_id;",
+    "solution": "WITH d AS (\n  SELECT DISTINCT user_id, listened_on FROM listens\n), g AS (\n  SELECT user_id,\n         listened_on - (row_number() OVER (PARTITION BY user_id ORDER BY listened_on))::int AS grp\n  FROM d\n), s AS (\n  SELECT user_id, grp, count(*) AS len\n  FROM g\n  GROUP BY user_id, grp\n)\nSELECT user_id, max(len) AS longest_streak\nFROM s\nGROUP BY user_id;",
+    "tests": [
+      {
+        "name": "a gap splits the streak",
+        "seed": "INSERT INTO listens VALUES (1, 1, 50, '2026-03-01'), (2, 1, 51, '2026-03-02'), (3, 1, 52, '2026-03-03'), (4, 1, 53, '2026-03-05'), (5, 1, 54, '2026-03-06'), (6, 2, 50, '2026-03-10');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "same-day plays count once",
+        "seed": "INSERT INTO listens VALUES (1, 7, 60, '2026-04-01'), (2, 7, 61, '2026-04-01'), (3, 7, 62, '2026-04-01'), (4, 7, 63, '2026-04-02');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              7,
+              2
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "month end and leap day",
+        "seed": "INSERT INTO listens VALUES (1, 3, 1, '2026-01-30'), (2, 3, 2, '2026-01-31'), (3, 3, 3, '2026-02-01'), (4, 4, 1, '2024-02-28'), (5, 4, 2, '2024-02-29'), (6, 4, 3, '2024-03-01'), (7, 4, 4, '2024-03-02');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              3,
+              3
+            ],
+            [
+              4,
+              4
+            ]
+          ]
+        }
+      },
+      {
+        "name": "duplicates inside a gapped history",
+        "seed": "INSERT INTO listens VALUES (1, 5, 1, '2026-05-01'), (2, 5, 2, '2026-05-01'), (3, 5, 3, '2026-05-03'), (4, 5, 4, '2026-05-03'), (5, 5, 5, '2026-05-04'), (6, 5, 6, '2026-05-04'), (7, 5, 7, '2026-05-06');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              5,
+              2
+            ]
+          ]
+        }
+      },
+      {
+        "name": "year boundary and out of order rows",
+        "seed": "INSERT INTO listens VALUES (1, 6, 1, '2027-01-01'), (2, 6, 2, '2026-12-30'), (3, 6, 3, '2026-12-31'), (4, 6, 4, '2026-12-01');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              6,
+              3
+            ]
+          ]
+        }
+      },
+      {
+        "name": "two equal streaks",
+        "seed": "INSERT INTO listens VALUES (1, 8, 1, '2026-02-01'), (2, 8, 2, '2026-02-02'), (3, 8, 3, '2026-02-10'), (4, 8, 4, '2026-02-11');",
+        "expected": {
+          "columns": [
+            "user_id",
+            "longest_streak"
+          ],
+          "rows": [
+            [
+              8,
+              2
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "This is the classic islands trick: after removing duplicate days, subtracting a per-user row number from each date gives the same value for every day in an unbroken run, and a new value after any gap. Grouping by that value gives each streak's length, and max picks the longest per user. The main trap is skipping DISTINCT: two plays on one day get two row numbers, the date stays the same while the row number grows, and the run splits in two. Date arithmetic (date - int) handles month, leap-day and year boundaries for free.",
+  "notes": "The DISTINCT and the window both need the data sorted by (user_id, listened_on), so an index on those columns lets Postgres stream rows without a sort. On a large table, pre-aggregating to a daily activity table makes streak queries much cheaper. lag() with a running sum of 'new streak' flags is an equivalent approach that also works when the step is not exactly one day.",
+  "followUps": [
+    "Also return the first and last day of each user's longest streak; break ties by the most recent streak.",
+    "How would you find each user's current streak, ending today?"
+  ]
+}

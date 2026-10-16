@@ -9,6 +9,8 @@ export interface CodeDraft {
   lang?: CodeLanguage
   js?: string
   py?: string
+  /** SQL interview problems, stored under `sql:<id>`. */
+  sql?: string
 }
 type Drafts = Record<string, CodeDraft>
 
@@ -26,7 +28,7 @@ export function readDraft(problemId: string): CodeDraft {
   if (!draft || typeof draft !== 'object') return {}
   const clean: CodeDraft = {}
   if (draft.lang === 'js' || draft.lang === 'py') clean.lang = draft.lang
-  for (const lang of ['js', 'py'] as const) if (typeof draft[lang] === 'string') clean[lang] = draft[lang]!.slice(0, MAX_CODE_LENGTH)
+  for (const lang of ['js', 'py', 'sql'] as const) if (typeof draft[lang] === 'string') clean[lang] = draft[lang]!.slice(0, MAX_CODE_LENGTH)
   return clean
 }
 
@@ -46,7 +48,7 @@ export function writeDraft(problemId: string, patch: CodeDraft): boolean {
   }
 }
 
-export function clearDraft(problemId: string, lang: CodeLanguage): boolean {
+export function clearDraft(problemId: string, lang: CodeLanguage | 'sql'): boolean {
   try {
     const all = readAll()
     if (all[problemId]) delete all[problemId][lang]

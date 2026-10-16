@@ -1,0 +1,207 @@
+{
+  "id": "clinic-video-patient-billing",
+  "title": "Billing for patients who used video visits",
+  "topic": "Filtering & joins",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-aggregates",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A group of physio clinics wants to know how much of its billing comes from patients who have tried video appointments. A patient belongs to one clinic, can have many visits (mode 'in_person' or 'video') and many invoices.\n\nFor every clinic return: how many patients it has, how many of them have at least one video visit, and the total of all invoices (any visit type) for those video patients.\n\n- Columns: clinic_id, name, patients, video_patients, video_billed\n- Include clinics with no patients (0, 0, 0)\n- video_billed is 0 when there is nothing to sum\n- Each invoice is counted once, no matter how many visits the patient had\n- Order rows by clinic_id ascending",
+  "hints": [
+    "Joining patients to both visits and invoices creates one row per visit-invoice pair. What does that do to sum(amount)?",
+    "Work out a per-patient fact first: does this patient have a video visit (EXISTS), and what is their invoice total (its own subquery or pre-aggregated CTE)?",
+    "Build a per-patient CTE with has_video and billed, LEFT JOIN it to clinics, then use count(*) FILTER (WHERE has_video) and coalesce(sum(billed) FILTER (WHERE has_video), 0)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE clinics (id int PRIMARY KEY, name text NOT NULL);\nCREATE TABLE patients (id int PRIMARY KEY, clinic_id int NOT NULL REFERENCES clinics(id));\nCREATE TABLE visits (id int PRIMARY KEY, patient_id int NOT NULL REFERENCES patients(id), mode text NOT NULL CHECK (mode IN ('in_person', 'video')));\nCREATE TABLE invoices (id int PRIMARY KEY, patient_id int NOT NULL REFERENCES patients(id), amount numeric(10,2) NOT NULL);",
+    "starter": "-- Per clinic: patients, video patients, billing from video patients\nSELECT c.id AS clinic_id, c.name,\n       count(p.id) AS patients,\n       count(v.id) AS video_patients,\n       coalesce(sum(i.amount), 0) AS video_billed\nFROM clinics c\nJOIN patients p ON p.clinic_id = c.id\nJOIN visits v ON v.patient_id = p.id AND v.mode = 'video'\nLEFT JOIN invoices i ON i.patient_id = p.id\nGROUP BY c.id, c.name\nORDER BY c.id;",
+    "solution": "WITH per_patient AS (\n  SELECT p.id, p.clinic_id,\n         EXISTS (SELECT 1 FROM visits v WHERE v.patient_id = p.id AND v.mode = 'video') AS has_video,\n         (SELECT coalesce(sum(i.amount), 0) FROM invoices i WHERE i.patient_id = p.id) AS billed\n  FROM patients p\n)\nSELECT c.id AS clinic_id, c.name,\n       count(pp.id) AS patients,\n       count(pp.id) FILTER (WHERE pp.has_video) AS video_patients,\n       coalesce(sum(pp.billed) FILTER (WHERE pp.has_video), 0) AS video_billed\nFROM clinics c\nLEFT JOIN per_patient pp ON pp.clinic_id = c.id\nGROUP BY c.id, c.name\nORDER BY c.id;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "two clinics",
+        "seed": "INSERT INTO clinics VALUES (1, 'Harbor'), (2, 'Ridge');\nINSERT INTO patients VALUES (10, 1), (11, 1), (12, 2);\nINSERT INTO visits VALUES (100, 10, 'video'), (101, 10, 'video'), (102, 11, 'in_person'), (103, 12, 'in_person');\nINSERT INTO invoices VALUES (200, 10, 40.00), (201, 10, 60.00), (202, 11, 25.00), (203, 12, 30.00);",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Harbor",
+              2,
+              1,
+              100
+            ],
+            [
+              2,
+              "Ridge",
+              1,
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "clinic without patients",
+        "seed": "INSERT INTO clinics VALUES (1, 'Mill'), (2, 'Quay');\nINSERT INTO patients VALUES (10, 2);\nINSERT INTO visits VALUES (100, 10, 'video');",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Mill",
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              "Quay",
+              1,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "many visits and invoices for one patient",
+        "seed": "INSERT INTO clinics VALUES (1, 'Dock');\nINSERT INTO patients VALUES (10, 1);\nINSERT INTO visits VALUES (100, 10, 'video'), (101, 10, 'video'), (102, 10, 'video'), (103, 10, 'in_person');\nINSERT INTO invoices VALUES (200, 10, 15.00), (201, 10, 35.00);",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Dock",
+              1,
+              1,
+              50
+            ]
+          ]
+        }
+      },
+      {
+        "name": "patients without any visits",
+        "seed": "INSERT INTO clinics VALUES (1, 'Elm');\nINSERT INTO patients VALUES (10, 1), (11, 1), (12, 1);\nINSERT INTO visits VALUES (100, 12, 'video');\nINSERT INTO invoices VALUES (200, 10, 99.00), (201, 12, 1.50), (202, 12, 2.25);",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Elm",
+              3,
+              1,
+              3.75
+            ]
+          ]
+        }
+      },
+      {
+        "name": "in-person invoices of video patients count too",
+        "seed": "INSERT INTO clinics VALUES (1, 'Fen'), (2, 'Glen');\nINSERT INTO patients VALUES (10, 1), (11, 2), (12, 2);\nINSERT INTO visits VALUES (100, 10, 'in_person'), (101, 10, 'video'), (102, 11, 'video'), (103, 12, 'video'), (104, 12, 'video');\nINSERT INTO invoices VALUES (200, 10, 80.00), (201, 10, 20.00), (202, 11, 5.00), (203, 12, 7.00), (204, 12, 8.00);",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Fen",
+              1,
+              1,
+              100
+            ],
+            [
+              2,
+              "Glen",
+              2,
+              2,
+              20
+            ]
+          ]
+        }
+      },
+      {
+        "name": "only clinics exist",
+        "seed": "INSERT INTO clinics VALUES (2, 'Hill'), (1, 'Isle');",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": [
+            [
+              1,
+              "Isle",
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              "Hill",
+              0,
+              0,
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no clinics",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "clinic_id",
+            "name",
+            "patients",
+            "video_patients",
+            "video_billed"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "The plain join is the trap: joining a patient to visits and invoices yields visits × invoices rows, so a patient with three video visits and two invoices adds each invoice three times and counts the patient three times. Using EXISTS for \"has a video visit\" is a semi join, which tests for a match without multiplying rows, and summing invoices in its own subquery keeps each invoice once. With one row per patient, FILTER turns the clinic aggregate into conditional counts and sums. The LEFT JOIN from clinics plus count(pp.id) and coalesce keeps empty clinics at 0, 0, 0; count(DISTINCT ...) can patch the counts in the fan-out version but not the sum.",
+  "notes": "Postgres plans the EXISTS as a hash semi join and the invoice subquery is best rewritten as a GROUP BY patient_id CTE on large data so it runs once instead of per patient. Indexes on visits(patient_id) and invoices(patient_id) help the correlated form, and a partial index on visits(patient_id) WHERE mode = 'video' makes the EXISTS cheap. Pre-aggregating each child table to one row per patient before any join is the general cure for fan-out.",
+  "followUps": [
+    "How would you also report the share of each clinic's total billing that comes from video patients, as a percentage with 1 decimal?",
+    "Why does sum(DISTINCT i.amount) not fix the fan-out version?"
+  ]
+}

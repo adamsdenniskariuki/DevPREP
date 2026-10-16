@@ -1,0 +1,185 @@
+{
+  "id": "game-server-outage-windows",
+  "title": "Game server outage windows",
+  "topic": "Gaps & islands",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-window-functions",
+  "prompt": "A monitoring bot pings each game server and stores one row per check with a check_no that increases over time. When the bot is restarted some check numbers are skipped, so the numbers are not contiguous.\n\nAn outage is a maximal run of failed checks (is_up = false) for one server with no successful check between them. Skipped numbers do not end an outage.\n\nReturn one row per outage.\n\n- Columns: server_id, first_check, last_check, failed_checks\n- Any row order is fine\n- failed_checks is the number of failed rows in the outage\n- Servers that never failed return no rows",
+  "hints": [
+    "Grouping all failed checks per server merges separate outages. You need a label that changes whenever an up check interrupts.",
+    "check_no minus row_number() breaks on skipped numbers. Instead, compare two row numbers: one over all of a server's checks and one over its checks with the same is_up value.",
+    "row_number() OVER (PARTITION BY server_id ORDER BY check_no) - row_number() OVER (PARTITION BY server_id, is_up ORDER BY check_no) is constant within a run. Keep NOT is_up and group by server_id and that difference."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE health_checks (\n  server_id int NOT NULL,\n  check_no int NOT NULL,\n  is_up boolean NOT NULL,\n  PRIMARY KEY (server_id, check_no)\n);",
+    "starter": "-- One row per outage\nSELECT server_id,\n       min(check_no) AS first_check,\n       max(check_no) AS last_check,\n       count(*) AS failed_checks\nFROM health_checks\nWHERE NOT is_up\nGROUP BY server_id;",
+    "solution": "WITH x AS (\n  SELECT server_id, check_no, is_up,\n         row_number() OVER (PARTITION BY server_id ORDER BY check_no)\n       - row_number() OVER (PARTITION BY server_id, is_up ORDER BY check_no) AS grp\n  FROM health_checks\n)\nSELECT server_id,\n       min(check_no) AS first_check,\n       max(check_no) AS last_check,\n       count(*) AS failed_checks\nFROM x\nWHERE NOT is_up\nGROUP BY server_id, grp;",
+    "tests": [
+      {
+        "name": "two outages on one server",
+        "seed": "INSERT INTO health_checks VALUES (1, 1, true), (1, 2, false), (1, 3, false), (1, 4, true), (1, 5, false), (1, 6, true);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": [
+            [
+              1,
+              2,
+              3,
+              2
+            ],
+            [
+              1,
+              5,
+              5,
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "skipped numbers inside an outage",
+        "seed": "INSERT INTO health_checks VALUES (2, 10, true), (2, 11, false), (2, 13, false), (2, 14, false), (2, 16, true), (2, 17, false);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": [
+            [
+              2,
+              11,
+              14,
+              3
+            ],
+            [
+              2,
+              17,
+              17,
+              1
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "empty table",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "never down",
+        "seed": "INSERT INTO health_checks VALUES (3, 1, true), (3, 2, true);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "always down",
+        "seed": "INSERT INTO health_checks VALUES (4, 1, false), (4, 5, false), (4, 9, false);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": [
+            [
+              4,
+              1,
+              9,
+              3
+            ]
+          ]
+        }
+      },
+      {
+        "name": "two servers with interleaved numbers",
+        "seed": "INSERT INTO health_checks VALUES (5, 1, false), (6, 2, false), (5, 3, true), (6, 4, false), (5, 5, false), (6, 6, true), (5, 7, false);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": [
+            [
+              5,
+              1,
+              1,
+              1
+            ],
+            [
+              5,
+              5,
+              7,
+              2
+            ],
+            [
+              6,
+              2,
+              4,
+              2
+            ]
+          ]
+        }
+      },
+      {
+        "name": "outage at the start and gap after an up check",
+        "seed": "INSERT INTO health_checks VALUES (7, 1, false), (7, 2, false), (7, 3, true), (7, 8, false);",
+        "expected": {
+          "columns": [
+            "server_id",
+            "first_check",
+            "last_check",
+            "failed_checks"
+          ],
+          "rows": [
+            [
+              7,
+              1,
+              2,
+              2
+            ],
+            [
+              7,
+              8,
+              8,
+              1
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "Rows in the same run of equal is_up values advance both row numbers together, so their difference stays constant; any row with the other status advances only the overall counter and shifts the difference. Grouping failed rows by (server_id, difference) therefore yields exactly one group per outage. The trap is using check_no - row_number(): it only works when numbers are contiguous, and a skipped number would wrongly split one outage in two. Grouping all failed checks per server is the other common mistake, merging separate outages into one.",
+  "notes": "Both windows sort on different keys, so Postgres usually runs two sorts; the primary key covers only the first. Note the difference value can repeat between an up-run and a down-run, which is why the filter on is_up (or grouping by it) is required. A lag()-based 'status changed' flag plus a running sum is an equivalent formulation and is easier to extend with extra break rules.",
+  "followUps": [
+    "Also treat a gap of more than 5 skipped check numbers as the end of an outage.",
+    "Return only outages of 3 or more failed checks, and the longest outage per server."
+  ]
+}

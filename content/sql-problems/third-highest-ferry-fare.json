@@ -1,0 +1,60 @@
+{
+  "id": "third-highest-ferry-fare",
+  "title": "Third-highest ferry fare",
+  "topic": "Subqueries & CTEs",
+  "level": "se",
+  "difficulty": "warm-up",
+  "lessonId": "sql-subqueries-ctes",
+  "paths": ["swe"],
+  "prompt": "A ferry operator lists one fare per route crossing. Several routes share the same price, and routes still being priced have a NULL price.\n\nReturn the third-highest distinct price as a single row. If there are fewer than three distinct non-NULL prices, still return one row whose value is NULL.\n\n- Columns: third_price\n- Exactly one row, always\n- Equal prices count once (45, 45, 30, 20 → 20)\n- NULL prices are ignored",
+  "hints": [
+    "Think about what happens to duplicates and to NULLs when you sort prices descending.",
+    "SELECT DISTINCT price ... WHERE price IS NOT NULL ORDER BY price DESC, then skip two rows with OFFSET 2 LIMIT 1.",
+    "A query with OFFSET can return zero rows. Wrap it as a scalar subquery: SELECT (SELECT ... OFFSET 2 LIMIT 1) AS third_price; an empty scalar subquery yields NULL."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE fares (id int PRIMARY KEY, route text NOT NULL, price numeric(8,2));",
+    "starter": "-- Third-highest distinct price, or NULL\nSELECT price AS third_price\nFROM fares\nORDER BY price DESC\nOFFSET 2 LIMIT 1;",
+    "solution": "SELECT (\n  SELECT DISTINCT price\n  FROM fares\n  WHERE price IS NOT NULL\n  ORDER BY price DESC\n  OFFSET 2 LIMIT 1\n) AS third_price;",
+    "tests": [
+      {
+        "name": "duplicate prices collapse",
+        "seed": "INSERT INTO fares VALUES (1, 'Harbor-Isle', 30.00), (2, 'Harbor-Cove', 45.00), (3, 'Cove-Isle', 45.00), (4, 'Isle-Point', 20.00), (5, 'Point-Bay', 12.00);",
+        "expected": { "columns": ["third_price"], "rows": [[20]] }
+      },
+      {
+        "name": "only two distinct prices",
+        "seed": "INSERT INTO fares VALUES (1, 'Harbor-Isle', 10.00), (2, 'Harbor-Cove', 10.00), (3, 'Cove-Isle', 15.00);",
+        "expected": { "columns": ["third_price"], "rows": [[null]] }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "NULL prices are ignored",
+        "seed": "INSERT INTO fares VALUES (1, 'A-B', NULL), (2, 'B-C', NULL), (3, 'C-D', 50.00), (4, 'D-E', 40.00), (5, 'E-F', 30.00);",
+        "expected": { "columns": ["third_price"], "rows": [[30]] }
+      },
+      {
+        "name": "empty fares table",
+        "seed": "",
+        "expected": { "columns": ["third_price"], "rows": [[null]] }
+      },
+      {
+        "name": "every route same price",
+        "seed": "INSERT INTO fares VALUES (1, 'A-B', 8.00), (2, 'B-C', 8.00), (3, 'C-D', 8.00), (4, 'D-E', 8.00);",
+        "expected": { "columns": ["third_price"], "rows": [[null]] }
+      },
+      {
+        "name": "exactly three distinct prices",
+        "seed": "INSERT INTO fares VALUES (1, 'A-B', 9.50), (2, 'B-C', 7.25), (3, 'C-D', 8.00);",
+        "expected": { "columns": ["third_price"], "rows": [[7.25]] }
+      }
+    ]
+  },
+  "explanation": "DISTINCT removes repeated prices so ties count once, and WHERE price IS NOT NULL drops unpriced routes; without it Postgres sorts NULLs first under DESC and they would take the top spots. OFFSET 2 LIMIT 1 then picks the third value. On its own that query returns zero rows when there are fewer than three prices, so it is wrapped in an outer SELECT as a scalar subquery, which turns an empty result into a single NULL. The common traps are forgetting DISTINCT and returning no row instead of a NULL row.",
+  "notes": "With an index on fares(price) Postgres can walk the index backwards and stop after a few distinct values instead of sorting the whole table. An alternative is DENSE_RANK() OVER (ORDER BY price DESC) = 3, wrapped in max() or a scalar subquery to keep the single-row guarantee. For a general Nth value, OFFSET n-1 works the same way.",
+  "followUps": [
+    "Return the third-highest price per route group instead of overall.",
+    "How would DENSE_RANK compare with OFFSET here, and which one reads more rows?"
+  ]
+}

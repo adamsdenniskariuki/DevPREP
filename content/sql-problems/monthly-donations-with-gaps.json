@@ -1,0 +1,195 @@
+{
+  "id": "monthly-donations-with-gaps",
+  "title": "Monthly donations with empty months",
+  "topic": "Aggregation",
+  "level": "sse",
+  "difficulty": "stretch",
+  "lessonId": "sql-dates-strings-json",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A wildlife charity records each online donation with a timestamp (UTC). Some donations were later refunded; treat those as if they never happened.\n\nProduce a monthly report covering every calendar month from the month of the first non-refunded donation through the month of the last one, including months with no donations.\n\n- Columns: month (a date, the first day of the month), donations, total, running_total\n- donations and total are the count and sum of non-refunded donations in that month; both 0 for an empty month\n- running_total is the sum of total from the first reported month up to and including this one\n- Order by month ascending\n- No non-refunded donations at all: return no rows",
+  "hints": [
+    "Grouping the donations by date_trunc('month', ...) only produces months that have data. You need a list of months to join onto.",
+    "generate_series(min_month, max_month, interval '1 month') makes the calendar. LEFT JOIN the monthly figures onto it and coalesce the sums.",
+    "A window sum over the grouped totals, sum(coalesce(sum(amount), 0)) OVER (ORDER BY month), gives the running total. Filter refunds before you take min and max."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE donations (id int PRIMARY KEY, donated_at timestamp NOT NULL, amount numeric(10,2) NOT NULL, refunded boolean NOT NULL DEFAULT false);",
+    "starter": "-- Monthly donation report\nSELECT date_trunc('month', donated_at)::date AS month,\n       count(*) AS donations,\n       sum(amount) AS total,\n       sum(sum(amount)) OVER (ORDER BY date_trunc('month', donated_at)::date) AS running_total\nFROM donations\nGROUP BY date_trunc('month', donated_at)::date\nORDER BY month;",
+    "solution": "WITH kept AS (\n  SELECT date_trunc('month', donated_at)::date AS month, amount\n  FROM donations\n  WHERE NOT refunded\n),\ncalendar AS (\n  SELECT generate_series(min(month), max(month), interval '1 month')::date AS month\n  FROM kept\n)\nSELECT c.month,\n       count(k.amount) AS donations,\n       coalesce(sum(k.amount), 0) AS total,\n       sum(coalesce(sum(k.amount), 0)) OVER (ORDER BY c.month) AS running_total\nFROM calendar c\nLEFT JOIN kept k ON k.month = c.month\nGROUP BY c.month\nORDER BY c.month;",
+    "ordered": true,
+    "tests": [
+      {
+        "name": "empty February in the middle",
+        "seed": "INSERT INTO donations (id, donated_at, amount) VALUES (1, '2026-01-04 10:00', 25.00), (2, '2026-01-31 23:59:59', 15.00), (3, '2026-03-01 00:00', 40.00);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": [
+            [
+              "2026-01-01",
+              2,
+              40.0,
+              40.0
+            ],
+            [
+              "2026-02-01",
+              0,
+              0,
+              40.0
+            ],
+            [
+              "2026-03-01",
+              1,
+              40.0,
+              80.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "refund before the first real donation",
+        "seed": "INSERT INTO donations VALUES (1, '2026-05-10 09:00', 50.00, true), (2, '2026-06-02 12:00', 20.00, false), (3, '2026-06-20 18:30', 30.00, false);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": [
+            [
+              "2026-06-01",
+              2,
+              50.0,
+              50.0
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "no donations",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "only refunded donations",
+        "seed": "INSERT INTO donations VALUES (1, '2026-02-01 08:00', 10.00, true), (2, '2026-04-01 08:00', 10.00, true);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": []
+        }
+      },
+      {
+        "name": "single donation",
+        "seed": "INSERT INTO donations (id, donated_at, amount) VALUES (1, '2026-08-15 14:00', 12.34);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": [
+            [
+              "2026-08-01",
+              1,
+              12.34,
+              12.34
+            ]
+          ]
+        }
+      },
+      {
+        "name": "gap across a year end with a refund inside it",
+        "seed": "INSERT INTO donations VALUES (1, '2025-11-30 23:59:59', 5.00, false), (2, '2025-12-24 12:00', 100.00, true), (3, '2026-02-01 00:00', 7.50, false), (4, '2026-02-28 23:00', 2.50, false);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": [
+            [
+              "2025-11-01",
+              1,
+              5.0,
+              5.0
+            ],
+            [
+              "2025-12-01",
+              0,
+              0,
+              5.0
+            ],
+            [
+              "2026-01-01",
+              0,
+              0,
+              5.0
+            ],
+            [
+              "2026-02-01",
+              2,
+              10.0,
+              15.0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "refund after the last real donation does not extend the range",
+        "seed": "INSERT INTO donations VALUES (1, '2026-03-03 10:00', 9.00, false), (2, '2026-04-04 10:00', 1.00, false), (3, '2026-07-07 10:00', 60.00, true);",
+        "expected": {
+          "columns": [
+            "month",
+            "donations",
+            "total",
+            "running_total"
+          ],
+          "rows": [
+            [
+              "2026-03-01",
+              1,
+              9.0,
+              9.0
+            ],
+            [
+              "2026-04-01",
+              1,
+              1.0,
+              10.0
+            ]
+          ]
+        }
+      }
+    ]
+  },
+  "explanation": "GROUP BY can only return months that have rows, so a calendar from generate_series supplies the missing ones and a LEFT JOIN attaches the donations. Refunds are removed before min and max are taken, so a refunded donation cannot stretch the range. count(k.amount) and coalesce(sum(...), 0) turn an empty month into 0 rather than 1 or NULL. The running total is a window function over the grouped result, ordered by month. When nothing is left, min and max are NULL and generate_series returns no rows, so the report is empty.",
+  "notes": "generate_series over dates resolves to the timestamptz version, which is safe here because the session time zone is UTC; with another zone, use timestamp arguments or generate_series over integers to avoid daylight-saving surprises. For a large table, an index on donated_at lets Postgres find min and max cheaply, but the monthly sums still read every row in range. Pre-aggregating per month in the kept CTE before the join keeps the join small.",
+  "followUps": [
+    "Report the range as a fixed fiscal year (April to March) instead of first-to-last donation.",
+    "How would you make month boundaries follow the charity's local time zone, Europe/London?"
+  ]
+}

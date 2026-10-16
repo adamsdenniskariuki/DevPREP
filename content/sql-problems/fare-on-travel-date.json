@@ -1,0 +1,237 @@
+{
+  "id": "fare-on-travel-date",
+  "title": "Fare in force on the travel date",
+  "topic": "Filtering & joins",
+  "level": "sse",
+  "difficulty": "core",
+  "lessonId": "sql-joins",
+  "paths": [
+    "senior"
+  ],
+  "prompt": "A ferry company changes its fares a few times a year. Each fares row says a price applies to a route from valid_from (inclusive) up to valid_to (exclusive). A NULL valid_to means the fare is still current. Fare periods for one route never overlap, but there can be gaps.\n\nFor every trip, return the price that was in force on its travel_date for its route.\n\n- Columns: trip_id, route, travel_date, price\n- Any row order is fine\n- Every trip appears exactly once\n- If no fare period covers the trip (a gap, before the first fare, or a route with no fares), price is NULL",
+  "hints": [
+    "The join condition is not equality on a key; it is a date falling inside a range.",
+    "valid_to is exclusive and may be NULL. BETWEEN is inclusive on both ends and is never true against NULL.",
+    "LEFT JOIN fares f ON f.route = t.route AND t.travel_date >= f.valid_from AND (f.valid_to IS NULL OR t.travel_date < f.valid_to)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE fares (route text NOT NULL, valid_from date NOT NULL, valid_to date, price numeric(8,2) NOT NULL, PRIMARY KEY (route, valid_from));\nCREATE TABLE trips (id int PRIMARY KEY, route text NOT NULL, travel_date date NOT NULL);",
+    "starter": "-- Price in force for each trip\nSELECT t.id AS trip_id, t.route, t.travel_date, f.price\nFROM trips t\nJOIN fares f\n  ON f.route = t.route\n AND t.travel_date BETWEEN f.valid_from AND f.valid_to;",
+    "solution": "SELECT t.id AS trip_id, t.route, t.travel_date, f.price\nFROM trips t\nLEFT JOIN fares f\n  ON f.route = t.route\n AND t.travel_date >= f.valid_from\n AND (f.valid_to IS NULL OR t.travel_date < f.valid_to);",
+    "tests": [
+      {
+        "name": "change-over day and open-ended fare",
+        "seed": "INSERT INTO fares VALUES ('A', '2026-01-01', '2026-04-01', 12.50), ('A', '2026-04-01', NULL, 14.00), ('B', '2026-01-01', '2026-07-01', 8.00);\nINSERT INTO trips VALUES (1, 'A', '2026-03-31'), (2, 'A', '2026-04-01'), (3, 'B', '2026-06-30'), (4, 'A', '2026-09-09');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "A",
+              "2026-03-31",
+              12.5
+            ],
+            [
+              2,
+              "A",
+              "2026-04-01",
+              14
+            ],
+            [
+              3,
+              "B",
+              "2026-06-30",
+              8
+            ],
+            [
+              4,
+              "A",
+              "2026-09-09",
+              14
+            ]
+          ]
+        }
+      },
+      {
+        "name": "trip before the first fare",
+        "seed": "INSERT INTO fares VALUES ('C', '2026-05-01', NULL, 20.00);\nINSERT INTO trips VALUES (1, 'C', '2026-04-30'), (2, 'C', '2026-05-01');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "C",
+              "2026-04-30",
+              null
+            ],
+            [
+              2,
+              "C",
+              "2026-05-01",
+              20
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "gap between periods",
+        "seed": "INSERT INTO fares VALUES ('D', '2026-01-01', '2026-02-01', 5.00), ('D', '2026-03-01', '2026-04-01', 6.00);\nINSERT INTO trips VALUES (1, 'D', '2026-01-31'), (2, 'D', '2026-02-01'), (3, 'D', '2026-02-28'), (4, 'D', '2026-03-01'), (5, 'D', '2026-04-01');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "D",
+              "2026-01-31",
+              5
+            ],
+            [
+              2,
+              "D",
+              "2026-02-01",
+              null
+            ],
+            [
+              3,
+              "D",
+              "2026-02-28",
+              null
+            ],
+            [
+              4,
+              "D",
+              "2026-03-01",
+              6
+            ],
+            [
+              5,
+              "D",
+              "2026-04-01",
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "route with no fares",
+        "seed": "INSERT INTO fares VALUES ('E', '2026-01-01', NULL, 9.99);\nINSERT INTO trips VALUES (1, 'E', '2026-06-01'), (2, 'F', '2026-06-01');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "E",
+              "2026-06-01",
+              9.99
+            ],
+            [
+              2,
+              "F",
+              "2026-06-01",
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "same date on two routes",
+        "seed": "INSERT INTO fares VALUES ('G', '2026-01-01', NULL, 3.00), ('H', '2026-01-01', '2026-12-31', 4.00), ('H', '2026-12-31', NULL, 4.50);\nINSERT INTO trips VALUES (1, 'G', '2026-12-31'), (2, 'H', '2026-12-31'), (3, 'H', '2026-12-30');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "G",
+              "2026-12-31",
+              3
+            ],
+            [
+              2,
+              "H",
+              "2026-12-31",
+              4.5
+            ],
+            [
+              3,
+              "H",
+              "2026-12-30",
+              4
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no fares at all",
+        "seed": "INSERT INTO trips VALUES (1, 'A', '2026-01-01'), (2, 'B', '2026-01-02');",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": [
+            [
+              1,
+              "A",
+              "2026-01-01",
+              null
+            ],
+            [
+              2,
+              "B",
+              "2026-01-02",
+              null
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no trips",
+        "seed": "INSERT INTO fares VALUES ('A', '2026-01-01', NULL, 1.00);",
+        "expected": {
+          "columns": [
+            "trip_id",
+            "route",
+            "travel_date",
+            "price"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "This is a non-equi (range) join: a fare matches when the route is equal and the travel date falls inside [valid_from, valid_to). BETWEEN is the trap twice over: it includes valid_to, so a trip on a change-over day matches both the old and the new fare, and it compares with NULL for open-ended fares, so current fares never match. The explicit (valid_to IS NULL OR travel_date < valid_to) handles both. Because periods never overlap, at most one fare matches, and LEFT JOIN keeps trips with no fare as NULL.",
+  "notes": "With the (route, valid_from) primary key Postgres can run a nested loop that index-scans one route's fares per trip; range conditions cannot drive a hash join, so on big tables this matters. A cleaner model stores a daterange column with an exclusion constraint (EXCLUDE USING gist (route WITH =, period WITH &&), which needs btree_gist) and joins with period @> travel_date. Another common pattern is LEFT JOIN LATERAL (... WHERE valid_from <= travel_date ORDER BY valid_from DESC LIMIT 1), which then still needs the valid_to check to respect gaps.",
+  "followUps": [
+    "How would you enforce in the schema that two fare periods for the same route never overlap?",
+    "If periods could overlap, how would you pick the most recently created fare for each trip?"
+  ]
+}

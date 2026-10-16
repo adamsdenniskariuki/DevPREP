@@ -23,6 +23,42 @@ export interface ProblemSummary {
   paths?: ('swe' | 'senior')[]
 }
 
+/** Topic order for the SQL interview problem set (lists, filters, progress and badges). */
+export const SQL_TOPICS = ['Filtering & joins', 'Aggregation', 'Subqueries & CTEs', 'Window functions', 'Gaps & islands', 'Data changes & design'] as const
+export type SqlTopic = typeof SQL_TOPICS[number]
+
+/** Small, eagerly loaded entry for one SQL interview problem. */
+export interface SqlProblemSummary {
+  id: string
+  title: string
+  topic: SqlTopic
+  level: ProblemLevel
+  difficulty: ProblemDifficulty
+  /** SQL lesson that teaches the idea. */
+  lessonId?: string
+  paths?: ('swe' | 'senior')[]
+}
+
+/** A runnable SQL interview problem on in-browser Postgres, checked like a SQL lab exercise. */
+export interface SqlProblem extends SqlProblemSummary {
+  prompt: string
+  hints: string[]
+  exercise: {
+    schema: string
+    starter: string
+    solution: string
+    ordered?: boolean
+    check?: string
+    tests: { name: string; seed: string; expected: { columns: string[]; rows: unknown[][] } }[]
+    hiddenTests: { name: string; seed: string; expected: { columns: string[]; rows: unknown[][] } }[]
+  }
+  /** Why the solution works, in prose. */
+  explanation: string
+  /** Performance, indexing or scale note an interviewer would probe. */
+  notes: string
+  followUps: string[]
+}
+
 export interface Problem extends ProblemSummary {
   prompt: string
   function: Record<CodeLanguage, string>

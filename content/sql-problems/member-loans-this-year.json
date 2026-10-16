@@ -1,0 +1,187 @@
+{
+  "id": "member-loans-this-year",
+  "title": "Loans per member this year, zeros included",
+  "topic": "Filtering & joins",
+  "level": "se",
+  "difficulty": "core",
+  "lessonId": "sql-joins",
+  "paths": [
+    "swe"
+  ],
+  "prompt": "A public library wants a report of how many books each member borrowed in calendar year 2026. Members who borrowed nothing in 2026 must still appear, with 0, even if they borrowed books in other years.\n\nReturn one row per member.\n\n- Columns: member_id, name, loans_2026\n- Any row order is fine\n- Count loans with loaned_on from 2026-01-01 to 2026-12-31 inclusive\n- Members can share a name; keep them as separate rows",
+  "hints": [
+    "Which join keeps members with no matching loans?",
+    "A WHERE condition on the loans table runs after the join and throws away the NULL-filled rows. Where else can the date condition go?",
+    "LEFT JOIN loans l ON l.member_id = m.id AND l.loaned_on >= '2026-01-01' AND l.loaned_on < '2027-01-01', then GROUP BY m.id, m.name and count(l.id)."
+  ],
+  "exercise": {
+    "schema": "CREATE TABLE members (id int PRIMARY KEY, name text NOT NULL);\nCREATE TABLE loans (id int PRIMARY KEY, member_id int NOT NULL REFERENCES members(id), loaned_on date NOT NULL);",
+    "starter": "-- Loans in 2026 per member\nSELECT m.id AS member_id, m.name, count(*) AS loans_2026\nFROM members m\nLEFT JOIN loans l ON l.member_id = m.id\nWHERE l.loaned_on >= '2026-01-01' AND l.loaned_on < '2027-01-01'\nGROUP BY m.id, m.name;",
+    "solution": "SELECT m.id AS member_id, m.name, count(l.id) AS loans_2026\nFROM members m\nLEFT JOIN loans l\n  ON l.member_id = m.id\n AND l.loaned_on >= DATE '2026-01-01'\n AND l.loaned_on <  DATE '2027-01-01'\nGROUP BY m.id, m.name;",
+    "tests": [
+      {
+        "name": "old loans do not count",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Ben'), (3, 'Cy');\nINSERT INTO loans VALUES (10, 1, '2026-02-01'), (11, 1, '2026-03-05'), (12, 2, '2025-11-30');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Ana",
+              2
+            ],
+            [
+              2,
+              "Ben",
+              0
+            ],
+            [
+              3,
+              "Cy",
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "first and last day of the year",
+        "seed": "INSERT INTO members VALUES (1, 'Ana'), (2, 'Ben');\nINSERT INTO loans VALUES (10, 1, '2026-01-01'), (11, 2, '2026-12-31');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Ana",
+              1
+            ],
+            [
+              2,
+              "Ben",
+              1
+            ]
+          ]
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "name": "dates just outside the year",
+        "seed": "INSERT INTO members VALUES (1, 'Dee');\nINSERT INTO loans VALUES (10, 1, '2025-12-31'), (11, 1, '2027-01-01'), (12, 1, '2026-06-15');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Dee",
+              1
+            ]
+          ]
+        }
+      },
+      {
+        "name": "members sharing a name",
+        "seed": "INSERT INTO members VALUES (1, 'Sam'), (2, 'Sam'), (3, 'Uma');\nINSERT INTO loans VALUES (10, 1, '2026-04-01'), (11, 1, '2026-04-02'), (12, 2, '2026-05-01');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Sam",
+              2
+            ],
+            [
+              2,
+              "Sam",
+              1
+            ],
+            [
+              3,
+              "Uma",
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no loans at all",
+        "seed": "INSERT INTO members VALUES (1, 'Eve'), (2, 'Fay');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Eve",
+              0
+            ],
+            [
+              2,
+              "Fay",
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "only last year's loans",
+        "seed": "INSERT INTO members VALUES (1, 'Gil'), (2, 'Hana');\nINSERT INTO loans VALUES (10, 1, '2025-01-10'), (11, 2, '2025-07-07');",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": [
+            [
+              1,
+              "Gil",
+              0
+            ],
+            [
+              2,
+              "Hana",
+              0
+            ]
+          ]
+        }
+      },
+      {
+        "name": "no members",
+        "seed": "",
+        "expected": {
+          "columns": [
+            "member_id",
+            "name",
+            "loans_2026"
+          ],
+          "rows": []
+        }
+      }
+    ]
+  },
+  "explanation": "The LEFT JOIN keeps every member, but a WHERE clause on loans.loaned_on runs after the join: unmatched members have NULL there, the comparison is NULL, and the row is dropped, turning the query back into an inner join. Putting the date range in the ON clause restricts which loans can match without removing members. count(l.id) counts only real loans, so members with no 2026 match get 0; count(*) would count the NULL-filled row as 1. Grouping by m.id keeps two members called Sam apart.",
+  "notes": "A half-open range (>= Jan 1 and < next Jan 1) stays correct if the column later becomes a timestamp, and it can use a btree index on loans(member_id, loaned_on). Wrapping the column, as in extract(year FROM loaned_on) = 2026, prevents a plain index from being used. An alternative is a correlated subquery or a pre-aggregated CTE joined back to members.",
+  "followUps": [
+    "Rewrite it with count(*) FILTER (WHERE ...) and explain whether the date filter can then stay outside ON.",
+    "How would you report every month of 2026 per member, including months with zero loans?"
+  ]
+}

@@ -5,6 +5,7 @@ import { tracks } from '../curriculum'
 import type { Track } from '../curriculum-types'
 import { loadCases } from '../cases'
 import { loadProblems } from '../problems'
+import { loadSqlProblems } from '../sql-problems'
 import { loadGuides } from '../guides'
 import { loadLabs } from '../curriculum'
 import { displayDate } from '../format'
@@ -57,7 +58,7 @@ export default function MockScreen({ app }: { app: AppModel }) {
   useEffect(() => { (phase === 'review' ? reviewHeading : app.heading).current?.focus() }, [app.heading, phase])
   useEffect(() => {
     let live = true
-    Promise.all([loadProblems(), loadCases(), loadGuides(), loadLabs()]).then(([problems, cases, guides, labs]) => { if (live) setData({ problems, cases, guides, labs }) }, () => { if (live) setError('Mock content could not be loaded. Reconnect and try again.') })
+    Promise.all([loadProblems(), loadCases(), loadGuides(), loadLabs(), loadSqlProblems()]).then(([problems, cases, guides, labs, sqlProblems]) => { if (live) setData({ problems, cases, guides, labs, sqlProblems }) }, () => { if (live) setError('Mock content could not be loaded. Reconnect and try again.') })
     return () => { live = false }
   }, [])
   useEffect(() => {
@@ -112,6 +113,7 @@ export default function MockScreen({ app }: { app: AppModel }) {
       <p className="mock-prompt">{question.prompt}</p>
       {question.code && <pre className="mock-code"><code>{question.code}</code></pre>}
       {phase === 'answer' && question.kind === 'problem' && <a className="text-button" href={`#code/${question.ref}`} target="_blank" rel="noreferrer">Open in code runner <Icon name="arrow" size={14} /></a>}
+      {phase === 'answer' && question.kind === 'sql' && <a className="text-button" href={`#sql/${question.ref}`} target="_blank" rel="noreferrer">Open in the SQL runner <Icon name="arrow" size={14} /></a>}
       {phase === 'answer' && question.kind === 'guide' && <a className="text-button" href={`#guide/${question.ref}`} target="_blank" rel="noreferrer">Read the Field Guide entry <Icon name="arrow" size={14} /></a>}
       {phase === 'answer' && question.kind === 'case' && <a className="text-button" href="#board" target="_blank" rel="noreferrer">Open a whiteboard <Icon name="arrow" size={14} /></a>}
       {phase === 'answer' ? <>

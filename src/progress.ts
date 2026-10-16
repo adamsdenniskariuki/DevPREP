@@ -4,6 +4,7 @@ import { lessonSections } from './lesson-sections'
 import { isPathId } from './learning-paths'
 import type { PathId } from './learning-paths'
 import { problemIds } from './problems'
+import { sqlProblemIds } from './sql-problems'
 import { caseIds } from './cases'
 import { guideIds } from './guides'
 import { cardIds } from './flashcards'
@@ -51,6 +52,8 @@ export interface Progress {
   profile?: Profile
   /** Runnable problems whose tests all passed, with the first passing time per language. */
   solved?: Record<string, SolvedProblem>
+  /** SQL interview problems whose tests all passed, with the first passing time. */
+  sqlSolved?: Record<string, string>
   /** Best self-scored rubric percentage per system design case study. */
   designs?: Record<string, DesignScore>
   /** Best Field Guide quiz percentage per guide or case study read to the end. */
@@ -166,7 +169,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -217,6 +220,7 @@ export function parseBackup(text: string): Progress {
   })
   const profile = Object.hasOwn(root, 'profile') ? parseProfile(root.profile) : undefined
   const solved = Object.hasOwn(root, 'solved') ? parseSolved(root.solved) : undefined
+  const sqlSolved = Object.hasOwn(root, 'sqlSolved') ? parseSqlSolved(root.sqlSolved) : undefined
   const designs = Object.hasOwn(root, 'designs') ? parseDesigns(root.designs) : undefined
   const cards = Object.hasOwn(root, 'cards') ? parseCards(root.cards) : undefined
   const guides = Object.hasOwn(root, 'guides') ? parseGuides(root.guides) : undefined
@@ -234,6 +238,7 @@ export function parseBackup(text: string): Progress {
     ...(stories ? { stories } : {}),
     ...(guides ? { guides } : {}),
     ...(placements ? { placements } : {}),
+    ...(sqlSolved ? { sqlSolved } : {}),
   }
 }
 
@@ -405,6 +410,23 @@ export function recordSolve(progress: Progress, problemId: string, lang: CodeLan
     ...progress, updatedAt: now.toISOString(),
     solved: { ...progress.solved, [problemId]: { ...progress.solved?.[problemId], [lang]: now.toISOString() } },
   }
+}
+
+function parseSqlSolved(value: unknown): Record<string, string> {
+  const raw = object(value)
+  const solved: Record<string, string> = {}
+  for (const [id, at] of Object.entries(raw)) {
+    if (!sqlProblemIds.has(id)) invalid('unknown SQL problem. This backup may need a newer app version.')
+    solved[id] = timestamp(at)
+  }
+  return solved
+}
+
+/** Records the first time a SQL problem's tests all pass. Later passes keep the original time. */
+export function recordSqlSolve(progress: Progress, problemId: string, now = new Date()): Progress {
+  if (!sqlProblemIds.has(problemId)) throw new Error('Unknown SQL problem.')
+  if (progress.sqlSolved?.[problemId]) return progress
+  return { ...progress, updatedAt: now.toISOString(), sqlSolved: { ...progress.sqlSolved, [problemId]: now.toISOString() } }
 }
 
 function parseProfile(value: unknown): Profile {
