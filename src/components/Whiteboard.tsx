@@ -176,7 +176,7 @@ export default function Whiteboard({ board, title, onChange }: Props) {
     </g>)}
   </svg>
 
-  if (!editable) return <figure className="whiteboard read-only"><div className="wb-scroll">{canvas}</div><figcaption className="sr-only">{title}</figcaption></figure>
+  if (!editable) return <figure className="whiteboard read-only"><div className="wb-scroll" tabIndex={0}>{canvas}</div><figcaption className="sr-only">{title}</figcaption></figure>
 
   return <div className="whiteboard">
     <div className="wb-toolbar" role="group" aria-label="Add a component">

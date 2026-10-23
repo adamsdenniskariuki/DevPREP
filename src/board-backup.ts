@@ -2,6 +2,7 @@ import { BOARD_ID, BOARD_KINDS, MAX_TITLE, parseScene } from './boards'
 import type { BoardKind, BoardRecord } from './boards'
 import { caseIds } from './cases'
 import { cleanBoard } from './design-drafts'
+import { parsePractice } from './practice'
 import { problemIds } from './problems'
 import { MAX_BACKUP_BYTES, parseBackup, serializeBackup } from './progress'
 import type { Progress } from './progress'
@@ -39,7 +40,7 @@ function timestamp(value: unknown): string {
 }
 
 const KEYS = ['id', 'title', 'kind', 'elements', 'appState', 'files', 'createdAt', 'updatedAt']
-const OPTIONAL = ['caseId', 'problemId', 'fallback']
+const OPTIONAL = ['caseId', 'problemId', 'fallback', 'practice']
 
 function parseBoard(value: unknown): BoardRecord {
   if (!isRec(value)) invalid('a whiteboard is not an object.')
@@ -52,6 +53,9 @@ function parseBoard(value: unknown): BoardRecord {
   if (Object.hasOwn(value, 'caseId') && (typeof value.caseId !== 'string' || !caseIds.has(value.caseId))) invalid(`whiteboard “${title}” links to an unknown case study.`)
   if (Object.hasOwn(value, 'problemId') && (typeof value.problemId !== 'string' || !problemIds.has(value.problemId))) invalid(`whiteboard “${title}” links to an unknown problem.`)
   if (Object.hasOwn(value, 'fallback') && !isRec(value.fallback)) invalid(`whiteboard “${title}” has a malformed simple sketch.`)
+  if (Object.hasOwn(value, 'practice') && value.kind !== 'practice') invalid(`whiteboard “${title}” has practice details but is not a practice board.`)
+  let practice
+  try { practice = Object.hasOwn(value, 'practice') ? parsePractice(value.practice) : undefined } catch (error) { invalid(`whiteboard “${title}” ${(error as Error).message}`) }
   let scene
   try { scene = parseScene(value, `whiteboard “${title}”`) } catch (error) { invalid((error as Error).message.replace(/^The /, 'the ')) }
   return {
@@ -61,6 +65,7 @@ function parseBoard(value: unknown): BoardRecord {
     ...scene,
     createdAt: timestamp(value.createdAt), updatedAt: timestamp(value.updatedAt),
     ...Object.hasOwn(value, 'fallback') ? { fallback: cleanBoard(value.fallback) } : {},
+    ...practice ? { practice } : {},
   }
 }
 
@@ -88,8 +93,8 @@ export function parseFullBackup(text: string): FullBackup {
 }
 
 function forBackup(board: BoardRecord): BoardRecord {
-  const { id, title, kind, caseId, problemId, elements, appState, files, createdAt, updatedAt, fallback } = board
-  return { id, title, kind, ...caseId ? { caseId } : {}, ...problemId ? { problemId } : {}, elements, appState, files, createdAt, updatedAt, ...fallback ? { fallback } : {} }
+  const { id, title, kind, caseId, problemId, elements, appState, files, createdAt, updatedAt, fallback, practice } = board
+  return { id, title, kind, ...caseId ? { caseId } : {}, ...problemId ? { problemId } : {}, elements, appState, files, createdAt, updatedAt, ...fallback ? { fallback } : {}, ...practice ? { practice } : {} }
 }
 
 /** Builds backup JSON. Without boards it matches the old format exactly. Throws a clear message over the caps. */

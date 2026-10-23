@@ -11,6 +11,11 @@ import { clearDesignDraft, emptyBoard, MAX_NOTE_LENGTH, readDesignDraft, writeDe
 import type { Board, DesignTimer } from '../design-drafts'
 import { rubricPercent, scoredItems } from '../design-score'
 import type { RubricMark } from '../design-score'
+import { createBoard, findBoards } from '../boards'
+import type { BoardRecord } from '../boards'
+import { displayDate } from '../format'
+import { attemptText, newPractice, PRACTICE_PRESETS } from '../practice'
+import type { PracticeMinutes } from '../practice'
 
 const LEVELS = [{ id: 'se', label: 'SE core' }, { id: 'sse', label: 'SSE depth' }] as const
 const MARKS: { value: RubricMark; label: string }[] = [{ value: 0, label: 'Missed' }, { value: 1, label: 'Partly' }, { value: 2, label: 'Covered' }]
@@ -142,6 +147,7 @@ function CaseWorkspace({ app, item }: { app: AppModel; item: DesignCase }) {
       </div>
       {related.length > 0 && <p className="muted case-related">Related lessons: {related.map((lesson, index) => <span key={lesson.id}>{index ? ', ' : ''}{lesson.title}</span>)}</p>}
     </section>
+    <PracticeStarter app={app} item={item} />
 
     {!review ? <>
       <h2 className="section-title">Your answer</h2>
@@ -197,5 +203,38 @@ function Review({ app, item, notes, heading, onBack }: { app: AppModel; item: De
       <button type="button" className="text-button" onClick={onBack}>Back to my answer</button>
     </div>
     {saved && <p className="alert success" role="status">Saved {saved.percent}%.{saved.xp > 0 ? ` +${saved.xp} XP` : ' Your best score is unchanged.'}</p>}
+  </section>
+}
+
+/** Starts a timed practice on an Excalidraw board and lists past attempts for this case. */
+function PracticeStarter({ app, item }: { app: AppModel; item: DesignCase }) {
+  const [attempts, setAttempts] = useState<BoardRecord[]>()
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let live = true
+    findBoards('practice', { caseId: item.id }).then(found => { if (live) setAttempts(found.sort((a, b) => b.createdAt.localeCompare(a.createdAt))) }, problem => { if (live) setError(problem instanceof Error ? problem.message : 'Practice boards could not load.') })
+    return () => { live = false }
+  }, [item.id])
+
+  async function start(minutes: PracticeMinutes) {
+    try {
+      const board = await createBoard({ kind: 'practice', caseId: item.id, title: `${item.title} practice`, practice: newPractice(minutes) })
+      app.createdBoard()
+      window.location.hash = `board/${board.id}`
+    } catch (problem) { setError(problem instanceof Error ? problem.message : 'The practice board could not be made.') }
+  }
+
+  return <section className="card practice-start" aria-labelledby="practice-start">
+    <h2 id="practice-start">Whiteboard practice</h2>
+    <p className="muted">Draw your design against the clock. When you finish, compare it with the reference and review it.</p>
+    <div className="button-row">{PRACTICE_PRESETS.map(minutes => <button key={minutes} type="button" onClick={() => { void start(minutes) }}><Icon name="clock" size={16} />Start {minutes} min</button>)}</div>
+    {error && <p className="alert" role="alert">{error}</p>}
+    {attempts && attempts.length > 0 && <>
+      <h3>Past attempts</h3>
+      <ul className="practice-attempts">{attempts.map((board, index) => <li key={board.id}>
+        <a href={`#board/${board.id}`}>Attempt {attempts.length - index}</a>
+        <span className="muted">{displayDate(board.createdAt.slice(0, 10))} · {board.practice ? attemptText(board.practice) : 'No timer'}</span>
+      </li>)}</ul>
+    </>}
   </section>
 }

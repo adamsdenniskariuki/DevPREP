@@ -30,7 +30,6 @@ import HomeScreen from './screens/HomeScreen'
 import TracksScreen from './screens/TracksScreen'
 import PracticeScreen from './screens/PracticeScreen'
 import ProgressScreen from './screens/ProgressScreen'
-import SettingsScreen from './screens/SettingsScreen'
 import Study from './screens/Study'
 import PlanScreen from './screens/PlanScreen'
 import type { FullBackup } from './board-backup'
@@ -45,6 +44,7 @@ const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
 const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
 const PatternsScreen = lazy(() => import('./screens/PatternsScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
+const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
 const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
@@ -223,11 +223,11 @@ export default function App() {
     latest.current = after
     return patternXp(after) - patternXp(before)
   }
-  function createdBoard() {
+  function createdBoard(caseId?: string) {
     const before = latest.current
-    const after = recordBoardCreated(before)
+    const after = recordBoardCreated(before, caseId)
     if (after === before) return 0
-    store.update(value => recordBoardCreated(value))
+    store.update(value => recordBoardCreated(value, caseId))
     latest.current = after
     return boardXp(after) - boardXp(before)
   }
@@ -390,7 +390,7 @@ export default function App() {
       {route === 'patterns' && <Suspense fallback={<p role="status">Loading patterns…</p>}><PatternsScreen app={app} view={patternView} /></Suspense>}
             {route === 'plan' && <PlanScreen app={app} />}
             {route === 'progress' && <ProgressScreen app={app} />}
-            {route === 'settings' && <SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} />}
+            {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
             <footer className="app-footer"><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></footer>

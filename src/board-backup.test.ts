@@ -4,6 +4,8 @@ import { MAX_BOARD_BYTES, parseFullBackup, serializeFullBackup } from './board-b
 import type { BoardRecord } from './boards'
 import { gameStats } from './gamification'
 import { emptyProgress, parseBackup, recordBoardCreated, serializeBackup } from './progress'
+import { caseIds } from './cases'
+import { finish, newPractice, tick } from './practice'
 
 const at = '2026-10-01T10:00:00.000Z'
 function board(id: string, extra: Partial<BoardRecord> = {}): BoardRecord {
@@ -17,7 +19,7 @@ const withBoards = (boards: unknown) => JSON.stringify({ ...JSON.parse(serialize
 
 describe('backups with whiteboards', () => {
   it('round-trips boards and progress', () => {
-    const progress = recordBoardCreated(emptyProgress(new Date(at)), new Date(at))
+    const progress = recordBoardCreated(emptyProgress(new Date(at)), undefined, new Date(at))
     const boards = [board('a'), board('b', { kind: 'practice', caseId: 'url-shortener', fallback: { nodes: [], edges: [] } }), board('c', { kind: 'scratch', problemId: 'count-pair-sums' })]
     const text = serializeFullBackup(progress, boards)
     const parsed = parseFullBackup(text)
@@ -77,13 +79,63 @@ describe('backups with whiteboards', () => {
 describe('first board', () => {
   it('records once, earns XP and a badge, and survives a backup', () => {
     const start = emptyProgress(new Date(at))
-    const once = recordBoardCreated(start, new Date(at))
+    const once = recordBoardCreated(start, undefined, new Date(at))
     expect(recordBoardCreated(once)).toBe(once)
     expect(gameStats(once, new Date(at)).xp - gameStats(start, new Date(at)).xp).toBe(10)
     expect(gameStats(once, new Date(at)).badges.find(badge => badge.id === 'first-board')?.earned).toBe(true)
-    expect(gameStats(start).badges.at(-1)?.id).toBe('first-board')
+    expect(gameStats(start).badges.slice(-3).map(badge => badge.id)).toEqual(['first-board', 'first-practice', 'practice-5'])
     expect(parseBackup(serializeBackup(once)).whiteboard).toEqual({ firstBoard: at })
     expect(() => parseBackup(JSON.stringify({ ...once, whiteboard: { firstBoard: 'x' } }))).toThrow('invalid timestamp')
     expect(() => parseBackup(JSON.stringify({ ...once, whiteboard: {} }))).toThrow('unexpected or missing fields')
+  })
+})
+
+describe('whiteboard practice', () => {
+  const later = (minutes: number) => new Date(Date.parse(at) + minutes * 60_000)
+
+  it('awards XP and badges once per case practised', () => {
+    const [first, second, ...rest] = [...caseIds]
+    const start = emptyProgress(new Date(at))
+    const one = recordBoardCreated(start, first, later(30))
+    expect(one.whiteboard).toEqual({ firstBoard: later(30).toISOString(), practised: { [first]: later(30).toISOString() } })
+    expect(recordBoardCreated(one, first, later(90))).toBe(one)
+    expect(recordBoardCreated(one)).toBe(one)
+    const xp = (progress: typeof start) => gameStats(progress, later(200)).xp
+    expect(xp(one) - xp(start)).toBe(30)
+    const two = recordBoardCreated(one, second, later(60))
+    expect(xp(two) - xp(one)).toBe(20)
+    const badge = (progress: typeof start, id: string) => gameStats(progress, later(200)).badges.find(item => item.id === id)?.earned
+    expect(badge(start, 'first-practice')).toBe(false)
+    expect(badge(one, 'first-practice')).toBe(true)
+    expect(badge(two, 'practice-5')).toBe(false)
+    const five = rest.slice(0, 3).reduce((progress, id, index) => recordBoardCreated(progress, id, later(100 + index)), two)
+    expect(badge(five, 'practice-5')).toBe(true)
+    expect(gameStats(five, later(200)).streak.activeToday).toBe(true)
+    expect(gameStats(start, later(200)).streak.activeToday).toBe(false)
+  })
+
+  it('keeps practised cases through a backup and rejects bad ones', () => {
+    const [first] = [...caseIds]
+    const one = recordBoardCreated(recordBoardCreated(emptyProgress(new Date(at)), undefined, new Date(at)), first, later(30))
+    expect(parseBackup(serializeBackup(one))).toEqual(one)
+    const bad = (practised: unknown) => JSON.stringify({ ...one, whiteboard: { firstBoard: at, practised } })
+    expect(() => parseBackup(bad({ 'no-such-case': at }))).toThrow('unknown case study')
+    expect(() => parseBackup(bad({ [first]: 'soon' }))).toThrow('invalid timestamp')
+    expect(() => parseBackup(bad([]))).toThrow()
+  })
+
+  it('round-trips attempts and scratchpads with their boards', () => {
+    const [first] = [...caseIds]
+    const attempt = tick(finish(newPractice(35, Date.parse(at)), Date.parse(at) + 31 * 60_000), 3, true)
+    const running = newPractice(45, Date.parse(at))
+    const boards = [
+      board('p1', { kind: 'practice', caseId: first, practice: attempt }),
+      board('p2', { kind: 'practice', caseId: first, practice: running }),
+      board('s1', { kind: 'scratch', problemId: 'count-pair-sums' }),
+    ]
+    const parsed = parseFullBackup(serializeFullBackup(emptyProgress(new Date(at)), boards))
+    expect(parsed.boards).toEqual(boards)
+    expect(() => parseFullBackup(withBoards([board('a', { practice: attempt })]))).toThrow('is not a practice board')
+    expect(() => parseFullBackup(withBoards([board('a', { kind: 'practice', caseId: first, practice: { ...attempt, minutes: 20 } as never })]))).toThrow('whiteboard “Board a” practice has an unknown time limit')
   })
 })

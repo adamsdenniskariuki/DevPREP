@@ -2,11 +2,12 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { elementProblems } from './board-elements'
 import {
-  createAutosave, createBoard, deleteBoard, deleteBoardsDatabase, excalidrawFile, getBoard, legacyElements, listBoards,
+  createAutosave, createBoard, deleteBoard, deleteBoardsDatabase, excalidrawFile, findBoards, getBoard, savePractice, legacyElements, listBoards,
   migrateLegacyBoard, parseExcalidrawFile, parseScene, renameBoard, replaceBoards, saveFallback, saveScene, DEFAULT_TITLE, MAX_TITLE,
 } from './boards'
 import type { BoardScene } from './boards'
 import type { Board } from './design-drafts'
+import { finish, newPractice, tick } from './practice'
 
 const rect = (id: string, x = 0) => ({ id, type: 'rectangle', x, y: 0, width: 10, height: 10, isDeleted: false, groupIds: [], boundElements: null })
 const scene = (...ids: string[]): BoardScene => ({ elements: ids.map((id, index) => rect(id, index * 20)), appState: { viewBackgroundColor: '#fff' }, files: {} })
@@ -54,6 +55,24 @@ describe('board storage', () => {
     expect((await listBoards()).map(board => board.title)).toEqual(['New'])
     await replaceBoards([])
     expect(await listBoards()).toEqual([])
+  })
+
+  it('finds practice and scratch boards by link and stores attempts', async () => {
+    const practice = newPractice(35, 1_000)
+    const attempt = await createBoard({ kind: 'practice', caseId: 'url-shortener', practice })
+    await createBoard({ kind: 'practice', caseId: 'rate-limiter', practice: newPractice(45, 1_000) })
+    const pad = await createBoard({ kind: 'scratch', problemId: 'count-pair-sums' })
+    await createBoard({ title: 'Free' })
+    expect(attempt.practice).toEqual(practice)
+    expect((await findBoards('practice', { caseId: 'url-shortener' })).map(board => board.id)).toEqual([attempt.id])
+    expect(await findBoards('practice', { caseId: 'chat-app' })).toEqual([])
+    expect((await findBoards('scratch', { problemId: 'count-pair-sums' })).map(board => board.id)).toEqual([pad.id])
+    expect(await findBoards('scratch', { problemId: 'two-sum' })).toEqual([])
+    const done = tick(finish(practice, 31 * 60_000), 2, true)
+    await savePractice(attempt.id, done)
+    expect((await getBoard(attempt.id))?.practice).toEqual(done)
+    expect((await getBoard(attempt.id))?.elements).toEqual([])
+    await expect(savePractice('missing-1', done)).rejects.toThrow()
   })
 })
 

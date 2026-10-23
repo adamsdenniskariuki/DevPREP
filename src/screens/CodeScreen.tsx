@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
 import Editor from '../components/Editor'
@@ -11,6 +11,9 @@ import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
 import { patternsForProblem } from '../patterns'
+
+/** The scratchpad and its drawing tool load only when the panel is first opened. */
+const Scratchpad = lazy(() => import('../components/Scratchpad').catch(() => ({ default: () => <p className="alert" role="alert">The scratchpad couldn’t load. Reconnect and try again.</p> })))
 
 const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
 const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
@@ -105,7 +108,7 @@ function ProblemPage({ app, summary }: { app: AppModel; summary: ProblemSummary 
     <a className="back-link" href="#code"><Icon name="back" size={16} /> All problems</a>
     <div className="page-heading"><div><div className="eyebrow">{summary.pattern.toUpperCase()} · {DIFFICULTY[summary.difficulty].toUpperCase()}{summary.level === 'sse' ? ' · SSE' : ''}</div><h1 ref={app.heading} tabIndex={-1}>{summary.title}</h1></div><SolvedMarks solved={app.progress.solved?.[summary.id]} /></div>
     {patternsForProblem(summary).map(page => <a key={page.id} className="text-button pattern-link" href={`#patterns/${page.id}`}><Icon name="target" size={16} />Learn the pattern: {page.title}</a>)}
-    {error ? <div className="alert" role="alert">{error}</div> : problem ? <Workspace app={app} problem={problem} /> : <p role="status">Loading problem…</p>}
+    {error ? <div className="alert" role="alert">{error}</div> : problem ? <><Workspace app={app} problem={problem} /><ScratchpadPanel app={app} summary={summary} /></> : <p role="status">Loading problem…</p>}
   </>
 }
 
@@ -202,4 +205,12 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
       </div>
     </section>
   </div>
+}
+
+function ScratchpadPanel({ app, summary }: { app: AppModel; summary: ProblemSummary }) {
+  const [opened, setOpened] = useState(false)
+  return <details className="card scratchpad" onToggle={event => { if (event.currentTarget.open) setOpened(true) }}>
+    <summary><Icon name="grid" size={18} /> Scratchpad <span className="muted">Trace arrays, trees and pointers. Saved for this problem.</span></summary>
+    {opened && <Suspense fallback={<p role="status">Loading the scratchpad…</p>}><Scratchpad app={app} problemId={summary.id} title={summary.title} /></Suspense>}
+  </details>
 }
