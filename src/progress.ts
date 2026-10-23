@@ -12,6 +12,8 @@ import { COMPETENCY_IDS } from './stories'
 import type { Competency } from './stories'
 import type { CodeLanguage } from './problem-types'
 import { defaultEditorPrefs, type EditorPrefs } from './editor-prefs'
+import { patternIds, PICKER_ROUND } from './patterns'
+import { PATTERN_LANGS, type PatternLang } from './pattern-types'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -69,6 +71,19 @@ export interface Progress {
   placements?: Partial<Record<Track, Placement>>
   /** Code editor choice. Omitted while it matches the defaults (Rich, interview mode off). */
   editor?: Partial<EditorPrefs>
+  /** Pattern course pages: first exercise pass per language and best quick-check score. */
+  patterns?: Record<string, PatternProgress>
+  /** Pattern picker rounds: best score out of PICKER_ROUND and rounds finished. */
+  patternPicker?: PickerProgress
+}
+export interface PatternProgress {
+  exercise?: Partial<Record<PatternLang, string>>
+  quiz?: DesignScore
+}
+export interface PickerProgress {
+  best: number
+  rounds: number
+  at: string
 }
 export interface Placement {
   percent: number
@@ -172,7 +187,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -231,6 +246,8 @@ export function parseBackup(text: string): Progress {
   const stories = Object.hasOwn(root, 'stories') ? parseStories(root.stories) : undefined
   const placements = Object.hasOwn(root, 'placements') ? parsePlacements(root.placements) : undefined
   const editor = Object.hasOwn(root, 'editor') ? parseEditor(root.editor) : undefined
+  const patterns = Object.hasOwn(root, 'patterns') ? parsePatterns(root.patterns) : undefined
+  const patternPicker = Object.hasOwn(root, 'patternPicker') ? parsePicker(root.patternPicker) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -244,7 +261,63 @@ export function parseBackup(text: string): Progress {
     ...(placements ? { placements } : {}),
     ...(sqlSolved ? { sqlSolved } : {}),
     ...(editor && Object.keys(editor).length ? { editor } : {}),
+    ...(patterns ? { patterns } : {}),
+    ...(patternPicker ? { patternPicker } : {}),
   }
+}
+
+function parsePatterns(value: unknown): Record<string, PatternProgress> {
+  const raw = object(value)
+  const patterns: Record<string, PatternProgress> = {}
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!patternIds.has(id)) invalid('unknown pattern page. This backup may need a newer app version.')
+    const page = object(entry, [], ['exercise', 'quiz'])
+    const item: PatternProgress = {}
+    if (Object.hasOwn(page, 'exercise')) {
+      const langs = object(page.exercise, [], [...PATTERN_LANGS])
+      if (!Object.keys(langs).length) invalid('pattern exercise has no language.')
+      item.exercise = Object.fromEntries(Object.entries(langs).map(([lang, at]) => [lang, timestamp(at)]))
+    }
+    if (Object.hasOwn(page, 'quiz')) {
+      const score = object(page.quiz, ['best', 'at'])
+      item.quiz = { best: integer(score.best, 0, 100), at: timestamp(score.at) }
+    }
+    if (!item.exercise && !item.quiz) invalid('empty pattern progress.')
+    patterns[id] = item
+  }
+  return patterns
+}
+
+function parsePicker(value: unknown): PickerProgress {
+  const raw = object(value, ['best', 'rounds', 'at'])
+  return { best: integer(raw.best, 0, PICKER_ROUND), rounds: integer(raw.rounds, 1, Number.MAX_SAFE_INTEGER), at: timestamp(raw.at) }
+}
+
+/** Saves the first passing time of a pattern exercise in one language. */
+export function recordPatternExercise(progress: Progress, pageId: string, lang: PatternLang, now = new Date()): Progress {
+  if (!patternIds.has(pageId)) throw new Error('Unknown pattern page.')
+  if (!PATTERN_LANGS.includes(lang)) throw new Error('Unknown language.')
+  const page = progress.patterns?.[pageId] ?? {}
+  if (page.exercise?.[lang]) return progress
+  const exercise = { ...page.exercise, [lang]: now.toISOString() }
+  return { ...progress, updatedAt: now.toISOString(), patterns: { ...progress.patterns, [pageId]: { ...page, exercise } } }
+}
+
+/** Saves a pattern quick-check score, keeping the best. */
+export function recordPatternQuiz(progress: Progress, pageId: string, score: number, now = new Date()): Progress {
+  if (!patternIds.has(pageId)) throw new Error('Unknown pattern page.')
+  if (!Number.isInteger(score) || score < 0 || score > 100) throw new Error('Score must be a whole percentage.')
+  const page = progress.patterns?.[pageId] ?? {}
+  const best = Math.max(page.quiz?.best ?? 0, score)
+  return { ...progress, updatedAt: now.toISOString(), patterns: { ...progress.patterns, [pageId]: { ...page, quiz: { best, at: now.toISOString() } } } }
+}
+
+/** Counts a finished pattern picker round, keeping the best score. */
+export function recordPicker(progress: Progress, score: number, now = new Date()): Progress {
+  if (!Number.isInteger(score) || score < 0 || score > PICKER_ROUND) throw new Error('Score out of range.')
+  const previous = progress.patternPicker
+  const patternPicker = { best: Math.max(previous?.best ?? 0, score), rounds: (previous?.rounds ?? 0) + 1, at: now.toISOString() }
+  return { ...progress, updatedAt: now.toISOString(), patternPicker }
 }
 
 function parseEditor(value: unknown): Partial<EditorPrefs> {

@@ -8,9 +8,10 @@ import { patternProgress, problemIndex } from './problems'
 import { guideIndex } from './guides'
 import { sqlProblemIndex, sqlTopicProgress } from './sql-problems'
 import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
+import { patternIndex, PICKER_ROUND } from './patterns'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -53,6 +54,23 @@ export function guideTopicProgress(progress: Pick<Progress, 'guides'>) {
     const items = guideIndex.filter(item => item.topic === topic)
     return { topic, label: TOPIC_LABELS[topic], total: items.length, read: items.filter(item => progress.guides?.[item.id]).length }
   }).filter(row => row.total > 0)
+}
+
+/** Pattern course: exercise passes per language, quick checks and picker rounds. */
+export function patternXp(progress: Pick<Progress, 'patterns' | 'patternPicker'>): number {
+  const pages = Object.values(progress.patterns ?? {}).reduce((sum, page) => {
+    const langs = Object.keys(page.exercise ?? {}).length
+    const exercise = langs ? XP_RULES.patternExercise + (langs - 1) * XP_RULES.patternSecondLanguage : 0
+    const quiz = page.quiz ? XP_RULES.patternQuiz + (page.quiz.best === 100 ? XP_RULES.patternQuizPerfect : 0) : 0
+    return sum + exercise + quiz
+  }, 0)
+  return pages + (progress.patternPicker?.rounds ?? 0) * XP_RULES.pickerRound
+}
+
+/** A pattern page counts as done once its exercise passes in any language and its quick check is taken. */
+export function patternPageDone(progress: Pick<Progress, 'patterns'>, pageId: string): boolean {
+  const page = progress.patterns?.[pageId]
+  return !!page?.quiz && Object.keys(page.exercise ?? {}).length > 0
 }
 
 export function cardXp(progress: Pick<Progress, 'cards'>): number {
@@ -128,7 +146,7 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress) + patternXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
   const sqlSolves = Object.values(progress.sqlSolved ?? {})
@@ -138,7 +156,9 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const mocks = progress.mocks ?? []
   const guides = Object.entries(progress.guides ?? {})
   const guideDays = guides.map(([, score]) => localDay(new Date(score.at)))
-  const practiceDays = [...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
+  const patternDays = Object.values(progress.patterns ?? {}).flatMap(page => [...Object.values(page.exercise ?? {}), ...page.quiz ? [page.quiz.at] : []]).map(at => localDay(new Date(at!)))
+  if (progress.patternPicker) patternDays.push(localDay(new Date(progress.patternPicker.at)))
+  const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
@@ -187,6 +207,10 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
       ...track.placement ? [{ id: `placed-${track.id}`, title: `${track.title} placed`, description: `Take the ${track.title} placement check.`, earned: !!progress.placements?.[track.id] }] : [],
       { id: `trivia-${track.id}`, title: `${track.title} trivia`, description: `Finish a ${track.title} trivia mock interview.`, earned: mocks.some(mock => mock.track === track.id) },
     ]),
+    ...patternIndex.map(page => ({ id: `pattern-course-${page.id}`, title: `${page.title} learned`, description: `Pass the ${page.title} exercise and take its quick check.`, earned: patternPageDone(progress, page.id) })),
+    { id: 'first-pattern', title: 'Pattern learner', description: 'Finish your first pattern page: exercise and quick check.', earned: patternIndex.some(page => patternPageDone(progress, page.id)) },
+    { id: 'patterns-course', title: 'Pattern course', description: `Finish all ${patternIndex.length} pattern pages.`, earned: patternIndex.length > 0 && patternIndex.every(page => patternPageDone(progress, page.id)) },
+    { id: 'picker-sharp', title: 'Quick eye', description: `Score 9 or more out of ${PICKER_ROUND} in a pattern picker round.`, earned: (progress.patternPicker?.best ?? 0) >= 9 },
   ]
   return { xp, level: Math.floor(xp / LEVEL_XP) + 1, levelXp: xp % LEVEL_XP, streak, badges }
 }

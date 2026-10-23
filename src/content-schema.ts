@@ -101,8 +101,9 @@ const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 export function validateProblem(value: unknown, where = 'problem'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
-  check.keys(value, '', PROBLEM_REQUIRED, ['lessonId', 'paths'])
+  check.keys(value, '', PROBLEM_REQUIRED, ['lessonId', 'paths', 'subpattern'])
   if (typeof value.id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.id)) check.fail('id', 'expected kebab-case id')
+  if ('subpattern' in value && (typeof value.subpattern !== 'string' || !KEBAB.test(value.subpattern))) check.fail('subpattern', 'expected a pattern page id')
   for (const key of ['title', 'pattern', 'prompt']) check.text(value[key], key)
   if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
   if (!['warm-up', 'core', 'stretch'].includes(value.difficulty as string)) check.fail('difficulty', 'expected warm-up, core or stretch')
@@ -597,6 +598,24 @@ const GUIDE_ONLY = ['principle', 'why', 'examples', 'checklist', 'antipatterns']
 const CASE_ONLY = ['organisation', 'year', 'problem', 'constraints', 'decisions', 'failures', 'lessons', 'sources']
 
 /** Validates one content/field-guide/<id>.json guide or case study. Cross-links are checked by the tests. */
+/** Multiple-choice questions that also become flashcards, so they share the card length limits. */
+function quizItems(check: Checker, list: unknown, min: number, max: number) {
+  if (!Array.isArray(list) || list.length < min || list.length > max) return check.fail('quiz', min === max ? `expected ${min} questions` : `expected ${min}–${max} questions`)
+  list.forEach((item, index) => {
+    const at = `quiz[${index}]`
+    if (!isRec(item)) return check.fail(at, 'expected object')
+    check.keys(item, at, ['question', 'choices', 'answer', 'explain'])
+    maxLength(check, item.question, `${at}.question`, QUIZ_QUESTION_MAX)
+    check.text(item.explain, `${at}.explain`)
+    const choices = item.choices
+    if (!Array.isArray(choices) || choices.length < 3 || choices.length > 4 || choices.some(choice => !isText(choice)) || new Set(choices).size !== choices.length) check.fail(`${at}.choices`, 'expected 3–4 distinct choices')
+    else {
+      if (!Number.isInteger(item.answer) || (item.answer as number) < 0 || (item.answer as number) >= choices.length) check.fail(`${at}.answer`, 'expected a choice index')
+      else if (`${choices[item.answer as number]}. ${String(item.explain)}`.length > QUIZ_BACK_MAX) check.fail(at, `answer plus explanation longer than ${QUIZ_BACK_MAX - 2} characters`)
+    }
+  })
+}
+
 export function validateGuide(value: unknown, where = 'guide'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
@@ -622,20 +641,7 @@ export function validateGuide(value: unknown, where = 'guide'): string[] {
     if (new Set(value.diagrams.map(item => isRec(item) ? item.type : '')).size < 2) check.fail('diagrams', 'expected at least 2 different diagram types')
   }
   check.texts(value.interview, 'interview', 2)
-  if (!Array.isArray(value.quiz) || value.quiz.length < 3 || value.quiz.length > 6) check.fail('quiz', 'expected 3–6 questions')
-  else value.quiz.forEach((item, index) => {
-    const at = `quiz[${index}]`
-    if (!isRec(item)) return check.fail(at, 'expected object')
-    check.keys(item, at, ['question', 'choices', 'answer', 'explain'])
-    maxLength(check, item.question, `${at}.question`, QUIZ_QUESTION_MAX)
-    check.text(item.explain, `${at}.explain`)
-    const choices = item.choices
-    if (!Array.isArray(choices) || choices.length < 3 || choices.length > 4 || choices.some(choice => !isText(choice)) || new Set(choices).size !== choices.length) check.fail(`${at}.choices`, 'expected 3–4 distinct choices')
-    else {
-      if (!Number.isInteger(item.answer) || (item.answer as number) < 0 || (item.answer as number) >= choices.length) check.fail(`${at}.answer`, 'expected a choice index')
-      else if (`${choices[item.answer as number]}. ${String(item.explain)}`.length > QUIZ_BACK_MAX) check.fail(at, `answer plus explanation longer than ${QUIZ_BACK_MAX - 2} characters`)
-    }
-  })
+  quizItems(check, value.quiz, 3, 6)
   if (!isRec(value.practice)) check.fail('practice', 'expected object')
   else {
     check.keys(value.practice, 'practice', ['prompt', 'answer', 'rubric'])
@@ -700,5 +706,103 @@ export function validateGuide(value: unknown, where = 'guide'): string[] {
       snippet(check, item.better, `${at}.better`, diagramIds)
     })
   }
+  return check.errors
+}
+
+const PATTERN_REQUIRED = ['id', 'title', 'category', 'level', 'summary', 'minutes', 'idea', 'recognise', 'picture', 'visualiser', 'template', 'oneLiner', 'exercise', 'problems', 'complexity', 'mistakes', 'quiz', 'interviewTip']
+const PATTERN_LANG_KEYS = ['js', 'py', 'ts']
+export const SIGNAL_SEE_MAX = 160
+export const DRILL_MAX = 200
+
+/** Validates one content/patterns/<id>.json pattern page. Cross-references (tracers, problems, parents) are checked in tests. */
+export function validatePattern(value: unknown, where = 'pattern'): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', PATTERN_REQUIRED, ['parent'])
+  if (typeof value.id !== 'string' || !KEBAB.test(value.id)) check.fail('id', 'expected kebab-case id')
+  if ('parent' in value && (typeof value.parent !== 'string' || !KEBAB.test(value.parent) || value.parent === value.id)) check.fail('parent', 'expected another page id')
+  if (!(PROBLEM_PATTERNS as readonly string[]).includes(value.category as string)) check.fail('category', 'expected a known pattern')
+  if (value.level !== 'se' && value.level !== 'sse') check.fail('level', 'expected se or sse')
+  maxLength(check, value.title, 'title', 50)
+  maxLength(check, value.summary, 'summary', 220)
+  maxLength(check, value.idea, 'idea', 200)
+  maxLength(check, value.oneLiner, 'oneLiner', 120)
+  check.text(value.interviewTip, 'interviewTip')
+  if (!Number.isInteger(value.minutes) || (value.minutes as number) < 5 || (value.minutes as number) > 45) check.fail('minutes', 'expected integer 5–45')
+  const langs = (item: unknown, path: string, keys: string[]) => {
+    if (!isRec(item)) return check.fail(path, 'expected object')
+    check.keys(item, path, keys)
+    for (const key of keys) check.text(item[key], `${path}.${key}`)
+  }
+  if (!isRec(value.recognise)) check.fail('recognise', 'expected object')
+  else {
+    const { signals, phrasings } = value.recognise
+    check.keys(value.recognise, 'recognise', ['signals', 'phrasings'])
+    if (!Array.isArray(signals) || signals.length < 2 || signals.length > 5) check.fail('recognise.signals', 'expected 2–5 signals')
+    else signals.forEach((item, index) => {
+      const at = `recognise.signals[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['see', 'think'])
+      maxLength(check, item.see, `${at}.see`, SIGNAL_SEE_MAX)
+      maxLength(check, item.think, `${at}.think`, 300)
+    })
+    if (!Array.isArray(phrasings) || phrasings.length < 2 || phrasings.length > 3) check.fail('recognise.phrasings', 'expected 2–3 phrasings')
+    else phrasings.forEach((item, index) => maxLength(check, item, `recognise.phrasings[${index}]`, DRILL_MAX))
+  }
+  diagram(check, value.picture, 'picture')
+  if (!isRec(value.visualiser)) check.fail('visualiser', 'expected object')
+  else {
+    const vis = value.visualiser
+    check.keys(vis, 'visualiser', ['tracer', 'function', 'code', 'examples', 'inputHelp'])
+    if (typeof vis.tracer !== 'string' || !KEBAB.test(vis.tracer)) check.fail('visualiser.tracer', 'expected a tracer id')
+    langs(vis.function, 'visualiser.function', ['js', 'py'])
+    langs(vis.code, 'visualiser.code', ['js', 'py'])
+    check.text(vis.inputHelp, 'visualiser.inputHelp')
+    if (!Array.isArray(vis.examples) || vis.examples.length < 2) check.fail('visualiser.examples', 'expected at least 2 examples')
+    else vis.examples.forEach((item, index) => {
+      const at = `visualiser.examples[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['label', 'input'])
+      maxLength(check, item.label, `${at}.label`, 40)
+      if (!isRec(item.input) || Object.values(item.input).some(text => typeof text !== 'string')) check.fail(`${at}.input`, 'expected text per parameter')
+    })
+  }
+  langs(value.template, 'template', PATTERN_LANG_KEYS)
+  if (!isRec(value.exercise)) check.fail('exercise', 'expected object')
+  else {
+    const ex = value.exercise
+    check.keys(ex, 'exercise', ['prompt', 'function', 'starter', 'solution', 'tests', 'hiddenTests', 'hints'])
+    check.text(ex.prompt, 'exercise.prompt')
+    langs(ex.function, 'exercise.function', ['js', 'py'])
+    if (isRec(ex.function)) for (const lang of ['js', 'py']) if (!IDENT.test(String(ex.function[lang]))) check.fail(`exercise.function.${lang}`, 'expected identifier')
+    langs(ex.starter, 'exercise.starter', PATTERN_LANG_KEYS)
+    langs(ex.solution, 'exercise.solution', PATTERN_LANG_KEYS)
+    labTests(check, ex.tests, 'exercise.tests', 2)
+    labTests(check, ex.hiddenTests, 'exercise.hiddenTests', 3)
+    check.texts(ex.hints, 'exercise.hints', 2)
+  }
+  if (!Array.isArray(value.problems) || value.problems.length < 2 || value.problems.length > 4) check.fail('problems', 'expected 2–4 linked problems')
+  else {
+    value.problems.forEach((item, index) => {
+      const at = `problems[${index}]`
+      if (!isRec(item)) return check.fail(at, 'expected object')
+      check.keys(item, at, ['id', 'role'])
+      if (typeof item.id !== 'string' || !KEBAB.test(item.id)) check.fail(`${at}.id`, 'expected a problem id')
+      if (!['warm-up', 'core', 'stretch'].includes(item.role as string)) check.fail(`${at}.role`, 'expected warm-up, core or stretch')
+    })
+    const ids = value.problems.map(item => isRec(item) ? item.id : undefined)
+    if (new Set(ids).size !== ids.length) check.fail('problems', 'duplicate problem')
+    const roles = new Set(value.problems.map(item => isRec(item) ? item.role : undefined))
+    for (const role of ['warm-up', 'core', 'stretch']) if (!roles.has(role)) check.fail('problems', `expected a ${role} problem`)
+  }
+  if (!isRec(value.complexity)) check.fail('complexity', 'expected object')
+  else {
+    check.keys(value.complexity, 'complexity', ['time', 'space', 'why'])
+    maxLength(check, value.complexity.time, 'complexity.time', 30)
+    maxLength(check, value.complexity.space, 'complexity.space', 30)
+    check.text(value.complexity.why, 'complexity.why')
+  }
+  check.texts(value.mistakes, 'mistakes', 3)
+  quizItems(check, value.quiz, 3, 3)
   return check.errors
 }

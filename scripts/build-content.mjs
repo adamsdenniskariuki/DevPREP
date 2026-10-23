@@ -42,7 +42,7 @@ export function buildProblems(root = 'content') {
     return read(join(dir, `${id}.json`))
   })
   if (files.size) throw new Error(`content/problems has problems not listed in index.json: ${[...files].join(', ')}`)
-  const index = problems.map(({ id, title, pattern, level, difficulty, lessonId, paths }) => ({ id, title, pattern, level, difficulty, ...(lessonId ? { lessonId } : {}), ...(paths ? { paths } : {}) }))
+  const index = problems.map(({ id, title, pattern, level, difficulty, lessonId, paths, subpattern }) => ({ id, title, pattern, level, difficulty, ...(lessonId ? { lessonId } : {}), ...(paths ? { paths } : {}), ...(subpattern ? { subpattern } : {}) }))
   return { problems, index }
 }
 
@@ -143,6 +143,39 @@ export function guideCards(entry) {
   }))
 }
 
+export const PATTERNS_OUTPUT = 'src/generated/patterns.json'
+export const PATTERN_INDEX_OUTPUT = 'src/generated/pattern-index.json'
+
+/** Pattern pages, in learning order. A page is published when content/patterns/index.json lists it. */
+export function buildPatterns(root = 'content') {
+  const dir = join(root, 'patterns')
+  if (!existsSync(join(dir, 'index.json'))) return { patterns: [], index: [] }
+  const { patterns: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const patterns = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/patterns/index.json lists ${id} but the file is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/patterns has pages not listed in index.json: ${[...files].join(', ')}`)
+  const prompts = new Map(buildProblems(root).problems.map(problem => [problem.id, problem.prompt]))
+  const index = patterns.map(page => ({
+    id: page.id, title: page.title, ...(page.parent ? { parent: page.parent } : {}), category: page.category, level: page.level,
+    summary: page.summary, minutes: page.minutes, idea: page.idea, oneLiner: page.oneLiner,
+    time: page.complexity.time, space: page.complexity.space, signals: page.recognise.signals,
+    drills: [...page.recognise.phrasings, ...page.problems.map(link => prompts.has(link.id) ? firstSentence(prompts.get(link.id)) : undefined).filter(text => text && text.length <= 200)],
+    problems: page.problems,
+  }))
+  return { patterns, index }
+}
+
+/** Pattern quiz questions, then one "which pattern?" card per recognition signal. */
+export function patternCards(page) {
+  return [
+    ...page.quiz.map((item, n) => ({ id: `dsa-pt-${page.id}-${n + 1}`, front: item.question, back: `${item.choices[item.answer]}. ${item.explain}`, level: page.level })),
+    ...page.recognise.signals.map((signal, n) => ({ id: `dsa-pt-${page.id}-${page.quiz.length + n + 1}`, front: `You see: ${signal.see} Which pattern?`, back: `${page.title}: ${signal.think}`, level: page.level })),
+  ]
+}
+
 export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
@@ -155,7 +188,7 @@ export function buildFlashcards(root = 'content') {
   })
   if (files.size) throw new Error(`content/flashcards has decks for unknown tracks: ${[...files].join(', ')}`)
   const dsa = decks.find(deck => deck.track === 'dsa')
-  dsa.cards = [...dsa.cards, ...buildProblems(root).problems.map(problemCard)]
+  dsa.cards = [...dsa.cards, ...buildProblems(root).problems.map(problemCard), ...buildPatterns(root).patterns.flatMap(patternCards)]
   const sql = decks.find(deck => deck.track === 'sql')
   sql.cards = [...sql.cards, ...buildSqlProblems(root).problems.map(sqlProblemCard)]
   if (existsSync(join(root, 'field-guide', 'index.json'))) for (const entry of buildGuides(root).guides) {
@@ -190,6 +223,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const field = buildGuides()
   writeIfChanged(GUIDES_OUTPUT, field.guides)
   writeIfChanged(GUIDE_INDEX_OUTPUT, field.index)
+  const patternSet = buildPatterns()
+  writeIfChanged(PATTERNS_OUTPUT, patternSet.patterns)
+  writeIfChanged(PATTERN_INDEX_OUTPUT, patternSet.index)
   const cards = buildFlashcards()
   writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
   writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)

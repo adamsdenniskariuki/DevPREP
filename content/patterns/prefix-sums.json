@@ -1,0 +1,142 @@
+{
+  "id": "prefix-sums",
+  "title": "Prefix sums",
+  "category": "Prefix sums",
+  "level": "se",
+  "summary": "Build a list of running totals once, then the sum of any range is one subtraction.",
+  "minutes": 15,
+  "idea": "prefix[k] is the total of the first k items, so the sum from lo to hi is prefix[hi + 1] − prefix[lo].",
+  "recognise": {
+    "signals": [
+      { "see": "Many questions ask for the total of a range of the same list.", "think": "Pay O(n) once to build running totals. Then every range total costs O(1)." },
+      { "see": "You need blocks whose sum equals a value, and numbers can be negative.", "think": "A sliding window will not work with negatives. Use running totals plus a map of totals seen so far." },
+      { "see": "A block must balance, such as equal wins and losses or equal 0s and 1s.", "think": "Score one side +1 and the other −1. A balanced block is two equal running totals." },
+      { "see": "You need rectangle totals in a grid.", "think": "Build a 2-D prefix table and use inclusion-exclusion: add the big corner, subtract two strips, add back the overlap." }
+    ],
+    "phrasings": [
+      "A fitness app stores daily step counts. Answer many questions like “how many steps from day 10 to day 20?”.",
+      "Count the stretches of consecutive bank transactions whose total is exactly zero.",
+      "Find the longest run of games with as many wins as losses."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "prefix-vs-loop",
+    "title": "Pay once, then answer fast",
+    "alt": "On the left, every range question loops over the range again, costing up to n steps per question. On the right, one pass builds running totals and every question becomes a single subtraction of two totals.",
+    "caption": "A range total is the running total at its end minus the running total just before its start.",
+    "before": {
+      "label": "Brute force: loop per question",
+      "nodes": [
+        { "id": "a", "label": "Read lo, hi", "kind": "state", "col": 0, "row": 0 },
+        { "id": "b", "label": "Add each item", "kind": "decision", "col": 1, "row": 0 },
+        { "id": "c", "label": "n steps each", "kind": "bad", "col": 2, "row": 0, "sub": "O(n × q) time" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b", "label": "lo to hi" },
+        { "from": "b", "to": "c" }
+      ]
+    },
+    "after": {
+      "label": "Pattern: running totals",
+      "nodes": [
+        { "id": "a", "label": "Build prefix", "kind": "cache", "col": 0, "row": 0, "sub": "once, O(n)" },
+        { "id": "b", "label": "Subtract two", "kind": "state", "col": 1, "row": 0 },
+        { "id": "c", "label": "1 step each", "kind": "good", "col": 2, "row": 0, "sub": "O(n + q) time" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b", "label": "p[hi+1] − p[lo]" },
+        { "from": "b", "to": "c" }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "prefix-range",
+    "function": { "js": "rangeSum", "py": "range_sum" },
+    "code": {
+      "js": "function rangeSum(nums, lo, hi) {\n  const prefix = [0] //@init\n  for (const x of nums) { //@loop\n    prefix.push(prefix[prefix.length - 1] + x) //@add\n  }\n  return prefix[hi + 1] - prefix[lo] //@answer\n}",
+      "py": "def range_sum(nums, lo, hi):\n    prefix = [0]  #@init\n    for x in nums:  #@loop\n        prefix.append(prefix[-1] + x)  #@add\n    return prefix[hi + 1] - prefix[lo]  #@answer"
+    },
+    "examples": [
+      { "label": "Middle range", "input": { "nums": "3, 1, 4, 1, 5", "lo": "1", "hi": "3" } },
+      { "label": "From the start", "input": { "nums": "2, -1, 6", "lo": "0", "hi": "1" } },
+      { "label": "One item", "input": { "nums": "7, 8, 9", "lo": "2", "hi": "2" } }
+    ],
+    "inputHelp": "Up to 12 whole numbers between -99 and 99, separated by commas. lo and hi are indexes into that list, counting from 0, with lo ≤ hi."
+  },
+  "template": {
+    "py": "def build_prefix(items):\n    prefix = [0]  # prefix[k] = total of the first k items\n    for x in items:\n        prefix.append(prefix[-1] + x)\n    return prefix\n\ndef range_total(prefix, lo, hi):\n    # total of items[lo..hi], both ends included\n    return prefix[hi + 1] - prefix[lo]\n",
+    "js": "function buildPrefix(items) {\n  const prefix = [0] // prefix[k] = total of the first k items\n  for (const x of items) prefix.push(prefix[prefix.length - 1] + x)\n  return prefix\n}\n\nfunction rangeTotal(prefix, lo, hi) {\n  // total of items[lo..hi], both ends included\n  return prefix[hi + 1] - prefix[lo]\n}\n",
+    "ts": "function buildPrefix(items: number[]): number[] {\n  const prefix = [0] // prefix[k] = total of the first k items\n  for (const x of items) prefix.push(prefix[prefix.length - 1] + x)\n  return prefix\n}\n\nfunction rangeTotal(prefix: number[], lo: number, hi: number): number {\n  // total of items[lo..hi], both ends included\n  return prefix[hi + 1] - prefix[lo]\n}\n"
+  },
+  "oneLiner": "prefix = [0, a0, a0+a1, …]; sum(lo..hi) = prefix[hi+1] − prefix[lo]",
+  "exercise": {
+    "prompt": "A balance point of a list is an index where the total of everything to its left equals the total of everything to its right (the item itself counts on neither side). Return the first balance point, or -1 if there is none. The left of index 0 and the right of the last index total 0. Fill in the loop using a running total.",
+    "function": { "js": "balancePoint", "py": "balance_point" },
+    "starter": {
+      "js": "function balancePoint(nums) {\n  let total = 0\n  for (const x of nums) total += x\n  let left = 0 // running total of everything before i\n  for (let i = 0; i < nums.length; i++) {\n    // 1. The right side is total - left - nums[i].\n    // 2. If left equals the right side, return i.\n    // 3. Add nums[i] to left.\n  }\n  return -1\n}\n",
+      "py": "def balance_point(nums):\n    total = sum(nums)\n    left = 0  # running total of everything before i\n    for i in range(len(nums)):\n        # 1. The right side is total - left - nums[i].\n        # 2. If left equals the right side, return i.\n        # 3. Add nums[i] to left.\n        pass\n    return -1\n",
+      "ts": "function balancePoint(nums: number[]): number {\n  let total = 0\n  for (const x of nums) total += x\n  let left = 0 // running total of everything before i\n  for (let i = 0; i < nums.length; i++) {\n    // 1. The right side is total - left - nums[i].\n    // 2. If left equals the right side, return i.\n    // 3. Add nums[i] to left.\n  }\n  return -1\n}\n"
+    },
+    "solution": {
+      "js": "function balancePoint(nums) {\n  let total = 0\n  for (const x of nums) total += x\n  let left = 0\n  for (let i = 0; i < nums.length; i++) {\n    if (left === total - left - nums[i]) return i\n    left += nums[i]\n  }\n  return -1\n}\n",
+      "py": "def balance_point(nums):\n    total = sum(nums)\n    left = 0\n    for i in range(len(nums)):\n        if left == total - left - nums[i]:\n            return i\n        left += nums[i]\n    return -1\n",
+      "ts": "function balancePoint(nums: number[]): number {\n  let total = 0\n  for (const x of nums) total += x\n  let left = 0\n  for (let i = 0; i < nums.length; i++) {\n    if (left === total - left - nums[i]) return i\n    left += nums[i]\n  }\n  return -1\n}\n"
+    },
+    "tests": [
+      { "args": [[2, 3, 1, 4, 1]], "expected": 2 },
+      { "args": [[1, 2, 3]], "expected": -1 },
+      { "args": [[5, -2, 2]], "expected": 0 }
+    ],
+    "hiddenTests": [
+      { "args": [[]], "expected": -1 },
+      { "args": [[9]], "expected": 0 },
+      { "args": [[1, -1, 4]], "expected": 2 },
+      { "args": [[0, 0, 0]], "expected": 0 },
+      { "args": [[3, 0, 3, 0]], "expected": 1 }
+    ],
+    "hints": [
+      "You do not need the whole prefix list here. A running total of the left side is enough.",
+      "Once you know the grand total, the right side of i is total − left − nums[i]."
+    ]
+  },
+  "problems": [
+    { "id": "rainfall-range-totals", "role": "warm-up" },
+    { "id": "subarrays-hitting-target", "role": "core" },
+    { "id": "longest-even-record", "role": "core" },
+    { "id": "field-plot-totals", "role": "stretch" }
+  ],
+  "complexity": {
+    "time": "O(n) to build, O(1) per query",
+    "space": "O(n)",
+    "why": "One pass fills n + 1 running totals. After that, any range total reads two of them and subtracts."
+  },
+  "mistakes": [
+    "Forgetting the leading 0, so ranges that start at index 0 need a special case.",
+    "Off by one: the range lo..hi is prefix[hi + 1] − prefix[lo], not prefix[hi] − prefix[lo].",
+    "Mixing up inclusive and exclusive ends. Write down which one the question uses.",
+    "Seeding the “totals seen” map without 0, which misses blocks that start at the first item.",
+    "Reaching for a sliding window when numbers can be negative. Running totals still work."
+  ],
+  "quiz": [
+    {
+      "question": "With prefix = [0, a0, a0+a1, …], which expression gives the total of items lo to hi, inclusive?",
+      "choices": ["prefix[hi] − prefix[lo]", "prefix[hi + 1] − prefix[lo]", "prefix[hi + 1] − prefix[lo + 1]", "prefix[hi] + prefix[lo]"],
+      "answer": 1,
+      "explain": "prefix[hi + 1] covers items 0..hi. Subtracting prefix[lo] removes items 0..lo − 1, leaving lo..hi."
+    },
+    {
+      "question": "Why start the prefix list with 0?",
+      "choices": ["So a range that starts at index 0 needs no special case", "Because lists must not start with a negative number", "It makes the list sorted"],
+      "answer": 0,
+      "explain": "prefix[0] = 0 is the total of no items. Then the range 0..hi is prefix[hi + 1] − prefix[0] like every other range."
+    },
+    {
+      "question": "To count blocks that sum to k when numbers can be negative, what do you store in a map?",
+      "choices": ["Each item's index", "How many times each running total has appeared", "The largest item so far"],
+      "answer": 1,
+      "explain": "A block ending here sums to k when an earlier running total equals the current one minus k. The map counts those totals."
+    }
+  ],
+  "interviewTip": "Draw the running totals under the list on the whiteboard. Pointing at two of them and subtracting makes the O(1) query obvious, and the leading 0 stops an off-by-one before it starts."
+}
