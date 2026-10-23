@@ -1,0 +1,320 @@
+{
+  "id": "tries",
+  "title": "Tries",
+  "category": "Tries",
+  "level": "se",
+  "summary": "A trie stores words letter by letter, so words with a shared prefix share a path. Insert and prefix lookup cost one step per letter, however many words are stored.",
+  "minutes": 12,
+  "idea": "Each edge is one letter and each node is a prefix. Mark the nodes where a word ends, and count how many words pass through each node.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "You must answer many questions about prefixes: starts-with, autocomplete or how many words begin with something.",
+        "think": "Build a trie once. Each query walks one node per letter of the prefix, whatever the dictionary size."
+      },
+      {
+        "see": "You must find the shortest or longest stored word that is a prefix of some text.",
+        "think": "Walk the text through the trie letter by letter and note each end-of-word mark you pass."
+      },
+      {
+        "see": "A grid or board search must check many dictionary words at once.",
+        "think": "Walk the trie alongside the search, and prune a path as soon as no word starts with it."
+      }
+    ],
+    "phrasings": [
+      "A search box shows how many saved contacts start with the letters typed so far.",
+      "Replace each word in a sentence with the shortest dictionary stem it begins with.",
+      "Given a list of commands, find the longest prefix that they all share."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "scan-vs-trie",
+    "title": "Walk the prefix once",
+    "alt": "On the left, every stored word is compared with the prefix, so each query costs the number of words times the prefix length. On the right, the prefix is walked down a trie one letter at a time, and the count stored on the last node answers the query.",
+    "caption": "A prefix query costs one step per letter, not one check per word.",
+    "before": {
+      "label": "Check every word",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "For each word",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "startswith?",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "O(n × L) a query",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: one node per letter",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Insert words",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "count each node"
+        },
+        {
+          "id": "b",
+          "label": "Walk prefix",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "one step a letter"
+        },
+        {
+          "id": "c",
+          "label": "Read count",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "O(L) a query"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "trie-prefix",
+    "function": {
+      "js": "countPrefix",
+      "py": "count_prefix"
+    },
+    "code": {
+      "js": "function countPrefix(words, prefix) {\n  const root = { next: {}, count: 0 } //@init\n  let node = root\n  for (const word of words) {\n    node = root //@word\n    for (const ch of word) {\n      node = node.next[ch] ??= { next: {}, count: 0, end: false } //@insert\n      node.count++ //@count\n    }\n    node.end = true //@end\n  }\n  node = root //@lookup\n  for (const ch of prefix) {\n    if (!(ch in node.next)) return 0 //@check\n    node = node.next[ch] //@step\n  }\n  return node.count //@done\n}",
+      "py": "def count_prefix(words, prefix):\n    root = {'next': {}, 'count': 0}  #@init\n    for word in words:\n        node = root  #@word\n        for ch in word:\n            node = node['next'].setdefault(ch, {'next': {}, 'count': 0, 'end': False})  #@insert\n            node['count'] += 1  #@count\n        node['end'] = True  #@end\n    node = root  #@lookup\n    for ch in prefix:\n        if ch not in node['next']: return 0  #@check\n        node = node['next'][ch]  #@step\n    return node['count']  #@done"
+    },
+    "examples": [
+      {
+        "label": "Shared prefix “ca”",
+        "input": {
+          "words": "cat, car, cart, dog",
+          "prefix": "ca"
+        }
+      },
+      {
+        "label": "Missing prefix",
+        "input": {
+          "words": "tea, ten, to",
+          "prefix": "tr"
+        }
+      },
+      {
+        "label": "A word is a prefix of another",
+        "input": {
+          "words": "in, inn, ink",
+          "prefix": "in"
+        }
+      }
+    ],
+    "inputHelp": "Words: 2 to 5 words of up to 5 lowercase letters, separated by commas or spaces. Prefix: one group of 1 to 5 lowercase letters."
+  },
+  "template": {
+    "py": "class Trie:\n    def __init__(self):\n        self.root = {'next': {}, 'count': 0, 'end': False}\n\n    def insert(self, word):\n        node = self.root\n        for ch in word:\n            node = node['next'].setdefault(ch, {'next': {}, 'count': 0, 'end': False})\n            node['count'] += 1  # words passing through this prefix\n        node['end'] = True  # a whole word stops here\n\n    def find(self, prefix):\n        node = self.root\n        for ch in prefix:\n            if ch not in node['next']:\n                return None  # no word starts with prefix\n            node = node['next'][ch]\n        return node\n",
+    "js": "class Trie {\n  constructor() {\n    this.root = { next: new Map(), count: 0, end: false }\n  }\n\n  insert(word) {\n    let node = this.root\n    for (const ch of word) {\n      if (!node.next.has(ch)) node.next.set(ch, { next: new Map(), count: 0, end: false })\n      node = node.next.get(ch)\n      node.count++ // words passing through this prefix\n    }\n    node.end = true // a whole word stops here\n  }\n\n  find(prefix) {\n    let node = this.root\n    for (const ch of prefix) {\n      node = node.next.get(ch)\n      if (!node) return null // no word starts with prefix\n    }\n    return node\n  }\n}\n",
+    "ts": "type TrieNode = { next: Map<string, TrieNode>; count: number; end: boolean }\n\nclass Trie {\n  root: TrieNode = { next: new Map(), count: 0, end: false }\n\n  insert(word: string): void {\n    let node = this.root\n    for (const ch of word) {\n      let child = node.next.get(ch)\n      if (!child) node.next.set(ch, child = { next: new Map(), count: 0, end: false })\n      node = child\n      node.count++ // words passing through this prefix\n    }\n    node.end = true // a whole word stops here\n  }\n\n  find(prefix: string): TrieNode | null {\n    let node: TrieNode | undefined = this.root\n    for (const ch of prefix) {\n      node = node.next.get(ch)\n      if (!node) return null // no word starts with prefix\n    }\n    return node\n  }\n}\n"
+  },
+  "oneLiner": "insert: walk letters, create missing children, count++, mark end; query: walk the prefix or fail",
+  "exercise": {
+    "prompt": "roots is a list of word stems and sentence is lowercase words separated by single spaces. Replace every word that starts with a stem by the shortest such stem, and keep other words as they are. Return the new sentence. The starter keeps walking after it finds a stem, so it uses the longest stem instead of the shortest.",
+    "function": {
+      "js": "replaceWithRoots",
+      "py": "replace_with_roots"
+    },
+    "starter": {
+      "js": "function replaceWithRoots(roots, sentence) {\n  const trie = {}\n  for (const root of roots) {\n    let node = trie\n    for (const ch of root) node = node[ch] ??= {}\n    node.$ = true\n  }\n  return sentence.split(' ').map(word => {\n    let node = trie\n    let cut = word\n    for (let i = 0; i < word.length; i++) {\n      node = node[word[i]]\n      if (!node) break\n      if (node.$) cut = word.slice(0, i + 1)\n    }\n    return cut\n  }).join(' ')\n}\n",
+      "py": "def replace_with_roots(roots, sentence):\n    trie = {}\n    for root in roots:\n        node = trie\n        for ch in root:\n            node = node.setdefault(ch, {})\n        node['$'] = True\n    out = []\n    for word in sentence.split():\n        node, cut = trie, word\n        for i, ch in enumerate(word):\n            if ch not in node:\n                break\n            node = node[ch]\n            if '$' in node:\n                cut = word[:i + 1]\n        out.append(cut)\n    return ' '.join(out)\n",
+      "ts": "type Trie = { $?: boolean; [ch: string]: Trie | boolean | undefined }\n\nfunction replaceWithRoots(roots: string[], sentence: string): string {\n  const trie: Trie = {}\n  for (const root of roots) {\n    let node = trie\n    for (const ch of root) node = (node[ch] ??= {}) as Trie\n    node.$ = true\n  }\n  return sentence.split(' ').map(word => {\n    let node: Trie | undefined = trie\n    let cut = word\n    for (let i = 0; i < word.length; i++) {\n      node = node[word[i]] as Trie | undefined\n      if (!node) break\n      if (node.$) cut = word.slice(0, i + 1)\n    }\n    return cut\n  }).join(' ')\n}\n"
+    },
+    "solution": {
+      "js": "function replaceWithRoots(roots, sentence) {\n  const trie = {}\n  for (const root of roots) {\n    let node = trie\n    for (const ch of root) node = node[ch] ??= {}\n    node.$ = true\n  }\n  return sentence.split(' ').map(word => {\n    let node = trie\n    for (let i = 0; i < word.length; i++) {\n      node = node[word[i]]\n      if (!node) break\n      if (node.$) return word.slice(0, i + 1)\n    }\n    return word\n  }).join(' ')\n}\n",
+      "py": "def replace_with_roots(roots, sentence):\n    trie = {}\n    for root in roots:\n        node = trie\n        for ch in root:\n            node = node.setdefault(ch, {})\n        node['$'] = True\n    out = []\n    for word in sentence.split():\n        node, cut = trie, word\n        for i, ch in enumerate(word):\n            if ch not in node:\n                break\n            node = node[ch]\n            if '$' in node:\n                cut = word[:i + 1]\n                break\n        out.append(cut)\n    return ' '.join(out)\n",
+      "ts": "type Trie = { $?: boolean; [ch: string]: Trie | boolean | undefined }\n\nfunction replaceWithRoots(roots: string[], sentence: string): string {\n  const trie: Trie = {}\n  for (const root of roots) {\n    let node = trie\n    for (const ch of root) node = (node[ch] ??= {}) as Trie\n    node.$ = true\n  }\n  return sentence.split(' ').map(word => {\n    let node: Trie | undefined = trie\n    for (let i = 0; i < word.length; i++) {\n      node = node[word[i]] as Trie | undefined\n      if (!node) break\n      if (node.$) return word.slice(0, i + 1)\n    }\n    return word\n  }).join(' ')\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            "cat",
+            "bat",
+            "rat"
+          ],
+          "the cattle was rattled by the battery"
+        ],
+        "expected": "the cat was rat by the bat"
+      },
+      {
+        "args": [
+          [
+            "a",
+            "b",
+            "c"
+          ],
+          "aadsfasf absbs bbab cadsfafs"
+        ],
+        "expected": "a a b c"
+      },
+      {
+        "args": [
+          [
+            "re",
+            "rep"
+          ],
+          "repeat the report"
+        ],
+        "expected": "re the re"
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          [],
+          "nothing changes here"
+        ],
+        "expected": "nothing changes here"
+      },
+      {
+        "args": [
+          [
+            "x"
+          ],
+          "x"
+        ],
+        "expected": "x"
+      },
+      {
+        "args": [
+          [
+            "catt",
+            "cat",
+            "ca"
+          ],
+          "cattle cats car"
+        ],
+        "expected": "ca ca ca"
+      },
+      {
+        "args": [
+          [
+            "ab",
+            "abc"
+          ],
+          "a ab abc abcd"
+        ],
+        "expected": "a ab ab ab"
+      },
+      {
+        "args": [
+          [
+            "go",
+            "going",
+            "gone"
+          ],
+          "go gone goes gopher golf"
+        ],
+        "expected": "go go go go go"
+      }
+    ],
+    "hints": [
+      "Insert every stem into a trie and mark the node where each stem ends.",
+      "Walk each word through the trie. Return as soon as you reach an end mark, because that is the shortest stem. Keep the word if you fall off the trie."
+    ]
+  },
+  "problems": [
+    {
+      "id": "longest-shared-prefix",
+      "role": "warm-up"
+    },
+    {
+      "id": "prefix-counts",
+      "role": "core"
+    },
+    {
+      "id": "autocomplete-suggestions",
+      "role": "core"
+    },
+    {
+      "id": "grid-word-finder",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(L) per word or prefix",
+    "space": "O(total letters)",
+    "why": "Insert and lookup take one step per letter of the word or prefix, so O(L). In the worst case the trie stores one node for every letter of every word, when no prefixes are shared."
+  },
+  "mistakes": [
+    "Forgetting the end-of-word mark, so a stored prefix like “car” looks like a word when only “cart” was added.",
+    "Treating “no child for this letter” as “found”. It means no stored word has this prefix.",
+    "Scanning the whole trie to answer a count query instead of storing a count on each node during insert.",
+    "Creating new child nodes during a lookup, which silently adds prefixes to the trie."
+  ],
+  "quiz": [
+    {
+      "question": "You store “car” and “cart”. Which flag tells you “car” is a word and not only a prefix?",
+      "choices": [
+        "The node for “r” has a child",
+        "The node for “r” is marked as the end of a word",
+        "The root has a child for “c”"
+      ],
+      "answer": 1,
+      "explain": "Shared paths are prefixes. Only the end mark says a whole word stops at that node."
+    },
+    {
+      "question": "How long does it take to check a prefix of length L in a trie holding n words?",
+      "choices": [
+        "O(L)",
+        "O(n)",
+        "O(n × L)"
+      ],
+      "answer": 0,
+      "explain": "The walk takes one step per letter, whatever the number of stored words."
+    },
+    {
+      "question": "You must count words that start with a prefix, many times. What should each node store?",
+      "choices": [
+        "The full list of words below it",
+        "How many inserted words pass through it",
+        "Its depth in the trie"
+      ],
+      "answer": 1,
+      "explain": "Add 1 to every node on the path during insert. A count query then reads one number at the prefix's node."
+    }
+  ],
+  "interviewTip": "Draw three words with a shared prefix as a small trie before coding. It makes the end-of-word mark and the per-node count obvious to you and the interviewer."
+}

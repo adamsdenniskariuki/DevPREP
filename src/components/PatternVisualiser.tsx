@@ -3,7 +3,8 @@ import type { KeyboardEvent } from 'react'
 import Editor from './Editor'
 import Icon from './Icon'
 import { getTracer } from '../patterns/tracers'
-import type { ArrayView, ListView, MapView, Trace, VarValue } from '../patterns/tracers'
+import type { ArrayView, GridView, ListView, MapView, Trace, TreeView, VarValue } from '../patterns/tracers'
+import { layoutTree } from '../patterns/layout'
 import { stripMarkers } from '../patterns/markers'
 import type { PatternVisualiserSpec } from '../pattern-types'
 
@@ -75,6 +76,63 @@ function ListRow({ view }: { view: ListView }) {
   </div>
 }
 
+const TREE_ROW = 60
+
+function TreePanel({ view }: { view: TreeView }) {
+  const { pos, columns, rows } = layoutTree(view.nodes)
+  const at = (index: number) => ({ x: (pos[index].x + 0.5) / columns * 100, y: pos[index].y * TREE_ROW + 20 })
+  const parentOf = new Map<number, number>()
+  view.nodes.forEach((node, index) => node.children.forEach(child => { if (child !== null) parentOf.set(child, index) }))
+  return <div className="pv-array">
+    <p className="pv-array-label">{view.label}</p>
+    {view.nodes.length === 0 ? <p className="muted pv-empty">Empty</p> : <div className="pv-tree" style={{ height: rows * TREE_ROW }}>
+      <svg className="pv-tree-edges" aria-hidden="true" focusable="false" viewBox={`0 0 100 ${rows * TREE_ROW}`} preserveAspectRatio="none">
+        {[...parentOf].map(([child, parent]) => {
+          const a = at(parent)
+          const b = at(child)
+          return <line key={child} x1={a.x} y1={a.y} x2={b.x} y2={b.y} vectorEffect="non-scaling-stroke" />
+        })}
+      </svg>
+      <ol aria-label={view.label}>
+        {view.nodes.map((node, index) => {
+          const pointers = view.pointers?.filter(pointer => pointer.index === index).map(pointer => pointer.name) ?? []
+          const active = view.active?.includes(index)
+          const marked = view.marked?.includes(index)
+          const parent = parentOf.get(index)
+          const states = [node.end && 'ends a word', active && 'in play', marked && 'done', pointers.length && `pointer ${pointers.join(', ')}`].filter(Boolean).join('; ')
+          const { x } = at(index)
+          return <li key={index} className={['pv-tnode', node.end && 'end', active && 'active', marked && 'marked', pointers.length && 'pointed'].filter(Boolean).join(' ')} style={{ left: `${x}%`, top: pos[index].y * TREE_ROW }}>
+            <span className="pv-value">{parent === undefined ? <span className="sr-only">Root: </span> : <span className="sr-only">Child of {view.nodes[parent].label}: </span>}{node.label}{states && <span className="sr-only"> ({states})</span>}</span>
+            <span className="pv-pointers" aria-hidden="true">{pointers.map(name => <span key={name} className="pv-pointer">{name}</span>)}</span>
+          </li>
+        })}
+      </ol>
+    </div>}
+  </div>
+}
+
+function GridPanel({ view }: { view: GridView }) {
+  const isVisited = (r: number, c: number) => view.visited?.some(([vr, vc]) => vr === r && vc === c)
+  return <div className="pv-array">
+    <p className="pv-array-label">{view.label}</p>
+    <table className="pv-grid">
+      <caption className="sr-only">{view.label}</caption>
+      <tbody>
+        {view.cells.map((row, r) => <tr key={r}>
+          {row.map((value, c) => {
+            const current = view.current?.[0] === r && view.current?.[1] === c
+            const visited = isVisited(r, c)
+            const states = [current && 'current cell', visited && 'visited'].filter(Boolean).join('; ')
+            return <td key={c} className={['pv-gcell', visited && 'visited', current && 'current'].filter(Boolean).join(' ')}>
+              <span className="pv-value"><span className="sr-only">Row {r}, column {c}: </span>{value}{states && <span className="sr-only"> ({states})</span>}</span>
+            </td>
+          })}
+        </tr>)}
+      </tbody>
+    </table>
+  </div>
+}
+
 function MapPanel({ map }: { map: MapView }) {
   return <div className="pv-map">
     <p className="pv-array-label">{map.label}</p>
@@ -139,6 +197,8 @@ export default function PatternVisualiser({ spec }: { spec: PatternVisualiserSpe
     <div className="pv-stage" tabIndex={0} role="group" aria-roledescription="step-through" aria-label="Visualiser. Use the left and right arrow keys to step." onKeyDown={onKey} data-testid="pv-stage">
       <p className="pv-text" aria-live="polite"><span className="pv-count">Step {Math.min(frame, last) + 1} of {last + 1}.</span> {current.text}</p>
       <div className="pv-views">
+        {current.view.trees?.map(view => <TreePanel key={view.name} view={view} />)}
+        {current.view.grids?.map(view => <GridPanel key={view.name} view={view} />)}
         {current.view.lists?.map(view => <ListRow key={view.name} view={view} />)}
         {current.view.arrays.map(view => <ArrayRow key={view.name} view={view} />)}
         {current.view.map && <MapPanel map={current.view.map} />}

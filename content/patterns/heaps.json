@@ -1,0 +1,385 @@
+{
+  "id": "heaps",
+  "title": "Heaps",
+  "category": "Heaps",
+  "level": "se",
+  "summary": "A heap keeps the smallest (or largest) value at the root of an array-backed tree. Push and pop cost O(log n) each, so it is the tool whenever you keep asking for the current best.",
+  "minutes": 14,
+  "idea": "Push sifts a value up past bigger parents; pop moves the last value to the root and sifts it down. The best value is always at index 0.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "You keep asking for the smallest or largest item while items are still being added.",
+        "think": "Use a heap. Peeking is O(1), and each push or pop is O(log n). Sorting again after each change would be O(n log n)."
+      },
+      {
+        "see": "The question asks for the k largest, k smallest or k most frequent items.",
+        "think": "Keep a heap of size k. See the Top K page."
+      },
+      {
+        "see": "You must merge several sorted lists, or always take the next earliest event.",
+        "think": "Put the front of each list in a heap. See the K-way merge page."
+      },
+      {
+        "see": "You need a running median or a balance between a lower and an upper half.",
+        "think": "Use a max-heap for the lower half and a min-heap for the upper half. See the Two heaps page."
+      }
+    ],
+    "phrasings": [
+      "A hospital triage desk always treats the most urgent patient waiting, while new patients keep arriving.",
+      "A game repeatedly smashes the two heaviest rocks together. What is left at the end?",
+      "A scheduler must always run the job with the earliest deadline next."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "resort-vs-heap",
+    "title": "Keep only the best at the top",
+    "alt": "On the left, the whole list is sorted again after every insert, which costs O(n log n) each time. On the right, a heap sifts the new value up one path and keeps the best value at the root, costing O(log n).",
+    "caption": "A heap only fixes one root-to-leaf path per push or pop.",
+    "before": {
+      "label": "Sort again after each change",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Add item",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Sort the list",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "O(n log n) each",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: sift along one path",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Push: sift up",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "swap with parent"
+        },
+        {
+          "id": "b",
+          "label": "Pop: sift down",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "swap with child"
+        },
+        {
+          "id": "c",
+          "label": "Best at index 0",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "O(log n) each"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "c"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "heap-sort",
+    "function": {
+      "js": "heapSort",
+      "py": "heap_sort"
+    },
+    "code": {
+      "js": "function heapSort(nums) {\n  const heap = [], out = [] //@init\n  for (const x of nums) {\n    heap.push(x); let i = heap.length - 1 //@push\n    while (i > 0 && heap[(i - 1) >> 1] > heap[i]) { //@up\n      const p = (i - 1) >> 1; [heap[i], heap[p]] = [heap[p], heap[i]]; i = p //@swapup\n    }\n  }\n  while (heap.length) { //@pop\n    out.push(heap[0]) //@take\n    const last = heap.pop()\n    if (!heap.length) break\n    heap[0] = last; let i = 0 //@move\n    while (true) {\n      let small = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < heap.length && heap[c] < heap[small]) small = c //@down\n      if (small === i) break\n      ;[heap[i], heap[small]] = [heap[small], heap[i]]; i = small //@swapdown\n    }\n  }\n  return out //@done\n}",
+      "py": "def heap_sort(nums):\n    heap, out = [], []  #@init\n    for x in nums:\n        heap.append(x); i = len(heap) - 1  #@push\n        while i > 0 and heap[(i - 1) // 2] > heap[i]:  #@up\n            p = (i - 1) // 2; heap[i], heap[p] = heap[p], heap[i]; i = p  #@swapup\n    while heap:  #@pop\n        out.append(heap[0])  #@take\n        last = heap.pop()\n        if not heap: break\n        heap[0] = last; i = 0  #@move\n        while True:\n            small = min((c for c in (i, 2 * i + 1, 2 * i + 2) if c < len(heap)), key=lambda c: heap[c])  #@down\n            if small == i: break\n            heap[i], heap[small] = heap[small], heap[i]; i = small  #@swapdown\n    return out  #@done"
+    },
+    "examples": [
+      {
+        "label": "Five numbers",
+        "input": {
+          "nums": "5, 3, 8, 1, 4"
+        }
+      },
+      {
+        "label": "Already sorted",
+        "input": {
+          "nums": "1, 2, 3, 4"
+        }
+      },
+      {
+        "label": "Repeated values",
+        "input": {
+          "nums": "2, 2, 1, 2"
+        }
+      }
+    ],
+    "inputHelp": "Up to 10 whole numbers between -99 and 99, separated by commas or spaces."
+  },
+  "template": {
+    "py": "import heapq\n\ndef solve(items):\n    heap = []\n    for x in items:\n        heapq.heappush(heap, x)  # O(log n); smallest stays at heap[0]\n    out = []\n    while heap:\n        out.append(heapq.heappop(heap))  # always the current smallest\n    return out\n# For a max-heap, push -x and negate again when you pop.\n",
+    "js": "// JavaScript has no built-in heap. This min-heap keeps h[0] smallest.\nfunction push(h, x) {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] > h[i]) { // sift up\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h) {\n  const top = h[0]\n  const last = h.pop()\n  if (h.length) {\n    h[0] = last\n    let i = 0\n    for (;;) { // sift down towards the smaller child\n      let s = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] < h[s]) s = c\n      if (s === i) break\n      ;[h[i], h[s]] = [h[s], h[i]]\n      i = s\n    }\n  }\n  return top\n}\n",
+    "ts": "// TypeScript has no built-in heap. This min-heap keeps h[0] smallest.\nfunction push(h: number[], x: number): void {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] > h[i]) { // sift up\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h: number[]): number | undefined {\n  const top = h[0]\n  const last = h.pop()\n  if (h.length && last !== undefined) {\n    h[0] = last\n    let i = 0\n    for (;;) { // sift down towards the smaller child\n      let s = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] < h[s]) s = c\n      if (s === i) break\n      ;[h[i], h[s]] = [h[s], h[i]]\n      i = s\n    }\n  }\n  return top\n}\n"
+  },
+  "oneLiner": "push: append, sift up while parent > x; pop: move last to root, sift down to the smaller child",
+  "exercise": {
+    "prompt": "Each turn, take the two heaviest stones, with weights a ≥ b. If a = b both are destroyed; otherwise a stone of weight a − b goes back. Return the weight of the last stone, or 0 if none is left. The starter uses a min-heap as it is, so it smashes the two lightest stones instead.",
+    "function": {
+      "js": "lastBoulder",
+      "py": "last_boulder"
+    },
+    "starter": {
+      "js": "function push(h, x) {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] > h[i]) {\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h) {\n  const top = h[0]\n  const last = h.pop()\n  if (h.length) {\n    h[0] = last\n    let i = 0\n    for (;;) {\n      let big = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] < h[big]) big = c\n      if (big === i) break\n      ;[h[i], h[big]] = [h[big], h[i]]\n      i = big\n    }\n  }\n  return top\n}\n\nfunction lastBoulder(stones) {\n  const heap = []\n  for (const s of stones) push(heap, s)\n  while (heap.length > 1) {\n    const a = pop(heap)\n    const b = pop(heap)\n    if (a !== b) push(heap, Math.abs(a - b))\n  }\n  return heap.length ? heap[0] : 0\n}\n",
+      "py": "import heapq\n\ndef last_boulder(stones):\n    heap = list(stones)\n    heapq.heapify(heap)\n    while len(heap) > 1:\n        a = heapq.heappop(heap)\n        b = heapq.heappop(heap)\n        if a != b:\n            heapq.heappush(heap, abs(a - b))\n    return heap[0] if heap else 0\n",
+      "ts": "function push(h: number[], x: number): void {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] > h[i]) {\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h: number[]): number {\n  const top = h[0]\n  const last = h.pop()!\n  if (h.length) {\n    h[0] = last\n    let i = 0\n    for (;;) {\n      let big = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] < h[big]) big = c\n      if (big === i) break\n      ;[h[i], h[big]] = [h[big], h[i]]\n      i = big\n    }\n  }\n  return top\n}\n\nfunction lastBoulder(stones: number[]): number {\n  const heap: number[] = []\n  for (const s of stones) push(heap, s)\n  while (heap.length > 1) {\n    const a = pop(heap)\n    const b = pop(heap)\n    if (a !== b) push(heap, Math.abs(a - b))\n  }\n  return heap.length ? heap[0] : 0\n}\n"
+    },
+    "solution": {
+      "js": "// A max-heap: every parent is at least as big as its children.\nfunction push(h, x) {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] < h[i]) {\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h) {\n  const top = h[0]\n  const last = h.pop()\n  if (h.length) {\n    h[0] = last\n    let i = 0\n    for (;;) {\n      let big = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] > h[big]) big = c\n      if (big === i) break\n      ;[h[i], h[big]] = [h[big], h[i]]\n      i = big\n    }\n  }\n  return top\n}\n\nfunction lastBoulder(stones) {\n  const heap = []\n  for (const s of stones) push(heap, s)\n  while (heap.length > 1) {\n    const a = pop(heap)\n    const b = pop(heap)\n    if (a !== b) push(heap, a - b)\n  }\n  return heap.length ? heap[0] : 0\n}\n",
+      "py": "import heapq\n\ndef last_boulder(stones):\n    heap = [-s for s in stones]\n    heapq.heapify(heap)\n    while len(heap) > 1:\n        a = -heapq.heappop(heap)\n        b = -heapq.heappop(heap)\n        if a != b:\n            heapq.heappush(heap, -(a - b))\n    return -heap[0] if heap else 0\n",
+      "ts": "// A max-heap: every parent is at least as big as its children.\nfunction push(h: number[], x: number): void {\n  h.push(x)\n  let i = h.length - 1\n  while (i > 0 && h[(i - 1) >> 1] < h[i]) {\n    const p = (i - 1) >> 1\n    ;[h[i], h[p]] = [h[p], h[i]]\n    i = p\n  }\n}\n\nfunction pop(h: number[]): number {\n  const top = h[0]\n  const last = h.pop()!\n  if (h.length) {\n    h[0] = last\n    let i = 0\n    for (;;) {\n      let big = i\n      for (const c of [2 * i + 1, 2 * i + 2]) if (c < h.length && h[c] > h[big]) big = c\n      if (big === i) break\n      ;[h[i], h[big]] = [h[big], h[i]]\n      i = big\n    }\n  }\n  return top\n}\n\nfunction lastBoulder(stones: number[]): number {\n  const heap: number[] = []\n  for (const s of stones) push(heap, s)\n  while (heap.length > 1) {\n    const a = pop(heap)\n    const b = pop(heap)\n    if (a !== b) push(heap, a - b)\n  }\n  return heap.length ? heap[0] : 0\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            2,
+            7,
+            4,
+            1,
+            8,
+            1
+          ]
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          [
+            1
+          ]
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          [
+            3,
+            3
+          ]
+        ],
+        "expected": 0
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          []
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          [
+            10,
+            4
+          ]
+        ],
+        "expected": 6
+      },
+      {
+        "args": [
+          [
+            1,
+            1,
+            1
+          ]
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          [
+            9,
+            3,
+            2,
+            10
+          ]
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          [
+            5,
+            5,
+            5,
+            5,
+            5
+          ]
+        ],
+        "expected": 5
+      },
+      {
+        "args": [
+          [
+            31,
+            26,
+            33,
+            21,
+            40
+          ]
+        ],
+        "expected": 9
+      },
+      {
+        "args": [
+          [
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            1
+          ]
+        ],
+        "expected": 1
+      }
+    ],
+    "hints": [
+      "You need the two largest values again and again while new values arrive. That calls for a max-heap.",
+      "Python's heapq is a min-heap. Push -s for each stone, and negate again when you pop."
+    ]
+  },
+  "problems": [
+    {
+      "id": "kth-largest-stream",
+      "role": "warm-up"
+    },
+    {
+      "id": "merge-sorted-streams",
+      "role": "core"
+    },
+    {
+      "id": "running-median",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(log n) per push or pop",
+    "space": "O(n)",
+    "why": "A heap is a complete binary tree of height about log₂ n, and sifting moves along one root-to-leaf path. Building a heap from n values with heapify takes O(n), and n pops take O(n log n)."
+  },
+  "mistakes": [
+    "Forgetting that Python's heapq is a min-heap only. For a max-heap, store negated values.",
+    "Assuming the heap's array is sorted. Only heap[0] is guaranteed; the rest is just partly ordered.",
+    "Sorting again after every insert instead of using a heap, which turns O(log n) into O(n log n).",
+    "Sifting down towards the first smaller child rather than the smallest child, which breaks the heap rule."
+  ],
+  "quiz": [
+    {
+      "question": "In an array-backed heap, where are the children of index i?",
+      "choices": [
+        "i + 1 and i + 2",
+        "2i + 1 and 2i + 2",
+        "i / 2 and i / 2 + 1"
+      ],
+      "answer": 1,
+      "explain": "The tree is stored level by level, so node i's children sit at 2i + 1 and 2i + 2, and its parent at (i − 1) / 2 rounded down."
+    },
+    {
+      "question": "What does popping a min-heap of n values cost?",
+      "choices": [
+        "O(1)",
+        "O(log n)",
+        "O(n)"
+      ],
+      "answer": 1,
+      "explain": "Reading the root is O(1), but refilling it means sifting the last value down one path of length about log n."
+    },
+    {
+      "question": "How do you get a max-heap from Python's heapq?",
+      "choices": [
+        "Call heapq.maxheap()",
+        "Push negated values and negate on the way out",
+        "Sort the list in reverse first"
+      ],
+      "answer": 1,
+      "explain": "heapq only builds min-heaps. Negating flips the order, so the largest value comes out first."
+    }
+  ],
+  "interviewTip": "Say which heap you need and why before coding: “a max-heap, because I keep taking the largest”. In Python, mention the negation trick; in JavaScript, say you will write a small heap or use a sorted structure."
+}
