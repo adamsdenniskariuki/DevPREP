@@ -34,6 +34,8 @@ export interface ListView {
   marked?: number[]
   /** Nodes no longer in the list, e.g. removed ones. */
   dropped?: number[]
+  /** Doubly linked: a node and the next one in order point at each other, drawn as ⇄. */
+  double?: boolean
 }
 
 export interface TreeViewNode {
@@ -70,6 +72,11 @@ export interface GridView {
   visited?: [number, number][]
   /** Cells waiting to be explored: in the queue or on the call stack. */
   frontier?: [number, number][]
+  /** Cells this step reads, e.g. the earlier DP cells a new cell is built from. */
+  deps?: [number, number][]
+  /** Headers drawn before each row and above each column, e.g. the letters of two strings. */
+  rowLabels?: string[]
+  colLabels?: string[]
 }
 
 export interface GraphViewNode {

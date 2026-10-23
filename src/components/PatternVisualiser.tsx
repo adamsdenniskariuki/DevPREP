@@ -49,9 +49,9 @@ function ArrayRow({ view }: { view: ArrayView }) {
 }
 
 /** Where a node's next pointer goes, as a short arrow and as words for screen readers. */
-function nextLink(index: number, next: number | null): [string, string] {
+function nextLink(index: number, next: number | null, double = false): [string, string] {
   if (next === null) return ['∅', 'next is null']
-  if (next === index + 1) return ['→', `next is node ${next}`]
+  if (next === index + 1) return double ? ['⇄', `linked both ways with node ${next}`] : ['→', `next is node ${next}`]
   if (next === index - 1) return ['←', `next is node ${next}`]
   return [`→${next}`, `next is node ${next}`]
 }
@@ -64,7 +64,7 @@ function ListRow({ view }: { view: ListView }) {
         const pointers = view.pointers?.filter(pointer => pointer.index === index).map(pointer => pointer.name) ?? []
         const marked = view.marked?.includes(index)
         const dropped = view.dropped?.includes(index)
-        const [arrow, words] = nextLink(index, view.next[index])
+        const [arrow, words] = nextLink(index, view.next[index], view.double)
         const states = [(view.head ?? 0) === index && 'head', dropped && 'removed', marked && 'highlighted', pointers.length && `pointer ${pointers.join(', ')}`].filter(Boolean).join('; ')
         return <li key={index} className={['pv-cell', 'pv-node', marked && 'marked', dropped && 'dropped', pointers.length && 'pointed'].filter(Boolean).join(' ')}>
           <span className="pv-index" aria-hidden="true">{index}</span>
@@ -175,14 +175,22 @@ function GridPanel({ view }: { view: GridView }) {
     <p className="pv-array-label">{view.label}</p>
     <table className="pv-grid">
       <caption className="sr-only">{view.label}</caption>
+      {view.colLabels && <thead>
+        <tr>
+          {view.rowLabels && <td />}
+          {view.colLabels.map((label, c) => <th key={c} scope="col" className="pv-ghead">{label}</th>)}
+        </tr>
+      </thead>}
       <tbody>
         {view.cells.map((row, r) => <tr key={r}>
+          {view.rowLabels && <th scope="row" className="pv-ghead">{view.rowLabels[r]}</th>}
           {row.map((value, c) => {
             const current = view.current?.[0] === r && view.current?.[1] === c
             const visited = has(view.visited, r, c)
             const frontier = has(view.frontier, r, c)
-            const states = [current && 'current cell', frontier && 'waiting', visited && 'visited'].filter(Boolean).join('; ')
-            return <td key={c} className={['pv-gcell', visited && 'visited', frontier && 'frontier', current && 'current'].filter(Boolean).join(' ')}>
+            const dep = has(view.deps, r, c)
+            const states = [current && 'current cell', dep && 'read by this step', frontier && 'waiting', visited && 'visited'].filter(Boolean).join('; ')
+            return <td key={c} className={['pv-gcell', visited && 'visited', frontier && 'frontier', dep && 'dep', current && 'current'].filter(Boolean).join(' ')}>
               <span className="pv-value"><span className="sr-only">Row {r}, column {c}: </span>{value}{states && <span className="sr-only"> ({states})</span>}</span>
             </td>
           })}
