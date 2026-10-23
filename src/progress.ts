@@ -11,6 +11,7 @@ import { cardIds } from './flashcards'
 import { COMPETENCY_IDS } from './stories'
 import type { Competency } from './stories'
 import type { CodeLanguage } from './problem-types'
+import { defaultEditorPrefs, type EditorPrefs } from './editor-prefs'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -66,6 +67,8 @@ export interface Progress {
   stories?: Story[]
   /** Latest placement check per language track, with the lessons it marked as already known. */
   placements?: Partial<Record<Track, Placement>>
+  /** Code editor choice. Omitted while it matches the defaults (Rich, interview mode off). */
+  editor?: Partial<EditorPrefs>
 }
 export interface Placement {
   percent: number
@@ -169,7 +172,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -227,6 +230,7 @@ export function parseBackup(text: string): Progress {
   const mocks = Object.hasOwn(root, 'mocks') ? parseMocks(root.mocks) : undefined
   const stories = Object.hasOwn(root, 'stories') ? parseStories(root.stories) : undefined
   const placements = Object.hasOwn(root, 'placements') ? parsePlacements(root.placements) : undefined
+  const editor = Object.hasOwn(root, 'editor') ? parseEditor(root.editor) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -239,7 +243,39 @@ export function parseBackup(text: string): Progress {
     ...(guides ? { guides } : {}),
     ...(placements ? { placements } : {}),
     ...(sqlSolved ? { sqlSolved } : {}),
+    ...(editor && Object.keys(editor).length ? { editor } : {}),
   }
+}
+
+function parseEditor(value: unknown): Partial<EditorPrefs> {
+  const raw = object(value, [], ['kind', 'interview'])
+  const editor: Partial<EditorPrefs> = {}
+  if (Object.hasOwn(raw, 'kind')) {
+    if (raw.kind !== 'rich' && raw.kind !== 'plain') invalid('unknown code editor.')
+    if (raw.kind !== defaultEditorPrefs.kind) editor.kind = raw.kind
+  }
+  if (Object.hasOwn(raw, 'interview')) {
+    if (typeof raw.interview !== 'boolean') invalid('invalid interview mode.')
+    if (raw.interview !== defaultEditorPrefs.interview) editor.interview = raw.interview
+  }
+  return editor
+}
+
+/** The saved editor choice with defaults filled in. */
+export function editorPrefs(progress: Progress): EditorPrefs {
+  return { ...defaultEditorPrefs, ...progress.editor }
+}
+
+/** Saves editor settings; values equal to the defaults are dropped so backups stay minimal. */
+export function updateEditorPrefs(progress: Progress, patch: Partial<EditorPrefs>, now = new Date()): Progress {
+  const merged = { ...editorPrefs(progress), ...patch }
+  const editor: Partial<EditorPrefs> = {}
+  if (merged.kind !== defaultEditorPrefs.kind) editor.kind = merged.kind
+  if (merged.interview !== defaultEditorPrefs.interview) editor.interview = merged.interview
+  const next: Progress = { ...progress, updatedAt: now.toISOString() }
+  if (Object.keys(editor).length) next.editor = editor
+  else delete next.editor
+  return next
 }
 
 function parsePlacements(value: unknown): Partial<Record<Track, Placement>> {

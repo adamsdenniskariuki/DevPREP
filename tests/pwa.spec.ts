@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { expectCode } from './editor-helpers'
 import { readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -572,7 +573,10 @@ test('code runner works offline: JavaScript from the precache, Python after its 
   await page.close()
   const offline = await context.newPage()
   await offline.goto(`/DevPREP/#code/${problem.id}`)
-  await expect(offline.getByRole('textbox', { name: 'Python code' })).toHaveValue(problem.solution.py)
+  await expectCode(offline.getByRole('textbox', { name: 'Python code' }), problem.solution.py)
+  // CodeMirror and its Python grammar are precached, so the rich editor (not the fallback) works offline.
+  await expect(offline.locator('.rich-editor .tok-keyword').first()).toBeVisible()
+  await expect(offline.locator('.editor-fallback')).toHaveCount(0)
   await offline.getByRole('button', { name: 'Run tests' }).click()
   await expect(offline.locator('.run-summary')).toContainText(/All \d+ tests passed/, { timeout: 120_000 })
 })
@@ -606,7 +610,7 @@ test('TypeScript labs run offline after the compiler\'s first online load', asyn
   await page.close()
   const offline = await context.newPage()
   await openPractice(offline)
-  await expect(offline.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
+  await expectCode(offline.getByRole('textbox', { name: /Your solution/ }), core.solution)
   await offline.getByRole('button', { name: 'Run tests' }).click()
   await expect(offline.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 60_000 })
 })
@@ -639,7 +643,7 @@ test('SQL labs run offline after Postgres\'s first online load', async ({ page, 
   await page.close()
   const offline = await context.newPage()
   await openPractice(offline)
-  await expect(offline.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
+  await expectCode(offline.getByRole('textbox', { name: /Your solution/ }), core.solution)
   await offline.getByRole('button', { name: 'Run tests' }).click()
   await expect(offline.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 90_000 })
 })

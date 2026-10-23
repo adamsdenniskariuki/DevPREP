@@ -5,6 +5,7 @@ import { fonts, modes, palettes } from '../appearance'
 import type { Appearance } from '../appearance'
 import { getLearningPath, isPathId, learningPaths, pathLessonIds } from '../learning-paths'
 import type { AppModel } from '../app-model'
+import { useEditorPrefs } from '../editor-context'
 
 export default function SettingsScreen({ app, appearance, setAppearance, appearanceError, accent, chooseAccent }: {
   app: AppModel
@@ -15,6 +16,7 @@ export default function SettingsScreen({ app, appearance, setAppearance, appeara
   chooseAccent: (value: string) => void
 }) {
   const { progress, heading, changePath, changeProfile, backupControls, replayTour, today } = app
+  const editor = useEditorPrefs()
   const path = getLearningPath(progress.selectedPath)
   const focus = progress.profile?.focusTracks ?? []
   return <>
@@ -50,6 +52,14 @@ export default function SettingsScreen({ app, appearance, setAppearance, appeara
     <select id="font-choice" value={appearance.font} onChange={event => setAppearance({ font: fonts.find(item => item.id === event.target.value)?.id ?? 'atkinson' })}>{fonts.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
     <p className="helper font-preview">The quick brown fox jumps over the lazy dog.</p></div>
   {appearanceError && <p className="pwa-warning" role="alert">{appearanceError}</p>}
+</section>
+
+<section className="card settings-section" aria-labelledby="editor-settings-title"><h2 id="editor-settings-title">Code editor</h2>
+  <fieldset className="field"><legend>Editor</legend><div className="chip-group">
+    <label className="chip"><input type="radio" name="editor-kind" checked={editor.prefs.kind === 'rich'} onChange={() => editor.setPrefs({ kind: 'rich' })} />Rich (CodeMirror)</label>
+    <label className="chip"><input type="radio" name="editor-kind" checked={editor.prefs.kind === 'plain'} onChange={() => editor.setPrefs({ kind: 'plain' })} />Plain</label>
+  </div><p className="helper">Rich adds highlighting, line numbers and bracket matching. In both, Tab indents; press Esc, then Tab, to leave the editor.</p></fieldset>
+  <label className="interview-toggle"><input type="checkbox" checked={editor.prefs.interview} onChange={event => editor.setPrefs({ interview: event.target.checked })} />Interview mode <span className="muted">· no autocomplete or auto-closing brackets, like a plain interview pad</span></label>
 </section>
 
 <section className="card settings-section about-data" aria-labelledby="data-title"><h2 id="data-title">About your data</h2>

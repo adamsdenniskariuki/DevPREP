@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { expectCode } from './editor-helpers'
 import { readdirSync, readFileSync } from 'node:fs'
 import { palettes } from '../src/appearance'
 import { color, contrast, over } from './contrast'
@@ -89,7 +90,7 @@ for (const track of languageTracks) test(`the core exercise runs in ${track.titl
     await page.getByRole('textbox', { name: /Your solution/ }).fill(core.solution)
   }
   await page.reload()
-  await expect(page.getByRole('textbox', { name: /Your solution/ })).toHaveValue(core.solution)
+  await expectCode(page.getByRole('textbox', { name: /Your solution/ }), core.solution)
 })
 
 test('a TypeScript type-level exercise shows its type checks and only passes when they do', async ({ page }, testInfo) => {

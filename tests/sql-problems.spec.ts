@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { expectCode } from './editor-helpers'
 import { readFileSync } from 'node:fs'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
@@ -44,7 +45,7 @@ test('a SQL problem fails its starter, passes its solution, awards XP and keeps 
   const stored = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}'), PROGRESS_KEY)
   expect(Object.keys(stored.sqlSolved ?? {})).toEqual([runnable.id])
   await page.reload()
-  await expect(page.getByRole('textbox', { name: /Your query/ })).toHaveValue(runnable.exercise.solution)
+  await expectCode(page.getByRole('textbox', { name: /Your query/ }), runnable.exercise.solution)
   await page.getByRole('link', { name: 'All SQL problems' }).click()
   await expect(page.locator('.code-row', { hasText: runnable.title }).locator('.pill.solved')).toBeVisible()
 })
