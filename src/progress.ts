@@ -75,6 +75,12 @@ export interface Progress {
   patterns?: Record<string, PatternProgress>
   /** Pattern picker rounds: best score out of PICKER_ROUND and rounds finished. */
   patternPicker?: PickerProgress
+  /** Whiteboard milestones. The boards themselves live in IndexedDB and back up under a separate key. */
+  whiteboard?: WhiteboardProgress
+}
+export interface WhiteboardProgress {
+  /** When the first board was created or imported. */
+  firstBoard: string
 }
 export interface PatternProgress {
   exercise?: Partial<Record<PatternLang, string>>
@@ -187,7 +193,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker', 'whiteboard'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -248,6 +254,7 @@ export function parseBackup(text: string): Progress {
   const editor = Object.hasOwn(root, 'editor') ? parseEditor(root.editor) : undefined
   const patterns = Object.hasOwn(root, 'patterns') ? parsePatterns(root.patterns) : undefined
   const patternPicker = Object.hasOwn(root, 'patternPicker') ? parsePicker(root.patternPicker) : undefined
+  const whiteboard = Object.hasOwn(root, 'whiteboard') ? parseWhiteboard(root.whiteboard) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -263,6 +270,7 @@ export function parseBackup(text: string): Progress {
     ...(editor && Object.keys(editor).length ? { editor } : {}),
     ...(patterns ? { patterns } : {}),
     ...(patternPicker ? { patternPicker } : {}),
+    ...(whiteboard ? { whiteboard } : {}),
   }
 }
 
@@ -286,6 +294,17 @@ function parsePatterns(value: unknown): Record<string, PatternProgress> {
     patterns[id] = item
   }
   return patterns
+}
+
+function parseWhiteboard(value: unknown): WhiteboardProgress {
+  const raw = object(value, ['firstBoard'])
+  return { firstBoard: timestamp(raw.firstBoard) }
+}
+
+/** Notes the first whiteboard. Later boards change nothing. */
+export function recordBoardCreated(progress: Progress, now = new Date()): Progress {
+  if (progress.whiteboard) return progress
+  return { ...progress, updatedAt: now.toISOString(), whiteboard: { firstBoard: now.toISOString() } }
 }
 
 function parsePicker(value: unknown): PickerProgress {

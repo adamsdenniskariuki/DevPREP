@@ -7,7 +7,7 @@ import { lessons } from '../curriculum'
 import { caseIndex, loadCases } from '../cases'
 import type { CaseSummary, DesignCase, StepKey } from '../case-types'
 import { DESIGN_FRAMEWORK } from '../design-framework'
-import { clearDesignDraft, emptyBoard, FREE_BOARD, MAX_NOTE_LENGTH, readDesignDraft, writeDesignDraft } from '../design-drafts'
+import { clearDesignDraft, emptyBoard, MAX_NOTE_LENGTH, readDesignDraft, writeDesignDraft } from '../design-drafts'
 import type { Board, DesignTimer } from '../design-drafts'
 import { rubricPercent, scoredItems } from '../design-score'
 import type { RubricMark } from '../design-score'
@@ -21,11 +21,10 @@ const formatTime = (ms: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-export default function DesignScreen({ app, caseId, board }: { app: AppModel; caseId?: string; board?: boolean }) {
+export default function DesignScreen({ app, caseId }: { app: AppModel; caseId?: string }) {
   const summary = caseIndex.find(item => item.id === caseId)
   // Lazy screen: focus our own heading once mounted.
-  useEffect(() => { app.heading.current?.focus() }, [app.heading, summary?.id, board])
-  if (board) return <FreeBoard app={app} />
+  useEffect(() => { app.heading.current?.focus() }, [app.heading, summary?.id])
   return summary ? <CasePage key={summary.id} app={app} summary={summary} /> : <CaseList app={app} />
 }
 
@@ -43,7 +42,7 @@ function CaseList({ app }: { app: AppModel }) {
       <summary><Icon name="layers" size={18} /> The 8-step framework</summary>
       <ol className="framework-list">{DESIGN_FRAMEWORK.map(step => <li key={step.key}><strong>{step.title}</strong> <span className="muted">~{step.minutes} min</span><ul>{step.questions.map(question => <li key={question}>{question}</li>)}</ul></li>)}</ol>
     </details>
-    <a className="tool-card live board-link" href="#board"><span className="tool-icon"><Icon name="grid" /></span><span><strong>Blank whiteboard</strong><span className="muted">Sketch any design freely.</span></span></a>
+    <a className="tool-card live board-link" href="#board"><span className="tool-icon"><Icon name="grid" /></span><span><strong>Whiteboards</strong><span className="muted">Sketch any design with shapes, arrows and stencils.</span></span></a>
     {LEVELS.map(level => <section key={level.id} className="code-group" aria-labelledby={`cases-${level.id}`}>
       <h2 className="section-title" id={`cases-${level.id}`}>{level.label}</h2>
       <ul className="card code-list">{caseIndex.filter(item => item.level === level.id).map(item => <li key={item.id} className="code-row">
@@ -51,17 +50,6 @@ function CaseList({ app }: { app: AppModel }) {
         <span className="code-row-meta"><span className="pill"><Icon name="clock" size={14} />{item.minutes} min</span><BestPill app={app} id={item.id} /></span>
       </li>)}</ul>
     </section>)}
-  </>
-}
-
-function FreeBoard({ app }: { app: AppModel }) {
-  const [board, setBoard] = useState<Board>(() => readDesignDraft(FREE_BOARD).board ?? emptyBoard())
-  const [saveFailed, setSaveFailed] = useState(false)
-  return <>
-    <a className="back-link" href="#design"><Icon name="back" size={16} /> Case studies</a>
-    <div className="page-heading"><div><div className="eyebrow">PRACTICE · WHITEBOARD</div><h1 ref={app.heading} tabIndex={-1}>Whiteboard</h1><p>Saved on this device as you go.</p></div></div>
-    <Whiteboard title="Your whiteboard" board={board} onChange={next => { setBoard(next); setSaveFailed(!writeDesignDraft(FREE_BOARD, { board: next })) }} />
-    {saveFailed && <p className="alert" role="alert">Couldn't save on this device. Storage may be full or blocked.</p>}
   </>
 }
 

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
+import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
 import { EditorPrefsContext } from './editor-context'
 import type { EditorPrefs } from './editor-prefs'
 import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
@@ -9,10 +9,9 @@ import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
-import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
+import { activityXp, boardXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { placementResult } from './placement'
@@ -34,6 +33,7 @@ import ProgressScreen from './screens/ProgressScreen'
 import SettingsScreen from './screens/SettingsScreen'
 import Study from './screens/Study'
 import PlanScreen from './screens/PlanScreen'
+import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
 
 const CodeScreen = lazy(() => import('./screens/CodeScreen'))
@@ -44,6 +44,11 @@ const MockScreen = lazy(() => import('./screens/MockScreen'))
 const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
 const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
 const PatternsScreen = lazy(() => import('./screens/PatternsScreen'))
+const BoardScreen = lazy(() => import('./screens/BoardScreen'))
+/** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
+const backupFlow = () => import('./backup-flow')
+const ImportDialog = lazy(backupFlow)
+const Recovery = lazy(() => backupFlow().then(flow => ({ default: flow.Recovery })))
 
 const navigation = [
   { id: 'home', label: 'Home', icon: 'home' },
@@ -58,8 +63,10 @@ const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', '
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
 const PATTERN_VIEWS = new Set(['pick', 'cheatsheet'])
+/** Same as BOARD_ID in boards.ts, repeated so board storage stays out of the main bundle. */
+const BOARD_ID = /^[a-z0-9-]{1,64}$/
 
-function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string } {
+function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string; boardId?: string } {
   const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
   const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
   if (!route || rest.length) return { route: 'unknown' }
@@ -67,6 +74,7 @@ function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: str
   if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
   if (route === 'sql') return sqlProblemIds.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
   if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
+  if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return patternIds.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = tracks.find(item => item.id === sub)?.id
@@ -89,15 +97,16 @@ export default function App() {
   const [guideId, setGuideId] = useState(() => parseHash().guideId)
   const [sqlId, setSqlId] = useState(() => parseHash().sqlId)
   const [patternView, setPatternView] = useState(() => parseHash().patternView)
+  const [boardId, setBoardId] = useState(() => parseHash().boardId)
+  const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
   const [backupError, setBackupError] = useState('')
-  const [pendingImport, setPendingImport] = useState<ReturnType<typeof parseBackup> | null>(null)
+  const [pendingImport, setPendingImport] = useState<FullBackup | null>(null)
   const [clock, setClock] = useState(() => new Date())
   const [tour, setTour] = useState<'auto' | 'replay' | 'off'>(() => tourSeen() ? 'off' : 'auto')
   const importInput = useRef<HTMLInputElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
-  const importDialog = useRef<HTMLDialogElement>(null)
   const reloadBlocked = !!(store.error || store.unsaved || store.conflict || accent.error)
   const pwa = usePwa(() => {
     if (store.recovery || store.error || store.unsaved || store.conflict || accent.error) return false
@@ -117,6 +126,7 @@ export default function App() {
       setGuideId(parsed.guideId)
       setSqlId(parsed.sqlId)
       setPatternView(parsed.patternView)
+      setBoardId(parsed.boardId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -124,11 +134,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView])
-  useEffect(() => {
-    if (pendingImport) importDialog.current?.showModal()
-    else importDialog.current?.close()
-  }, [pendingImport])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -217,6 +223,14 @@ export default function App() {
     latest.current = after
     return patternXp(after) - patternXp(before)
   }
+  function createdBoard() {
+    const before = latest.current
+    const after = recordBoardCreated(before)
+    if (after === before) return 0
+    store.update(value => recordBoardCreated(value))
+    latest.current = after
+    return boardXp(after) - boardXp(before)
+  }
 
   function gradeCard(id: string, grade: Grade) {
     const before = latest.current
@@ -289,43 +303,21 @@ export default function App() {
     navigate('home')
   }
 
+  const backupFailed = (error: unknown) => setBackupError(error instanceof Error ? error.message : String(error))
   function exportBackup() {
-    try {
-      download(serializeBackup(progress), `devprep-backup-${today}.json`)
-      setNotice('Backup downloaded. It includes your written answers.')
-      setBackupError('')
-    } catch (error) {
-      setBackupError(`The backup could not be downloaded. ${error instanceof Error ? error.message : 'Please allow downloads in your browser and try again.'}`)
-    }
+    backupFlow().then(flow => flow.exportBackup(progress, includeBoards, today)).then(text => { setNotice(text); setBackupError('') }, backupFailed)
+  }
+  function importBackup(file: File | undefined) {
+    if (file) backupFlow().then(flow => flow.importBackup(file)).then(parsed => { setPendingImport(parsed); setBackupError('') }, backupFailed)
+      .finally(() => { if (importInput.current) importInput.current.value = '' })
   }
 
-  async function importBackup(file: File | undefined) {
-    if (!file) return
-    try {
-      if (file.size > MAX_BACKUP_BYTES) throw new Error('Backup must be 1 MB or smaller.')
-      const parsed = parseBackup(await file.text())
-      setPendingImport(parsed)
-      setBackupError('')
-    } catch (error) {
-      setBackupError(`${error instanceof Error ? error.message : 'Unable to read this file.'} Existing progress was not changed.`)
-    } finally {
-      if (importInput.current) importInput.current.value = ''
-    }
-  }
-
-  function recoveryExport() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw === null) throw new Error('No saved data is available in this browser.')
-      download(raw, `devprep-recovery-${today}.json`)
-    } catch (error) {
-      setBackupError(error instanceof Error ? error.message : 'Could not read the stored data.')
-    }
-  }
-
-  const backupControls = <div className="button-row">
-    {!store.recovery && <button onClick={exportBackup}>Export backup <span aria-hidden="true">↓</span></button>}
-    <button onClick={() => importInput.current?.click()}>Import backup <span aria-hidden="true">↑</span></button>
+  const backupControls = <div className="backup-controls">
+    {!store.recovery && <label className="check-row"><input type="checkbox" checked={includeBoards} onChange={event => setIncludeBoards(event.target.checked)} /> Include whiteboards</label>}
+    <div className="button-row">
+      {!store.recovery && <button onClick={exportBackup}>Export backup <span aria-hidden="true">↓</span></button>}
+      <button onClick={() => importInput.current?.click()}>Import backup <span aria-hidden="true">↑</span></button>
+    </div>
   </div>
   const accentProblem = <div className="accent-problem"><strong>Accent preference needs attention.</strong><p>{accent.error} Study progress is separate and has not been changed by the accent preference.</p><button onClick={accent.retry}>Save current accent</button></div>
 
@@ -333,7 +325,7 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
   const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
@@ -360,7 +352,7 @@ export default function App() {
     <div className="main-shell">
       <header className="topbar"><a className="mobile-brand" href="#home">Dev<span>PREP</span></a>
         <div className="topbar-right">
-          <a className="game-chip" href="#progress" aria-label={`${game.streak.current}-day streak, ${game.xp} XP`}><span className={game.streak.activeToday ? 'chip-part lit' : 'chip-part'}><Icon name="flame" size={16} />{game.streak.current}</span><span className="chip-part"><Icon name="bolt" size={16} />{game.xp}</span></a>
+          <a className="game-chip" href="#progress"><span className={game.streak.activeToday ? 'chip-part lit' : 'chip-part'}><Icon name="flame" size={16} />{game.streak.current}<span className="sr-only"> day streak, </span></span><span className="chip-part"><Icon name="bolt" size={16} />{game.xp}<span className="sr-only"> XP</span></span></a>
           {pwa.updateReady && <a className="update-chip" href="#settings">Update ready</a>}
           <span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Saved'}</span>
           <button className="theme-button" aria-label="Toggle color theme" onClick={() => {
@@ -372,6 +364,7 @@ export default function App() {
           }}><Icon name="sun" size={18} /></button>
         </div></header>
       <main id="main-content" tabIndex={-1}>
+        <input ref={importInput} type="file" accept=".json,application/json" className="sr-only" aria-label="Import progress JSON" onChange={event => importBackup(event.target.files?.[0])} />
         {store.error && <div className="alert" role="alert"><strong>{store.recovery ? 'Your saved progress needs attention.' : 'Progress could not be saved safely.'}</strong><p>{store.error} {store.unsaved && 'Your latest work is only in memory. Export it before closing this page.'}</p><div className="button-row">
           {!store.recovery && !store.conflict && <button onClick={store.retry}>Retry saving</button>}
           {!store.recovery && <button onClick={exportBackup}>Export current work</button>}
@@ -381,9 +374,7 @@ export default function App() {
         {notice && <div className="notice" role="status">{notice}<button className="text-button" aria-label="Dismiss notification" onClick={() => setNotice('')}>Dismiss</button></div>}
         {backupError && <div className="alert" role="alert">{backupError}</div>}
 
-        {store.recovery ? <section className="card recovery"><div className="eyebrow">SAFE RECOVERY</div><h1 ref={heading} tabIndex={-1}>Let’s protect your progress.</h1><p>Existing browser data could not be loaded. We have not replaced it. Download the original data before starting over, or restore a valid DevPREP backup.</p><button onClick={recoveryExport}>Download original data</button>{backupControls}<button className="text-button" onClick={() => {
-          if (window.confirm('Permanently replace unreadable browser data with a fresh start? Download the original data first.')) store.replace(emptyProgress())
-        }}>Replace with a fresh start</button><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></section>
+        {store.recovery ? <Suspense fallback={null}><Recovery heading={heading} today={today} controls={backupControls} replace={store.replace} fail={backupFailed}><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></Recovery></Suspense>
           : <>
             {route === 'home' && <HomeScreen app={app} />}
             {route === 'tracks' && <TracksScreen app={app} />}
@@ -391,7 +382,8 @@ export default function App() {
             {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
             {route === 'sql' && <Suspense fallback={<p role="status">Loading SQL problems…</p>}><SqlProblemsScreen app={app} problemId={sqlId} /></Suspense>}
             {(route === 'guide' || route === 'antipatterns') && <Suspense fallback={<p role="status">Loading the Field Guide…</p>}><FieldGuideScreen app={app} guideId={guideId} gallery={route === 'antipatterns'} /></Suspense>}
-{(route === 'design' || route === 'board') && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} board={route === 'board'} /></Suspense>}
+            {route === 'design' && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} /></Suspense>}
+            {route === 'board' && <Suspense fallback={<p role="status">Loading whiteboards…</p>}><BoardScreen app={app} boardId={boardId} /></Suspense>}
             {route === 'cards' && <Suspense fallback={<p role="status">Loading flashcards…</p>}><FlashcardsScreen app={app} /></Suspense>}
             {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
             {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}
@@ -405,15 +397,11 @@ export default function App() {
           </>}
       </main>
     </div>
-    <input ref={importInput} type="file" accept=".json,application/json" className="sr-only" aria-label="Import progress JSON" onChange={event => { void importBackup(event.target.files?.[0]) }} />
-    <dialog ref={importDialog} className="import-dialog" aria-labelledby="import-title" onCancel={() => setPendingImport(null)}>
-      <h2 id="import-title">Replace this browser’s progress?</h2><p>This backup contains {pendingImport ? Object.keys(pendingImport.records).length : 0} completed lessons{pendingImport?.session ? ' and an unfinished session' : ''}. It will replace, not merge with, your current progress.</p><p>Learning path after import: {getLearningPath(pendingImport?.selectedPath)?.title ?? 'All curriculum (no path selected)'}. The backup replaces this choice too.</p><p>Export your current progress first if you want to keep both versions.</p><div className="button-row"><button autoFocus onClick={() => setPendingImport(null)}>Cancel import</button><button className="primary" onClick={() => {
-        if (pendingImport && store.replace(pendingImport)) {
-          setPendingImport(null)
-          setNotice('Backup restored. Your lessons, reviews, and unfinished session are ready.')
-          navigate('home')
-        } else setPendingImport(null)
-      }}>Replace progress</button></div>
-    </dialog>
+    {pendingImport && <Suspense fallback={null}><ImportDialog backup={pendingImport} cancel={() => setPendingImport(null)} fail={setBackupError} restored={setNotice} replace={next => {
+      setPendingImport(null)
+      if (!store.replace(next)) return false
+      navigate('home')
+      return true
+    }} /></Suspense>}
   </div></EditorPrefsContext.Provider>
 }
