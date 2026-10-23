@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import DiagramFigure from './Diagram'
-import CodeEditor from './CodeEditor'
+import Editor from './Editor'
 import Icon from './Icon'
 import RunResults from './RunResults'
 import SqlLabRunner from './SqlLab'
@@ -135,7 +135,7 @@ function CodeLabRunner({ lab, exercise, value, onChange, onPass, label }: {
       <label htmlFor={id}>{label} <span className="muted">· {LANGUAGE_NAME[lab.lang === 'ts' ? 'ts' : 'py']}</span></label>
       <button type="button" className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
     </div>
-    <CodeEditor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
+    <Editor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
     <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang === 'ts' ? 'ts' : 'py']}</p>
     {exercise.typeChecks && <details className="type-checks"><summary>Type checks your types must pass</summary><pre><code>{exercise.typeChecks}</code></pre></details>}
     <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase]}</button></div>

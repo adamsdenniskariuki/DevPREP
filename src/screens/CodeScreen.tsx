@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
-import CodeEditor from '../components/CodeEditor'
+import Editor from '../components/Editor'
 import { lessons } from '../curriculum'
 import { clearDraft, readDraft, writeDraft } from '../code-drafts'
 import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from '../problems'
@@ -190,7 +190,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
         <button className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
       </div>
       <label htmlFor="code-editor" className="sr-only">{lang === 'js' ? 'JavaScript' : 'Python'} code</label>
-      <CodeEditor id="code-editor" lang={lang} value={code[lang]} onChange={edit} describedBy="editor-help" />
+      <Editor id="code-editor" lang={lang} value={code[lang]} onChange={edit} describedBy="editor-help" />
       <p id="editor-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : ''}{saveFailed ? ' Drafts can’t be saved in this browser.' : ''}</p>
       <div className="button-row">
         <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>

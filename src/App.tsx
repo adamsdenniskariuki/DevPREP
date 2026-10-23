@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPlacement, recordSolve, recordSqlSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPlacement, recordSolve, recordSqlSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
+import { EditorPrefsContext } from './editor-context'
+import type { EditorPrefs } from './editor-prefs'
 import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
 import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
@@ -215,6 +217,10 @@ export default function App() {
     setNotice(`${getLearningPath(id)?.title ?? 'All curriculum'} selected. Your progress is unchanged.`)
   }
 
+  function changeEditorPrefs(patch: Partial<EditorPrefs>) {
+    store.update(value => updateEditorPrefs(value, patch))
+  }
+
   function changeProfile(patch: Partial<Profile>) {
     store.update(value => updateProfile(value, patch))
   }
@@ -301,7 +307,8 @@ export default function App() {
   }
   const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
 
-  return <div className="app-shell">
+  const editorContext = { prefs: editorPrefs(progress), setPrefs: changeEditorPrefs }
+  return <EditorPrefsContext.Provider value={editorContext}><div className="app-shell">
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
     <aside className="sidebar">
       <a className="brand" href="#home" aria-label="DevPREP home"><span className="brand-mark"><Icon name="code" size={24} /></span><span>Dev<span className="brand-accent">PREP</span></span></a>
@@ -376,5 +383,5 @@ export default function App() {
         } else setPendingImport(null)
       }}>Replace progress</button></div>
     </dialog>
-  </div>
+  </div></EditorPrefsContext.Provider>
 }

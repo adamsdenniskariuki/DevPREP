@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import CodeEditor from './CodeEditor'
+import Editor from './Editor'
 import Icon from './Icon'
 import type { SqlExercise, SqlLabTest } from '../curriculum-types'
 import type { RunPhase, SqlReport } from '../runner/runner'
@@ -95,7 +95,7 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
       <label htmlFor={id}>{label} <span className="muted">· SQL (Postgres)</span></label>
       <button type="button" className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
     </div>
-    <CodeEditor id={id} lang="sql" value={value} onChange={onChange} describedBy={`${id}-help`} />
+    <Editor id={id} lang="sql" value={value} onChange={onChange} describedBy={`${id}-help`} />
     <p id={`${id}-help`} className="helper">Each test starts from a fresh database with the tables below{exercise.check ? '; a check query then reads the result' : ''}. Tab indents; press Esc, then Tab, to leave the editor. Postgres’s first run downloads about 6 MB compressed, then works offline.</p>
     <details className="sql-schema"><summary>Tables and test data</summary><pre><code>{exercise.schema}</code></pre>{exercise.tests.filter(test => test.seed.trim()).map(test => <div key={test.name}><p className="muted">Test data: {test.name}</p><pre><code>{test.seed}</code></pre></div>)}</details>
     <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : phase === 'loading-sql' ? 'Starting Postgres…' : 'Running…'}</button></div>

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { expectCode } from './editor-helpers'
 import { readFileSync } from 'node:fs'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
@@ -12,7 +13,7 @@ async function openProblem(page: Page) {
   await expect(page.getByRole('heading', { level: 1, name: 'Code runner' })).toBeFocused()
   await page.getByRole('link', { name: problem.title }).click()
   await expect(page.getByRole('heading', { level: 1, name: problem.title })).toBeFocused()
-  await expect(page.getByRole('textbox', { name: 'JavaScript code' })).toHaveValue(problem.starter.js)
+  await expectCode(page.getByRole('textbox', { name: 'JavaScript code' }), problem.starter.js)
 }
 
 test('a JavaScript solve passes visible and hidden tests, earns XP once and is saved in backups', async ({ page }) => {
@@ -76,19 +77,19 @@ test('drafts survive a reload, reset asks first, and the language toggle keeps e
   await js.fill('function countPairs() { return 42 }')
   await page.getByRole('radio', { name: 'Python' }).check()
   const py = page.getByRole('textbox', { name: 'Python code' })
-  await expect(py).toHaveValue(problem.starter.py)
+  await expectCode(py, problem.starter.py)
   await py.fill('def count_pairs(values, target):\n    return 7')
   await page.reload()
-  await expect(page.getByRole('textbox', { name: 'Python code' })).toHaveValue('def count_pairs(values, target):\n    return 7')
+  await expectCode(page.getByRole('textbox', { name: 'Python code' }), 'def count_pairs(values, target):\n    return 7')
   await page.getByRole('radio', { name: 'JavaScript' }).check()
-  await expect(js).toHaveValue('function countPairs() { return 42 }')
+  await expectCode(js, 'function countPairs() { return 42 }')
 
   page.once('dialog', dialog => dialog.dismiss())
   await page.getByRole('button', { name: 'Reset to starter' }).click()
-  await expect(js).toHaveValue('function countPairs() { return 42 }')
+  await expectCode(js, 'function countPairs() { return 42 }')
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Reset to starter' }).click()
-  await expect(js).toHaveValue(problem.starter.js)
+  await expectCode(js, problem.starter.js)
   const drafts = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), DRAFTS_KEY)
   expect(drafts[problem.id].js).toBeUndefined()
   expect(drafts[problem.id].py).toContain('return 7')
@@ -103,7 +104,8 @@ test('Tab indents, Escape then Tab leaves the editor, and hints reveal one at a 
   await page.keyboard.type('if (x) {')
   await page.keyboard.press('Enter')
   await page.keyboard.press('Tab')
-  await expect(editor).toHaveValue('if (x) {\n    ')
+  // The Rich editor closes brackets and indents inside the block; Tab adds one more level.
+  await expectCode(editor, 'if (x) {\n    \n}')
   await page.keyboard.press('Escape')
   await page.keyboard.press('Tab')
   await expect(editor).not.toBeFocused()
