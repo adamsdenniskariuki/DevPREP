@@ -79,6 +79,7 @@ describe('pattern content', () => {
     expect(kids('linked-lists')).toEqual(['fast-slow-pointers', 'in-place-reversal'])
     expect(kids('trees')).toEqual(['dfs-traversals', 'bfs-level-order'])
     expect(kids('heaps')).toEqual(['top-k', 'k-way-merge', 'two-heaps'])
+    expect(kids('graphs')).toEqual(['bfs-shortest-steps', 'dfs-flood-fill', 'topological-sort', 'union-find', 'dijkstra'])
   })
 
   it('links problems to their pattern page', () => {
