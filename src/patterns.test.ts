@@ -17,6 +17,7 @@ import { loadProblems, problemIndex } from './problems'
 import { PY_HARNESS, runJs, runJsAsync, runPython } from './runner/core'
 import { createTsCompiler, libClosure } from './runner/ts-core'
 import type { PatternPage, PatternSummary } from './pattern-types'
+import { PROBLEM_PATTERNS } from './problem-types'
 
 const pages = [...(await loadPatterns()).values()]
 const order = (JSON.parse(readFileSync('content/patterns/index.json', 'utf8')) as { patterns: string[] }).patterns
@@ -80,6 +81,12 @@ describe('pattern content', () => {
     expect(kids('trees')).toEqual(['dfs-traversals', 'bfs-level-order'])
     expect(kids('heaps')).toEqual(['top-k', 'k-way-merge', 'two-heaps'])
     expect(kids('graphs')).toEqual(['bfs-shortest-steps', 'dfs-flood-fill', 'topological-sort', 'union-find', 'dijkstra'])
+    expect(kids('dynamic-programming')).toEqual(['dp-1d', 'dp-grid', 'knapsack', 'lcs-edit-distance', 'interval-dp'])
+  })
+
+  it('gives every pattern a top-level page and every problem at least one Patterns page', () => {
+    for (const pattern of PROBLEM_PATTERNS) expect(pages.some(page => page.category === pattern && !page.parent), pattern).toBe(true)
+    for (const problem of problemIndex) expect(patternsForProblem(problem).length, problem.id).toBeGreaterThan(0)
   })
 
   it('links problems to their pattern page', () => {
@@ -130,7 +137,8 @@ describe('pattern visualisers', () => {
       const parsed = tracer.parse(input)
       expect(parsed.ok, tracer.id).toBe(false)
       if (!parsed.ok) expect(Object.keys(parsed.errors).length).toBeGreaterThan(0)
-      const big = Object.fromEntries(tracer.params.map(param => [param.name, param.kind === 'int' ? '1' : Array.from({ length: 40 }, () => 1).join(', ')]))
+      const allInts = tracer.params.every(param => param.kind === 'int')
+      const big = Object.fromEntries(tracer.params.map(param => [param.name, param.kind === 'int' ? (allInts ? '999999' : '1') : Array.from({ length: 40 }, () => 1).join(', ')]))
       expect(tracer.parse(big).ok, `${tracer.id} long list`).toBe(false)
     }
   })

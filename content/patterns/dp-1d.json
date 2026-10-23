@@ -1,0 +1,297 @@
+{
+  "id": "dp-1d",
+  "parent": "dynamic-programming",
+  "title": "1-D DP",
+  "category": "Dynamic programming",
+  "level": "se",
+  "summary": "In 1-D DP the state is a single index: the best answer for a prefix, or for a run that ends at position i. Each cell reads a few earlier cells, or every earlier cell when any of them could come just before.",
+  "minutes": 12,
+  "idea": "dp[i] = answer for the prefix up to i (or ending at i). Build it from earlier cells; the answer is dp[n] or the best dp[i].",
+  "recognise": {
+    "signals": [
+      {
+        "see": "A sequence, string or number line, and the answer for position i depends only on earlier positions.",
+        "think": "One index is enough state. Ask: what is the last step into position i, and where could it come from?"
+      },
+      {
+        "see": "'Longest increasing…', 'number of ways to decode or split…', 'can the string be broken into words…'.",
+        "think": "Each of these looks back at some or all earlier cells: dp[i] combines dp[j] for valid j < i."
+      },
+      {
+        "see": "The recurrence only reads the last one or two cells.",
+        "think": "Keep two variables instead of the whole array to get O(1) space."
+      }
+    ],
+    "phrasings": [
+      "Find the length of the longest strictly rising subsequence.",
+      "Count the ways to turn a string of digits back into letters, where 1 is A and 26 is Z.",
+      "Can this sentence without spaces be split into dictionary words?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "ending-at-i",
+    "title": "Trying every subsequence versus a best run ending at each index",
+    "alt": "On the left, every subsequence is listed and checked, which is 2 to the n options. On the right, dp[i] stores the longest rising run that ends at index i; it is found by looking back at every smaller earlier value j and adding one to dp[j].",
+    "caption": "Store the best answer that ends at each index, then look back.",
+    "before": {
+      "label": "Try every subsequence",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "All 2ⁿ picks",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Check rising",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Exponential",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: best ending at i",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "dp[j], j < i",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "already final"
+        },
+        {
+          "id": "b",
+          "label": "Smaller nums[j]",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "nums[j] < nums[i]"
+        },
+        {
+          "id": "c",
+          "label": "dp[i]",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "max dp[j] + 1"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "look back"
+        },
+        {
+          "from": "b",
+          "to": "c",
+          "label": "extend"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "rise-length",
+    "function": {
+      "js": "longestRise",
+      "py": "longest_rise"
+    },
+    "code": {
+      "js": "function longestRise(nums) {\n  const dp = nums.map(() => 1) //@init\n  for (let i = 1; i < nums.length; i++) {\n    for (let j = 0; j < i; j++) {\n      if (nums[j] < nums[i]) dp[i] = Math.max(dp[i], dp[j] + 1) //@check\n    }\n  }\n  return Math.max(...dp) //@done\n}",
+      "py": "def longest_rise(nums):\n    dp = [1] * len(nums)  #@init\n    for i in range(1, len(nums)):\n        for j in range(i):\n            if nums[j] < nums[i]: dp[i] = max(dp[i], dp[j] + 1)  #@check\n    return max(dp)  #@done"
+    },
+    "examples": [
+      {
+        "label": "A run of four",
+        "input": {
+          "nums": "3, 1, 4, 1, 5, 9, 2, 6"
+        }
+      },
+      {
+        "label": "Falling, so 1",
+        "input": {
+          "nums": "5, 4, 3"
+        }
+      },
+      {
+        "label": "Equal values do not rise",
+        "input": {
+          "nums": "2, 2, 3"
+        }
+      }
+    ],
+    "inputHelp": "Up to 8 whole numbers from −99 to 99."
+  },
+  "template": {
+    "py": "def solve(items):\n    n = len(items)\n    dp = [1] * n  # dp[i] = best answer that ends at index i\n    for i in range(n):\n        for j in range(i):  # every earlier index that could come just before i\n            if can_follow(items[j], items[i]):\n                dp[i] = max(dp[i], dp[j] + 1)\n    return max(dp, default=0)\n\ndef can_follow(a, b):\n    return a < b\n",
+    "js": "function solve(items) {\n  const n = items.length\n  const dp = Array(n).fill(1) // dp[i] = best answer that ends at index i\n  for (let i = 0; i < n; i++) {\n    for (let j = 0; j < i; j++) { // every earlier index that could come just before i\n      if (canFollow(items[j], items[i])) dp[i] = Math.max(dp[i], dp[j] + 1)\n    }\n  }\n  return n ? Math.max(...dp) : 0\n}\n\nconst canFollow = (a, b) => a < b\n",
+    "ts": "function solve(items: number[]): number {\n  const n = items.length\n  const dp: number[] = Array(n).fill(1) // dp[i] = best answer that ends at index i\n  for (let i = 0; i < n; i++) {\n    for (let j = 0; j < i; j++) { // every earlier index that could come just before i\n      if (canFollow(items[j], items[i])) dp[i] = Math.max(dp[i], dp[j] + 1)\n    }\n  }\n  return n ? Math.max(...dp) : 0\n}\n\nconst canFollow = (a: number, b: number): boolean => a < b\n"
+  },
+  "oneLiner": "dp[i] = best ending at i = combine dp[j] for valid j < i; answer = dp[n] or max(dp)",
+  "exercise": {
+    "prompt": "A message of letters was encoded as digits, with A = 1 up to Z = 26, and the spaces were lost. Given the digit string s, return how many different messages it could have been. A 0 can only be the second digit of 10 or 20. The starter decodes a lone 0 as a letter.",
+    "function": {
+      "js": "decodeWays",
+      "py": "decode_ways"
+    },
+    "starter": {
+      "js": "function decodeWays(s) {\n  const n = s.length\n  const dp = Array(n + 1).fill(0)\n  dp[0] = 1\n  for (let i = 1; i <= n; i++) {\n    dp[i] += dp[i - 1]\n    const two = i >= 2 ? Number(s.slice(i - 2, i)) : 0\n    if (two >= 10 && two <= 26) dp[i] += dp[i - 2]\n  }\n  return dp[n]\n}\n",
+      "py": "def decode_ways(s):\n    n = len(s)\n    dp = [0] * (n + 1)\n    dp[0] = 1\n    for i in range(1, n + 1):\n        dp[i] += dp[i - 1]\n        if i >= 2 and 10 <= int(s[i - 2:i]) <= 26:\n            dp[i] += dp[i - 2]\n    return dp[n]\n",
+      "ts": "function decodeWays(s: string): number {\n  const n = s.length\n  const dp: number[] = Array(n + 1).fill(0)\n  dp[0] = 1\n  for (let i = 1; i <= n; i++) {\n    dp[i] += dp[i - 1]\n    const two = i >= 2 ? Number(s.slice(i - 2, i)) : 0\n    if (two >= 10 && two <= 26) dp[i] += dp[i - 2]\n  }\n  return dp[n]\n}\n"
+    },
+    "solution": {
+      "js": "function decodeWays(s) {\n  const n = s.length\n  const dp = Array(n + 1).fill(0)\n  dp[0] = 1\n  for (let i = 1; i <= n; i++) {\n    if (s[i - 1] !== '0') dp[i] += dp[i - 1]\n    const two = i >= 2 ? Number(s.slice(i - 2, i)) : 0\n    if (two >= 10 && two <= 26) dp[i] += dp[i - 2]\n  }\n  return dp[n]\n}\n",
+      "py": "def decode_ways(s):\n    n = len(s)\n    dp = [0] * (n + 1)\n    dp[0] = 1\n    for i in range(1, n + 1):\n        if s[i - 1] != \"0\":\n            dp[i] += dp[i - 1]\n        if i >= 2 and 10 <= int(s[i - 2:i]) <= 26:\n            dp[i] += dp[i - 2]\n    return dp[n]\n",
+      "ts": "function decodeWays(s: string): number {\n  const n = s.length\n  const dp: number[] = Array(n + 1).fill(0)\n  dp[0] = 1\n  for (let i = 1; i <= n; i++) {\n    if (s[i - 1] !== '0') dp[i] += dp[i - 1]\n    const two = i >= 2 ? Number(s.slice(i - 2, i)) : 0\n    if (two >= 10 && two <= 26) dp[i] += dp[i - 2]\n  }\n  return dp[n]\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          "12"
+        ],
+        "expected": 2
+      },
+      {
+        "args": [
+          "226"
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          "06"
+        ],
+        "expected": 0
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          "0"
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          "10"
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          "100"
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          "2101"
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          "11106"
+        ],
+        "expected": 2
+      },
+      {
+        "args": [
+          "27"
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          "1111111111111111111111111111111111111111"
+        ],
+        "expected": 165580141
+      }
+    ],
+    "hints": [
+      "dp[i] is the number of ways to decode the first i digits. dp[0] = 1: the empty prefix decodes one way.",
+      "The last letter used either one digit (it must not be 0) or two digits (they must form 10 to 26).",
+      "Add dp[i − 1] for the one-digit case and dp[i − 2] for the two-digit case."
+    ]
+  },
+  "problems": [
+    {
+      "id": "stair-ways",
+      "role": "warm-up"
+    },
+    {
+      "id": "longest-rising-subsequence",
+      "role": "core"
+    },
+    {
+      "id": "word-segmentation",
+      "role": "core"
+    }
+  ],
+  "complexity": {
+    "time": "O(n²); O(n) for a fixed reach",
+    "space": "O(n)",
+    "why": "Looking back at every earlier index costs O(n) per cell. When dp[i] reads only dp[i − 1] and dp[i − 2], each cell is O(1) and two variables replace the array."
+  },
+  "mistakes": [
+    "Returning dp[n − 1] when the best run can end anywhere, so the answer is max(dp).",
+    "Using ≤ instead of < when the question says strictly increasing.",
+    "Setting dp[0] = 0 in counting problems, when the empty prefix has exactly one way.",
+    "Forgetting that a digit or word can fail to match, so some dp cells stay 0."
+  ],
+  "quiz": [
+    {
+      "question": "For the longest rising subsequence, why is the answer max(dp) and not dp[n − 1]?",
+      "choices": [
+        "dp[n − 1] is not filled",
+        "dp[i] is the best run that ends at i, and the best run may end earlier",
+        "max(dp) is faster"
+      ],
+      "answer": 1,
+      "explain": "The state is 'ends at i', so every cell is a candidate answer."
+    },
+    {
+      "question": "In stair climbing with steps of 1 or 2, how much memory do you really need?",
+      "choices": [
+        "The whole array",
+        "Two variables: the last two values",
+        "A 2-D table"
+      ],
+      "answer": 1,
+      "explain": "dp[i] reads only dp[i − 1] and dp[i − 2], so keep a rolling pair."
+    },
+    {
+      "question": "For decoding digits, what is dp[0]?",
+      "choices": [
+        "0",
+        "1: there is one way to decode nothing",
+        "It depends on s[0]"
+      ],
+      "answer": 1,
+      "explain": "Counting DP usually starts from 1 way for the empty case, so the first real choice has something to build on."
+    }
+  ],
+  "interviewTip": "Say whether your state means 'using the first i items' or 'ending at index i'. The difference decides the answer cell and catches most off-by-one bugs."
+}

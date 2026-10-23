@@ -1,11 +1,13 @@
 import { pickSum } from './backtrack'
 import { bracketMatch } from './bracket-match'
 import { cyclicMissing } from './cyclic-missing'
+import { endsGame, gridPaths, houseRob, knapsack, lcsTable, riseLength } from './dp'
 import { dijkstra, floodFill, graphReach, gridBfs, kahn, unionFind } from './graphs'
 import { hashPair } from './hash-pair'
 import { heapSort, kwayMerge, runningMedian, topK } from './heaps'
 import { dropValue, middleNode, reverseList } from './linked'
 import { mergeIntervals } from './merge-intervals'
+import { countBits, jumpReach, lruOps } from './misc'
 import { minSpeed } from './min-speed'
 import { nextGreater } from './next-greater'
 import { prefixRange } from './prefix-range'
@@ -26,6 +28,7 @@ export const TRACERS: Record<string, Tracer> = Object.fromEntries([
   simplifyPath, bracketMatch, nextGreater, sortedSearch, minSpeed, dropValue, middleNode, reverseList, mergeIntervals, cyclicMissing,
   treeDepthTracer, treeOrderTracer, levelOrderTracer, triePrefix, heapSort, topK, kwayMerge, runningMedian, spiralWalk, quickselect,
   graphReach, gridBfs, floodFill, kahn, unionFind, dijkstra, pickSum,
+  houseRob, riseLength, gridPaths, knapsack, lcsTable, endsGame, jumpReach, countBits, lruOps,
 ].map(tracer => [tracer.id, tracer]))
 
 export function getTracer(id: string): Tracer | undefined {

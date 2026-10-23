@@ -1,0 +1,307 @@
+{
+  "id": "lcs-edit-distance",
+  "parent": "dynamic-programming",
+  "title": "LCS / edit distance",
+  "category": "Dynamic programming",
+  "level": "se",
+  "summary": "Two-string DP compares a prefix of one string with a prefix of the other. When the last letters match, extend the diagonal; when they differ, drop or change one letter and take the best neighbour.",
+  "minutes": 15,
+  "idea": "dp[i][j] = answer for a[:i] and b[:j]. Equal last letters: use dp[i−1][j−1]. Otherwise combine dp[i−1][j], dp[i][j−1] (and dp[i−1][j−1] for a substitution).",
+  "recognise": {
+    "signals": [
+      {
+        "see": "Two strings or sequences, and the question compares them: longest common part, fewest edits, interleaving.",
+        "think": "The state is a pair of prefix lengths (i, j). The table has an extra row and column for empty prefixes."
+      },
+      {
+        "see": "Operations are insert, delete or replace one character, each costing 1.",
+        "think": "Edit distance: match is free (diagonal); otherwise 1 + min of delete (up), insert (left) and replace (diagonal)."
+      },
+      {
+        "see": "'Fewest deletions to make two strings equal', or 'shortest string containing both as subsequences'.",
+        "think": "These are LCS in disguise: m + n − 2 × LCS and m + n − LCS."
+      }
+    ],
+    "phrasings": [
+      "Find the length of the longest sequence of letters that appears in order in both strings.",
+      "How many single-letter edits turn one word into another?",
+      "Delete the fewest letters from both words so they become equal."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "pairs-vs-table",
+    "title": "Every subsequence pair versus a prefix × prefix table",
+    "alt": "On the left, every subsequence of one string is compared with every subsequence of the other. On the right, a table has a row per prefix of a and a column per prefix of b; matching letters read the diagonal cell, and differing letters read the cell above and the cell to the left.",
+    "caption": "Match: diagonal + 1. Differ: the best of above and left.",
+    "before": {
+      "label": "Compare every pair",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Picks from a",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "every subsequence"
+        },
+        {
+          "id": "b",
+          "label": "× those of b",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Exponential",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: prefix table",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "dp[i-1][j-1]",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "match: + 1"
+        },
+        {
+          "id": "b",
+          "label": "Up or left",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "differ: the max"
+        },
+        {
+          "id": "c",
+          "label": "dp[i][j]",
+          "kind": "good",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "d",
+          "label": "dp[m][n]",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "whole words"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "c"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        },
+        {
+          "from": "c",
+          "to": "d",
+          "label": "row by row"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "lcs-table",
+    "function": {
+      "js": "lcs",
+      "py": "lcs"
+    },
+    "code": {
+      "js": "function lcs(a, b) {\n  const m = a.length, n = b.length, dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0)) //@init\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1 //@match\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]) //@differ\n    }\n  }\n  return dp[m][n] //@done\n}",
+      "py": "def lcs(a, b):\n    m, n = len(a), len(b); dp = [[0] * (n + 1) for _ in range(m + 1)]  #@init\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i - 1] == b[j - 1]: dp[i][j] = dp[i - 1][j - 1] + 1  #@match\n            else: dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])  #@differ\n    return dp[m][n]  #@done"
+    },
+    "examples": [
+      {
+        "label": "Common part ace",
+        "input": {
+          "words": "abcde, ace"
+        }
+      },
+      {
+        "label": "Swapped letters",
+        "input": {
+          "words": "abcd, acbd"
+        }
+      },
+      {
+        "label": "Nothing in common",
+        "input": {
+          "words": "ab, cd"
+        }
+      }
+    ],
+    "inputHelp": "Two lowercase words of up to 5 letters, separated by a comma."
+  },
+  "template": {
+    "py": "def solve(a, b):\n    m, n = len(a), len(b)\n    dp = [[0] * (n + 1) for _ in range(m + 1)]  # row 0 and column 0: empty prefixes\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i - 1] == b[j - 1]:\n                dp[i][j] = dp[i - 1][j - 1] + 1  # extend the diagonal\n            else:\n                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])  # drop a letter from one side\n    return dp[m][n]\n",
+    "js": "function solve(a, b) {\n  const m = a.length\n  const n = b.length\n  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0)) // row 0 and column 0: empty prefixes\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1 // extend the diagonal\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]) // drop a letter from one side\n    }\n  }\n  return dp[m][n]\n}\n",
+    "ts": "function solve(a: string, b: string): number {\n  const m = a.length\n  const n = b.length\n  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0)) // row 0 and column 0: empty prefixes\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1 // extend the diagonal\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]) // drop a letter from one side\n    }\n  }\n  return dp[m][n]\n}\n"
+  },
+  "oneLiner": "a[i-1] == b[j-1] ? dp[i-1][j-1] + 1 : max(dp[i-1][j], dp[i][j-1]); answer dp[m][n]",
+  "exercise": {
+    "prompt": "Return the fewest letters you must delete, from either or both words, so that the two words become equal. Each deletion removes one letter. The starter subtracts the longest common subsequence only once.",
+    "function": {
+      "js": "minDeleteSteps",
+      "py": "min_delete_steps"
+    },
+    "starter": {
+      "js": "function minDeleteSteps(a, b) {\n  const m = a.length\n  const n = b.length\n  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])\n    }\n  }\n  return m + n - dp[m][n]\n}\n",
+      "py": "def min_delete_steps(a, b):\n    m, n = len(a), len(b)\n    dp = [[0] * (n + 1) for _ in range(m + 1)]\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i - 1] == b[j - 1]:\n                dp[i][j] = dp[i - 1][j - 1] + 1\n            else:\n                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])\n    return m + n - dp[m][n]\n",
+      "ts": "function minDeleteSteps(a: string, b: string): number {\n  const m = a.length\n  const n = b.length\n  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])\n    }\n  }\n  return m + n - dp[m][n]\n}\n"
+    },
+    "solution": {
+      "js": "function minDeleteSteps(a, b) {\n  const m = a.length\n  const n = b.length\n  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])\n    }\n  }\n  return m + n - 2 * dp[m][n]\n}\n",
+      "py": "def min_delete_steps(a, b):\n    m, n = len(a), len(b)\n    dp = [[0] * (n + 1) for _ in range(m + 1)]\n    for i in range(1, m + 1):\n        for j in range(1, n + 1):\n            if a[i - 1] == b[j - 1]:\n                dp[i][j] = dp[i - 1][j - 1] + 1\n            else:\n                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])\n    return m + n - 2 * dp[m][n]\n",
+      "ts": "function minDeleteSteps(a: string, b: string): number {\n  const m = a.length\n  const n = b.length\n  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))\n  for (let i = 1; i <= m; i++) {\n    for (let j = 1; j <= n; j++) {\n      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1\n      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])\n    }\n  }\n  return m + n - 2 * dp[m][n]\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          "sea",
+          "eat"
+        ],
+        "expected": 2
+      },
+      {
+        "args": [
+          "leetcode",
+          "etco"
+        ],
+        "expected": 4
+      },
+      {
+        "args": [
+          "abc",
+          "abc"
+        ],
+        "expected": 0
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          "",
+          ""
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          "",
+          "abc"
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          "a",
+          "a"
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          "abc",
+          "def"
+        ],
+        "expected": 6
+      },
+      {
+        "args": [
+          "kitten",
+          "sitting"
+        ],
+        "expected": 5
+      },
+      {
+        "args": [
+          "aabcdaadcdcaacbdabcaaaabdcdbabaabdbdccdabaadcccaccdbbacaabcabbcdccbadbccaacbcadcdcdcbacdbddcdbacbbcbddcacacddccccdddadbadadddcadcbbcdcdcbbaccaacdabcdbaaaadaacabadbccabcbdcbcdbaaacbabcbcdaaaaccdacbcbdacbaaddaadcdccadadcbcaadcaadccbbababddcbdcdcacbdcdadbadcaaaaaacdcdcddaddcbaababccccddacddccdabbbdaddc",
+          "cddcaddddccbababbaaaccdbcdccbdbcadcbacccaaaddccabbadbdcadcacadddcdcbdccdaccaaccbddbcccbacdbdadbccbcabbcddacaccacddccdabbdbbacbbaadaabccbcbbbaddabcdddabcaaadcaaddadccbadaccbbcaccbddaabaaadddcbdababdaacdcdcadabddadbabccacbacbbbcbaadccabbddcddaadbddcaacbbaabdbadcdabacbbbcbdcbabbcdcabcdddbabccaadadaacdd"
+        ],
+        "expected": 210
+      }
+    ],
+    "hints": [
+      "The letters that survive in both words form a common subsequence. Keep as many as possible.",
+      "Compute the LCS length L with the prefix table.",
+      "Every other letter is deleted: (m − L) from a and (n − L) from b."
+    ]
+  },
+  "problems": [
+    {
+      "id": "common-subsequence",
+      "role": "warm-up"
+    },
+    {
+      "id": "edit-distance",
+      "role": "core"
+    }
+  ],
+  "complexity": {
+    "time": "O(m × n)",
+    "space": "O(m × n); O(n) with two rows",
+    "why": "There is one cell per pair of prefixes and each takes constant time. A cell reads only the row above and its left neighbour, so two rows are enough when you do not need to rebuild the answer string."
+  },
+  "mistakes": [
+    "Comparing a[i] with b[j] instead of a[i − 1] with b[j − 1] in a table with an empty-prefix row.",
+    "Forgetting that in edit distance row 0 is 0, 1, 2, …: turning an empty prefix into b[:j] takes j inserts.",
+    "Mixing up substring (contiguous) and subsequence (in order, gaps allowed) problems.",
+    "Dropping the table too early when the question asks to rebuild the common string itself."
+  ],
+  "quiz": [
+    {
+      "question": "The last letters of a[:i] and b[:j] match. What is the LCS of the prefixes?",
+      "choices": [
+        "dp[i − 1][j − 1] + 1",
+        "max(dp[i − 1][j], dp[i][j − 1])",
+        "dp[i − 1][j] + 1"
+      ],
+      "answer": 0,
+      "explain": "Both matching letters can end the common subsequence, so extend the diagonal."
+    },
+    {
+      "question": "In edit distance, what does dp[i][0] equal?",
+      "choices": [
+        "0",
+        "i: delete every letter of a[:i]",
+        "1"
+      ],
+      "answer": 1,
+      "explain": "The base row and column count the edits needed against an empty string."
+    },
+    {
+      "question": "How many deletions make two words equal, given their LCS length L?",
+      "choices": [
+        "m + n − L",
+        "m + n − 2L",
+        "max(m, n) − L"
+      ],
+      "answer": 1,
+      "explain": "Keep the L shared letters in both words and delete everything else."
+    }
+  ],
+  "interviewTip": "Draw the table with the words along the edges and fill a few cells aloud. Saying 'match goes diagonal, mismatch takes the best neighbour' is most of the explanation."
+}

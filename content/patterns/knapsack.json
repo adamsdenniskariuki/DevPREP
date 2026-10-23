@@ -1,0 +1,442 @@
+{
+  "id": "knapsack",
+  "parent": "dynamic-programming",
+  "title": "Knapsack",
+  "category": "Dynamic programming",
+  "level": "se",
+  "summary": "Knapsack DP picks items under a budget. Rows add one item at a time and columns are every budget from 0 up, so each cell decides: skip this item, or take it and use the best answer for the budget that is left.",
+  "minutes": 15,
+  "idea": "dp[i][c] = best using the first i items within budget c = max(skip: dp[i−1][c], take: dp[i−1][c−w] + v). Reading the same row instead allows unlimited copies.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "Choose a subset of items with weights or costs, under a capacity, to maximise value or hit an exact total.",
+        "think": "That is 0/1 knapsack. The state is (items considered, capacity used)."
+      },
+      {
+        "see": "'Can the numbers be split into two equal halves?', 'Is there a subset with sum k?'",
+        "think": "Subset sum is knapsack with true or false cells: can[s] |= can[s − x]."
+      },
+      {
+        "see": "Coins or pieces can be reused any number of times.",
+        "think": "Unbounded knapsack: take reads the same row (dp[c − w]), so the item can be used again."
+      }
+    ],
+    "phrasings": [
+      "Pack a bag of limited weight to carry the most value.",
+      "Can a list of numbers be split into two groups with the same sum?",
+      "Find the fewest coins that make an amount, with unlimited coins of each kind."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "subsets-vs-table",
+    "title": "Every subset versus an item × capacity table",
+    "alt": "On the left, every subset of items is tried, which is 2 to the n options. On the right, a table has a row per item and a column per capacity; each cell takes the larger of skipping the item (the cell above) and taking it (the cell above and w columns left, plus its value).",
+    "caption": "Skip copies the cell above; take reads w columns to the left in the row above.",
+    "before": {
+      "label": "Try every subset",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "All 2ⁿ subsets",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Check weight",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Exponential",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: skip or take",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "dp[i-1][c]",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "skip"
+        },
+        {
+          "id": "b",
+          "label": "dp[i-1][c-w] + v",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "take"
+        },
+        {
+          "id": "c",
+          "label": "dp[i][c]",
+          "kind": "good",
+          "col": 1,
+          "row": 0,
+          "sub": "the larger"
+        },
+        {
+          "id": "d",
+          "label": "dp[n][cap]",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "the answer"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "c"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        },
+        {
+          "from": "c",
+          "to": "d",
+          "label": "row by row"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "knapsack",
+    "function": {
+      "js": "knapsack",
+      "py": "knapsack"
+    },
+    "code": {
+      "js": "function knapsack(weights, values, cap) {\n  const n = weights.length, dp = Array.from({ length: n + 1 }, () => Array(cap + 1).fill(0)) //@init\n  for (let i = 1; i <= n; i++) {\n    const w = weights[i - 1], v = values[i - 1] //@item\n    for (let c = 0; c <= cap; c++) {\n      dp[i][c] = dp[i - 1][c] //@skip\n      if (w <= c) dp[i][c] = Math.max(dp[i][c], dp[i - 1][c - w] + v) //@take\n    }\n  }\n  return dp[n][cap] //@done\n}",
+      "py": "def knapsack(weights, values, cap):\n    n = len(weights); dp = [[0] * (cap + 1) for _ in range(n + 1)]  #@init\n    for i in range(1, n + 1):\n        w, v = weights[i - 1], values[i - 1]  #@item\n        for c in range(cap + 1):\n            dp[i][c] = dp[i - 1][c]  #@skip\n            if w <= c: dp[i][c] = max(dp[i][c], dp[i - 1][c - w] + v)  #@take\n    return dp[n][cap]  #@done"
+    },
+    "examples": [
+      {
+        "label": "Two light items beat one",
+        "input": {
+          "weights": "1, 3, 4",
+          "values": "15, 20, 30",
+          "cap": "4"
+        }
+      },
+      {
+        "label": "Both fit exactly",
+        "input": {
+          "weights": "2, 3",
+          "values": "3, 4",
+          "cap": "5"
+        }
+      },
+      {
+        "label": "Too heavy to take",
+        "input": {
+          "weights": "5",
+          "values": "10",
+          "cap": "3"
+        }
+      }
+    ],
+    "inputHelp": "Up to 4 weights from 1 to 6, one value from 1 to 30 for each, and a capacity from 1 to 6."
+  },
+  "template": {
+    "py": "def solve(weights, values, cap):\n    best = [0] * (cap + 1)  # best[c] = best value within capacity c\n    for w, v in zip(weights, values):\n        for c in range(cap, w - 1, -1):  # downwards: each item at most once\n            best[c] = max(best[c], best[c - w] + v)  # skip or take\n    return best[cap]\n",
+    "js": "function solve(weights, values, cap) {\n  const best = Array(cap + 1).fill(0) // best[c] = best value within capacity c\n  weights.forEach((w, i) => {\n    for (let c = cap; c >= w; c--) { // downwards: each item at most once\n      best[c] = Math.max(best[c], best[c - w] + values[i]) // skip or take\n    }\n  })\n  return best[cap]\n}\n",
+    "ts": "function solve(weights: number[], values: number[], cap: number): number {\n  const best: number[] = Array(cap + 1).fill(0) // best[c] = best value within capacity c\n  weights.forEach((w, i) => {\n    for (let c = cap; c >= w; c--) { // downwards: each item at most once\n      best[c] = Math.max(best[c], best[c - w] + values[i]) // skip or take\n    }\n  })\n  return best[cap]\n}\n"
+  },
+  "oneLiner": "for item (w, v): for c from cap down to w: best[c] = max(best[c], best[c-w] + v)",
+  "exercise": {
+    "prompt": "Return true if the numbers can be split into two groups with equal sums. Every number goes into exactly one group. Use one boolean array where can[s] says some of the numbers seen so far add up to s. The starter loops s upwards, so it can reuse a number twice.",
+    "function": {
+      "js": "canSplitEqual",
+      "py": "can_split_equal"
+    },
+    "starter": {
+      "js": "function canSplitEqual(nums) {\n  const total = nums.reduce((a, b) => a + b, 0)\n  if (total % 2) return false\n  const half = total / 2\n  const can = Array(half + 1).fill(false)\n  can[0] = true\n  for (const x of nums) {\n    for (let s = x; s <= half; s++) can[s] = can[s] || can[s - x]\n  }\n  return can[half]\n}\n",
+      "py": "def can_split_equal(nums):\n    total = sum(nums)\n    if total % 2:\n        return False\n    half = total // 2\n    can = [True] + [False] * half\n    for x in nums:\n        for s in range(x, half + 1):\n            can[s] = can[s] or can[s - x]\n    return can[half]\n",
+      "ts": "function canSplitEqual(nums: number[]): boolean {\n  const total = nums.reduce((a, b) => a + b, 0)\n  if (total % 2) return false\n  const half = total / 2\n  const can: boolean[] = Array(half + 1).fill(false)\n  can[0] = true\n  for (const x of nums) {\n    for (let s = x; s <= half; s++) can[s] = can[s] || can[s - x]\n  }\n  return can[half]\n}\n"
+    },
+    "solution": {
+      "js": "function canSplitEqual(nums) {\n  const total = nums.reduce((a, b) => a + b, 0)\n  if (total % 2) return false\n  const half = total / 2\n  const can = Array(half + 1).fill(false)\n  can[0] = true\n  for (const x of nums) {\n    for (let s = half; s >= x; s--) can[s] = can[s] || can[s - x]\n  }\n  return can[half]\n}\n",
+      "py": "def can_split_equal(nums):\n    total = sum(nums)\n    if total % 2:\n        return False\n    half = total // 2\n    can = [True] + [False] * half\n    for x in nums:\n        for s in range(half, x - 1, -1):\n            can[s] = can[s] or can[s - x]\n    return can[half]\n",
+      "ts": "function canSplitEqual(nums: number[]): boolean {\n  const total = nums.reduce((a, b) => a + b, 0)\n  if (total % 2) return false\n  const half = total / 2\n  const can: boolean[] = Array(half + 1).fill(false)\n  can[0] = true\n  for (const x of nums) {\n    for (let s = half; s >= x; s--) can[s] = can[s] || can[s - x]\n  }\n  return can[half]\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            1,
+            5,
+            11,
+            5
+          ]
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            5
+          ]
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            5
+          ]
+        ],
+        "expected": false
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          [
+            1,
+            1
+          ]
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          [
+            2
+          ]
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          [
+            3,
+            3,
+            3,
+            3
+          ]
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          [
+            2,
+            2,
+            3,
+            5
+          ]
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          [
+            2,
+            84,
+            26,
+            40,
+            95,
+            41,
+            72,
+            49,
+            95,
+            6,
+            34,
+            45,
+            16,
+            51,
+            9,
+            28,
+            14,
+            37,
+            99,
+            3,
+            90,
+            18,
+            61,
+            71,
+            36,
+            51,
+            41,
+            95,
+            30,
+            1,
+            19,
+            45,
+            50,
+            67,
+            39,
+            92,
+            36,
+            3,
+            60,
+            100,
+            79,
+            6,
+            40,
+            5,
+            56,
+            16,
+            29,
+            28,
+            2,
+            68,
+            23,
+            74,
+            19,
+            63,
+            53,
+            59,
+            27,
+            93,
+            33,
+            4,
+            80,
+            36,
+            63,
+            45,
+            7,
+            54,
+            6,
+            91,
+            37,
+            71,
+            16,
+            83,
+            94,
+            30,
+            84,
+            40,
+            48,
+            78,
+            94,
+            18,
+            40,
+            3,
+            64,
+            93,
+            7,
+            86,
+            97,
+            48,
+            3,
+            25,
+            36,
+            8,
+            58,
+            37,
+            35,
+            25,
+            61,
+            64,
+            66,
+            85
+          ]
+        ],
+        "expected": true
+      }
+    ],
+    "hints": [
+      "If the total is odd, the answer is false. Otherwise look for a subset that sums to half the total.",
+      "can[0] is true. For each number x, can[s] becomes true if can[s − x] was already true.",
+      "Loop s downwards from half to x, so can[s − x] still describes the numbers before x."
+    ]
+  },
+  "problems": [
+    {
+      "id": "pack-the-bag",
+      "role": "warm-up"
+    },
+    {
+      "id": "fewest-coins",
+      "role": "core"
+    }
+  ],
+  "complexity": {
+    "time": "O(n × capacity)",
+    "space": "O(capacity) with one row",
+    "why": "There is one cell per item and capacity, each filled in constant time. Looping capacity downwards lets one row stand in for the whole table. This is pseudo-polynomial: it depends on the capacity's size."
+  },
+  "mistakes": [
+    "Looping capacity upwards in the one-row 0/1 version, which lets an item be taken twice.",
+    "Looping downwards for unbounded problems, which forbids reusing an item.",
+    "Using 0 instead of 'impossible' (infinity or false) for amounts that cannot be made exactly.",
+    "Forgetting the odd-total check when splitting into equal halves."
+  ],
+  "quiz": [
+    {
+      "question": "In the one-row 0/1 knapsack, why loop capacity from high to low?",
+      "choices": [
+        "It is faster",
+        "So best[c − w] still holds the value from before this item, and each item is used at most once",
+        "To find the answer earlier"
+      ],
+      "answer": 1,
+      "explain": "Going upwards would read a cell already updated with this item."
+    },
+    {
+      "question": "How does unbounded knapsack (unlimited copies) differ?",
+      "choices": [
+        "Take reads the current row, so loop capacity upwards",
+        "It needs a 3-D table",
+        "It cannot be solved with DP"
+      ],
+      "answer": 0,
+      "explain": "Reading the updated cell means the item can be taken again."
+    },
+    {
+      "question": "Is O(n × capacity) polynomial in the input size?",
+      "choices": [
+        "Yes",
+        "No: it is pseudo-polynomial, because capacity can be huge compared with its number of digits",
+        "Only for small n"
+      ],
+      "answer": 1,
+      "explain": "A capacity of a billion makes the table huge, even though it is one number."
+    }
+  ],
+  "interviewTip": "Draw the item × capacity table for a tiny case first. Then show the one-row version and explain the loop direction; that is the usual follow-up."
+}

@@ -1,0 +1,299 @@
+{
+  "id": "interval-dp",
+  "parent": "dynamic-programming",
+  "title": "Interval DP",
+  "category": "Dynamic programming",
+  "level": "sse",
+  "summary": "Interval DP solves every contiguous range nums[i..j]. A range is built from shorter ranges inside it, so fill the table by length: all ranges of length 1, then 2, and so on up to the whole input.",
+  "minutes": 15,
+  "idea": "dp[i][j] = answer for the range i..j. Base: length 1. For each longer range, try the ends (or every split point k) and combine the shorter ranges. Answer: dp[0][n−1].",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The question is about a contiguous range that shrinks from either end: palindromes, removing from the ends, two-player games on a row.",
+        "think": "The state is a pair (i, j). Its answer comes from (i + 1, j) and (i, j − 1)."
+      },
+      {
+        "see": "You choose where to split or which item to handle last, and the cost depends on the whole range: cutting a stick, bursting balloons, merging piles.",
+        "think": "Try every split point k in i..j and combine dp[i][k] and dp[k][j] plus the cost of this step. That is O(n³)."
+      },
+      {
+        "see": "A greedy or left-to-right scan fails because a choice in the middle changes both sides.",
+        "think": "Ranges capture both sides at once. Fill by increasing length so the inner ranges are ready."
+      }
+    ],
+    "phrasings": [
+      "Two players take turns removing a number from either end of a row. Can the first player win?",
+      "Find the longest subsequence that reads the same backwards.",
+      "Cut a stick at given marks, paying the current length for each cut. What is the least total cost?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "prefix-vs-range",
+    "title": "Left-to-right prefix versus ranges by length",
+    "alt": "On the left, a prefix DP moves left to right but cannot see choices made at the right end. On the right, dp[i][j] covers the range i to j and reads the two ranges one shorter, dp[i+1][j] and dp[i][j-1]; ranges are filled in order of length, so the whole row is solved last.",
+    "caption": "Fill short ranges first; each range reads ranges inside it.",
+    "before": {
+      "label": "Prefix only",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "dp[i]",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "first i items"
+        },
+        {
+          "id": "b",
+          "label": "Right end lost",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Wrong answer",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: ranges by length",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "dp[i+1][j]",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "drop the left"
+        },
+        {
+          "id": "b",
+          "label": "dp[i][j-1]",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "drop the right"
+        },
+        {
+          "id": "c",
+          "label": "dp[i][j]",
+          "kind": "good",
+          "col": 1,
+          "row": 0,
+          "sub": "length + 1"
+        },
+        {
+          "id": "d",
+          "label": "dp[0][n-1]",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "whole row"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "c"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        },
+        {
+          "from": "c",
+          "to": "d",
+          "label": "by length"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "ends-game",
+    "function": {
+      "js": "endsGame",
+      "py": "ends_game"
+    },
+    "code": {
+      "js": "function endsGame(nums) {\n  const n = nums.length, dp = Array.from({ length: n }, () => Array(n).fill(0)) //@init\n  for (let i = 0; i < n; i++) dp[i][i] = nums[i] //@single\n  for (let len = 2; len <= n; len++) {\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1; dp[i][j] = Math.max(nums[i] - dp[i + 1][j], nums[j] - dp[i][j - 1]) //@fill\n    }\n  }\n  return dp[0][n - 1] //@done\n}",
+      "py": "def ends_game(nums):\n    n = len(nums); dp = [[0] * n for _ in range(n)]  #@init\n    for i in range(n): dp[i][i] = nums[i]  #@single\n    for length in range(2, n + 1):\n        for i in range(n - length + 1):\n            j = i + length - 1; dp[i][j] = max(nums[i] - dp[i + 1][j], nums[j] - dp[i][j - 1])  #@fill\n    return dp[0][n - 1]  #@done"
+    },
+    "examples": [
+      {
+        "label": "First player loses",
+        "input": {
+          "nums": "1, 5, 2"
+        }
+      },
+      {
+        "label": "First player wins",
+        "input": {
+          "nums": "1, 5, 20, 7"
+        }
+      },
+      {
+        "label": "Even split",
+        "input": {
+          "nums": "4, 4"
+        }
+      }
+    ],
+    "inputHelp": "Up to 6 whole numbers from 0 to 20. The answer is the first player's best lead; below 0 means they lose."
+  },
+  "template": {
+    "py": "def solve(nums):\n    n = len(nums)\n    dp = [[0] * n for _ in range(n)]  # dp[i][j] = answer for nums[i..j]\n    for i in range(n):\n        dp[i][i] = nums[i]  # base case: ranges of length 1\n    for length in range(2, n + 1):  # shorter ranges first\n        for i in range(n - length + 1):\n            j = i + length - 1\n            dp[i][j] = max(nums[i] - dp[i + 1][j], nums[j] - dp[i][j - 1])\n    return dp[0][n - 1] if n else 0\n",
+    "js": "function solve(nums) {\n  const n = nums.length\n  const dp = Array.from({ length: n }, () => Array(n).fill(0)) // dp[i][j] = answer for nums[i..j]\n  for (let i = 0; i < n; i++) dp[i][i] = nums[i] // base case: ranges of length 1\n  for (let len = 2; len <= n; len++) { // shorter ranges first\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      dp[i][j] = Math.max(nums[i] - dp[i + 1][j], nums[j] - dp[i][j - 1])\n    }\n  }\n  return n ? dp[0][n - 1] : 0\n}\n",
+    "ts": "function solve(nums: number[]): number {\n  const n = nums.length\n  const dp: number[][] = Array.from({ length: n }, () => Array(n).fill(0)) // dp[i][j] = answer for nums[i..j]\n  for (let i = 0; i < n; i++) dp[i][i] = nums[i] // base case: ranges of length 1\n  for (let len = 2; len <= n; len++) { // shorter ranges first\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      dp[i][j] = Math.max(nums[i] - dp[i + 1][j], nums[j] - dp[i][j - 1])\n    }\n  }\n  return n ? dp[0][n - 1] : 0\n}\n"
+  },
+  "oneLiner": "for len in 1..n: for i: j = i+len-1; dp[i][j] = combine(dp[i+1][j], dp[i][j-1]) or split at k",
+  "exercise": {
+    "prompt": "Return how many substrings of s are palindromes. Substrings at different positions count separately, even when they spell the same thing. Use pal[i][j] for whether s[i..j] is a palindrome, filled by length. The starter only compares the two end letters.",
+    "function": {
+      "js": "countPalindromes",
+      "py": "count_palindromes"
+    },
+    "starter": {
+      "js": "function countPalindromes(s) {\n  const n = s.length\n  const pal = Array.from({ length: n }, () => Array(n).fill(false))\n  let count = 0\n  for (let len = 1; len <= n; len++) {\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      if (s[i] === s[j]) {\n        pal[i][j] = true\n        count++\n      }\n    }\n  }\n  return count\n}\n",
+      "py": "def count_palindromes(s):\n    n = len(s)\n    pal = [[False] * n for _ in range(n)]\n    count = 0\n    for length in range(1, n + 1):\n        for i in range(n - length + 1):\n            j = i + length - 1\n            if s[i] == s[j]:\n                pal[i][j] = True\n                count += 1\n    return count\n",
+      "ts": "function countPalindromes(s: string): number {\n  const n = s.length\n  const pal: boolean[][] = Array.from({ length: n }, () => Array(n).fill(false))\n  let count = 0\n  for (let len = 1; len <= n; len++) {\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      if (s[i] === s[j]) {\n        pal[i][j] = true\n        count++\n      }\n    }\n  }\n  return count\n}\n"
+    },
+    "solution": {
+      "js": "function countPalindromes(s) {\n  const n = s.length\n  const pal = Array.from({ length: n }, () => Array(n).fill(false))\n  let count = 0\n  for (let len = 1; len <= n; len++) {\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      if (s[i] === s[j] && (len <= 2 || pal[i + 1][j - 1])) {\n        pal[i][j] = true\n        count++\n      }\n    }\n  }\n  return count\n}\n",
+      "py": "def count_palindromes(s):\n    n = len(s)\n    pal = [[False] * n for _ in range(n)]\n    count = 0\n    for length in range(1, n + 1):\n        for i in range(n - length + 1):\n            j = i + length - 1\n            if s[i] == s[j] and (length <= 2 or pal[i + 1][j - 1]):\n                pal[i][j] = True\n                count += 1\n    return count\n",
+      "ts": "function countPalindromes(s: string): number {\n  const n = s.length\n  const pal: boolean[][] = Array.from({ length: n }, () => Array(n).fill(false))\n  let count = 0\n  for (let len = 1; len <= n; len++) {\n    for (let i = 0; i + len - 1 < n; i++) {\n      const j = i + len - 1\n      if (s[i] === s[j] && (len <= 2 || pal[i + 1][j - 1])) {\n        pal[i][j] = true\n        count++\n      }\n    }\n  }\n  return count\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          "abc"
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          "aaa"
+        ],
+        "expected": 6
+      },
+      {
+        "args": [
+          "abca"
+        ],
+        "expected": 4
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          ""
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          "a"
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          "abba"
+        ],
+        "expected": 6
+      },
+      {
+        "args": [
+          "racecar"
+        ],
+        "expected": 10
+      },
+      {
+        "args": [
+          "abcab"
+        ],
+        "expected": 5
+      },
+      {
+        "args": [
+          "baabbbbaaababbbbbbbabbbbaabbbabbaaabaaaaaaabaabaabaabbaaaababbbbaabbbaabbbaaaababaaaabbabaabaabbbabbbababbaaaababaaaabaaabaaabbbabaaababbbbbbbaaabbaaaababaabaaababbbbbaaabaaaaabbbbabbaabbabbbaabbabbab"
+        ],
+        "expected": 590
+      }
+    ],
+    "hints": [
+      "s[i..j] is a palindrome when its end letters match and the inside s[i + 1..j − 1] is a palindrome.",
+      "Ranges of length 1 and 2 have no inside to check: matching ends is enough.",
+      "Fill by length so the inside range is always decided first, and count every true cell."
+    ]
+  },
+  "problems": [
+    {
+      "id": "longest-palindrome-subsequence",
+      "role": "core"
+    },
+    {
+      "id": "stick-cutting-cost",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n²); O(n³) with split points",
+    "space": "O(n²)",
+    "why": "There are about n²/2 ranges. When a range only reads its two shorter neighbours each cell is O(1); when it tries every split point k, each cell costs O(n)."
+  },
+  "mistakes": [
+    "Filling row by row from i = 0, so dp[i + 1][j] is not ready yet. Fill by length, or loop i downwards.",
+    "Forgetting the length-1 base cases on the diagonal.",
+    "In two-player games, adding the opponent's best instead of subtracting it.",
+    "Off-by-one in the split loop: whether k is a cut position or the last item handled."
+  ],
+  "quiz": [
+    {
+      "question": "Why fill interval DP by increasing length?",
+      "choices": [
+        "It uses less memory",
+        "Each range reads ranges strictly inside it, which are shorter and so already filled",
+        "It is the only order that terminates"
+      ],
+      "answer": 1,
+      "explain": "Looping i from n − 1 down to 0 with j going up also works for the same reason."
+    },
+    {
+      "question": "In the ends game, why subtract dp[i + 1][j] after taking nums[i]?",
+      "choices": [
+        "dp[i + 1][j] is the opponent's best lead on what is left, which counts against you",
+        "To avoid double counting the middle",
+        "It is a typo for addition"
+      ],
+      "answer": 0,
+      "explain": "Storing the lead of the player to move makes both players use the same table."
+    },
+    {
+      "question": "Cutting a stick at chosen marks: what does each range try?",
+      "choices": [
+        "Only its two ends",
+        "Every mark k inside it as the first cut, with dp[i][k] + dp[k][j] + the range's length",
+        "The middle mark only"
+      ],
+      "answer": 1,
+      "explain": "Split-point interval DP tries every k, which gives O(n³)."
+    }
+  ],
+  "interviewTip": "Say 'the state is a range i..j and I fill it by length' up front. Then the only question is what each range tries: its two ends, or every split point."
+}
