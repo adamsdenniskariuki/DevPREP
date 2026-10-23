@@ -1,0 +1,377 @@
+{
+  "id": "in-place-reversal",
+  "parent": "linked-lists",
+  "title": "In-place reversal",
+  "category": "Linked lists",
+  "level": "se",
+  "summary": "Walk the list with prev and curr, save curr.next, then point curr back at prev. Each node is flipped once with no extra space.",
+  "minutes": 12,
+  "idea": "Reversing is one arrow flip per node. Saving the next node first means the unreversed part is never lost.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "You must reverse a linked list, or a part of it, with O(1) extra space.",
+        "think": "Use prev, curr and nxt. Save nxt, flip curr.next to prev, then move prev and curr one step."
+      },
+      {
+        "see": "Only a section between positions left and right must be reversed.",
+        "think": "Walk to the node before left, reverse right − left + 1 nodes, then reconnect both ends."
+      },
+      {
+        "see": "You must compare the list with itself backwards, as in a palindrome check.",
+        "think": "Find the middle with fast and slow pointers, reverse the second half, and walk both halves together."
+      },
+      {
+        "see": "Groups of k nodes must each be flipped.",
+        "think": "Reverse one group, link the previous group's tail to its new head, and repeat."
+      }
+    ],
+    "phrasings": [
+      "A train's carriages are linked front to back. Turn the whole train around without new carriages.",
+      "Flip the order of songs 3 to 6 in a linked playlist, leaving the rest unchanged.",
+      "Does a linked list of digits read the same forwards and backwards?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "stack-vs-flip",
+    "title": "Flip arrows, not values",
+    "alt": "On the left, every value is pushed on a stack and written back, using O(n) extra space. On the right, three pointers walk the list once and each node's next arrow is turned to point backwards.",
+    "caption": "Save next, flip, then step: the rest of the list is never lost.",
+    "before": {
+      "label": "Copy to a stack, write back",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Push every val",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Pop into nodes",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "O(n) extra space",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: save, flip, step",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Save nxt",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "nxt = curr.next"
+        },
+        {
+          "id": "b",
+          "label": "Flip arrow",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "curr.next = prev"
+        },
+        {
+          "id": "c",
+          "label": "Step both",
+          "kind": "state",
+          "col": 2,
+          "row": 0,
+          "sub": "prev, curr move"
+        },
+        {
+          "id": "d",
+          "label": "Return prev",
+          "kind": "good",
+          "col": 1,
+          "row": 1,
+          "sub": "O(1) extra space"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        },
+        {
+          "from": "b",
+          "to": "d",
+          "label": "curr is null"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "reverse-list",
+    "function": {
+      "js": "reverseList",
+      "py": "reverse_list"
+    },
+    "code": {
+      "js": "function reverseList(head) {\n  let prev = null, curr = head //@init\n  while (curr) { //@loop\n    const nxt = curr.next //@save\n    curr.next = prev //@flip\n    prev = curr //@prev\n    curr = nxt //@curr\n  }\n  return prev //@done\n}",
+      "py": "def reverse_list(head):\n    prev, curr = None, head  #@init\n    while curr:  #@loop\n        nxt = curr['next']  #@save\n        curr['next'] = prev  #@flip\n        prev = curr  #@prev\n        curr = nxt  #@curr\n    return prev  #@done"
+    },
+    "examples": [
+      {
+        "label": "Four nodes",
+        "input": {
+          "values": "1, 2, 3, 4"
+        }
+      },
+      {
+        "label": "Two nodes",
+        "input": {
+          "values": "8, 5"
+        }
+      },
+      {
+        "label": "Empty list",
+        "input": {
+          "values": ""
+        }
+      }
+    ],
+    "inputHelp": "Up to 10 list values between -99 and 99, separated by commas. Leave it empty for an empty list."
+  },
+  "template": {
+    "py": "def solve(head):\n    prev, curr = None, head  # prev is the reversed part, curr the rest\n    while curr:\n        nxt = curr['next']  # save the rest before breaking the link\n        curr['next'] = prev  # flip this node's arrow backwards\n        prev, curr = curr, nxt  # grow the reversed part by one\n    return prev  # the old tail is the new head\n",
+    "js": "function solve(head) {\n  let prev = null // the reversed part\n  let curr = head // the part still to reverse\n  while (curr) {\n    const nxt = curr.next // save the rest before breaking the link\n    curr.next = prev // flip this node's arrow backwards\n    prev = curr // grow the reversed part by one\n    curr = nxt\n  }\n  return prev // the old tail is the new head\n}\n",
+    "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction solve(head: ListNode | null): ListNode | null {\n  let prev: ListNode | null = null // the reversed part\n  let curr = head // the part still to reverse\n  while (curr) {\n    const nxt: ListNode | null = curr.next // save the rest before breaking the link\n    curr.next = prev // flip this node's arrow backwards\n    prev = curr // grow the reversed part by one\n    curr = nxt\n  }\n  return prev // the old tail is the new head\n}\n"
+  },
+  "oneLiner": "prev, curr = null, head; while curr: nxt = curr.next; curr.next = prev; prev, curr = curr, nxt",
+  "exercise": {
+    "prompt": "Return true if the list's values read the same forwards and backwards. Use O(1) extra space: find the middle, reverse the second half in place, then compare the two halves. The starter finds the middle and compares, but forgets to reverse, so it compares the second half in the wrong direction.",
+    "function": {
+      "js": "isPalindromeList",
+      "py": "is_palindrome_list"
+    },
+    "starter": {
+      "js": "function isPalindromeList(head) {\n  let slow = head\n  let fast = head\n  while (fast && fast.next) {\n    slow = slow.next\n    fast = fast.next.next\n  }\n  // Reverse the list that starts at slow, and point second at its new head.\n  let second = slow\n  let first = head\n  while (second && first) {\n    if (first.val !== second.val) return false\n    first = first.next\n    second = second.next\n  }\n  return true\n}\n",
+      "py": "def is_palindrome_list(head):\n    slow = fast = head\n    while fast and fast['next']:\n        slow = slow['next']\n        fast = fast['next']['next']\n    # Reverse the list that starts at slow, and point second at its new head.\n    second = slow\n    first = head\n    while second and first:\n        if first['val'] != second['val']:\n            return False\n        first = first['next']\n        second = second['next']\n    return True\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction isPalindromeList(head: ListNode | null): boolean {\n  let slow = head\n  let fast = head\n  while (fast && fast.next) {\n    slow = slow!.next\n    fast = fast.next.next\n  }\n  // Reverse the list that starts at slow, and point second at its new head.\n  let second = slow\n  let first = head\n  while (second && first) {\n    if (first.val !== second.val) return false\n    first = first.next\n    second = second.next\n  }\n  return true\n}\n"
+    },
+    "solution": {
+      "js": "function isPalindromeList(head) {\n  let slow = head\n  let fast = head\n  while (fast && fast.next) {\n    slow = slow.next\n    fast = fast.next.next\n  }\n  let prev = null\n  let second = slow\n  while (second) {\n    const nxt = second.next\n    second.next = prev\n    prev = second\n    second = nxt\n  }\n  second = prev\n  let first = head\n  while (second && first) {\n    if (first.val !== second.val) return false\n    first = first.next\n    second = second.next\n  }\n  return true\n}\n",
+      "py": "def is_palindrome_list(head):\n    slow = fast = head\n    while fast and fast['next']:\n        slow = slow['next']\n        fast = fast['next']['next']\n    prev, second = None, slow\n    while second:\n        nxt = second['next']\n        second['next'] = prev\n        prev, second = second, nxt\n    second = prev\n    first = head\n    while second and first:\n        if first['val'] != second['val']:\n            return False\n        first = first['next']\n        second = second['next']\n    return True\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction isPalindromeList(head: ListNode | null): boolean {\n  let slow = head\n  let fast = head\n  while (fast && fast.next) {\n    slow = slow!.next\n    fast = fast.next.next\n  }\n  let prev: ListNode | null = null\n  let second = slow\n  while (second) {\n    const nxt: ListNode | null = second.next\n    second.next = prev\n    prev = second\n    second = nxt\n  }\n  second = prev\n  let first = head\n  while (second && first) {\n    if (first.val !== second.val) return false\n    first = first.next\n    second = second.next\n  }\n  return true\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 2,
+                "next": {
+                  "val": 1,
+                  "next": null
+                }
+              }
+            }
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": null
+              }
+            }
+          }
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 1,
+                "next": null
+              }
+            }
+          }
+        ],
+        "expected": true
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          null
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 5,
+            "next": null
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": null
+            }
+          }
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          {
+            "val": 3,
+            "next": {
+              "val": 3,
+              "next": null
+            }
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": {
+                  "val": 2,
+                  "next": {
+                    "val": 1,
+                    "next": null
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": {
+                  "val": 1,
+                  "next": null
+                }
+              }
+            }
+          }
+        ],
+        "expected": false
+      }
+    ],
+    "hints": [
+      "After the first loop, slow is at the start of the second half. Reverse from slow with prev, curr and nxt.",
+      "The reversed half's head is prev. Walk it and the list from head together and compare values."
+    ]
+  },
+  "problems": [
+    {
+      "id": "reverse-sublist",
+      "role": "core"
+    },
+    {
+      "id": "interleave-halves",
+      "role": "core"
+    },
+    {
+      "id": "reverse-in-groups",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "Each node is visited once and its next pointer is changed once. Only prev, curr and nxt are stored, whatever the length."
+  },
+  "mistakes": [
+    "Flipping curr.next before saving it, which cuts off the rest of the list.",
+    "Returning head instead of prev. After reversal the old head is the tail.",
+    "Forgetting to reconnect the ends when reversing a section, which drops the nodes after it.",
+    "Off-by-one when walking to the node before position left. A dummy node in front helps."
+  ],
+  "quiz": [
+    {
+      "question": "Which line must come first inside the reversal loop?",
+      "choices": [
+        "curr.next = prev",
+        "nxt = curr.next",
+        "prev = curr"
+      ],
+      "answer": 1,
+      "explain": "Save the next node before you overwrite curr.next. Otherwise the rest of the list is unreachable."
+    },
+    {
+      "question": "The loop ends when curr is null. What do you return?",
+      "choices": [
+        "head",
+        "prev",
+        "curr"
+      ],
+      "answer": 1,
+      "explain": "prev is the last node you flipped, which was the old tail and is now the head."
+    },
+    {
+      "question": "You reverse nodes 2 to 4 of a 6-node list. What extra work is needed compared with a full reversal?",
+      "choices": [
+        "Nothing",
+        "Reconnect node 1 to the new section head and the old section head to node 5",
+        "Reverse the whole list twice"
+      ],
+      "answer": 1,
+      "explain": "A section reversal leaves two broken links at its ends. Keep the node before the section and the section's first node so you can relink both."
+    }
+  ],
+  "interviewTip": "Say the three-step rhythm out loud: save next, flip, step. Then trace it on a two-node list. It shows you will not lose the rest of the list."
+}

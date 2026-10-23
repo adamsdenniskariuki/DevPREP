@@ -30,6 +30,8 @@ export function patternsForProblem(problem: { id: string; pattern: string; subpa
 }
 
 export const PICKER_ROUND = 10
+/** Choices offered per picker question: the answer plus distractors. */
+export const PICKER_CHOICES = 4
 
 export interface PickerQuestion {
   /** A short problem statement. */
@@ -42,24 +44,35 @@ export interface PickerQuestion {
   explain: string
 }
 
-/** A deterministic round of "which pattern?" drills built from published pages. */
+/**
+ * A deterministic round of "which pattern?" drills built from published pages. Each question offers the
+ * answer plus up to three other pages, in learning order. A page's own parent or sub-pages, and any page
+ * whose drills share the prompt, are never offered as wrong answers, because they would also be right.
+ */
 export function pickerRound(seed: number, pages: readonly PatternSummary[] = patternIndex, size = PICKER_ROUND): PickerQuestion[] {
   if (pages.length < 2) return []
   const random = seeded(seed)
   const drills = pages.flatMap(page => page.drills.map(prompt => ({ prompt, page })))
-  const shuffled = [...drills]
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1))
-    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  const shuffle = <T,>(items: T[]) => {
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[items[i], items[j]] = [items[j], items[i]]
+    }
+    return items
   }
+  const shuffled = shuffle([...drills])
   const seen = new Set<string>()
   const picked = shuffled.filter(item => !seen.has(item.prompt) && seen.add(item.prompt)).slice(0, size)
-  return picked.map(({ prompt, page }) => ({
-    prompt,
-    answer: page.id,
-    choices: pages.map(item => item.id),
-    explain: `${page.title}: ${page.signals[0].see} ${page.signals[0].think}`,
-  }))
+  return picked.map(({ prompt, page }) => {
+    const related = (other: PatternSummary) => other.id === page.id || other.parent === page.id || page.parent === other.id || other.drills.includes(prompt)
+    const wrong = new Set(shuffle(pages.filter(other => !related(other)).map(other => other.id)).slice(0, PICKER_CHOICES - 1))
+    return {
+      prompt,
+      answer: page.id,
+      choices: pages.filter(item => item.id === page.id || wrong.has(item.id)).map(item => item.id),
+      explain: `${page.title}: ${page.signals[0].see} ${page.signals[0].think}`,
+    }
+  })
 }
 
 /** Number of right answers in a picker round. */

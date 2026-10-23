@@ -1,0 +1,374 @@
+{
+  "id": "intervals",
+  "title": "Intervals",
+  "category": "Intervals",
+  "level": "se",
+  "summary": "Sort intervals by start time, then sweep once, comparing each interval only with the last one you kept.",
+  "minutes": 15,
+  "idea": "After sorting by start, any interval that overlaps earlier ones must overlap the latest merged one, so one comparison per interval is enough.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The input is a list of [start, end] pairs: meetings, bookings, ranges.",
+        "think": "Sort by start first. Then overlapping intervals sit next to each other."
+      },
+      {
+        "see": "You must merge overlaps, or count how much time is covered.",
+        "think": "Keep the last merged interval. If the next one starts before it ends, extend it; otherwise start a new one."
+      },
+      {
+        "see": "You must decide whether any two intervals clash.",
+        "think": "After sorting, check only neighbours: a clash exists if one starts before the previous one ends."
+      },
+      {
+        "see": "You need the most intervals open at the same moment, such as rooms needed.",
+        "think": "Sweep over start and end events in time order, adding 1 at a start and subtracting 1 at an end."
+      }
+    ],
+    "phrasings": [
+      "Combine overlapping holiday bookings into the fewest continuous periods.",
+      "Can one person attend every meeting on this list?",
+      "How many hours of the day did at least one camera record?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "all-pairs-vs-sweep",
+    "title": "Sort, then sweep once",
+    "alt": "On the left, every pair of intervals is compared for overlap, costing n times n checks. On the right, intervals are sorted by start and each one is compared only with the last merged interval, extending it or starting a new one.",
+    "caption": "Sorting puts every overlap next to the interval it overlaps.",
+    "before": {
+      "label": "Brute force: compare every pair",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Pick interval i",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Check every j",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "n × n checks",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "O(n²) time"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: sort, then merge with last",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Start ≤ last end?",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Extend last",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "end = max(ends)"
+        },
+        {
+          "id": "c",
+          "label": "Start new one",
+          "kind": "state",
+          "col": 2,
+          "row": 1
+        },
+        {
+          "id": "d",
+          "label": "One sweep",
+          "kind": "good",
+          "col": 1,
+          "row": 2,
+          "sub": "O(n log n) total"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "yes"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "no"
+        },
+        {
+          "from": "b",
+          "to": "d"
+        },
+        {
+          "from": "c",
+          "to": "d"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "merge-intervals",
+    "function": {
+      "js": "mergeIntervals",
+      "py": "merge_intervals"
+    },
+    "code": {
+      "js": "function mergeIntervals(intervals) {\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0]), merged = [] //@init\n  for (const [start, end] of sorted) { //@loop\n    const last = merged[merged.length - 1]\n    if (last && start <= last[1]) last[1] = Math.max(last[1], end) //@extend\n    else merged.push([start, end]) //@push\n  }\n  return merged //@done\n}",
+      "py": "def merge_intervals(intervals):\n    ordered, merged = sorted(intervals, key=lambda iv: iv[0]), []  #@init\n    for start, end in ordered:  #@loop\n        if merged and start <= merged[-1][1]: merged[-1][1] = max(merged[-1][1], end)  #@extend\n        else: merged.append([start, end])  #@push\n    return merged  #@done"
+    },
+    "examples": [
+      {
+        "label": "Two overlaps",
+        "input": {
+          "intervals": "1-3, 2-6, 8-10, 9-12"
+        }
+      },
+      {
+        "label": "Unsorted, nested",
+        "input": {
+          "intervals": "5-7, 1-10, 12-14"
+        }
+      },
+      {
+        "label": "Touching ends",
+        "input": {
+          "intervals": "1-2, 2-4, 6-7"
+        }
+      }
+    ],
+    "inputHelp": "Up to 8 intervals written start-end, like 2-5, separated by commas. Numbers are from 0 to 99 and each start is at most its end."
+  },
+  "template": {
+    "py": "def solve(intervals):\n    merged = []\n    for start, end in sorted(intervals, key=lambda iv: iv[0]):  # sort by start\n        if merged and start <= merged[-1][1]:\n            merged[-1][1] = max(merged[-1][1], end)  # overlaps the last one: extend it\n        else:\n            merged.append([start, end])  # a gap: start a new merged interval\n    return merged\n",
+    "js": "function solve(intervals) {\n  const merged = []\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0]) // sort by start\n  for (const [start, end] of sorted) {\n    const last = merged[merged.length - 1]\n    if (last && start <= last[1]) last[1] = Math.max(last[1], end) // overlaps the last one: extend it\n    else merged.push([start, end]) // a gap: start a new merged interval\n  }\n  return merged\n}\n",
+    "ts": "function solve(intervals: number[][]): number[][] {\n  const merged: number[][] = []\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0]) // sort by start\n  for (const [start, end] of sorted) {\n    const last = merged[merged.length - 1]\n    if (last && start <= last[1]) last[1] = Math.max(last[1], end) // overlaps the last one: extend it\n    else merged.push([start, end]) // a gap: start a new merged interval\n  }\n  return merged\n}\n"
+  },
+  "oneLiner": "sort by start; for each: start ≤ last.end → last.end = max(…), else push",
+  "exercise": {
+    "prompt": "intervals is a list of [start, end] pairs with start < end, in any order. Return the total length of the number line covered by at least one interval, counting shared parts once. The starter sorts and then adds every interval in full, so overlaps are counted twice. Use reach, the furthest end so far, to count only the new part.",
+    "function": {
+      "js": "coveredLength",
+      "py": "covered_length"
+    },
+    "starter": {
+      "js": "function coveredLength(intervals) {\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0])\n  let total = 0\n  let reach = -Infinity // furthest end covered so far\n  for (const [start, end] of sorted) {\n    // Only the part of [start, end] beyond reach is new. Count just that.\n    total += end - start\n  }\n  return total\n}\n",
+      "py": "def covered_length(intervals):\n    total = 0\n    reach = float('-inf')  # furthest end covered so far\n    for start, end in sorted(intervals):\n        # Only the part of [start, end] beyond reach is new. Count just that.\n        total += end - start\n    return total\n",
+      "ts": "function coveredLength(intervals: number[][]): number {\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0])\n  let total = 0\n  let reach = -Infinity // furthest end covered so far\n  for (const [start, end] of sorted) {\n    // Only the part of [start, end] beyond reach is new. Count just that.\n    total += end - start\n  }\n  return total\n}\n"
+    },
+    "solution": {
+      "js": "function coveredLength(intervals) {\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0])\n  let total = 0\n  let reach = -Infinity\n  for (const [start, end] of sorted) {\n    if (end > reach) {\n      total += end - Math.max(start, reach)\n      reach = end\n    }\n  }\n  return total\n}\n",
+      "py": "def covered_length(intervals):\n    total = 0\n    reach = float('-inf')\n    for start, end in sorted(intervals):\n        if end > reach:\n            total += end - max(start, reach)\n            reach = end\n    return total\n",
+      "ts": "function coveredLength(intervals: number[][]): number {\n  const sorted = [...intervals].sort((a, b) => a[0] - b[0])\n  let total = 0\n  let reach = -Infinity\n  for (const [start, end] of sorted) {\n    if (end > reach) {\n      total += end - Math.max(start, reach)\n      reach = end\n    }\n  }\n  return total\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              6
+            ],
+            [
+              8,
+              10
+            ]
+          ]
+        ],
+        "expected": 7
+      },
+      {
+        "args": [
+          [
+            [
+              0,
+              10
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        ],
+        "expected": 10
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          []
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          [
+            [
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              3
+            ],
+            [
+              3,
+              5
+            ]
+          ]
+        ],
+        "expected": 4
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              10
+            ],
+            [
+              2,
+              3
+            ],
+            [
+              4,
+              12
+            ]
+          ]
+        ],
+        "expected": 11
+      },
+      {
+        "args": [
+          [
+            [
+              7,
+              9
+            ],
+            [
+              1,
+              2
+            ]
+          ]
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          [
+            [
+              -5,
+              -1
+            ],
+            [
+              -3,
+              2
+            ]
+          ]
+        ],
+        "expected": 7
+      }
+    ],
+    "hints": [
+      "After sorting by start, the only thing that matters about earlier intervals is how far right they reach.",
+      "If end > reach, add end − max(start, reach) and set reach = end. Otherwise the interval is already covered."
+    ]
+  },
+  "problems": [
+    {
+      "id": "any-conflict",
+      "role": "warm-up"
+    },
+    {
+      "id": "merge-overlaps",
+      "role": "core"
+    },
+    {
+      "id": "insert-and-merge",
+      "role": "core"
+    },
+    {
+      "id": "common-free-slots",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n log n)",
+    "space": "O(n)",
+    "why": "Sorting costs O(n log n) and the sweep is O(n). The merged output can hold all n intervals. If the input is already sorted, the sweep alone is O(n)."
+  },
+  "mistakes": [
+    "Forgetting to sort by start first, so overlaps are not next to each other.",
+    "Setting the merged end to the new end instead of the max of both, which shrinks it when one interval sits inside another.",
+    "Getting touching intervals wrong: decide whether [1, 2] and [2, 3] overlap and use < or <= to match.",
+    "Comparing each interval with every merged interval instead of only the last one.",
+    "Mutating the caller's intervals while merging. Copy the pairs you store."
+  ],
+  "quiz": [
+    {
+      "question": "After sorting by start, why is comparing with only the last merged interval enough?",
+      "choices": [
+        "Earlier merged intervals all end before the last one starts",
+        "Intervals never overlap after sorting",
+        "The last interval is always the longest"
+      ],
+      "answer": 0,
+      "explain": "Merged intervals are separated by gaps, and every new start is at least the last start. So a new interval can only touch the last one."
+    },
+    {
+      "question": "Merging [1, 10] then [2, 5], what should the merged end be?",
+      "choices": [
+        "5",
+        "10",
+        "15"
+      ],
+      "answer": 1,
+      "explain": "Take max(10, 5). Using the newer end would shrink the interval when one sits inside the other."
+    },
+    {
+      "question": "You need the most meetings happening at the same time. Which approach fits best?",
+      "choices": [
+        "Merge all overlaps",
+        "Sweep start and end events in time order, counting +1 and −1",
+        "Binary search the meeting list"
+      ],
+      "answer": 1,
+      "explain": "Merging loses how many overlap. Counting +1 at each start and −1 at each end gives the peak count."
+    }
+  ],
+  "interviewTip": "Ask early whether touching intervals like [1, 2] and [2, 3] count as overlapping. It changes < to <=, and asking shows you think about boundaries."
+}

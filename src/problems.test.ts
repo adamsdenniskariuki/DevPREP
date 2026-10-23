@@ -42,6 +42,7 @@ describe('problem content', () => {
       const page = patternIndex.find(item => item.id === problem.subpattern)
       expect(page, `${problem.id} subpattern`).toBeDefined()
       expect(page!.category, problem.id).toBe(problem.pattern)
+      expect(page!.parent, `${problem.id} subpattern is a sub-page`).toBeDefined()
     }
   })
 

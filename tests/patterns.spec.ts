@@ -126,7 +126,7 @@ test('a picker round asks 10 questions, explains each and saves the result', asy
   await expect(page.getByRole('heading', { level: 1, name: 'Which pattern?' })).toBeVisible()
   for (let i = 1; i <= 10; i++) {
     await expect(page.getByText(`QUESTION ${i} OF 10`)).toBeVisible()
-    await expect(page.getByRole('radio')).toHaveCount(order.length)
+    await expect(page.getByRole('radio')).toHaveCount(4)
     await page.getByRole('radio').first().check()
     await expect(page.locator('.picker-explain')).toBeVisible()
     await page.getByRole('button', { name: i < 10 ? 'Next question' : 'See results' }).click()
@@ -191,6 +191,40 @@ test('the visualiser stays readable in every palette, light and dark', async ({ 
       }
     }
   }
+})
+
+test('linked-list and stack visualisers stay readable in every palette, light and dark', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const checks: [string, string[]][] = [
+    ['in-place-reversal', ['.pv-node .pv-value', '.pv-node .pv-next', '.pv-pointer', '.pv-node.marked .pv-value']],
+    ['linked-lists', ['.pv-node .pv-value', '.pv-node.dropped .pv-value', '.pv-node .pv-next', '.pv-pointer']],
+    ['monotonic-stack', ['.pv-cell .pv-value', '.pv-cell.marked .pv-value', '.pv-pointer', '.pv-array-label']],
+  ]
+  for (const [id, selectors] of checks) {
+    await openPage(page, pages.find(item => item.id === id))
+    await page.getByTestId('pv-stage').focus()
+    for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowRight')
+    await expect(page.locator(selectors[0]).first()).toBeVisible()
+    for (const palette of palettes) {
+      for (const theme of ['light', 'dark'] as const) {
+        await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.palette = palette; document.documentElement.dataset.theme = theme }, { palette: palette.id, theme })
+        for (const selector of selectors) {
+          if (await page.locator(selector).count() === 0) continue
+          expect(await textContrast(page.locator(selector).first()), `${id} ${palette.id}/${theme} ${selector}`).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    }
+  }
+})
+
+test('sub-pattern pages link back to their parent and the parent lists them', async ({ page }) => {
+  const parent = pages.find(item => item.id === 'stack')
+  const children = pages.filter(item => item.parent === 'stack')
+  expect(children.map(item => item.id)).toEqual(['basic-stack', 'monotonic-stack'])
+  await openPage(page, parent)
+  for (const child of children) await expect(page.locator(`a[href="#patterns/${child.id}"]`).first()).toBeVisible()
+  await openPage(page, children[1])
+  await expect(page.locator('a[href="#patterns/stack"]').first()).toBeVisible()
 })
 
 for (const width of [360, 768, 1440]) {

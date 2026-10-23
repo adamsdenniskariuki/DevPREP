@@ -1,0 +1,436 @@
+{
+  "id": "linked-lists",
+  "title": "Linked lists",
+  "category": "Linked lists",
+  "level": "se",
+  "summary": "Walk the list with a few named pointers and relink nodes in place. A dummy node in front removes the special case for the head.",
+  "minutes": 15,
+  "idea": "A node only knows its next node, so every change is a pointer rewrite. Name each pointer, change next in the right order, and you never lose the rest of the list.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The input is a head node, and each node has val and next.",
+        "think": "Walk with a pointer. To change the list, rewrite next fields instead of copying values into an array."
+      },
+      {
+        "see": "The head itself might be removed or replaced.",
+        "think": "Put a dummy node in front. Return dummy.next, and the head needs no special case."
+      },
+      {
+        "see": "You must find the middle, a cycle, or the k-th node from the end in one pass.",
+        "think": "Use two pointers moving at different speeds or with a gap. See Fast & slow pointers."
+      },
+      {
+        "see": "You must reverse the whole list or part of it without extra space.",
+        "think": "Keep prev, curr and next, and flip one arrow at a time. See In-place reversal."
+      }
+    ],
+    "phrasings": [
+      "Remove every song by a given artist from a playlist stored as a linked list.",
+      "Merge two sorted chains of train carriages into one sorted chain.",
+      "Insert a new reading into a sorted linked list of sensor values."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "array-copy-vs-relink",
+    "title": "Relink, do not copy",
+    "alt": "On the left, the list is copied into an array, changed, and rebuilt, which uses O(n) extra space. On the right, a dummy node points at the head and a prev pointer walks the list, rewriting next to skip or insert nodes in place.",
+    "caption": "The dummy node means removing the head is just another skip.",
+    "before": {
+      "label": "Copy to an array and rebuild",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Copy values",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Edit the array",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Rebuild nodes",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "O(n) extra space"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: dummy node and a prev pointer",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Dummy → head",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Remove prev.next?",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Skip it",
+          "kind": "state",
+          "col": 2,
+          "row": 0,
+          "sub": "relink past it"
+        },
+        {
+          "id": "d",
+          "label": "Step prev",
+          "kind": "good",
+          "col": 1,
+          "row": 1,
+          "sub": "O(1) extra space"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c",
+          "label": "yes"
+        },
+        {
+          "from": "b",
+          "to": "d",
+          "label": "no"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "drop-value",
+    "function": {
+      "js": "dropValue",
+      "py": "drop_value"
+    },
+    "code": {
+      "js": "function dropValue(head, val) {\n  const dummy = { val: 0, next: head } //@init\n  let prev = dummy\n  while (prev.next) { //@loop\n    if (prev.next.val === val) prev.next = prev.next.next //@drop\n    else prev = prev.next //@keep\n  }\n  return dummy.next //@done\n}",
+      "py": "def drop_value(head, val):\n    dummy = {'val': 0, 'next': head}  #@init\n    prev = dummy\n    while prev['next']:  #@loop\n        if prev['next']['val'] == val: prev['next'] = prev['next']['next']  #@drop\n        else: prev = prev['next']  #@keep\n    return dummy['next']  #@done"
+    },
+    "examples": [
+      {
+        "label": "Two to remove",
+        "input": {
+          "values": "1, 2, 6, 3, 6",
+          "val": "6"
+        }
+      },
+      {
+        "label": "The head goes",
+        "input": {
+          "values": "7, 7, 2",
+          "val": "7"
+        }
+      },
+      {
+        "label": "Nothing matches",
+        "input": {
+          "values": "1, 2, 3",
+          "val": "9"
+        }
+      }
+    ],
+    "inputHelp": "Up to 10 list values between -99 and 99, separated by commas (leave it empty for an empty list). The value to remove is between -99 and 99."
+  },
+  "template": {
+    "py": "def solve(head, val):\n    dummy = {'val': 0, 'next': head}  # a fake node in front of the head\n    prev = dummy  # prev.next is the node we are looking at\n    while prev['next']:\n        if should_remove(prev['next'], val):\n            prev['next'] = prev['next']['next']  # unlink it; prev stays put\n        else:\n            prev = prev['next']  # keep it and step forward\n    return dummy['next']  # the real head, even if the old head was removed\n\n\ndef should_remove(node, val):\n    return node['val'] == val\n",
+    "js": "function solve(head, val) {\n  const dummy = { val: 0, next: head } // a fake node in front of the head\n  let prev = dummy // prev.next is the node we are looking at\n  while (prev.next) {\n    if (prev.next.val === val) prev.next = prev.next.next // unlink it; prev stays put\n    else prev = prev.next // keep it and step forward\n  }\n  return dummy.next // the real head, even if the old head was removed\n}\n",
+    "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction solve(head: ListNode | null, val: number): ListNode | null {\n  const dummy: ListNode = { val: 0, next: head } // a fake node in front of the head\n  let prev = dummy // prev.next is the node we are looking at\n  while (prev.next) {\n    if (prev.next.val === val) prev.next = prev.next.next // unlink it; prev stays put\n    else prev = prev.next // keep it and step forward\n  }\n  return dummy.next // the real head, even if the old head was removed\n}\n"
+  },
+  "oneLiner": "dummy → head; prev = dummy; skip with prev.next = prev.next.next, else step; return dummy.next",
+  "exercise": {
+    "prompt": "head is a linked list sorted from smallest to largest (it may be empty). Insert a new node with value val so the list stays sorted, and return the head. Nodes are { val, next } objects (dicts in Python). The starter walks from the head, so it breaks when the list is empty or val belongs first. Use a dummy node.",
+    "function": {
+      "js": "insertSorted",
+      "py": "insert_sorted"
+    },
+    "starter": {
+      "js": "function insertSorted(head, val) {\n  const node = { val, next: null }\n  let prev = head\n  while (prev.next && prev.next.val < val) prev = prev.next\n  node.next = prev.next\n  prev.next = node\n  return head\n}\n",
+      "py": "def insert_sorted(head, val):\n    node = {'val': val, 'next': None}\n    prev = head\n    while prev['next'] and prev['next']['val'] < val:\n        prev = prev['next']\n    node['next'] = prev['next']\n    prev['next'] = node\n    return head\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction insertSorted(head: ListNode | null, val: number): ListNode | null {\n  const node: ListNode = { val, next: null }\n  let prev = head!\n  while (prev.next && prev.next.val < val) prev = prev.next\n  node.next = prev.next\n  prev.next = node\n  return head\n}\n"
+    },
+    "solution": {
+      "js": "function insertSorted(head, val) {\n  const dummy = { val: 0, next: head }\n  let prev = dummy\n  while (prev.next && prev.next.val < val) prev = prev.next\n  prev.next = { val, next: prev.next }\n  return dummy.next\n}\n",
+      "py": "def insert_sorted(head, val):\n    dummy = {'val': 0, 'next': head}\n    prev = dummy\n    while prev['next'] and prev['next']['val'] < val:\n        prev = prev['next']\n    prev['next'] = {'val': val, 'next': prev['next']}\n    return dummy['next']\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction insertSorted(head: ListNode | null, val: number): ListNode | null {\n  const dummy: ListNode = { val: 0, next: head }\n  let prev = dummy\n  while (prev.next && prev.next.val < val) prev = prev.next\n  prev.next = { val, next: prev.next }\n  return dummy.next\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 3,
+              "next": {
+                "val": 7,
+                "next": null
+              }
+            }
+          },
+          5
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 3,
+            "next": {
+              "val": 5,
+              "next": {
+                "val": 7,
+                "next": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 2,
+            "next": {
+              "val": 4,
+              "next": null
+            }
+          },
+          9
+        ],
+        "expected": {
+          "val": 2,
+          "next": {
+            "val": 4,
+            "next": {
+              "val": 9,
+              "next": null
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 4,
+            "next": {
+              "val": 6,
+              "next": null
+            }
+          },
+          1
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 4,
+            "next": {
+              "val": 6,
+              "next": null
+            }
+          }
+        }
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          null,
+          3
+        ],
+        "expected": {
+          "val": 3,
+          "next": null
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 5,
+            "next": null
+          },
+          5
+        ],
+        "expected": {
+          "val": 5,
+          "next": {
+            "val": 5,
+            "next": null
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 1,
+              "next": {
+                "val": 2,
+                "next": null
+              }
+            }
+          },
+          1
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 1,
+            "next": {
+              "val": 1,
+              "next": {
+                "val": 2,
+                "next": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": -3,
+            "next": {
+              "val": 0,
+              "next": {
+                "val": 8,
+                "next": null
+              }
+            }
+          },
+          -10
+        ],
+        "expected": {
+          "val": -10,
+          "next": {
+            "val": -3,
+            "next": {
+              "val": 0,
+              "next": {
+                "val": 8,
+                "next": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": null
+              }
+            }
+          },
+          4
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 2,
+            "next": {
+              "val": 3,
+              "next": {
+                "val": 4,
+                "next": null
+              }
+            }
+          }
+        }
+      }
+    ],
+    "hints": [
+      "If val belongs before the head, there is no node before it to link from. A dummy node in front gives you one.",
+      "Start prev at the dummy, walk while prev.next.val < val, link the new node after prev, and return dummy.next."
+    ]
+  },
+  "problems": [
+    {
+      "id": "middle-of-list",
+      "role": "warm-up"
+    },
+    {
+      "id": "merge-sorted-lists",
+      "role": "core"
+    },
+    {
+      "id": "interleave-halves",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "One walk visits each node once. Relinking reuses the existing nodes, so only a few pointers and one dummy node are extra."
+  },
+  "mistakes": [
+    "Losing the rest of the list by overwriting next before saving it.",
+    "Moving prev forward right after removing a node, which skips the next node without checking it.",
+    "Special-casing the head with extra ifs instead of using a dummy node.",
+    "Reading node.next.val without checking that node.next exists.",
+    "Copying values into an array when the question asks for O(1) extra space."
+  ],
+  "quiz": [
+    {
+      "question": "Why put a dummy node in front of the head?",
+      "choices": [
+        "It makes the list faster",
+        "Every real node, including the head, then has a node before it",
+        "It stores the length"
+      ],
+      "answer": 1,
+      "explain": "Removing or inserting needs the node before. The dummy gives the head one, so there is no special case. Return dummy.next."
+    },
+    {
+      "question": "You remove prev.next. Should prev move forward in the same step?",
+      "choices": [
+        "Yes, always",
+        "No: the new prev.next has not been checked yet",
+        "Only at the end of the list"
+      ],
+      "answer": 1,
+      "explain": "After the skip, prev.next is a new node. Move prev only when you keep a node."
+    },
+    {
+      "question": "You must reverse a list in place. What do you save before flipping curr.next?",
+      "choices": [
+        "The head",
+        "curr.next, so the rest of the list is not lost",
+        "The list length"
+      ],
+      "answer": 1,
+      "explain": "Once curr.next points backwards, the old next node is unreachable unless you saved it first."
+    }
+  ],
+  "interviewTip": "Draw three or four boxes with arrows and update them as you code. Interviewers like seeing each pointer change checked on the drawing, especially at the head and the tail."
+}

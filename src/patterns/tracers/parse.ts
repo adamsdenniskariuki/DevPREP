@@ -31,3 +31,21 @@ export function randomInts(rand: () => number, length: number, min: number, max:
 }
 
 export const list = (values: number[]) => values.join(', ')
+
+export interface ListNode { val: number; next: ListNode | null }
+
+/** Builds the nested { val, next } list that pattern code receives. */
+export function toLinked(values: readonly number[]): ListNode | null {
+  let head: ListNode | null = null
+  for (let i = values.length - 1; i >= 0; i--) head = { val: values[i], next: head }
+  return head
+}
+
+export function fromLinked(head: ListNode | null): number[] {
+  const values: number[] = []
+  for (let node = head; node; node = node.next) values.push(node.val)
+  return values
+}
+
+/** Next indexes for nodes 0..n-1 linked in order. */
+export const chain = (n: number): (number | null)[] => Array.from({ length: n }, (_, i) => i + 1 < n ? i + 1 : null)

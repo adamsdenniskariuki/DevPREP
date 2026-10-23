@@ -1,0 +1,324 @@
+{
+  "id": "basic-stack",
+  "parent": "stack",
+  "title": "Basic stack",
+  "category": "Stack",
+  "level": "se",
+  "summary": "Push each opener or action, and pop when a closer or an undo arrives. The top is always the item to match or cancel.",
+  "minutes": 12,
+  "idea": "Matching and undo both work on the newest unfinished item. A stack keeps that item on top, so each check is one pop.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "Pairs must match and nest: brackets, HTML tags, or start and end events.",
+        "think": "Push each opener. On a closer, pop and check that the popped opener is its partner."
+      },
+      {
+        "see": "The input has undo, back, or delete-previous actions.",
+        "think": "Push each action or value. An undo pops the top, which is the most recent one."
+      },
+      {
+        "see": "You read an expression in postfix order, such as 3 4 + 2 *.",
+        "think": "Push numbers. An operator pops two, combines them, and pushes the result."
+      },
+      {
+        "see": "The question asks for a minimum or maximum that must survive pops.",
+        "think": "Push a pair: the value and the best value so far. The top always holds the current best."
+      }
+    ],
+    "phrasings": [
+      "Check whether every tag in a snippet of markup is closed in the right order.",
+      "A drawing app records strokes and undo presses. Which strokes are still on the canvas?",
+      "Work out the value of a calculation written as 5 1 2 + 4 * + 3 −."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "counter-vs-stack",
+    "title": "A counter is not enough",
+    "alt": "On the left, one counter goes up on any opener and down on any closer, so mixed-up pairs such as ( ] look fine. On the right, the stack remembers which opener is on top, so a wrong closer is caught at once.",
+    "caption": "The stack remembers which opener is waiting, not just how many.",
+    "before": {
+      "label": "Counting openers only",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Opener: +1",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Closer: −1",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Misses ( ]",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "wrong pair passes"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: push, then pop and compare",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Read a char",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Push opener",
+          "kind": "state",
+          "col": 0,
+          "row": 1
+        },
+        {
+          "id": "c",
+          "label": "Pop and compare",
+          "kind": "state",
+          "col": 2,
+          "row": 1,
+          "sub": "must be its pair"
+        },
+        {
+          "id": "d",
+          "label": "Exact matching",
+          "kind": "good",
+          "col": 1,
+          "row": 2,
+          "sub": "O(n) time"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "opener"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "closer"
+        },
+        {
+          "from": "b",
+          "to": "d"
+        },
+        {
+          "from": "c",
+          "to": "d"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "bracket-match",
+    "function": {
+      "js": "isBalanced",
+      "py": "is_balanced"
+    },
+    "code": {
+      "js": "function isBalanced(text) {\n  const pairs = { ')': '(', ']': '[', '}': '{' }\n  const stack = [] //@init\n  for (const ch of text) { //@loop\n    if (!(ch in pairs)) { stack.push(ch); continue } //@push\n    if (stack.pop() !== pairs[ch]) return false //@pop\n  }\n  return stack.length === 0 //@done\n}",
+      "py": "def is_balanced(text):\n    pairs = {')': '(', ']': '[', '}': '{'}\n    stack = []  #@init\n    for ch in text:  #@loop\n        if ch not in pairs:  #@push\n            stack.append(ch)\n            continue\n        if not stack or stack.pop() != pairs[ch]: return False  #@pop\n    return not stack  #@done"
+    },
+    "examples": [
+      {
+        "label": "Nested and balanced",
+        "input": {
+          "text": "{[()]}"
+        }
+      },
+      {
+        "label": "Crossed pairs",
+        "input": {
+          "text": "([)]"
+        }
+      },
+      {
+        "label": "Left open",
+        "input": {
+          "text": "(()"
+        }
+      }
+    ],
+    "inputHelp": "Up to 12 brackets, using only ( ) [ ] { } with no spaces."
+  },
+  "template": {
+    "py": "def solve(text):\n    pairs = {')': '(', ']': '[', '}': '{'}  # closer -> its opener\n    stack = []  # openers still waiting for a closer\n    for ch in text:\n        if ch not in pairs:\n            stack.append(ch)  # an opener: remember it\n        elif not stack or stack.pop() != pairs[ch]:\n            return False  # nothing to close, or the wrong opener on top\n    return not stack  # every opener must be closed\n",
+    "js": "function solve(text) {\n  const pairs = { ')': '(', ']': '[', '}': '{' } // closer -> its opener\n  const stack = [] // openers still waiting for a closer\n  for (const ch of text) {\n    if (!(ch in pairs)) stack.push(ch) // an opener: remember it\n    else if (stack.pop() !== pairs[ch]) return false // nothing to close, or the wrong opener on top\n  }\n  return stack.length === 0 // every opener must be closed\n}\n",
+    "ts": "function solve(text: string): boolean {\n  const pairs: Record<string, string> = { ')': '(', ']': '[', '}': '{' } // closer -> its opener\n  const stack: string[] = [] // openers still waiting for a closer\n  for (const ch of text) {\n    if (!(ch in pairs)) stack.push(ch) // an opener: remember it\n    else if (stack.pop() !== pairs[ch]) return false // nothing to close, or the wrong opener on top\n  }\n  return stack.length === 0 // every opener must be closed\n}\n"
+  },
+  "oneLiner": "opener → push; closer → pop must equal its partner; end → stack empty",
+  "exercise": {
+    "prompt": "actions is a list of strings. \"type X\" adds the word X to the document and \"undo\" removes the most recently added word that is still there (undo with nothing to remove does nothing). Return the remaining words joined by single spaces. The starter ignores undo. Make it work.",
+    "function": {
+      "js": "replayEdits",
+      "py": "replay_edits"
+    },
+    "starter": {
+      "js": "function replayEdits(actions) {\n  const words = []\n  for (const action of actions) {\n    if (action === 'undo') {\n      // Remove the newest word, if there is one.\n      continue\n    }\n    words.push(action.slice(5))\n  }\n  return words.join(' ')\n}\n",
+      "py": "def replay_edits(actions):\n    words = []\n    for action in actions:\n        if action == 'undo':\n            # Remove the newest word, if there is one.\n            continue\n        words.append(action[5:])\n    return ' '.join(words)\n",
+      "ts": "function replayEdits(actions: string[]): string {\n  const words: string[] = []\n  for (const action of actions) {\n    if (action === 'undo') {\n      // Remove the newest word, if there is one.\n      continue\n    }\n    words.push(action.slice(5))\n  }\n  return words.join(' ')\n}\n"
+    },
+    "solution": {
+      "js": "function replayEdits(actions) {\n  const words = []\n  for (const action of actions) {\n    if (action === 'undo') {\n      words.pop()\n      continue\n    }\n    words.push(action.slice(5))\n  }\n  return words.join(' ')\n}\n",
+      "py": "def replay_edits(actions):\n    words = []\n    for action in actions:\n        if action == 'undo':\n            if words:\n                words.pop()\n            continue\n        words.append(action[5:])\n    return ' '.join(words)\n",
+      "ts": "function replayEdits(actions: string[]): string {\n  const words: string[] = []\n  for (const action of actions) {\n    if (action === 'undo') {\n      words.pop()\n      continue\n    }\n    words.push(action.slice(5))\n  }\n  return words.join(' ')\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            "type hello",
+            "type there",
+            "undo",
+            "type world"
+          ]
+        ],
+        "expected": "hello world"
+      },
+      {
+        "args": [
+          [
+            "type a",
+            "type b",
+            "type c"
+          ]
+        ],
+        "expected": "a b c"
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          [
+            "undo",
+            "type x"
+          ]
+        ],
+        "expected": "x"
+      },
+      {
+        "args": [
+          [
+            "type a",
+            "undo",
+            "undo"
+          ]
+        ],
+        "expected": ""
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": ""
+      },
+      {
+        "args": [
+          [
+            "type a",
+            "type b",
+            "undo",
+            "undo",
+            "type c"
+          ]
+        ],
+        "expected": "c"
+      },
+      {
+        "args": [
+          [
+            "type one",
+            "type two",
+            "type three",
+            "undo"
+          ]
+        ],
+        "expected": "one two"
+      }
+    ],
+    "hints": [
+      "The word an undo removes is always the newest one still in the document: the top of the stack.",
+      "In Python, pop only when the list is not empty. In JavaScript, pop on an empty array just returns undefined."
+    ]
+  },
+  "problems": [
+    {
+      "id": "balanced-brackets",
+      "role": "warm-up"
+    },
+    {
+      "id": "min-stack-ops",
+      "role": "core"
+    },
+    {
+      "id": "decode-nested-repeats",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "why": "Each character or action is pushed and popped at most once. If nothing is ever closed or undone, the stack holds all n items."
+  },
+  "mistakes": [
+    "Counting openers instead of storing them, which accepts crossed pairs like ([)].",
+    "Popping an empty stack in Python, which raises an error. Check first.",
+    "Returning true as soon as the loop ends without checking that the stack is empty.",
+    "In postfix, popping the operands in the wrong order: the first pop is the right-hand side."
+  ],
+  "quiz": [
+    {
+      "question": "Why does a single counter fail to check ([)]?",
+      "choices": [
+        "It cannot count past one",
+        "It does not know which opener is waiting",
+        "It reads the text backwards"
+      ],
+      "answer": 1,
+      "explain": "The counts balance, but ] arrives while ( is the newest opener. Only a stack remembers which opener is on top."
+    },
+    {
+      "question": "In postfix 8 2 −, the stack holds 8 then 2. Which result is right?",
+      "choices": [
+        "6: pop 2 as the right side, then 8 as the left",
+        "−6: pop 8 first",
+        "10: order does not matter"
+      ],
+      "answer": 0,
+      "explain": "The first pop is the right operand. So 8 − 2 = 6. Order matters for − and ÷."
+    },
+    {
+      "question": "A min-stack must return the minimum in O(1) even after pops. What should each entry store?",
+      "choices": [
+        "Only the value",
+        "The value and the minimum so far",
+        "A sorted copy of the stack"
+      ],
+      "answer": 1,
+      "explain": "Storing the running minimum with each value means the top always knows the current minimum, and a pop restores the older one."
+    }
+  ],
+  "interviewTip": "Mention the empty-stack edge cases out loud: a closer with nothing open, and openers left at the end. Interviewers often test exactly those two."
+}

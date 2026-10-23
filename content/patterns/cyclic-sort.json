@@ -1,0 +1,370 @@
+{
+  "id": "cyclic-sort",
+  "title": "Cyclic sort",
+  "category": "Cyclic sort",
+  "level": "se",
+  "summary": "When values are 1 to n (or 0 to n), each value has a home index. Swap values home, then scan: any index without its own value marks a gap or a repeat.",
+  "minutes": 12,
+  "idea": "Value v belongs at index v − 1. Every swap puts one value home for good, so sorting takes O(n) swaps and needs no extra memory.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The values are whole numbers in the range 1 to n (or 0 to n), where n is the length.",
+        "think": "Each value has a home index. Swap it there instead of using a set or sorting."
+      },
+      {
+        "see": "You must find the missing number, or every missing number.",
+        "think": "After placing values home, every index k without value k + 1 is a missing number."
+      },
+      {
+        "see": "You must find duplicates with O(1) extra space.",
+        "think": "A duplicate cannot go home because its twin is already there. It ends up sitting in someone else's gap."
+      },
+      {
+        "see": "You need the smallest missing positive, and values outside 1..n can be ignored.",
+        "think": "Only values 1..n can fill the first n slots. Skip the rest, place the others home, and scan for the first gap."
+      }
+    ],
+    "phrasings": [
+      "Tickets numbered 1 to n were sold, but some were lost. Which ticket numbers are missing?",
+      "Seat numbers 1 to n were assigned, and some seats were booked twice. Which ones?",
+      "Find the smallest positive order number that has not been used yet."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "set-vs-cyclic",
+    "title": "Every value has a home",
+    "alt": "On the left, a set of seen values is built and then checked for every number from 1 to n, using O(n) extra space. On the right, each value is swapped to its home index, value v at index v minus 1, and a final scan finds indexes that do not hold their own value.",
+    "caption": "The array itself becomes the lookup table.",
+    "before": {
+      "label": "Hash set of seen values",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Add all to a set",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Check 1..n",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "O(n) extra space",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: swap home, then scan",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Is v at home?",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Swap v home",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "stay at i"
+        },
+        {
+          "id": "c",
+          "label": "Move to i + 1",
+          "kind": "state",
+          "col": 2,
+          "row": 1,
+          "sub": "home or repeat"
+        },
+        {
+          "id": "d",
+          "label": "Scan for gaps",
+          "kind": "good",
+          "col": 1,
+          "row": 2,
+          "sub": "O(n), O(1) space"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "no"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "yes or dup"
+        },
+        {
+          "from": "b",
+          "to": "d"
+        },
+        {
+          "from": "c",
+          "to": "d"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "cyclic-missing",
+    "function": {
+      "js": "findMissing",
+      "py": "find_missing"
+    },
+    "code": {
+      "js": "function findMissing(nums) {\n  let i = 0 //@init\n  while (i < nums.length) {\n    const want = nums[i] - 1 //@want\n    if (nums[want] !== nums[i]) [nums[i], nums[want]] = [nums[want], nums[i]] //@swap\n    else i++ //@next\n  }\n  const missing = [] //@scan\n  for (let k = 0; k < nums.length; k++) if (nums[k] !== k + 1) missing.push(k + 1) //@check\n  return missing //@done\n}",
+      "py": "def find_missing(nums):\n    i = 0  #@init\n    while i < len(nums):\n        want = nums[i] - 1  #@want\n        if nums[want] != nums[i]: nums[i], nums[want] = nums[want], nums[i]  #@swap\n        else: i += 1  #@next\n    missing = []  #@scan\n    for k in range(len(nums)):  #@check\n        if nums[k] != k + 1: missing.append(k + 1)\n    return missing  #@done"
+    },
+    "examples": [
+      {
+        "label": "Two missing",
+        "input": {
+          "nums": "4, 3, 2, 7, 8, 2, 3, 1"
+        }
+      },
+      {
+        "label": "Nothing missing",
+        "input": {
+          "nums": "3, 1, 2"
+        }
+      },
+      {
+        "label": "All the same",
+        "input": {
+          "nums": "2, 2, 2"
+        }
+      }
+    ],
+    "inputHelp": "Up to 12 whole numbers, each from 1 to how many numbers you enter, separated by commas. Repeats are allowed."
+  },
+  "template": {
+    "py": "def solve(nums):\n    i = 0\n    while i < len(nums):\n        home = nums[i] - 1  # value v belongs at index v - 1\n        if 0 <= home < len(nums) and nums[home] != nums[i]:\n            nums[i], nums[home] = nums[home], nums[i]  # send it home; check the new nums[i]\n        else:\n            i += 1  # already home, a repeat, or out of range\n    return [k + 1 for k in range(len(nums)) if nums[k] != k + 1]  # the gaps\n",
+    "js": "function solve(nums) {\n  let i = 0\n  while (i < nums.length) {\n    const home = nums[i] - 1 // value v belongs at index v - 1\n    if (home >= 0 && home < nums.length && nums[home] !== nums[i]) {\n      [nums[i], nums[home]] = [nums[home], nums[i]] // send it home; check the new nums[i]\n    } else {\n      i++ // already home, a repeat, or out of range\n    }\n  }\n  const gaps = []\n  for (let k = 0; k < nums.length; k++) if (nums[k] !== k + 1) gaps.push(k + 1) // the gaps\n  return gaps\n}\n",
+    "ts": "function solve(nums: number[]): number[] {\n  let i = 0\n  while (i < nums.length) {\n    const home = nums[i] - 1 // value v belongs at index v - 1\n    if (home >= 0 && home < nums.length && nums[home] !== nums[i]) {\n      [nums[i], nums[home]] = [nums[home], nums[i]] // send it home; check the new nums[i]\n    } else {\n      i++ // already home, a repeat, or out of range\n    }\n  }\n  const gaps: number[] = []\n  for (let k = 0; k < nums.length; k++) if (nums[k] !== k + 1) gaps.push(k + 1) // the gaps\n  return gaps\n}\n"
+  },
+  "oneLiner": "while i < n: v not home and its home lacks v → swap, else i++; then scan k for nums[k] ≠ k + 1",
+  "exercise": {
+    "prompt": "nums holds n numbers from 1 to n. One number appears twice, so exactly one number is missing. Return [duplicate, missing]. The starter already swaps every value home. Write the scan: the first index k that does not hold k + 1 gives both answers.",
+    "function": {
+      "js": "findMismatch",
+      "py": "find_mismatch"
+    },
+    "starter": {
+      "js": "function findMismatch(nums) {\n  let i = 0\n  while (i < nums.length) {\n    const want = nums[i] - 1\n    if (nums[want] !== nums[i]) [nums[i], nums[want]] = [nums[want], nums[i]]\n    else i++\n  }\n  // Scan for the index k where nums[k] is not k + 1.\n  return [-1, -1]\n}\n",
+      "py": "def find_mismatch(nums):\n    i = 0\n    while i < len(nums):\n        want = nums[i] - 1\n        if nums[want] != nums[i]:\n            nums[i], nums[want] = nums[want], nums[i]\n        else:\n            i += 1\n    # Scan for the index k where nums[k] is not k + 1.\n    return [-1, -1]\n",
+      "ts": "function findMismatch(nums: number[]): number[] {\n  let i = 0\n  while (i < nums.length) {\n    const want = nums[i] - 1\n    if (nums[want] !== nums[i]) [nums[i], nums[want]] = [nums[want], nums[i]]\n    else i++\n  }\n  // Scan for the index k where nums[k] is not k + 1.\n  return [-1, -1]\n}\n"
+    },
+    "solution": {
+      "js": "function findMismatch(nums) {\n  let i = 0\n  while (i < nums.length) {\n    const want = nums[i] - 1\n    if (nums[want] !== nums[i]) [nums[i], nums[want]] = [nums[want], nums[i]]\n    else i++\n  }\n  for (let k = 0; k < nums.length; k++) {\n    if (nums[k] !== k + 1) return [nums[k], k + 1]\n  }\n  return [-1, -1]\n}\n",
+      "py": "def find_mismatch(nums):\n    i = 0\n    while i < len(nums):\n        want = nums[i] - 1\n        if nums[want] != nums[i]:\n            nums[i], nums[want] = nums[want], nums[i]\n        else:\n            i += 1\n    for k in range(len(nums)):\n        if nums[k] != k + 1:\n            return [nums[k], k + 1]\n    return [-1, -1]\n",
+      "ts": "function findMismatch(nums: number[]): number[] {\n  let i = 0\n  while (i < nums.length) {\n    const want = nums[i] - 1\n    if (nums[want] !== nums[i]) [nums[i], nums[want]] = [nums[want], nums[i]]\n    else i++\n  }\n  for (let k = 0; k < nums.length; k++) {\n    if (nums[k] !== k + 1) return [nums[k], k + 1]\n  }\n  return [-1, -1]\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            2,
+            4
+          ]
+        ],
+        "expected": [
+          2,
+          3
+        ]
+      },
+      {
+        "args": [
+          [
+            3,
+            1,
+            3
+          ]
+        ],
+        "expected": [
+          3,
+          2
+        ]
+      },
+      {
+        "args": [
+          [
+            1,
+            1
+          ]
+        ],
+        "expected": [
+          1,
+          2
+        ]
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          [
+            2,
+            2
+          ]
+        ],
+        "expected": [
+          2,
+          1
+        ]
+      },
+      {
+        "args": [
+          [
+            2,
+            3,
+            3,
+            4,
+            5
+          ]
+        ],
+        "expected": [
+          3,
+          1
+        ]
+      },
+      {
+        "args": [
+          [
+            4,
+            2,
+            1,
+            4
+          ]
+        ],
+        "expected": [
+          4,
+          3
+        ]
+      },
+      {
+        "args": [
+          [
+            1,
+            5,
+            3,
+            2,
+            2
+          ]
+        ],
+        "expected": [
+          2,
+          4
+        ]
+      },
+      {
+        "args": [
+          [
+            6,
+            5,
+            4,
+            3,
+            2,
+            2
+          ]
+        ],
+        "expected": [
+          2,
+          1
+        ]
+      }
+    ],
+    "hints": [
+      "After the swaps, every value except the duplicate is home. The duplicate sits in the one slot whose value is missing.",
+      "Find the first k with nums[k] != k + 1. Then nums[k] is the duplicate and k + 1 is the missing number."
+    ]
+  },
+  "problems": [
+    {
+      "id": "missing-ticket-number",
+      "role": "warm-up"
+    },
+    {
+      "id": "double-booked-seats",
+      "role": "core"
+    },
+    {
+      "id": "next-free-order-numbers",
+      "role": "stretch"
+    },
+    {
+      "id": "smallest-absent-positive",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "Each swap puts one value home for good, so there are at most n swaps plus n moves of i. The scan is one more pass. The array is reused, so extra space is O(1)."
+  },
+  "mistakes": [
+    "Moving i forward after a swap. The value swapped in has not been placed yet, so stay at i.",
+    "Swapping when the home already holds the same value, which loops forever on duplicates. Compare values, not indexes.",
+    "Forgetting to skip values outside 1..n, which index past the end of the array.",
+    "Using cyclic sort when the values are not tied to the length, such as arbitrary large ids. Use a hash set instead.",
+    "Mixing up 0-based and 1-based homes: decide whether v goes to index v or v − 1."
+  ],
+  "quiz": [
+    {
+      "question": "After swapping nums[i] home, why does i stay where it is?",
+      "choices": [
+        "To count the swaps",
+        "The value that arrived at i has not been placed yet",
+        "Because i is always home after a swap"
+      ],
+      "answer": 1,
+      "explain": "The swap brings a new value to index i. It needs its own check, so only move on when nums[i] is home or cannot be placed."
+    },
+    {
+      "question": "Why is cyclic sort O(n) even though there is a swap loop inside the scan?",
+      "choices": [
+        "Each swap places one value home for good, so there are at most n swaps",
+        "It only works on short arrays",
+        "It never swaps more than once per index"
+      ],
+      "answer": 0,
+      "explain": "A value that is home is never moved again. With n values there can be at most n swaps in total."
+    },
+    {
+      "question": "nums has n values but some are negative or larger than n. You want the smallest missing positive. What do you do with those values?",
+      "choices": [
+        "Sort them first",
+        "Leave them where they are and move on",
+        "Replace them with 1"
+      ],
+      "answer": 1,
+      "explain": "Only values 1..n can fill the first n slots. Others are skipped. They end up in gaps, which the scan reports."
+    }
+  ],
+  "interviewTip": "Point out the range constraint early: “values are 1 to n, so each one has a home index”. It explains why you can beat the hash-set answer on space."
+}

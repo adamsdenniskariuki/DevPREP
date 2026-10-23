@@ -1,0 +1,336 @@
+{
+  "id": "search-on-answer",
+  "parent": "binary-search",
+  "title": "Search on the answer",
+  "category": "Binary search",
+  "level": "sse",
+  "summary": "When you can check whether a guess works, and every bigger guess works too, binary search the guesses instead of the data.",
+  "minutes": 15,
+  "idea": "If “does x work?” is false then true as x grows, the smallest x that works is a boundary. Binary search finds it in log(range) checks.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The question asks for the minimum or maximum value of a setting: speed, capacity, size, or time.",
+        "think": "Search over that setting, not over the input. Each guess becomes a yes/no check."
+      },
+      {
+        "see": "Given a guess, you can check it greedily in one pass.",
+        "think": "Write can(x) first. If it is monotone (once true, always true), binary search x."
+      },
+      {
+        "see": "The answer lies in a known range, such as 1 to the largest input.",
+        "think": "Set lo and hi to that range. It can be far larger than n and still only cost log steps."
+      },
+      {
+        "see": "Phrases like “minimise the largest” or “maximise the smallest”.",
+        "think": "Guess the limit, check whether it is achievable, and move toward the best limit that works."
+      }
+    ],
+    "phrasings": [
+      "A courier must deliver parcels in order within d days. What is the smallest van capacity that works?",
+      "Cut ribbons into k pieces of equal length. What is the longest length possible?",
+      "Split a reading list into m days so the busiest day is as light as possible."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "try-all-vs-search-answer",
+    "title": "Search the answers, not the data",
+    "alt": "On the left, every speed from 1 upward is tried, with a full check each time. On the right, the range of speeds is halved using the check, so only about log of the range checks run.",
+    "caption": "The check costs O(n). Binary search runs it only log(range) times.",
+    "before": {
+      "label": "Try every answer",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Speed 1, 2, 3…",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Check each",
+          "kind": "decision",
+          "col": 1,
+          "row": 0,
+          "sub": "O(n) per check"
+        },
+        {
+          "id": "c",
+          "label": "range × n",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "too slow"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: halve the answer range",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Check mid",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Works: hi = mid",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "try smaller"
+        },
+        {
+          "id": "c",
+          "label": "Fails: lo=mid+1",
+          "kind": "state",
+          "col": 2,
+          "row": 1,
+          "sub": "need bigger"
+        },
+        {
+          "id": "d",
+          "label": "log R checks",
+          "kind": "good",
+          "col": 1,
+          "row": 2,
+          "sub": "O(n log range)"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "yes"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "no"
+        },
+        {
+          "from": "b",
+          "to": "d"
+        },
+        {
+          "from": "c",
+          "to": "d"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "min-speed",
+    "function": {
+      "js": "minSpeed",
+      "py": "min_speed"
+    },
+    "code": {
+      "js": "function minSpeed(piles, hours) {\n  let lo = 1, hi = Math.max(...piles) //@init\n  while (lo < hi) { //@loop\n    const mid = (lo + hi) >> 1 //@mid\n    const need = piles.reduce((sum, p) => sum + Math.ceil(p / mid), 0) //@need\n    if (need <= hours) hi = mid //@fits\n    else lo = mid + 1 //@slow\n  }\n  return lo //@done\n}",
+      "py": "def min_speed(piles, hours):\n    lo, hi = 1, max(piles)  #@init\n    while lo < hi:  #@loop\n        mid = (lo + hi) // 2  #@mid\n        need = sum((p + mid - 1) // mid for p in piles)  #@need\n        if need <= hours: hi = mid  #@fits\n        else: lo = mid + 1  #@slow\n    return lo  #@done"
+    },
+    "examples": [
+      {
+        "label": "Four piles, 8 hours",
+        "input": {
+          "piles": "3, 6, 7, 11",
+          "hours": "8"
+        }
+      },
+      {
+        "label": "One hour per pile",
+        "input": {
+          "piles": "9, 4, 10",
+          "hours": "3"
+        }
+      },
+      {
+        "label": "Plenty of time",
+        "input": {
+          "piles": "5, 8",
+          "hours": "13"
+        }
+      }
+    ],
+    "inputHelp": "Up to 8 pile sizes from 1 to 15, separated by commas. Hours is from 1 to 40 and at least the number of piles."
+  },
+  "template": {
+    "py": "def solve(items, limit):\n    lo, hi = 1, max(items)  # smallest and largest answers worth trying\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if works(items, mid, limit):\n            hi = mid  # mid works: the best answer is mid or smaller\n        else:\n            lo = mid + 1  # mid fails, so everything smaller fails too\n    return lo  # smallest answer that works\n\n\ndef works(items, guess, limit):\n    # one greedy pass: can we finish within limit using this guess?\n    return sum((x + guess - 1) // guess for x in items) <= limit\n",
+    "js": "function solve(items, limit) {\n  let lo = 1 // smallest answer worth trying\n  let hi = Math.max(...items) // largest answer worth trying\n  while (lo < hi) {\n    const mid = (lo + hi) >> 1\n    if (works(items, mid, limit)) hi = mid // mid works: the best answer is mid or smaller\n    else lo = mid + 1 // mid fails, so everything smaller fails too\n  }\n  return lo // smallest answer that works\n}\n\nfunction works(items, guess, limit) {\n  // one greedy pass: can we finish within limit using this guess?\n  return items.reduce((sum, x) => sum + Math.ceil(x / guess), 0) <= limit\n}\n",
+    "ts": "function solve(items: number[], limit: number): number {\n  let lo = 1 // smallest answer worth trying\n  let hi = Math.max(...items) // largest answer worth trying\n  while (lo < hi) {\n    const mid = (lo + hi) >> 1\n    if (works(items, mid, limit)) hi = mid // mid works: the best answer is mid or smaller\n    else lo = mid + 1 // mid fails, so everything smaller fails too\n  }\n  return lo // smallest answer that works\n}\n\nfunction works(items: number[], guess: number, limit: number): boolean {\n  // one greedy pass: can we finish within limit using this guess?\n  return items.reduce((sum, x) => sum + Math.ceil(x / guess), 0) <= limit\n}\n"
+  },
+  "oneLiner": "lo, hi = smallest, largest answer; works(mid) → hi = mid, else lo = mid + 1; return lo",
+  "exercise": {
+    "prompt": "lengths are rope lengths. You want at least k pieces that all have the same whole-number length L, cut from the ropes (leftovers are wasted). Return the largest L that works, or 0 if even L = 1 gives fewer than k pieces. The starter never moves lo up when a guess works. Fix the search. Note: mid is rounded up so lo = mid always makes progress.",
+    "function": {
+      "js": "longestPiece",
+      "py": "longest_piece"
+    },
+    "starter": {
+      "js": "function longestPiece(lengths, k) {\n  let lo = 0\n  let hi = Math.max(0, ...lengths)\n  while (lo < hi) {\n    const mid = (lo + hi + 1) >> 1\n    const pieces = lengths.reduce((sum, len) => sum + Math.floor(len / mid), 0)\n    // If mid gives at least k pieces, keep it: move lo up. Otherwise move hi down.\n    hi = mid - 1\n  }\n  return lo\n}\n",
+      "py": "def longest_piece(lengths, k):\n    lo, hi = 0, max(lengths, default=0)\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        pieces = sum(length // mid for length in lengths)\n        # If mid gives at least k pieces, keep it: move lo up. Otherwise move hi down.\n        hi = mid - 1\n    return lo\n",
+      "ts": "function longestPiece(lengths: number[], k: number): number {\n  let lo = 0\n  let hi = Math.max(0, ...lengths)\n  while (lo < hi) {\n    const mid = (lo + hi + 1) >> 1\n    const pieces = lengths.reduce((sum, len) => sum + Math.floor(len / mid), 0)\n    // If mid gives at least k pieces, keep it: move lo up. Otherwise move hi down.\n    hi = mid - 1\n  }\n  return lo\n}\n"
+    },
+    "solution": {
+      "js": "function longestPiece(lengths, k) {\n  let lo = 0\n  let hi = Math.max(0, ...lengths)\n  while (lo < hi) {\n    const mid = (lo + hi + 1) >> 1\n    const pieces = lengths.reduce((sum, len) => sum + Math.floor(len / mid), 0)\n    if (pieces >= k) lo = mid\n    else hi = mid - 1\n  }\n  return lo\n}\n",
+      "py": "def longest_piece(lengths, k):\n    lo, hi = 0, max(lengths, default=0)\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        pieces = sum(length // mid for length in lengths)\n        if pieces >= k:\n            lo = mid\n        else:\n            hi = mid - 1\n    return lo\n",
+      "ts": "function longestPiece(lengths: number[], k: number): number {\n  let lo = 0\n  let hi = Math.max(0, ...lengths)\n  while (lo < hi) {\n    const mid = (lo + hi + 1) >> 1\n    const pieces = lengths.reduce((sum, len) => sum + Math.floor(len / mid), 0)\n    if (pieces >= k) lo = mid\n    else hi = mid - 1\n  }\n  return lo\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            802,
+            743,
+            457,
+            539
+          ],
+          11
+        ],
+        "expected": 200
+      },
+      {
+        "args": [
+          [
+            5,
+            9
+          ],
+          3
+        ],
+        "expected": 4
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          [
+            1000000
+          ],
+          7
+        ],
+        "expected": 142857
+      },
+      {
+        "args": [
+          [],
+          1
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          [
+            3
+          ],
+          5
+        ],
+        "expected": 0
+      },
+      {
+        "args": [
+          [
+            10,
+            10
+          ],
+          2
+        ],
+        "expected": 10
+      },
+      {
+        "args": [
+          [
+            1,
+            1,
+            1
+          ],
+          3
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          [
+            7,
+            7,
+            7
+          ],
+          3
+        ],
+        "expected": 7
+      }
+    ],
+    "hints": [
+      "More length means fewer pieces, so “gives at least k pieces” is true for small L and false for big L. You want the last true.",
+      "If pieces >= k, set lo = mid (mid works, maybe bigger does too). Otherwise set hi = mid - 1."
+    ]
+  },
+  "problems": [
+    {
+      "id": "integer-square-root",
+      "role": "warm-up"
+    },
+    {
+      "id": "minimum-daily-capacity",
+      "role": "core"
+    }
+  ],
+  "complexity": {
+    "time": "O(n log R)",
+    "space": "O(1)",
+    "why": "R is the size of the answer range, such as the largest pile. Binary search runs about log₂ R checks, and each check is one O(n) pass."
+  },
+  "mistakes": [
+    "Searching over the input positions instead of over the possible answers.",
+    "Using a check that is not monotone. If a bigger guess can fail after a smaller one works, binary search is wrong.",
+    "Setting lo = mid with mid rounded down, which loops forever. Round up when you move lo to mid.",
+    "Choosing a range that misses the answer, such as starting lo at 0 and then dividing by mid.",
+    "Integer overflow in other languages when adding large counts. Stop the check early once it is over the limit."
+  ],
+  "quiz": [
+    {
+      "question": "What must be true of works(x) for search on the answer to be correct?",
+      "choices": [
+        "It runs in O(1)",
+        "Once it is true for some x, it stays true for every bigger x",
+        "It is true for exactly one x"
+      ],
+      "answer": 1,
+      "explain": "Binary search needs one flip from false to true. Then the smallest x that works is a boundary you can halve toward."
+    },
+    {
+      "question": "You want the largest L that works and you set lo = mid when mid works. How should mid be computed?",
+      "choices": [
+        "(lo + hi) // 2",
+        "(lo + hi + 1) // 2",
+        "hi − 1"
+      ],
+      "answer": 1,
+      "explain": "Rounding up makes mid > lo whenever lo < hi, so lo = mid always shrinks the range."
+    },
+    {
+      "question": "Piles are up to 10⁹ in size and there are n piles. How many checks does the search make?",
+      "choices": [
+        "About 30",
+        "About n",
+        "About 10⁹"
+      ],
+      "answer": 0,
+      "explain": "log₂(10⁹) is about 30. Each check is O(n), so the total is about 30n."
+    }
+  ],
+  "interviewTip": "Write and test the check function first, then say “this check is monotone, so I can binary search the answer”. That sentence shows you know why the method works."
+}
