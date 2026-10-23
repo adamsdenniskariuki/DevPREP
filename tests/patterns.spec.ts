@@ -252,6 +252,39 @@ test('tree, heap, trie and grid visualisers stay readable in every palette, ligh
   }
 })
 
+test('graph, grid search and backtracking visualisers stay readable in every palette, light and dark', async ({ page }) => {
+  test.slow()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const checks: [string, string[]][] = [
+    ['graphs', ['.pv-gnode .pv-value', '.pv-gnode.current .pv-value', '.pv-gnode.frontier .pv-value', '.pv-gnode.visited .pv-value', '.pv-entry']],
+    ['bfs-shortest-steps', ['.pv-gcell .pv-value', '.pv-gcell.frontier .pv-value', '.pv-gcell.visited .pv-value', '.pv-gcell.current .pv-value']],
+    ['dfs-flood-fill', ['.pv-gcell .pv-value', '.pv-gcell.frontier .pv-value', '.pv-gcell.visited .pv-value', '.pv-cell .pv-value']],
+    ['topological-sort', ['.pv-gnode .pv-value', '.pv-gnote', '.pv-gnode.frontier .pv-value', '.pv-gnode.visited .pv-value']],
+    ['union-find', ['.pv-gnode .pv-value', '.pv-gnode.visited .pv-value', '.pv-gnode.current .pv-value', '.pv-gnote', '.pv-pointer']],
+    ['dijkstra', ['.pv-gnode .pv-value', '.pv-glabel', '.pv-gnote', '.pv-gnode.frontier .pv-value', '.pv-gnode.visited .pv-value']],
+    ['backtracking', ['.pv-tnode .pv-value', '.pv-tnode.active .pv-value', '.pv-tnode.marked .pv-value', '.pv-tnode.dropped .pv-value', '.pv-tnode .pv-pointer']],
+  ]
+  for (const [id, selectors] of checks) {
+    await openPage(page, pages.find(item => item.id === id))
+    await page.getByTestId('pv-stage').focus()
+    const pending = new Set(selectors)
+    for (let step = 0; step < 60 && pending.size; step++) {
+      for (const selector of [...pending]) {
+        if (await page.locator(selector).count() === 0) continue
+        pending.delete(selector)
+        for (const palette of palettes) {
+          for (const theme of ['light', 'dark'] as const) {
+            await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.palette = palette; document.documentElement.dataset.theme = theme }, { palette: palette.id, theme })
+            expect(await textContrast(page.locator(selector).first()), `${id} ${palette.id}/${theme} ${selector}`).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+      await page.keyboard.press('ArrowRight')
+    }
+    expect([...pending], `${id} selectors never shown`).toEqual([])
+  }
+})
+
 test('sub-pattern pages link back to their parent and the parent lists them', async ({ page }) => {
   const parent = pages.find(item => item.id === 'stack')
   const children = pages.filter(item => item.parent === 'stack')
@@ -271,7 +304,7 @@ for (const width of [360, 768, 1440]) {
       await expect(page.getByText('Loading pattern…')).toHaveCount(0)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${hash} at ${width}`).toBe(true)
     }
-    for (const id of ['dfs-traversals', 'bfs-level-order', 'tries', 'heaps', 'k-way-merge', 'two-heaps', 'matrix-traversal', 'quickselect']) {
+    for (const id of ['dfs-traversals', 'bfs-level-order', 'tries', 'heaps', 'k-way-merge', 'two-heaps',     'matrix-traversal', 'quickselect', 'graphs', 'bfs-shortest-steps', 'dfs-flood-fill', 'topological-sort', 'union-find', 'dijkstra', 'backtracking']) {
       await page.goto(`./#patterns/${id}`)
       await page.getByTestId('pv-stage').focus()
       for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight')

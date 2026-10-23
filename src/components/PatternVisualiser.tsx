@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react'
 import Editor from './Editor'
 import Icon from './Icon'
 import { getTracer } from '../patterns/tracers'
-import type { ArrayView, GridView, ListView, MapView, Trace, TreeView, VarValue } from '../patterns/tracers'
+import type { ArrayView, GraphView, GridView, ListView, MapView, Trace, TreeView, VarValue } from '../patterns/tracers'
 import { layoutTree } from '../patterns/layout'
 import { stripMarkers } from '../patterns/markers'
 import type { PatternVisualiserSpec } from '../pattern-types'
@@ -98,10 +98,11 @@ function TreePanel({ view }: { view: TreeView }) {
           const pointers = view.pointers?.filter(pointer => pointer.index === index).map(pointer => pointer.name) ?? []
           const active = view.active?.includes(index)
           const marked = view.marked?.includes(index)
+          const dropped = view.dropped?.includes(index)
           const parent = parentOf.get(index)
-          const states = [node.end && 'ends a word', active && 'in play', marked && 'done', pointers.length && `pointer ${pointers.join(', ')}`].filter(Boolean).join('; ')
+          const states = [node.end && 'ends a word', active && 'in play', marked && 'done', dropped && 'pruned', pointers.length && `pointer ${pointers.join(', ')}`].filter(Boolean).join('; ')
           const { x } = at(index)
-          return <li key={index} className={['pv-tnode', node.end && 'end', active && 'active', marked && 'marked', pointers.length && 'pointed'].filter(Boolean).join(' ')} style={{ left: `${x}%`, top: pos[index].y * TREE_ROW }}>
+          return <li key={index} className={['pv-tnode', node.end && 'end', active && 'active', marked && 'marked', dropped && 'dropped', pointers.length && 'pointed'].filter(Boolean).join(' ')} style={{ left: `${x}%`, top: pos[index].y * TREE_ROW }}>
             <span className="pv-value">{parent === undefined ? <span className="sr-only">Root: </span> : <span className="sr-only">Child of {view.nodes[parent].label}: </span>}{node.label}{states && <span className="sr-only"> ({states})</span>}</span>
             <span className="pv-pointers" aria-hidden="true">{pointers.map(name => <span key={name} className="pv-pointer">{name}</span>)}</span>
           </li>
@@ -111,8 +112,65 @@ function TreePanel({ view }: { view: TreeView }) {
   </div>
 }
 
+/** The drawing is 160 × 100 units; nodes sit inside a margin so circles and notes stay in the box. */
+const GRAPH_W = 160
+const GRAPH_H = 100
+const graphX = (x: number) => 0.08 + x * 0.84
+const graphY = (y: number) => 0.13 + y * 0.64
+
+function GraphPanel({ view }: { view: GraphView }) {
+  const uid = useId().replace(/:/g, '')
+  const point = (index: number) => ({ x: graphX(view.nodes[index].x), y: graphY(view.nodes[index].y) })
+  const edgeText = view.edges.map(edge => `${view.nodes[edge.from].label} ${view.directed ? 'to' : 'and'} ${view.nodes[edge.to].label}${edge.label ? ` (${edge.label})` : ''}`).join('; ')
+  return <div className="pv-array">
+    <p className="pv-array-label">{view.label}</p>
+    {view.nodes.length === 0 ? <p className="muted pv-empty">Empty</p> : <div className="pv-graph">
+      <svg className="pv-graph-edges" aria-hidden="true" focusable="false" viewBox={`0 0 ${GRAPH_W} ${GRAPH_H}`}>
+        <defs>
+          <marker id={`${uid}-arrow`} viewBox="0 0 10 10" refX="10" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" /></marker>
+          <marker id={`${uid}-arrow-on`} className="on" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" /></marker>
+        </defs>
+        {view.edges.map((edge, index) => {
+          const a = point(edge.from)
+          const b = point(edge.to)
+          const x1 = a.x * GRAPH_W
+          const y1 = a.y * GRAPH_H
+          const x2 = b.x * GRAPH_W
+          const y2 = b.y * GRAPH_H
+          const length = Math.hypot(x2 - x1, y2 - y1) || 1
+          const trim = view.directed ? 11 / length : 0
+          const on = view.activeEdges?.includes(index)
+          return <line key={index} className={on ? 'on' : undefined} x1={x1} y1={y1} x2={x2 - (x2 - x1) * trim} y2={y2 - (y2 - y1) * trim} markerEnd={view.directed ? `url(#${uid}-arrow${on ? '-on' : ''})` : undefined} />
+        })}
+      </svg>
+      {view.edges.some(edge => edge.label) && <div aria-hidden="true">
+        {view.edges.map((edge, index) => {
+          if (!edge.label) return null
+          const a = point(edge.from)
+          const b = point(edge.to)
+          return <span key={index} className={view.activeEdges?.includes(index) ? 'pv-glabel on' : 'pv-glabel'} style={{ left: `${(a.x + b.x) * 50}%`, top: `${(a.y + b.y) * 50}%` }}>{edge.label}</span>
+        })}
+      </div>}
+      <ol aria-label={view.label}>
+        {view.nodes.map((node, index) => {
+          const current = view.current === index
+          const frontier = view.frontier?.includes(index)
+          const visited = view.visited?.includes(index)
+          const states = [current && 'current', frontier && 'waiting', visited && 'done', node.note].filter(Boolean).join('; ')
+          const { x, y } = point(index)
+          return <li key={index} className={['pv-gnode', visited && 'visited', frontier && 'frontier', current && 'current'].filter(Boolean).join(' ')} style={{ left: `${x * 100}%`, top: `${y * 100}%` }}>
+            <span className="pv-value"><span className="sr-only">Node </span>{node.label}{states && <span className="sr-only"> ({states})</span>}</span>
+            {node.note && <span className="pv-gnote" aria-hidden="true">{node.note}</span>}
+          </li>
+        })}
+      </ol>
+      <p className="sr-only">{view.edges.length ? `Edges: ${edgeText}.` : 'No edges.'}</p>
+    </div>}
+  </div>
+}
+
 function GridPanel({ view }: { view: GridView }) {
-  const isVisited = (r: number, c: number) => view.visited?.some(([vr, vc]) => vr === r && vc === c)
+  const has = (cells: [number, number][] | undefined, r: number, c: number) => !!cells?.some(([cr, cc]) => cr === r && cc === c)
   return <div className="pv-array">
     <p className="pv-array-label">{view.label}</p>
     <table className="pv-grid">
@@ -121,9 +179,10 @@ function GridPanel({ view }: { view: GridView }) {
         {view.cells.map((row, r) => <tr key={r}>
           {row.map((value, c) => {
             const current = view.current?.[0] === r && view.current?.[1] === c
-            const visited = isVisited(r, c)
-            const states = [current && 'current cell', visited && 'visited'].filter(Boolean).join('; ')
-            return <td key={c} className={['pv-gcell', visited && 'visited', current && 'current'].filter(Boolean).join(' ')}>
+            const visited = has(view.visited, r, c)
+            const frontier = has(view.frontier, r, c)
+            const states = [current && 'current cell', frontier && 'waiting', visited && 'visited'].filter(Boolean).join('; ')
+            return <td key={c} className={['pv-gcell', visited && 'visited', frontier && 'frontier', current && 'current'].filter(Boolean).join(' ')}>
               <span className="pv-value"><span className="sr-only">Row {r}, column {c}: </span>{value}{states && <span className="sr-only"> ({states})</span>}</span>
             </td>
           })}
@@ -198,6 +257,7 @@ export default function PatternVisualiser({ spec }: { spec: PatternVisualiserSpe
       <p className="pv-text" aria-live="polite"><span className="pv-count">Step {Math.min(frame, last) + 1} of {last + 1}.</span> {current.text}</p>
       <div className="pv-views">
         {current.view.trees?.map(view => <TreePanel key={view.name} view={view} />)}
+        {current.view.graphs?.map(view => <GraphPanel key={view.name} view={view} />)}
         {current.view.grids?.map(view => <GridPanel key={view.name} view={view} />)}
         {current.view.lists?.map(view => <ListRow key={view.name} view={view} />)}
         {current.view.arrays.map(view => <ArrayRow key={view.name} view={view} />)}

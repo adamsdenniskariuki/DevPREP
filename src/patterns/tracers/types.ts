@@ -55,6 +55,8 @@ export interface TreeView {
   active?: number[]
   /** Nodes that are finished, e.g. already output. */
   marked?: number[]
+  /** Nodes cut off, e.g. branches pruned by a backtracking search. */
+  dropped?: number[]
 }
 
 /** A small matrix drawn as a grid of cells. */
@@ -66,6 +68,34 @@ export interface GridView {
   current?: [number, number]
   /** Cells already visited. */
   visited?: [number, number][]
+  /** Cells waiting to be explored: in the queue or on the call stack. */
+  frontier?: [number, number][]
+}
+
+export interface GraphViewNode {
+  label: string
+  /** Position inside the drawing, each from 0 to 1. */
+  x: number
+  y: number
+  /** Short text under the node, e.g. a distance or an in-degree. */
+  note?: string
+}
+
+/** A small graph drawn as nodes and edges. */
+export interface GraphView {
+  name: string
+  label: string
+  nodes: GraphViewNode[]
+  edges: { from: number; to: number; label?: string }[]
+  directed?: boolean
+  /** The node this step works on. */
+  current?: number
+  /** Nodes waiting to be explored: in the queue, stack or heap. */
+  frontier?: number[]
+  /** Nodes already finished. */
+  visited?: number[]
+  /** Indexes into edges that this step reads. */
+  activeEdges?: number[]
 }
 
 export interface TraceView {
@@ -73,6 +103,7 @@ export interface TraceView {
   lists?: ListView[]
   trees?: TreeView[]
   grids?: GridView[]
+  graphs?: GraphView[]
   map?: MapView
 }
 
