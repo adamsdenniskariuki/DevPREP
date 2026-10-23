@@ -73,9 +73,12 @@ function PageLoader({ app, summary }: { app: AppModel; summary: PatternSummary }
     return () => { live = false }
   }, [summary.id])
   const parent = summary.parent ? patternIndex.find(item => item.id === summary.parent) : undefined
+  const children = patternIndex.filter(item => item.parent === summary.id)
   return <>
     <a className="back-link" href="#patterns"><Icon name="back" size={16} /> All patterns</a>
     <div className="page-heading"><div><div className="eyebrow">PATTERNS{parent ? ` · ${parent.title.toUpperCase()}` : ''} · {summary.minutes} MIN</div><h1 ref={app.heading} tabIndex={-1}>{summary.title}</h1><p>{summary.summary}</p></div>{patternPageDone(app.progress, summary.id) && <span className="pill solved">Learned</span>}</div>
+    {parent && <p className="pattern-subnav">Part of <a href={`#patterns/${parent.id}`}>{parent.title}</a>.</p>}
+    {children.length > 0 && <nav className="pattern-subnav" aria-label="Sub-patterns"><span>Sub-patterns:</span>{children.map(child => <a key={child.id} href={`#patterns/${child.id}`}>{child.title}</a>)}</nav>}
     {error ? <div className="alert" role="alert">{error}</div> : page ? <PatternBody key={page.id} app={app} page={page} /> : <p role="status">Loading pattern…</p>}
   </>
 }
@@ -296,7 +299,7 @@ function CheatSheet({ app }: { app: AppModel }) {
         <caption className="sr-only">Algorithm patterns</caption>
         <thead><tr><th scope="col">Pattern</th><th scope="col">Signal</th><th scope="col">Core idea</th><th scope="col">Template</th><th scope="col">Time</th><th scope="col">Space</th></tr></thead>
         <tbody>
-          {patternTree().flatMap(({ page, children }) => [page, ...children]).map(page => <tr key={page.id}>
+          {patternTree().flatMap(({ page, children }) => [page, ...children]).map(page => <tr key={page.id} className={page.parent ? 'cheat-sub' : undefined}>
             <th scope="row"><a href={`#patterns/${page.id}`}>{page.title}</a></th>
             <td>{page.signals[0].see}</td>
             <td>{page.idea}</td>

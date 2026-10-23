@@ -20,8 +20,25 @@ export interface MapView {
   highlight?: string
 }
 
+/** A singly linked list drawn as nodes. Node i holds values[i]; next[i] is the index it points at, or null. */
+export interface ListView {
+  name: string
+  label: string
+  values: (number | string)[]
+  next: (number | null)[]
+  /** Index of the first node, or null for an empty list. Defaults to 0. */
+  head?: number | null
+  /** Named pointers drawn under nodes. */
+  pointers?: { name: string; index: number }[]
+  /** Nodes to emphasise, e.g. the answer. */
+  marked?: number[]
+  /** Nodes no longer in the list, e.g. removed ones. */
+  dropped?: number[]
+}
+
 export interface TraceView {
   arrays: ArrayView[]
+  lists?: ListView[]
   map?: MapView
 }
 
@@ -42,7 +59,7 @@ export interface Trace {
 export interface TracerParam {
   name: string
   label: string
-  kind: 'ints' | 'int'
+  kind: 'ints' | 'int' | 'text'
 }
 
 export type ParseResult = { ok: true; args: unknown[] } | { ok: false; errors: Record<string, string> }

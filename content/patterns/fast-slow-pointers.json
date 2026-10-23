@@ -1,0 +1,435 @@
+{
+  "id": "fast-slow-pointers",
+  "parent": "linked-lists",
+  "title": "Fast & slow pointers",
+  "category": "Linked lists",
+  "level": "se",
+  "summary": "Move one pointer one step and another two steps. When the fast one reaches the end, the slow one is in the middle; if they meet, there is a cycle.",
+  "minutes": 12,
+  "idea": "The fast pointer covers twice the distance, so the slow one is always halfway. In a loop the fast one gains one step per move and must catch up.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "You need the middle of a linked list in one pass.",
+        "think": "slow moves 1, fast moves 2. When fast runs out, slow is at the middle."
+      },
+      {
+        "see": "You must tell whether a list, or a chain of next-values, loops back on itself.",
+        "think": "Run slow and fast. If they ever meet, there is a cycle; if fast hits the end, there is none."
+      },
+      {
+        "see": "You need the k-th node from the end without counting the length first.",
+        "think": "Move a lead pointer k steps ahead, then move both one step at a time until the lead hits the end."
+      },
+      {
+        "see": "The question limits you to O(1) extra space where a set of seen nodes would be easy.",
+        "think": "Two pointers replace the set: the meeting point proves a cycle without storing anything."
+      }
+    ],
+    "phrasings": [
+      "A playlist is a linked list. Which song is exactly in the middle?",
+      "Each page links to a next page. Does following the links ever bring you back to a page you saw?",
+      "Remove the third-last stop from a linked list of bus stops in a single pass."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "count-twice-vs-fast-slow",
+    "title": "Two speeds, one pass",
+    "alt": "On the left, the list is walked once to count the nodes and again to stop halfway. On the right, a slow pointer moves one step and a fast pointer two steps, so when the fast pointer ends the slow one is at the middle after a single pass.",
+    "caption": "Fast covers twice the ground, so slow is always halfway.",
+    "before": {
+      "label": "Count, then walk again",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Count n nodes",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Walk n / 2 steps",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Two passes",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "cycles never end"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: slow +1, fast +2",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "fast at the end?",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Step both",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "slow 1, fast 2"
+        },
+        {
+          "id": "c",
+          "label": "slow is middle",
+          "kind": "good",
+          "col": 2,
+          "row": 1,
+          "sub": "one pass, O(1)"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "no"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "yes"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "middle-node",
+    "function": {
+      "js": "middleNode",
+      "py": "middle_node"
+    },
+    "code": {
+      "js": "function middleNode(head) {\n  let slow = head, fast = head //@init\n  while (fast && fast.next) { //@loop\n    slow = slow.next //@slow\n    fast = fast.next.next //@fast\n  }\n  return slow.val //@done\n}",
+      "py": "def middle_node(head):\n    slow = fast = head  #@init\n    while fast and fast['next']:  #@loop\n        slow = slow['next']  #@slow\n        fast = fast['next']['next']  #@fast\n    return slow['val']  #@done"
+    },
+    "examples": [
+      {
+        "label": "Odd length",
+        "input": {
+          "values": "1, 2, 3, 4, 5"
+        }
+      },
+      {
+        "label": "Even length",
+        "input": {
+          "values": "10, 20, 30, 40"
+        }
+      },
+      {
+        "label": "One node",
+        "input": {
+          "values": "8"
+        }
+      }
+    ],
+    "inputHelp": "1 to 12 list values between -99 and 99, separated by commas."
+  },
+  "template": {
+    "py": "def solve(head):\n    slow = fast = head  # both start at the head\n    while fast and fast['next']:  # fast needs two more nodes to jump\n        slow = slow['next']  # one step\n        fast = fast['next']['next']  # two steps\n        if slow is fast:\n            return True  # they met inside a loop: there is a cycle\n    return False  # fast fell off the end: no cycle (and slow is the middle)\n",
+    "js": "function solve(head) {\n  let slow = head // both start at the head\n  let fast = head\n  while (fast && fast.next) { // fast needs two more nodes to jump\n    slow = slow.next // one step\n    fast = fast.next.next // two steps\n    if (slow === fast) return true // they met inside a loop: there is a cycle\n  }\n  return false // fast fell off the end: no cycle (and slow is the middle)\n}\n",
+    "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction solve(head: ListNode | null): boolean {\n  let slow = head // both start at the head\n  let fast = head\n  while (fast && fast.next) { // fast needs two more nodes to jump\n    slow = slow!.next // one step\n    fast = fast.next.next // two steps\n    if (slow === fast) return true // they met inside a loop: there is a cycle\n  }\n  return false // fast fell off the end: no cycle (and slow is the middle)\n}\n"
+  },
+  "oneLiner": "slow = fast = head; while fast and fast.next: slow 1 step, fast 2; meet → cycle",
+  "exercise": {
+    "prompt": "Remove the middle node of the list and return the head. With an even number of nodes, remove the second of the two middle nodes. A one-node list becomes empty (null). The starter already stops slow just before the middle node, but never unlinks it. Finish it.",
+    "function": {
+      "js": "deleteMiddle",
+      "py": "delete_middle"
+    },
+    "starter": {
+      "js": "function deleteMiddle(head) {\n  if (!head || !head.next) return null\n  let slow = head\n  let fast = head.next.next\n  while (fast && fast.next) {\n    slow = slow.next\n    fast = fast.next.next\n  }\n  // slow is just before the middle node. Unlink the middle node here.\n  return head\n}\n",
+      "py": "def delete_middle(head):\n    if not head or not head['next']:\n        return None\n    slow = head\n    fast = head['next']['next']\n    while fast and fast['next']:\n        slow = slow['next']\n        fast = fast['next']['next']\n    # slow is just before the middle node. Unlink the middle node here.\n    return head\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction deleteMiddle(head: ListNode | null): ListNode | null {\n  if (!head || !head.next) return null\n  let slow: ListNode = head\n  let fast = head.next.next\n  while (fast && fast.next) {\n    slow = slow.next!\n    fast = fast.next.next\n  }\n  // slow is just before the middle node. Unlink the middle node here.\n  return head\n}\n"
+    },
+    "solution": {
+      "js": "function deleteMiddle(head) {\n  if (!head || !head.next) return null\n  let slow = head\n  let fast = head.next.next\n  while (fast && fast.next) {\n    slow = slow.next\n    fast = fast.next.next\n  }\n  slow.next = slow.next.next\n  return head\n}\n",
+      "py": "def delete_middle(head):\n    if not head or not head['next']:\n        return None\n    slow = head\n    fast = head['next']['next']\n    while fast and fast['next']:\n        slow = slow['next']\n        fast = fast['next']['next']\n    slow['next'] = slow['next']['next']\n    return head\n",
+      "ts": "type ListNode = { val: number; next: ListNode | null }\n\nfunction deleteMiddle(head: ListNode | null): ListNode | null {\n  if (!head || !head.next) return null\n  let slow: ListNode = head\n  let fast = head.next.next\n  while (fast && fast.next) {\n    slow = slow.next!\n    fast = fast.next.next\n  }\n  slow.next = slow.next!.next\n  return head\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": {
+                  "val": 4,
+                  "next": {
+                    "val": 5,
+                    "next": null
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 2,
+            "next": {
+              "val": 4,
+              "next": {
+                "val": 5,
+                "next": null
+              }
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": {
+                  "val": 4,
+                  "next": null
+                }
+              }
+            }
+          }
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 2,
+            "next": {
+              "val": 4,
+              "next": null
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 7,
+            "next": null
+          }
+        ],
+        "expected": null
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          null
+        ],
+        "expected": null
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": null
+            }
+          }
+        ],
+        "expected": {
+          "val": 1,
+          "next": null
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "next": {
+              "val": 2,
+              "next": {
+                "val": 3,
+                "next": null
+              }
+            }
+          }
+        ],
+        "expected": {
+          "val": 1,
+          "next": {
+            "val": 3,
+            "next": null
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 5,
+            "next": {
+              "val": 6,
+              "next": {
+                "val": 7,
+                "next": {
+                  "val": 8,
+                  "next": {
+                    "val": 9,
+                    "next": {
+                      "val": 10,
+                      "next": null
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "expected": {
+          "val": 5,
+          "next": {
+            "val": 6,
+            "next": {
+              "val": 7,
+              "next": {
+                "val": 9,
+                "next": {
+                  "val": 10,
+                  "next": null
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "args": [
+          {
+            "val": 4,
+            "next": {
+              "val": 4,
+              "next": {
+                "val": 4,
+                "next": {
+                  "val": 4,
+                  "next": {
+                    "val": 4,
+                    "next": {
+                      "val": 4,
+                      "next": {
+                        "val": 4,
+                        "next": null
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "expected": {
+          "val": 4,
+          "next": {
+            "val": 4,
+            "next": {
+              "val": 4,
+              "next": {
+                "val": 4,
+                "next": {
+                  "val": 4,
+                  "next": {
+                    "val": 4,
+                    "next": null
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "hints": [
+      "Starting fast two nodes ahead makes slow stop one node early, right before the middle.",
+      "Skip the middle node: set slow.next to slow.next.next."
+    ]
+  },
+  "problems": [
+    {
+      "id": "middle-of-list",
+      "role": "warm-up"
+    },
+    {
+      "id": "remove-from-end",
+      "role": "core"
+    },
+    {
+      "id": "cycle-entry",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "fast reaches the end after about n / 2 moves. In a cycle, fast gains one step per move, so they meet within one lap. Only two pointers are stored."
+  },
+  "mistakes": [
+    "Checking only fast.next and not fast, which crashes when fast is already null.",
+    "Starting both pointers in a way that gives the first middle when the question wants the second (or the reverse).",
+    "Comparing values instead of nodes when testing for a meeting. Different nodes can hold the same value.",
+    "For the start of a cycle, forgetting the second phase: reset one pointer to the head and move both one step at a time."
+  ],
+  "quiz": [
+    {
+      "question": "slow and fast start at the head of a 6-node list. Where is slow when the loop ends?",
+      "choices": [
+        "Node 3, the first middle",
+        "Node 4, the second middle",
+        "Node 6, the tail"
+      ],
+      "answer": 1,
+      "explain": "fast stops after 3 jumps (at null), and slow has moved 3 steps, landing on the 4th node: the second middle."
+    },
+    {
+      "question": "Why must fast eventually meet slow if there is a cycle?",
+      "choices": [
+        "Fast gets one step closer every move, so the gap reaches zero",
+        "Both pointers stop at the tail",
+        "The cycle is always short"
+      ],
+      "answer": 0,
+      "explain": "Inside the loop the gap shrinks by exactly one each move, so it cannot jump over slow."
+    },
+    {
+      "question": "You want the 2nd node from the end in one pass. What setup works?",
+      "choices": [
+        "Move a lead pointer 2 steps ahead, then move both until the lead is null",
+        "Move slow 1 and fast 3",
+        "Reverse the list first"
+      ],
+      "answer": 0,
+      "explain": "With a gap of 2, when the lead walks off the end the trailing pointer is on the 2nd-last node."
+    }
+  ],
+  "interviewTip": "Trace the pointers on lists of length 1, 2 and 3 out loud. Those tiny cases settle which middle you return and catch null checks before the interviewer does."
+}

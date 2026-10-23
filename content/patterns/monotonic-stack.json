@@ -1,0 +1,347 @@
+{
+  "id": "monotonic-stack",
+  "parent": "stack",
+  "title": "Monotonic stack",
+  "category": "Stack",
+  "level": "se",
+  "summary": "Keep a stack of positions whose answer is still unknown, in sorted order. A new item pops and answers every item it beats.",
+  "minutes": 15,
+  "idea": "Items waiting for a bigger value form a falling run. The next bigger value answers them from the top down, so each is popped once.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "For each item you need the next or previous item that is bigger or smaller.",
+        "think": "Keep indexes on a stack in sorted order. A new item pops every waiting item it beats and becomes their answer."
+      },
+      {
+        "see": "You need a span: how many items in a row before this one were lower.",
+        "think": "Pop every lower item. The new top is the nearest higher item, and the span is the distance to it."
+      },
+      {
+        "see": "The largest rectangle, or area, limited by the shortest bar in a range.",
+        "think": "Keep bars in rising order. When a shorter bar arrives, pop and measure the area each popped bar could reach."
+      },
+      {
+        "see": "A nested loop that scans right from each item until it finds a bigger one.",
+        "think": "That is O(n²). One stack pass gives every answer in O(n)."
+      }
+    ],
+    "phrasings": [
+      "For each day's temperature, how many days until a warmer day?",
+      "For each building, find the first taller building to its right.",
+      "How many days in a row up to today had a share price no higher than today's?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "scan-right-vs-monotonic",
+    "title": "Answer the waiting items",
+    "alt": "On the left, each item scans right until it finds a bigger value, costing n times n steps. On the right, indexes wait on a stack in falling order and each new value pops every smaller waiting item, so each index is pushed and popped once.",
+    "caption": "Each index is pushed once and popped once, so the pass is linear.",
+    "before": {
+      "label": "Brute force: scan right from each",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Pick item i",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Scan right",
+          "kind": "decision",
+          "col": 1,
+          "row": 0,
+          "sub": "until bigger"
+        },
+        {
+          "id": "c",
+          "label": "n × n steps",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "O(n²) time"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: pop what the new item beats",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "New item x",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Top < x?",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Pop: answer is x",
+          "kind": "state",
+          "col": 2,
+          "row": 0
+        },
+        {
+          "id": "d",
+          "label": "Push x",
+          "kind": "good",
+          "col": 1,
+          "row": 1,
+          "sub": "O(n) total"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c",
+          "label": "yes"
+        },
+        {
+          "from": "b",
+          "to": "d",
+          "label": "no"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "next-greater",
+    "function": {
+      "js": "nextGreater",
+      "py": "next_greater"
+    },
+    "code": {
+      "js": "function nextGreater(nums) {\n  const answer = nums.map(() => -1), stack = [] //@init\n  for (let i = 0; i < nums.length; i++) { //@loop\n    while (stack.length && nums[stack[stack.length - 1]] < nums[i]) { //@check\n      answer[stack.pop()] = nums[i] //@pop\n    }\n    stack.push(i) //@push\n  }\n  return answer //@done\n}",
+      "py": "def next_greater(nums):\n    answer, stack = [-1] * len(nums), []  #@init\n    for i in range(len(nums)):  #@loop\n        while stack and nums[stack[-1]] < nums[i]:  #@check\n            answer[stack.pop()] = nums[i]  #@pop\n        stack.append(i)  #@push\n    return answer  #@done"
+    },
+    "examples": [
+      {
+        "label": "Mixed values",
+        "input": {
+          "nums": "2, 7, 3, 5, 4, 6, 8"
+        }
+      },
+      {
+        "label": "Falling then a jump",
+        "input": {
+          "nums": "9, 6, 4, 10"
+        }
+      },
+      {
+        "label": "Already rising",
+        "input": {
+          "nums": "1, 2, 3"
+        }
+      }
+    ],
+    "inputHelp": "Up to 12 whole numbers between -99 and 99, separated by commas."
+  },
+  "template": {
+    "py": "def solve(nums):\n    answer = [-1] * len(nums)  # -1 means no bigger value to the right\n    stack = []  # indexes still waiting, values falling from bottom to top\n    for i, x in enumerate(nums):\n        while stack and nums[stack[-1]] < x:\n            answer[stack.pop()] = x  # x is the first bigger value for that index\n        stack.append(i)  # i now waits for its own answer\n    return answer\n",
+    "js": "function solve(nums) {\n  const answer = nums.map(() => -1) // -1 means no bigger value to the right\n  const stack = [] // indexes still waiting, values falling from bottom to top\n  nums.forEach((x, i) => {\n    while (stack.length && nums[stack[stack.length - 1]] < x) {\n      answer[stack.pop()] = x // x is the first bigger value for that index\n    }\n    stack.push(i) // i now waits for its own answer\n  })\n  return answer\n}\n",
+    "ts": "function solve(nums: number[]): number[] {\n  const answer = nums.map(() => -1) // -1 means no bigger value to the right\n  const stack: number[] = [] // indexes still waiting, values falling from bottom to top\n  nums.forEach((x, i) => {\n    while (stack.length && nums[stack[stack.length - 1]] < x) {\n      answer[stack.pop()!] = x // x is the first bigger value for that index\n    }\n    stack.push(i) // i now waits for its own answer\n  })\n  return answer\n}\n"
+  },
+  "oneLiner": "for i: while top < nums[i] → pop and answer it; push i",
+  "exercise": {
+    "prompt": "prices[i] is a share price on day i. The span of day i is the number of days in a row, ending with day i, whose price was no higher than prices[i]. Return every span. The starter pushes each day but never pops, so it only works for falling prices. Add the pop loop.",
+    "function": {
+      "js": "priceSpans",
+      "py": "price_spans"
+    },
+    "starter": {
+      "js": "function priceSpans(prices) {\n  const spans = []\n  const stack = [] // indexes of days with higher prices, nearest on top\n  for (let i = 0; i < prices.length; i++) {\n    // Pop every day whose price is not higher than prices[i].\n    const start = stack.length ? stack[stack.length - 1] : -1\n    spans.push(i - start)\n    stack.push(i)\n  }\n  return spans\n}\n",
+      "py": "def price_spans(prices):\n    spans = []\n    stack = []  # indexes of days with higher prices, nearest on top\n    for i in range(len(prices)):\n        # Pop every day whose price is not higher than prices[i].\n        start = stack[-1] if stack else -1\n        spans.append(i - start)\n        stack.append(i)\n    return spans\n",
+      "ts": "function priceSpans(prices: number[]): number[] {\n  const spans: number[] = []\n  const stack: number[] = [] // indexes of days with higher prices, nearest on top\n  for (let i = 0; i < prices.length; i++) {\n    // Pop every day whose price is not higher than prices[i].\n    const start = stack.length ? stack[stack.length - 1] : -1\n    spans.push(i - start)\n    stack.push(i)\n  }\n  return spans\n}\n"
+    },
+    "solution": {
+      "js": "function priceSpans(prices) {\n  const spans = []\n  const stack = []\n  for (let i = 0; i < prices.length; i++) {\n    while (stack.length && prices[stack[stack.length - 1]] <= prices[i]) stack.pop()\n    const start = stack.length ? stack[stack.length - 1] : -1\n    spans.push(i - start)\n    stack.push(i)\n  }\n  return spans\n}\n",
+      "py": "def price_spans(prices):\n    spans = []\n    stack = []\n    for i in range(len(prices)):\n        while stack and prices[stack[-1]] <= prices[i]:\n            stack.pop()\n        start = stack[-1] if stack else -1\n        spans.append(i - start)\n        stack.append(i)\n    return spans\n",
+      "ts": "function priceSpans(prices: number[]): number[] {\n  const spans: number[] = []\n  const stack: number[] = []\n  for (let i = 0; i < prices.length; i++) {\n    while (stack.length && prices[stack[stack.length - 1]] <= prices[i]) stack.pop()\n    const start = stack.length ? stack[stack.length - 1] : -1\n    spans.push(i - start)\n    stack.push(i)\n  }\n  return spans\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          [
+            100,
+            80,
+            60,
+            70,
+            60,
+            75,
+            85
+          ]
+        ],
+        "expected": [
+          1,
+          1,
+          1,
+          2,
+          1,
+          4,
+          6
+        ]
+      },
+      {
+        "args": [
+          [
+            5,
+            4,
+            3
+          ]
+        ],
+        "expected": [
+          1,
+          1,
+          1
+        ]
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          []
+        ],
+        "expected": []
+      },
+      {
+        "args": [
+          [
+            7
+          ]
+        ],
+        "expected": [
+          1
+        ]
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ]
+        ],
+        "expected": [
+          1,
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "args": [
+          [
+            3,
+            3,
+            3
+          ]
+        ],
+        "expected": [
+          1,
+          2,
+          3
+        ]
+      },
+      {
+        "args": [
+          [
+            3,
+            1,
+            2,
+            5,
+            1
+          ]
+        ],
+        "expected": [
+          1,
+          1,
+          2,
+          4,
+          1
+        ]
+      }
+    ],
+    "hints": [
+      "A day with a price no higher than today can never be the stopping point for any later day either, so it can be popped for good.",
+      "Pop while the top price is <= prices[i]. Then the top, if any, is the nearest higher day, and the span is i minus its index."
+    ]
+  },
+  "problems": [
+    {
+      "id": "next-higher-price",
+      "role": "core"
+    },
+    {
+      "id": "tallest-rectangle",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "why": "The inner while loop looks nested, but every index is pushed once and popped at most once, so the total work over the whole pass is at most 2n."
+  },
+  "mistakes": [
+    "Pushing values instead of indexes, so you cannot work out distances or fill the answer array.",
+    "Using < when the question needs <= (or the other way round). Decide what happens with equal values.",
+    "Calling the nested while loop O(n²). Each index is popped at most once, so it is O(n).",
+    "Forgetting the items left on the stack at the end: they have no answer, so keep their default."
+  ],
+  "quiz": [
+    {
+      "question": "Why is a monotonic stack pass O(n) even with a while loop inside the for loop?",
+      "choices": [
+        "The while loop runs at most once",
+        "Each index is pushed once and popped at most once",
+        "The stack never holds more than 2 items"
+      ],
+      "answer": 1,
+      "explain": "Across the whole pass there are at most n pushes and n pops, so the total work is linear."
+    },
+    {
+      "question": "For next greater element, what order do the values on the stack keep from bottom to top?",
+      "choices": [
+        "Rising",
+        "Falling (or equal)",
+        "No particular order"
+      ],
+      "answer": 1,
+      "explain": "A bigger value pops everything smaller before it is pushed, so what remains is a falling run."
+    },
+    {
+      "question": "For stock spans, after popping all lower or equal prices, what does the top of the stack tell you?",
+      "choices": [
+        "The nearest earlier day with a higher price",
+        "The highest price so far",
+        "The first day of the list"
+      ],
+      "answer": 0,
+      "explain": "Everything lower was popped, so the top is the nearest higher day. The span is the distance to it, or i + 1 if the stack is empty."
+    }
+  ],
+  "interviewTip": "State the invariant before coding: “the stack holds indexes still waiting for an answer, with falling values”. Then explain the O(n) cost as one push and one pop per index."
+}

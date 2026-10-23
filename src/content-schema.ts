@@ -792,8 +792,10 @@ export function validatePattern(value: unknown, where = 'pattern'): string[] {
     })
     const ids = value.problems.map(item => isRec(item) ? item.id : undefined)
     if (new Set(ids).size !== ids.length) check.fail('problems', 'duplicate problem')
-    const roles = new Set(value.problems.map(item => isRec(item) ? item.role : undefined))
-    for (const role of ['warm-up', 'core', 'stretch']) if (!roles.has(role)) check.fail('problems', `expected a ${role} problem`)
+    const roles = value.problems.map(item => isRec(item) ? item.role : undefined)
+    const rank = (role: unknown) => ['warm-up', 'core', 'stretch'].indexOf(role as string)
+    if (new Set(roles).size < 2) check.fail('problems', 'expected at least two different roles')
+    if (roles.some((role, index) => index > 0 && rank(role) < rank(roles[index - 1]))) check.fail('problems', 'expected warm-up, then core, then stretch')
   }
   if (!isRec(value.complexity)) check.fail('complexity', 'expected object')
   else {

@@ -8,7 +8,7 @@ import { validatePattern } from './content-schema'
 import { cardIds } from './flashcards'
 import { gameStats, patternPageDone, patternXp, XP_RULES } from './gamification'
 import { buildMock, PATTERN_RUBRIC, seeded } from './mocks'
-import { PICKER_ROUND, loadPatterns, patternIndex, patternsForProblem, patternTree, pickerRound, pickerScore } from './patterns'
+import { PICKER_CHOICES, PICKER_ROUND, loadPatterns, patternIndex, patternsForProblem, patternTree, pickerRound, pickerScore } from './patterns'
 import { stripMarkers } from './patterns/markers'
 import { getTracer, TRACERS } from './patterns/tracers'
 import { patternQueue, planStudy } from './planner'
@@ -59,6 +59,8 @@ describe('pattern content', () => {
     ]))
     expect(validatePattern({ ...page, category: 'Juggling' })).toContain('pattern.category: expected a known pattern')
     expect(validatePattern({ ...page, problems: (page.problems as unknown[]).slice(0, 1) })).toContain('pattern.problems: expected 2–4 linked problems')
+    expect(validatePattern({ ...page, problems: [{ id: 'a', role: 'core' }, { id: 'b', role: 'core' }] })).toContain('pattern.problems: expected at least two different roles')
+    expect(validatePattern({ ...page, problems: [{ id: 'a', role: 'stretch' }, { id: 'b', role: 'warm-up' }] })).toContain('pattern.problems: expected warm-up, then core, then stretch')
     expect(validatePattern({ ...page, parent: page.id })).toContain('pattern.parent: expected another page id')
     expect(validatePattern({ ...page, minutes: 2 })).toContain('pattern.minutes: expected integer 5–45')
     expect(validatePattern({ ...page, surprise: true }).length).toBeGreaterThan(0)
@@ -68,8 +70,13 @@ describe('pattern content', () => {
     const base = patternIndex[0]
     const child: PatternSummary = { ...base, id: 'child-page', parent: base.id }
     const tree = patternTree([...patternIndex, child])
-    expect(tree.map(item => item.page.id)).toEqual(order)
+    expect(tree.map(item => item.page.id)).toEqual(patternIndex.filter(page => !page.parent).map(page => page.id))
     expect(tree[0].children.map(item => item.id)).toEqual(['child-page'])
+    const real = patternTree(patternIndex)
+    const kids = (id: string) => real.find(item => item.page.id === id)!.children.map(item => item.id)
+    expect(kids('stack')).toEqual(['basic-stack', 'monotonic-stack'])
+    expect(kids('binary-search')).toEqual(['search-on-answer'])
+    expect(kids('linked-lists')).toEqual(['fast-slow-pointers', 'in-place-reversal'])
   })
 
   it('links problems to their pattern page', () => {
@@ -120,7 +127,7 @@ describe('pattern visualisers', () => {
       const parsed = tracer.parse(input)
       expect(parsed.ok, tracer.id).toBe(false)
       if (!parsed.ok) expect(Object.keys(parsed.errors).length).toBeGreaterThan(0)
-      const big = Object.fromEntries(tracer.params.map(param => [param.name, param.kind === 'ints' ? Array.from({ length: 40 }, () => 1).join(', ') : '1']))
+      const big = Object.fromEntries(tracer.params.map(param => [param.name, param.kind === 'int' ? '1' : Array.from({ length: 40 }, () => 1).join(', ')]))
       expect(tracer.parse(big).ok, `${tracer.id} long list`).toBe(false)
     }
   })
@@ -197,8 +204,15 @@ describe('pattern picker', () => {
     expect(pickerRound(43)).not.toEqual(round)
     expect(new Set(round.map(item => item.prompt)).size).toBe(PICKER_ROUND)
     for (const question of round) {
-      expect(question.choices).toEqual(order)
+      expect(question.choices).toHaveLength(PICKER_CHOICES)
       expect(question.choices).toContain(question.answer)
+      expect(question.choices).toEqual(order.filter(id => question.choices.includes(id)))
+      const answer = patternIndex.find(page => page.id === question.answer)!
+      for (const id of question.choices.filter(id => id !== question.answer)) {
+        const other = patternIndex.find(page => page.id === id)!
+        expect(other.parent === answer.id || answer.parent === other.id, `${id} is related to ${answer.id}`).toBe(false)
+        expect(other.drills, `${id} shares the prompt`).not.toContain(question.prompt)
+      }
       expect(question.explain.length).toBeGreaterThan(10)
     }
   })

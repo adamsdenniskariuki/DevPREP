@@ -3,7 +3,7 @@ import type { KeyboardEvent } from 'react'
 import Editor from './Editor'
 import Icon from './Icon'
 import { getTracer } from '../patterns/tracers'
-import type { ArrayView, MapView, Trace, VarValue } from '../patterns/tracers'
+import type { ArrayView, ListView, MapView, Trace, VarValue } from '../patterns/tracers'
 import { stripMarkers } from '../patterns/markers'
 import type { PatternVisualiserSpec } from '../pattern-types'
 
@@ -31,7 +31,7 @@ function ArrayRow({ view }: { view: ArrayView }) {
   const [lo, hi] = view.window ?? [-1, -2]
   return <div className="pv-array">
     <p className="pv-array-label">{view.label}</p>
-    <ol className="pv-cells" aria-label={view.label}>
+    {view.values.length === 0 ? <p className="muted pv-empty">Empty</p> : <ol className="pv-cells" aria-label={view.label}>
       {view.values.map((value, index) => {
         const pointers = view.pointers?.filter(pointer => pointer.index === index).map(pointer => pointer.name) ?? []
         const inWindow = index >= lo && index <= hi
@@ -43,7 +43,35 @@ function ArrayRow({ view }: { view: ArrayView }) {
           <span className="pv-pointers" aria-hidden="true">{pointers.map(name => <span key={name} className="pv-pointer">{name}</span>)}</span>
         </li>
       })}
-    </ol>
+    </ol>}
+  </div>
+}
+
+/** Where a node's next pointer goes, as a short arrow and as words for screen readers. */
+function nextLink(index: number, next: number | null): [string, string] {
+  if (next === null) return ['∅', 'next is null']
+  if (next === index + 1) return ['→', `next is node ${next}`]
+  if (next === index - 1) return ['←', `next is node ${next}`]
+  return [`→${next}`, `next is node ${next}`]
+}
+
+function ListRow({ view }: { view: ListView }) {
+  return <div className="pv-array">
+    <p className="pv-array-label">{view.label}</p>
+    {view.values.length === 0 ? <p className="muted pv-empty">Empty</p> : <ol className="pv-cells pv-list" aria-label={view.label}>
+      {view.values.map((value, index) => {
+        const pointers = view.pointers?.filter(pointer => pointer.index === index).map(pointer => pointer.name) ?? []
+        const marked = view.marked?.includes(index)
+        const dropped = view.dropped?.includes(index)
+        const [arrow, words] = nextLink(index, view.next[index])
+        const states = [(view.head ?? 0) === index && 'head', dropped && 'removed', marked && 'highlighted', pointers.length && `pointer ${pointers.join(', ')}`].filter(Boolean).join('; ')
+        return <li key={index} className={['pv-cell', 'pv-node', marked && 'marked', dropped && 'dropped', pointers.length && 'pointed'].filter(Boolean).join(' ')}>
+          <span className="pv-index" aria-hidden="true">{index}</span>
+          <span className="pv-value"><span className="sr-only">Node {index}: </span>{value}<span className="pv-next" aria-hidden="true">{arrow}</span><span className="sr-only">, {words}{states && ` (${states})`}</span></span>
+          <span className="pv-pointers" aria-hidden="true">{pointers.map(name => <span key={name} className="pv-pointer">{name}</span>)}</span>
+        </li>
+      })}
+    </ol>}
   </div>
 }
 
@@ -111,6 +139,7 @@ export default function PatternVisualiser({ spec }: { spec: PatternVisualiserSpe
     <div className="pv-stage" tabIndex={0} role="group" aria-roledescription="step-through" aria-label="Visualiser. Use the left and right arrow keys to step." onKeyDown={onKey} data-testid="pv-stage">
       <p className="pv-text" aria-live="polite"><span className="pv-count">Step {Math.min(frame, last) + 1} of {last + 1}.</span> {current.text}</p>
       <div className="pv-views">
+        {current.view.lists?.map(view => <ListRow key={view.name} view={view} />)}
         {current.view.arrays.map(view => <ArrayRow key={view.name} view={view} />)}
         {current.view.map && <MapPanel map={current.view.map} />}
       </div>

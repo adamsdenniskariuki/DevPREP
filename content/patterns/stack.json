@@ -1,0 +1,305 @@
+{
+  "id": "stack",
+  "title": "Stack",
+  "category": "Stack",
+  "level": "se",
+  "summary": "Keep the items you still need to come back to on a stack, and always deal with the newest one first.",
+  "minutes": 15,
+  "idea": "When the latest open item must be finished before older ones, a stack holds the unfinished work in order, so every step is O(1).",
+  "recognise": {
+    "signals": [
+      {
+        "see": "Things nest inside each other: brackets, folders, tags, or calls inside calls.",
+        "think": "Push when something opens, pop when it closes. The top is always the innermost open item."
+      },
+      {
+        "see": "A later item can cancel or undo the one just before it.",
+        "think": "Push each item. When a cancel arrives, pop the top: it is exactly the one to undo."
+      },
+      {
+        "see": "You need the nearest earlier item that is bigger or smaller than the current one.",
+        "think": "Keep a stack of items still waiting for an answer, in sorted order. This is the monotonic stack."
+      },
+      {
+        "see": "You evaluate an expression or decode a string with nested parts.",
+        "think": "Push partial results when a part opens. When it closes, pop and combine with what was outside."
+      }
+    ],
+    "phrasings": [
+      "Tidy a folder path such as /home/./docs/../pics into its shortest form.",
+      "A text editor supports type and undo. Show the text after a list of actions.",
+      "For each day's price, how many days in a row up to today had a price no higher?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "rescan-vs-stack",
+    "title": "Remember the open items",
+    "alt": "On the left, every closing item rescans the text to find its partner, costing n times n steps. On the right, open items are pushed on a stack and each closing item pops its partner from the top, so every item is pushed and popped once.",
+    "caption": "The newest open item is always on top, so its partner is found in one step.",
+    "before": {
+      "label": "Brute force: rescan for a partner",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Read a closer",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Scan back",
+          "kind": "decision",
+          "col": 1,
+          "row": 0,
+          "sub": "find its opener"
+        },
+        {
+          "id": "c",
+          "label": "n × n steps",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "O(n²) time"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: push openers, pop on close",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Read an item",
+          "kind": "decision",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Push it",
+          "kind": "state",
+          "col": 0,
+          "row": 1,
+          "sub": "it opens"
+        },
+        {
+          "id": "c",
+          "label": "Pop the top",
+          "kind": "state",
+          "col": 2,
+          "row": 1,
+          "sub": "it closes"
+        },
+        {
+          "id": "d",
+          "label": "One pass",
+          "kind": "good",
+          "col": 1,
+          "row": 2,
+          "sub": "O(n) time"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b",
+          "label": "opener"
+        },
+        {
+          "from": "a",
+          "to": "c",
+          "label": "closer"
+        },
+        {
+          "from": "b",
+          "to": "d"
+        },
+        {
+          "from": "c",
+          "to": "d"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "simplify-path",
+    "function": {
+      "js": "simplifyPath",
+      "py": "simplify_path"
+    },
+    "code": {
+      "js": "function simplifyPath(path) {\n  const stack = [] //@init\n  for (const part of path.split('/')) { //@loop\n    if (part === '' || part === '.') continue //@skip\n    if (part === '..') { if (stack.length) stack.pop(); continue } //@pop\n    stack.push(part) //@push\n  }\n  return '/' + stack.join('/') //@done\n}",
+      "py": "def simplify_path(path):\n    stack = []  #@init\n    for part in path.split('/'):  #@loop\n        if part == '' or part == '.': continue  #@skip\n        if part == '..':  #@pop\n            if stack: stack.pop()\n            continue\n        stack.append(part)  #@push\n    return '/' + '/'.join(stack)  #@done"
+    },
+    "examples": [
+      {
+        "label": "Dots and a step up",
+        "input": {
+          "path": "/a/./b/../c/"
+        }
+      },
+      {
+        "label": "Step above the root",
+        "input": {
+          "path": "/../x/.."
+        }
+      },
+      {
+        "label": "Nothing to tidy",
+        "input": {
+          "path": "/docs/img"
+        }
+      }
+    ],
+    "inputHelp": "A folder path that starts with /, using letters, digits, dots, dashes and slashes. Up to 40 characters and 11 slashes."
+  },
+  "template": {
+    "py": "def solve(items):\n    stack = []  # unfinished items, newest on top\n    for item in items:\n        if opens(item):\n            stack.append(item)  # remember it until it is closed\n        elif stack and closes(stack[-1], item):\n            stack.pop()  # the top is always the one to finish first\n        else:\n            return False  # a closer with nothing to match\n    return not stack  # anything left was never closed\n\n\ndef opens(item):\n    return item in '([{'\n\n\ndef closes(top, item):\n    return top + item in ('()', '[]', '{}')\n",
+    "js": "function solve(items) {\n  const stack = [] // unfinished items, newest on top\n  for (const item of items) {\n    if (opens(item)) stack.push(item) // remember it until it is closed\n    else if (stack.length && closes(stack[stack.length - 1], item)) stack.pop() // the top is the one to finish first\n    else return false // a closer with nothing to match\n  }\n  return stack.length === 0 // anything left was never closed\n}\n\nfunction opens(item) {\n  return '([{'.includes(item)\n}\n\nfunction closes(top, item) {\n  return ['()', '[]', '{}'].includes(top + item)\n}\n",
+    "ts": "function solve(items: string): boolean {\n  const stack: string[] = [] // unfinished items, newest on top\n  for (const item of items) {\n    if (opens(item)) stack.push(item) // remember it until it is closed\n    else if (stack.length && closes(stack[stack.length - 1], item)) stack.pop() // the top is the one to finish first\n    else return false // a closer with nothing to match\n  }\n  return stack.length === 0 // anything left was never closed\n}\n\nfunction opens(item: string): boolean {\n  return '([{'.includes(item)\n}\n\nfunction closes(top: string, item: string): boolean {\n  return ['()', '[]', '{}'].includes(top + item)\n}\n"
+  },
+  "oneLiner": "for x: opens → push; closes → pop and check the top; at the end the stack must be empty",
+  "exercise": {
+    "prompt": "keys is what someone typed. Each # is a backspace that deletes the character before it, if there is one. Return the text that is left. The starter copies every character except #, so backspaces do nothing yet. Make # remove the newest kept character.",
+    "function": {
+      "js": "applyBackspaces",
+      "py": "apply_backspaces"
+    },
+    "starter": {
+      "js": "function applyBackspaces(keys) {\n  const stack = []\n  for (const ch of keys) {\n    if (ch === '#') {\n      // Remove the newest kept character, if there is one.\n      continue\n    }\n    stack.push(ch)\n  }\n  return stack.join('')\n}\n",
+      "py": "def apply_backspaces(keys):\n    stack = []\n    for ch in keys:\n        if ch == '#':\n            # Remove the newest kept character, if there is one.\n            continue\n        stack.append(ch)\n    return ''.join(stack)\n",
+      "ts": "function applyBackspaces(keys: string): string {\n  const stack: string[] = []\n  for (const ch of keys) {\n    if (ch === '#') {\n      // Remove the newest kept character, if there is one.\n      continue\n    }\n    stack.push(ch)\n  }\n  return stack.join('')\n}\n"
+    },
+    "solution": {
+      "js": "function applyBackspaces(keys) {\n  const stack = []\n  for (const ch of keys) {\n    if (ch === '#') {\n      if (stack.length) stack.pop()\n      continue\n    }\n    stack.push(ch)\n  }\n  return stack.join('')\n}\n",
+      "py": "def apply_backspaces(keys):\n    stack = []\n    for ch in keys:\n        if ch == '#':\n            if stack:\n                stack.pop()\n            continue\n        stack.append(ch)\n    return ''.join(stack)\n",
+      "ts": "function applyBackspaces(keys: string): string {\n  const stack: string[] = []\n  for (const ch of keys) {\n    if (ch === '#') {\n      if (stack.length) stack.pop()\n      continue\n    }\n    stack.push(ch)\n  }\n  return stack.join('')\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          "ab#c"
+        ],
+        "expected": "ac"
+      },
+      {
+        "args": [
+          "abc##d"
+        ],
+        "expected": "ad"
+      },
+      {
+        "args": [
+          "x#y"
+        ],
+        "expected": "y"
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          "#a"
+        ],
+        "expected": "a"
+      },
+      {
+        "args": [
+          "a##"
+        ],
+        "expected": ""
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": ""
+      },
+      {
+        "args": [
+          "xyz"
+        ],
+        "expected": "xyz"
+      },
+      {
+        "args": [
+          "a#b#c#"
+        ],
+        "expected": ""
+      }
+    ],
+    "hints": [
+      "The character a backspace deletes is always the newest one still kept, which is the top of the stack.",
+      "On #, pop only when the stack is not empty, so a backspace at the start does nothing."
+    ]
+  },
+  "problems": [
+    {
+      "id": "evaluate-postfix",
+      "role": "warm-up"
+    },
+    {
+      "id": "decode-nested-repeats",
+      "role": "core"
+    },
+    {
+      "id": "tallest-rectangle",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "why": "Each item is pushed at most once and popped at most once, so the total work is linear. In the worst case every item is still open, so the stack holds n items."
+  },
+  "mistakes": [
+    "Popping or reading the top of an empty stack. Check that it is not empty first.",
+    "Forgetting to check the stack at the end: items left on it were never closed.",
+    "Using a queue by mistake (shift instead of pop), which handles the oldest item first.",
+    "Pushing values when you later need positions. Push indexes when the answer is a distance.",
+    "Rebuilding a string on every step instead of joining the stack once at the end."
+  ],
+  "quiz": [
+    {
+      "question": "A closing bracket arrives. Which opener must it match?",
+      "choices": [
+        "The first opener ever pushed",
+        "The opener on top of the stack",
+        "Any opener still on the stack"
+      ],
+      "answer": 1,
+      "explain": "Brackets nest, so the newest unclosed opener must close first. That is the top of the stack."
+    },
+    {
+      "question": "You finish reading the input and the stack is not empty. What does that mean for bracket matching?",
+      "choices": [
+        "The input is balanced",
+        "Some openers were never closed",
+        "The stack has a bug"
+      ],
+      "answer": 1,
+      "explain": "Every opener left on the stack is still waiting for its closer, so the input is not balanced."
+    },
+    {
+      "question": "For each price you need the next higher price to its right. What should the stack hold?",
+      "choices": [
+        "Indexes still waiting for a higher price",
+        "Every price seen so far, sorted",
+        "Only the highest price so far"
+      ],
+      "answer": 0,
+      "explain": "Waiting indexes form a falling run. A higher price pops and answers every lower one on top. That is the monotonic stack."
+    }
+  ],
+  "interviewTip": "Say what the stack holds in one sentence, such as “openers that are not closed yet”. Then say when you push and when you pop. It makes the code easy to follow."
+}
