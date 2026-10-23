@@ -302,6 +302,16 @@ for (const mount of mounts) {
       await expect(offline.getByRole('heading', { level: 2, name: 'Review your design' })).toBeVisible()
       await expect(offline.getByRole('figure', { name: /^Reference design for / })).toBeVisible()
       await offline.getByRole('checkbox', { name: 'Trade-offs' }).check()
+      await expect.poll(() => offline.evaluate(() => new Promise<boolean>((resolve, reject) => {
+        const open = indexedDB.open('devprep-boards')
+        open.onerror = () => reject(open.error)
+        open.onsuccess = () => {
+          const db = open.result
+          const request = db.transaction('boards').objectStore('boards').getAll()
+          request.onsuccess = () => { db.close(); resolve(request.result.some((board: { practice?: { checks?: boolean[] } }) => board.practice?.checks?.[6] === true)) }
+          request.onerror = () => { db.close(); reject(request.error) }
+        }
+      }))).toBe(true)
       await offline.reload()
       await expect(area.locator('canvas.interactive')).toBeVisible()
       await expect(offline.getByRole('checkbox', { name: 'Trade-offs' })).toBeChecked()
