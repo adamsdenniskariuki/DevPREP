@@ -6,6 +6,7 @@ import knownIds from '../tests/fixtures/problem-ids.json' with { type: 'json' }
 import { validateProblem } from './content-schema'
 import { lessons } from './curriculum'
 import { loadProblems, problemIndex } from './problems'
+import { patternIndex } from './patterns'
 import { PROBLEM_PATTERNS, type Problem } from './problem-types'
 import { deepEqual, formatArgs, formatValue, PY_HARNESS, pythonMessage, runJs, runPython } from './runner/core'
 import { PYODIDE_VERSION } from './runner/pyodide-version'
@@ -32,6 +33,16 @@ describe('problem content', () => {
   it('links only to lessons that exist', () => {
     const ids = new Set(lessons.map(lesson => lesson.id))
     expect(problems.filter(problem => problem.lessonId && !ids.has(problem.lessonId)).map(problem => problem.id)).toEqual([])
+  })
+
+  it('gives every problem a known pattern, and any sub-pattern names a published pattern page under it', () => {
+    const categories = new Set<string>(PROBLEM_PATTERNS)
+    expect(problems.filter(problem => !categories.has(problem.pattern)).map(problem => problem.id)).toEqual([])
+    for (const problem of problems.filter(item => item.subpattern !== undefined)) {
+      const page = patternIndex.find(item => item.id === problem.subpattern)
+      expect(page, `${problem.id} subpattern`).toBeDefined()
+      expect(page!.category, problem.id).toBe(problem.pattern)
+    }
   })
 
   it('covers every core DSA pattern at both levels', () => {

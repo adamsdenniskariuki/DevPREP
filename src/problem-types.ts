@@ -1,5 +1,5 @@
 /** Canonical pattern order for lists, filters, progress and badges. */
-export const PROBLEM_PATTERNS = ['Arrays & hashing', 'Two pointers', 'Sliding window', 'Stack', 'Binary search', 'Linked lists', 'Trees', 'Tries', 'Heaps', 'Graphs', 'Backtracking', 'Dynamic programming', 'Greedy', 'Intervals', 'Bit manipulation', 'Design & concurrency'] as const
+export const PROBLEM_PATTERNS = ['Arrays & hashing', 'Two pointers', 'Sliding window', 'Stack', 'Binary search', 'Linked lists', 'Trees', 'Tries', 'Heaps', 'Graphs', 'Backtracking', 'Dynamic programming', 'Greedy', 'Intervals', 'Bit manipulation', 'Design & concurrency', 'Prefix sums'] as const
 export type ProblemPattern = typeof PROBLEM_PATTERNS[number]
 
 export type ProblemLevel = 'se' | 'sse'
@@ -21,6 +21,8 @@ export interface ProblemSummary {
   lessonId?: string
   /** Learning paths that treat this problem as core practice. */
   paths?: ('swe' | 'senior')[]
+  /** Pattern page id when the problem teaches a sub-pattern of its category. */
+  subpattern?: string
 }
 
 /** Topic order for the SQL interview problem set (lists, filters, progress and badges). */

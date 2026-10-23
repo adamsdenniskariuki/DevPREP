@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPlacement, recordSolve, recordSqlSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
+import { beginSession, completeSession, dueLessons, emptyProgress, localDay, MAX_BACKUP_BYTES, parseBackup, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, serializeBackup, STORAGE_KEY, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
 import { EditorPrefsContext } from './editor-context'
 import type { EditorPrefs } from './editor-prefs'
 import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
@@ -12,12 +12,14 @@ import { displayDate } from './format'
 import { download } from './download'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
+import { activityXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { placementResult } from './placement'
 import { caseIds } from './cases'
 import { guideIds } from './guides'
+import { patternIds } from './patterns'
+import type { PatternLang } from './pattern-types'
 import type { CodeLanguage } from './problem-types'
 import { TOUR_KEY } from './appearance'
 import Icon from './components/Icon'
@@ -41,6 +43,7 @@ const FlashcardsScreen = lazy(() => import('./screens/FlashcardsScreen'))
 const MockScreen = lazy(() => import('./screens/MockScreen'))
 const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
 const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
+const PatternsScreen = lazy(() => import('./screens/PatternsScreen'))
 
 const navigation = [
   { id: 'home', label: 'Home', icon: 'home' },
@@ -50,11 +53,13 @@ const navigation = [
   { id: 'progress', label: 'Progress', icon: 'chart' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql']
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns']
 /** Hashes from earlier releases keep working as bookmarks. */
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
+/** Pattern course views other than a page id. */
+const PATTERN_VIEWS = new Set(['pick', 'cheatsheet'])
 
-function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string } {
+function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string } {
   const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
   const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
   if (!route || rest.length) return { route: 'unknown' }
@@ -63,6 +68,7 @@ function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: str
   if (route === 'sql') return sqlProblemIds.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
   if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
   if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
+  if (route === 'patterns') return patternIds.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = tracks.find(item => item.id === sub)?.id
   return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
 }
@@ -82,6 +88,7 @@ export default function App() {
   const [caseId, setCaseId] = useState(() => parseHash().caseId)
   const [guideId, setGuideId] = useState(() => parseHash().guideId)
   const [sqlId, setSqlId] = useState(() => parseHash().sqlId)
+  const [patternView, setPatternView] = useState(() => parseHash().patternView)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
   const [backupError, setBackupError] = useState('')
@@ -109,6 +116,7 @@ export default function App() {
       setCaseId(parsed.caseId)
       setGuideId(parsed.guideId)
       setSqlId(parsed.sqlId)
+      setPatternView(parsed.patternView)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -116,7 +124,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView])
   useEffect(() => {
     if (pendingImport) importDialog.current?.showModal()
     else importDialog.current?.close()
@@ -145,6 +153,7 @@ export default function App() {
     setCaseId(undefined)
     setGuideId(undefined)
     setSqlId(undefined)
+    setPatternView(undefined)
   }
 
   const latest = useRef(progress)
@@ -185,6 +194,28 @@ export default function App() {
     store.update(value => recordGuide(value, id, percent))
     latest.current = after
     return guideXp(after) - guideXp(before)
+  }
+  function passPatternExercise(id: string, lang: PatternLang) {
+    const before = latest.current
+    const after = recordPatternExercise(before, id, lang)
+    if (after === before) return 0
+    store.update(value => recordPatternExercise(value, id, lang))
+    latest.current = after
+    return patternXp(after) - patternXp(before)
+  }
+  function scorePatternQuiz(id: string, percent: number) {
+    const before = latest.current
+    const after = recordPatternQuiz(before, id, percent)
+    store.update(value => recordPatternQuiz(value, id, percent))
+    latest.current = after
+    return patternXp(after) - patternXp(before)
+  }
+  function finishPicker(score: number) {
+    const before = latest.current
+    const after = recordPicker(before, score)
+    store.update(value => recordPicker(value, score))
+    latest.current = after
+    return patternXp(after) - patternXp(before)
   }
 
   function gradeCard(id: string, grade: Grade) {
@@ -302,10 +333,10 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
+  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
 
   const editorContext = { prefs: editorPrefs(progress), setPrefs: changeEditorPrefs }
   return <EditorPrefsContext.Provider value={editorContext}><div className="app-shell">
@@ -364,6 +395,7 @@ export default function App() {
             {route === 'cards' && <Suspense fallback={<p role="status">Loading flashcards…</p>}><FlashcardsScreen app={app} /></Suspense>}
             {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
             {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}
+      {route === 'patterns' && <Suspense fallback={<p role="status">Loading patterns…</p>}><PatternsScreen app={app} view={patternView} /></Suspense>}
             {route === 'plan' && <PlanScreen app={app} />}
             {route === 'progress' && <ProgressScreen app={app} />}
             {route === 'settings' && <SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} />}

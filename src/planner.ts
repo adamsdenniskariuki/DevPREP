@@ -2,7 +2,7 @@ import { lessons } from './curriculum'
 import type { Track } from './curriculum-types'
 import { caseIndex } from './cases'
 import { isPathCore, patternProgress, problemIndex } from './problems'
-import { trackOptedIn, weakAreas } from './gamification'
+import { patternPageDone, trackOptedIn, weakAreas } from './gamification'
 import { getLearningPath, pathLessonIds } from './learning-paths'
 import { knownLessons } from './progress'
 import type { Progress } from './progress'
@@ -10,11 +10,19 @@ import { MOCK_MINUTES } from './mocks'
 import { guideIndex } from './guides'
 import { sqlProblemIndex, sqlTopicProgress } from './sql-problems'
 import { TOPIC_TRACK } from './guide-types'
+import { patternIndex } from './patterns'
 
-export type PlanKind = 'lesson' | 'cards' | 'problem' | 'sql' | 'case' | 'guide' | 'mock' | 'rest'
+export const PICKER_MINUTES = 10
+
+/** Unfinished pattern pages in learning order (exercise passed and quick check taken counts as finished). */
+export function patternQueue(progress: Progress) {
+  return patternIndex.filter(page => !patternPageDone(progress, page.id))
+}
+
+export type PlanKind = 'lesson' | 'cards' | 'problem' | 'sql' | 'case' | 'guide' | 'pattern' | 'mock' | 'rest'
 export interface PlanItem {
   kind: PlanKind
-  /** Lesson, problem, SQL problem, case or Field Guide id; the track for mocks. */
+  /** Lesson, problem, SQL problem, case, Field Guide or pattern page id ('pick' for picker drills); the track for mocks. */
   ref?: string
   title: string
   minutes: number
@@ -120,7 +128,7 @@ export function guideQueue(progress: Progress) {
 /**
  * Builds a day-by-day plan from today until the interview (or a default week).
  * Every day has flashcards; lessons are spread evenly (up to 3 a day); coding problems and
- * design cases alternate; every third day adds a Field Guide entry (and a SQL problem once the SQL track is opted in); mocks land weekly and on the two days before the interview,
+ * design cases alternate; every third day adds a Field Guide entry (and a SQL problem once the SQL track is opted in) and, from day one, a pattern page or picker drill; mocks land weekly and on the two days before the interview,
  * which itself is a light review day.
  */
 export function planStudy(progress: Progress, today: string): StudyPlan {
@@ -139,7 +147,8 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
   const mockTracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
   const guides = guideQueue(progress)
   const sqlProblems = sqlProblemQueue(progress)
-  let sqlAt = 0, lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0, guideAt = 0
+  const patternPages = patternQueue(progress)
+  let sqlAt = 0, lessonAt = 0, problemAt = 0, caseAt = 0, mockAt = 0, guideAt = 0, patternAt = 0
   const days: PlanDay[] = []
   for (let index = 0; index < total; index++) {
     const value = start + index
@@ -167,6 +176,12 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
     if (index % 3 === 1 && sqlAt < sqlProblems.length) {
       const problem = sqlProblems[sqlAt++]
       items.push({ kind: 'sql', ref: problem.id, title: `SQL: ${problem.title}`, minutes: 20 })
+    }
+    if (index % 3 === 0) {
+      const page = patternPages[patternAt++]
+      items.push(page
+        ? { kind: 'pattern', ref: page.id, title: `Pattern: ${page.title}`, minutes: page.minutes }
+        : { kind: 'pattern', ref: 'pick', title: 'Pattern picker drill', minutes: PICKER_MINUTES })
     }
     const daysLeft = dated ? dayNumber(saved!) - value : Infinity
     if (index % 7 === 6 || daysLeft === 1 || daysLeft === 2) {

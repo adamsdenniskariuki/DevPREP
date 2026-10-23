@@ -5,11 +5,12 @@ import type { Problem, SqlProblem } from './problem-types'
 import type { FieldGuideEntry } from './guide-types'
 import { TOPIC_TRACK } from './guide-types'
 import { COMPETENCIES, SSE_SIGNALS } from './stories'
+import type { PatternSummary } from './pattern-types'
 
 export type MockLevel = 'se' | 'sse'
 export interface MockQuestion {
-  kind: 'problem' | 'sql' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide' | 'trivia'
-  /** Problem, case, lesson, Field Guide or competency id the question came from. */
+  kind: 'problem' | 'sql' | 'case' | 'task' | 'followup' | 'behavioral' | 'guide' | 'trivia' | 'pattern'
+  /** Problem, case, lesson, Field Guide, pattern page or competency id the question came from. */
   ref: string
   title: string
   prompt: string
@@ -79,9 +80,12 @@ export interface MockData {
   labs?: Map<string, LessonLab>
   /** SQL interview problems. When given, the SQL mock's coding task is one of them. */
   sqlProblems?: Map<string, SqlProblem>
+  /** Published pattern pages. When given, DSA mocks end with one pattern-recognition question. */
+  patterns?: readonly PatternSummary[]
 }
 
 export const TRIVIA_ROUNDS = 4
+export const PATTERN_RUBRIC = ['Named the pattern before writing code', 'Pointed to the clue in the problem that suggests it', 'Gave the time and space of the pattern approach']
 const TRIVIA_RUBRIC = ['Predicted the exact output', 'Explained why in one or two sentences']
 
 /** Builds a mock interview for a track from existing content. The same seed always gives the same mock. */
@@ -155,6 +159,17 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
       const entry = pick(pool, random)
       questions.push({ kind: 'guide', ref: entry.id, title: entry.title, prompt: entry.practice.prompt, answer: entry.practice.answer, rubric: entry.practice.rubric })
     }
+  }
+  if (track === 'dsa' && data.patterns?.length) {
+    const pool = data.patterns.filter(page => page.drills.length && (level === 'sse' || page.level === 'se'))
+    const page = pick(pool.length ? pool : data.patterns, random)
+    const drill = pick(page.drills, random)
+    const signal = page.signals[0]
+    questions.push({
+      kind: 'pattern', ref: page.id, title: 'Which pattern?', prompt: `Which pattern would you reach for, and why? ${drill}`,
+      answer: `Pattern: ${page.title}. ${signal.see} ${signal.think}\n\n${page.idea}\n\nTemplate: ${page.oneLiner}. Time ${page.time}, space ${page.space}.`,
+      rubric: PATTERN_RUBRIC,
+    })
   }
   return { track, level, seed, minutes: MOCK_MINUTES[track], questions }
 }

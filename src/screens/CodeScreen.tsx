@@ -10,6 +10,7 @@ import { formatArgs, formatValue } from '../runner/core'
 import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
+import { patternsForProblem } from '../patterns'
 
 const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
 const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
@@ -103,6 +104,7 @@ function ProblemPage({ app, summary }: { app: AppModel; summary: ProblemSummary 
   return <>
     <a className="back-link" href="#code"><Icon name="back" size={16} /> All problems</a>
     <div className="page-heading"><div><div className="eyebrow">{summary.pattern.toUpperCase()} · {DIFFICULTY[summary.difficulty].toUpperCase()}{summary.level === 'sse' ? ' · SSE' : ''}</div><h1 ref={app.heading} tabIndex={-1}>{summary.title}</h1></div><SolvedMarks solved={app.progress.solved?.[summary.id]} /></div>
+    {patternsForProblem(summary).map(page => <a key={page.id} className="text-button pattern-link" href={`#patterns/${page.id}`}><Icon name="target" size={16} />Learn the pattern: {page.title}</a>)}
     {error ? <div className="alert" role="alert">{error}</div> : problem ? <Workspace app={app} problem={problem} /> : <p role="status">Loading problem…</p>}
   </>
 }

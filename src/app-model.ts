@@ -5,8 +5,9 @@ import type { LearningPath, PathId } from './learning-paths'
 import type { CodeLanguage } from './problem-types'
 import type { Activity, MockResult, Mode, Profile, Progress, Story } from './progress'
 import type { Grade } from './flashcards'
+import type { PatternLang } from './pattern-types'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql' | 'patterns'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -46,6 +47,12 @@ export interface AppModel {
   scoreDesign: (caseId: string, percent: number) => number
   /** Records a Field Guide quiz score (best kept) and returns the XP gained. */
   readGuide: (guideId: string, percent: number) => number
+  /** Records a passing pattern exercise run and returns the XP gained (0 if already passed in that language). */
+  passPatternExercise: (pageId: string, lang: PatternLang) => number
+  /** Records a pattern quick-check score (best kept) and returns the XP gained. */
+  scorePatternQuiz: (pageId: string, percent: number) => number
+  /** Records a finished pattern picker round and returns the XP gained. */
+  finishPicker: (score: number) => number
   /** Saves a language placement check; returns the lessons it marked known. */
   placeTrack: (track: Track, answers: (number | undefined)[]) => { percent: number; known: string[] }
   /** Grades a flashcard and returns the XP it earned. */

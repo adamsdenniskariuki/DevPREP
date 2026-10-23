@@ -1,0 +1,144 @@
+{
+  "id": "sliding-window",
+  "title": "Sliding window",
+  "category": "Sliding window",
+  "level": "se",
+  "summary": "Keep a window over a run of items. Grow it on the right and shrink it on the left, updating the answer as it slides.",
+  "minutes": 20,
+  "idea": "A contiguous run is a window [left, right]. Each item enters once and leaves once, so you never rescan the run.",
+  "recognise": {
+    "signals": [
+      { "see": "The answer is about a contiguous run: a subarray or substring.", "think": "Model the run as a window. Move right to add an item and left to drop one." },
+      { "see": "The question says longest, shortest or best run under a rule.", "think": "Grow until the rule breaks, shrink until it holds again, and record the answer when it holds." },
+      { "see": "The run has a fixed length k.", "think": "Add the item entering and subtract the item leaving. No inner loop is needed." },
+      { "see": "Counts of letters or kinds inside the run matter.", "think": "Keep a count map for the window. Update it on every add and every drop." }
+    ],
+    "phrasings": [
+      "Find the longest stretch of a playlist where no song repeats.",
+      "Return the highest total sales over any 7 days in a row.",
+      "Find the shortest run of shelves that holds every part on a parts list."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "window-vs-rescan",
+    "title": "Slide instead of starting over",
+    "alt": "On the left, every possible start and end of a run is tried and each run is re-added from scratch. On the right, a window grows on the right and shrinks on the left, so each item is added once and removed once.",
+    "caption": "The window keeps its running state, so moving it costs O(1) instead of re-reading the whole run.",
+    "before": {
+      "label": "Brute force: every start and end",
+      "nodes": [
+        { "id": "a", "label": "Pick start", "kind": "state", "col": 0, "row": 0 },
+        { "id": "b", "label": "Pick end", "kind": "state", "col": 1, "row": 0 },
+        { "id": "c", "label": "Re-add the run", "kind": "bad", "col": 2, "row": 0, "sub": "O(n²) or worse" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b" },
+        { "from": "b", "to": "c" }
+      ]
+    },
+    "after": {
+      "label": "Pattern: grow right, shrink left",
+      "nodes": [
+        { "id": "a", "label": "Add right item", "kind": "state", "col": 0, "row": 0 },
+        { "id": "b", "label": "Rule broken?", "kind": "decision", "col": 1, "row": 0 },
+        { "id": "c", "label": "Drop left item", "kind": "state", "col": 1, "row": 1 },
+        { "id": "d", "label": "Record answer", "kind": "good", "col": 2, "row": 0, "sub": "O(n) time" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b" },
+        { "from": "b", "to": "c", "label": "yes" },
+        { "from": "c", "to": "b", "label": "check again" },
+        { "from": "b", "to": "d", "label": "no" }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "variable-window",
+    "function": { "js": "longestWithin", "py": "longest_within" },
+    "code": {
+      "js": "function longestWithin(nums, limit) {\n  let left = 0, total = 0, best = 0 //@init\n  for (let right = 0; right < nums.length; right++) { //@grow\n    total += nums[right] //@add\n    while (total > limit) { //@check\n      total -= nums[left]; left++ //@shrink\n    }\n    best = Math.max(best, right - left + 1) //@best\n  }\n  return best //@done\n}",
+      "py": "def longest_within(nums, limit):\n    left = total = best = 0  #@init\n    for right in range(len(nums)):  #@grow\n        total += nums[right]  #@add\n        while total > limit:  #@check\n            total -= nums[left]; left += 1  #@shrink\n        best = max(best, right - left + 1)  #@best\n    return best  #@done"
+    },
+    "examples": [
+      { "label": "Shrink then grow", "input": { "nums": "2, 1, 5, 1, 1, 2", "limit": "6" } },
+      { "label": "Everything fits", "input": { "nums": "1, 2, 1", "limit": "10" } },
+      { "label": "Item over the limit", "input": { "nums": "3, 9, 2, 2", "limit": "5" } }
+    ],
+    "inputHelp": "Up to 12 whole numbers between 0 and 99, separated by commas. The window finds the longest run whose sum is at most the limit (0 to 999)."
+  },
+  "template": {
+    "py": "def solve(items):\n    left = 0\n    best = 0\n    state = {}  # what the window holds: a sum, counts, ...\n    for right in range(len(items)):\n        # 1. add items[right] to state\n        while False:  # 2. while the window breaks the rule:\n            # remove items[left] from state, then\n            left += 1\n        best = max(best, right - left + 1)  # 3. window is valid: record it\n    return best\n",
+    "js": "function solve(items) {\n  let left = 0\n  let best = 0\n  const state = new Map() // what the window holds: a sum, counts, ...\n  for (let right = 0; right < items.length; right++) {\n    // 1. add items[right] to state\n    while (false) { // 2. while the window breaks the rule:\n      // remove items[left] from state, then\n      left++\n    }\n    best = Math.max(best, right - left + 1) // 3. window is valid: record it\n  }\n  return best\n}\n",
+    "ts": "function solve<T>(items: T[]): number {\n  let left = 0\n  let best = 0\n  const state = new Map<T, number>() // what the window holds: a sum, counts, ...\n  for (let right = 0; right < items.length; right++) {\n    // 1. add items[right] to state\n    while (state.size < 0) { // 2. while the window breaks the rule:\n      // remove items[left] from state, then\n      left++\n    }\n    best = Math.max(best, right - left + 1) // 3. window is valid: record it\n  }\n  return best\n}\n"
+  },
+  "oneLiner": "for right: add(right); while broken: drop(left++); best = max(best, size)",
+  "exercise": {
+    "prompt": "stalls is a string; each letter is the kind of fruit sold at one market stall along a street. Your basket holds at most two kinds of fruit. Walking along the street without skipping a stall, return the most stalls in a row you can buy from. The shrinking step is done for you. Fill in the two missing steps.",
+    "function": { "js": "longestTwoKinds", "py": "longest_two_kinds" },
+    "starter": {
+      "js": "function longestTwoKinds(stalls) {\n  const count = new Map() // kind -> stalls of that kind in the window\n  let left = 0\n  let best = 0\n  for (let right = 0; right < stalls.length; right++) {\n    // 1. Add stalls[right] to count.\n    while (count.size > 2) {\n      const kind = stalls[left]\n      count.set(kind, count.get(kind) - 1)\n      if (count.get(kind) === 0) count.delete(kind)\n      left++\n    }\n    // 2. Update best with the window size, right - left + 1.\n  }\n  return best\n}\n",
+      "py": "def longest_two_kinds(stalls):\n    count = {}  # kind -> stalls of that kind in the window\n    left = 0\n    best = 0\n    for right in range(len(stalls)):\n        # 1. Add stalls[right] to count.\n        while len(count) > 2:\n            kind = stalls[left]\n            count[kind] -= 1\n            if count[kind] == 0:\n                del count[kind]\n            left += 1\n        # 2. Update best with the window size, right - left + 1.\n    return best\n",
+      "ts": "function longestTwoKinds(stalls: string): number {\n  const count = new Map<string, number>() // kind -> stalls of that kind in the window\n  let left = 0\n  let best = 0\n  for (let right = 0; right < stalls.length; right++) {\n    // 1. Add stalls[right] to count.\n    while (count.size > 2) {\n      const kind = stalls[left]\n      count.set(kind, count.get(kind)! - 1)\n      if (count.get(kind) === 0) count.delete(kind)\n      left++\n    }\n    // 2. Update best with the window size, right - left + 1.\n  }\n  return best\n}\n"
+    },
+    "solution": {
+      "js": "function longestTwoKinds(stalls) {\n  const count = new Map()\n  let left = 0\n  let best = 0\n  for (let right = 0; right < stalls.length; right++) {\n    count.set(stalls[right], (count.get(stalls[right]) ?? 0) + 1)\n    while (count.size > 2) {\n      const kind = stalls[left]\n      count.set(kind, count.get(kind) - 1)\n      if (count.get(kind) === 0) count.delete(kind)\n      left++\n    }\n    best = Math.max(best, right - left + 1)\n  }\n  return best\n}\n",
+      "py": "def longest_two_kinds(stalls):\n    count = {}\n    left = 0\n    best = 0\n    for right in range(len(stalls)):\n        count[stalls[right]] = count.get(stalls[right], 0) + 1\n        while len(count) > 2:\n            kind = stalls[left]\n            count[kind] -= 1\n            if count[kind] == 0:\n                del count[kind]\n            left += 1\n        best = max(best, right - left + 1)\n    return best\n",
+      "ts": "function longestTwoKinds(stalls: string): number {\n  const count = new Map<string, number>()\n  let left = 0\n  let best = 0\n  for (let right = 0; right < stalls.length; right++) {\n    count.set(stalls[right], (count.get(stalls[right]) ?? 0) + 1)\n    while (count.size > 2) {\n      const kind = stalls[left]\n      count.set(kind, count.get(kind)! - 1)\n      if (count.get(kind) === 0) count.delete(kind)\n      left++\n    }\n    best = Math.max(best, right - left + 1)\n  }\n  return best\n}\n"
+    },
+    "tests": [
+      { "args": ["abaccc"], "expected": 4 },
+      { "args": ["aaaa"], "expected": 4 },
+      { "args": ["abc"], "expected": 2 }
+    ],
+    "hiddenTests": [
+      { "args": [""], "expected": 0 },
+      { "args": ["a"], "expected": 1 },
+      { "args": ["ababab"], "expected": 6 },
+      { "args": ["abcabcbb"], "expected": 4 },
+      { "args": ["aabbccbb"], "expected": 6 }
+    ],
+    "hints": [
+      "The window is valid while count has at most two keys.",
+      "Add one to the count of stalls[right] before the shrinking loop, and update best after it."
+    ]
+  },
+  "problems": [
+    { "id": "best-window-sum", "role": "warm-up" },
+    { "id": "longest-after-k-swaps", "role": "core" },
+    { "id": "smallest-covering-window", "role": "stretch" }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1) to O(k)",
+    "why": "right moves n times and left moves at most n times in total, so the inner loop adds O(n) overall, not per step. Space is whatever the window state needs: a sum is O(1), a count map is O(kinds)."
+  },
+  "mistakes": [
+    "Thinking the inner while loop makes it O(n²). left only moves forward, so the total work is O(n).",
+    "Recording the answer before the window is valid again.",
+    "Off by one in the size: the window [left, right] holds right − left + 1 items.",
+    "Using a sum window when numbers can be negative. Shrinking no longer lowers the sum, so use prefix sums.",
+    "Forgetting to delete a key whose count drops to 0, so the map size is wrong."
+  ],
+  "quiz": [
+    {
+      "question": "A sliding window has a while loop inside a for loop. Why is it still O(n)?",
+      "choices": ["The while loop runs at most once per step", "left only moves forward, so it moves at most n times in total", "The compiler removes the inner loop"],
+      "answer": 1,
+      "explain": "Each item enters the window once (right) and leaves at most once (left). That is at most 2n moves overall."
+    },
+    {
+      "question": "Which input breaks a “shrink while the sum is over the limit” window?",
+      "choices": ["Very long lists", "Lists with negative numbers", "Lists with repeated values"],
+      "answer": 1,
+      "explain": "With negatives, dropping an item can raise the sum, so shrinking is not guaranteed to help. Prefix sums handle that case."
+    },
+    {
+      "question": "The window is left = 2, right = 5, both included. How many items does it hold?",
+      "choices": ["3", "4", "5"],
+      "answer": 1,
+      "explain": "right − left + 1 = 5 − 2 + 1 = 4: indexes 2, 3, 4 and 5."
+    }
+  ],
+  "interviewTip": "State the window rule out loud (“valid while at most two kinds”) before coding. The rule tells you exactly what to store, when to shrink and when to record the answer."
+}

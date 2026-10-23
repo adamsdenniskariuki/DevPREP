@@ -12,6 +12,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
 | **SQL problems** (`#sql`, `#sql/<problem-id>`) | Interview SQL problems on in-browser Postgres with visible and hidden tests |
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
+| **Patterns** (`#patterns`, `#patterns/<id>`, `#patterns/pick`, `#patterns/cheatsheet`) | Algorithm pattern pages with a step-through visualiser, templates, an exercise and a quick check, plus a pattern picker and a printable cheat sheet |
 | **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
 | **Whiteboard** (`#board`) | A free diagram board saved on this device |
 | **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
@@ -34,7 +35,7 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 
 ## Code runner
 
-**110 original problems** across 16 patterns: arrays & hashing, two pointers, sliding window, stack, binary search, linked lists, trees, tries, heaps, graphs, backtracking, dynamic programming, greedy, intervals, bit manipulation, and a senior **design & concurrency** set (caches, rate limiters, iterators, simulated concurrency). Each pattern mixes Easy, Medium and Hard problems (`warm-up`/`core`/`stretch` in the data), tagged SE or SSE and linked to lessons where one fits. Each has a prompt, examples, progressive hints, a JS and Python solution with explanation, Big-O notes and follow-ups. Lesson pseudocode stays as it was; the runner sits alongside it.
+**113 original problems** across 17 patterns: arrays & hashing, prefix sums, two pointers, sliding window, stack, binary search, linked lists, trees, tries, heaps, graphs, backtracking, dynamic programming, greedy, intervals, bit manipulation, and a senior **design & concurrency** set (caches, rate limiters, iterators, simulated concurrency). Each pattern mixes Easy, Medium and Hard problems (`warm-up`/`core`/`stretch` in the data), tagged SE or SSE and linked to lessons where one fits. Each has a prompt, examples, progressive hints, a JS and Python solution with explanation, Big-O notes and follow-ups. Lesson pseudocode stays as it was; the runner sits alongside it.
 
 - Filter the list by pattern (with solved/total per pattern), difficulty and level. With a Target role set, **SE core** / **SSE core** tags mark the problems that role should cover first, and a toggle shows only those.
 - Problems feed the rest of the app: each one adds a recall card (`dsa-p-<id>`: pattern, key idea, target cost) to the DSA flashcard deck; DSA mocks draw from them by level; the study plan schedules path-core problems first, then the least-practised patterns, easiest first.
@@ -45,6 +46,19 @@ Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Pr
 - Drafts are saved per problem and language in `devprep.code.v1` (20,000 characters each). They are not part of backups.
 - **Code editor** (Settings → Code editor): **Rich** (CodeMirror 6: highlighting for Python, JavaScript/TypeScript and SQL, line numbers, bracket matching, auto-closing brackets, autocomplete, undo history) or **Plain** (the original textarea). Rich is loaded only on code screens and precached for offline use; if it can't load, Plain is used automatically. In both, Tab indents and **Esc, then Tab** leaves the editor. **Interview mode** (in Settings or the toggle under the editor) turns off autocomplete and auto-closing brackets to feel like a plain interview pad. Both choices are saved in the backup as `editor` (`{ "kind": "plain", "interview": true }`); only non-default values are written, and backups without it use Rich with interview mode off.
 - Passing every test records a first-solve time per language in the backup (`solved`), worth 15 XP, plus 5 XP for the second language. Badges: Green tests, Bilingual, Pattern spotter (15), Half-century (50), Full toolkit (one in every pattern), Every problem, and a "<Pattern> cleared" badge per pattern.
+
+## Patterns
+
+A course on recognising algorithm patterns. It starts with **arrays & hashing, prefix sums, two pointers and sliding window**. Each page has the same 8 sections: recognise it (signals), picture it, **watch it run**, template (Python, JavaScript, TypeScript), try it (an exercise with tests), complexity, common mistakes, and a quick check.
+
+- **Visualiser**: step through a real trace of the template with Back/Step/Play/Reset, the slider, or ←/→/Home/End on the stage. The current code line is highlighted in Python or JavaScript, variables are listed, and every step is also available as text. You can trace your own input; it is validated first. Play slows down under reduced motion.
+- Traces come from tracer functions in `src/patterns/tracers/`. Each one is checked against the template running in JavaScript and in Pyodide, on the examples and on random inputs. Template lines are tagged with `//@key` / `#@key` markers, so a trace step points at the same line in both languages.
+- **Pattern picker** (`#patterns/pick`): 10 problem prompts per round. Name the pattern and see why. **Cheat sheet** (`#patterns/cheatsheet`): signals, template shape and cost for every page, with print styles.
+- Problems link back to their page with "Learn the pattern". A page lists 2–4 linked problems.
+- Progress is saved in the backup as `patterns` (exercise first-pass time per language, best quick-check score) and `patternPicker` (`{ best, rounds, at }`). The backup stays at v1, and old backups load unchanged. Exercise drafts are kept in memory only.
+- XP: an exercise is worth 15, plus 5 per extra language; the quick check is worth 10, plus 5 for 100%; a picker round is worth 5. Badges: "<Pattern> learned" (`pattern-course-<id>`), Pattern learner, Pattern course and Quick eye (9 or more of 10 in the picker).
+- Quick-check questions become DSA flashcards (`dsa-pt-<id>-*`), along with one card per recognition signal. The study plan adds an unfinished page every third day. DSA mocks can add a "which pattern?" question.
+- **Adding a page**: write `content/patterns/<id>.json`, then append the id to `content/patterns/index.json` and to `tests/fixtures/pattern-ids.json` (that list is append-only). If the page needs a new tracer, add it in `src/patterns/tracers/` and register it in `tracers/index.ts`. `npm run content` validates the page and bundles it to `src/generated/patterns.json` (lazy) and `pattern-index.json`.
 
 ## System design practice
 
@@ -240,7 +254,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, story bank, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, pattern course progress, story bank, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -346,6 +360,9 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/cases.test.ts`, `tests/fixtures/case-ids.json` | Case schema, diagram and rubric checks, append-only IDs |
 | `src/screens/DesignScreen.tsx`, `src/components/Whiteboard.tsx`, `src/design-drafts.ts`, `src/design-score.ts` | Case list, timed workspace, review and rubric, SVG whiteboard, local drafts |
 | `tests/design.spec.ts` | Timer, persisted notes and board, keyboard whiteboard, scoring, backups and narrow layouts |
+| `content/patterns/` | One JSON file per pattern page plus `index.json` (order); bundled to `src/generated/patterns.json` (lazy) and `pattern-index.json` |
+| `src/patterns.ts`, `src/patterns/`, `src/screens/PatternsScreen.tsx`, `src/components/PatternVisualiser.tsx`, `src/patterns.css` | Pattern index, tracers and markers, pages, visualiser, picker and cheat sheet |
+| `src/patterns.test.ts`, `tests/fixtures/pattern-ids.json`, `tests/patterns.spec.ts` | Schema, tracer-vs-runtime checks (JS and Pyodide), exercises, progress, XP and badges; browser flows, palette contrast and layouts at 360/768/1440 |
 | `content/field-guide/` | One JSON file per Field Guide entry plus `index.json` (order); bundled to `src/generated/guides.json` (lazy) and `guide-index.json`, with quiz flashcards added to the decks |
 | `src/guide-types.ts`, `src/guides.ts` | Entry and diagram types, topics and their tracks, index and lazy loader |
 | `src/components/Diagram.tsx`, `src/diagram-layout.ts`, `src/diagram.css` | Theme-aware SVG diagrams, layout geometry (edge-through-box and label-collision checks) and step-throughs |

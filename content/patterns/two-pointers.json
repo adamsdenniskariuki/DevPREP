@@ -1,0 +1,144 @@
+{
+  "id": "two-pointers",
+  "title": "Two pointers",
+  "category": "Two pointers",
+  "level": "se",
+  "summary": "Put one pointer at each end of a sorted list and move the one that brings you closer to the goal.",
+  "minutes": 15,
+  "idea": "On sorted data, each comparison tells you which end can never be part of the answer, so one pointer moves inward every step.",
+  "recognise": {
+    "signals": [
+      { "see": "The input is sorted, or sorting it would not lose anything you need.", "think": "Start a pointer at each end. Sorted order tells you which side to move." },
+      { "see": "You need a pair or triple with a target sum.", "think": "Too small? Move the left pointer right. Too big? Move the right pointer left. For triples, fix one item and run two pointers on the rest." },
+      { "see": "You must compare items from both ends, like a palindrome check.", "think": "Walk inward from both ends and stop where they meet." },
+      { "see": "You must do it in place with O(1) extra space.", "think": "Use a read pointer and a write pointer moving the same way." }
+    ],
+    "phrasings": [
+      "Prices are listed from cheapest to most expensive. Find two different items that cost exactly your budget.",
+      "Check whether a product code reads the same forwards and backwards, ignoring dashes.",
+      "Count the pairs of runners whose combined lap time is under a limit, given sorted times."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "ends-vs-pairs",
+    "title": "Squeeze from both ends",
+    "alt": "On the left, every pair of items is tried, costing n times n checks. On the right, a pointer at each end of a sorted list compares the sum with the target and moves one pointer inward, so the list is crossed once.",
+    "caption": "Each step rules out a whole row of pairs, because the list is sorted.",
+    "before": {
+      "label": "Brute force: try every pair",
+      "nodes": [
+        { "id": "a", "label": "Pick i", "kind": "state", "col": 0, "row": 0 },
+        { "id": "b", "label": "Try every j", "kind": "decision", "col": 1, "row": 0 },
+        { "id": "c", "label": "n × n checks", "kind": "bad", "col": 2, "row": 0, "sub": "O(n²) time" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b" },
+        { "from": "b", "to": "c" }
+      ]
+    },
+    "after": {
+      "label": "Pattern: lo and hi move inward",
+      "nodes": [
+        { "id": "a", "label": "Compare sum", "kind": "decision", "col": 1, "row": 0 },
+        { "id": "b", "label": "Move lo right", "kind": "state", "col": 0, "row": 1, "sub": "sum too small" },
+        { "id": "c", "label": "Move hi left", "kind": "state", "col": 2, "row": 1, "sub": "sum too big" },
+        { "id": "d", "label": "One pass", "kind": "good", "col": 1, "row": 2, "sub": "O(n) time" }
+      ],
+      "edges": [
+        { "from": "a", "to": "b", "label": "< target" },
+        { "from": "a", "to": "c", "label": "> target" },
+        { "from": "b", "to": "d" },
+        { "from": "c", "to": "d" }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "sorted-pair",
+    "function": { "js": "pairInSorted", "py": "pair_in_sorted" },
+    "code": {
+      "js": "function pairInSorted(nums, target) {\n  let lo = 0, hi = nums.length - 1 //@init\n  while (lo < hi) { //@loop\n    const total = nums[lo] + nums[hi] //@sum\n    if (total === target) return [lo, hi] //@found\n    if (total < target) lo++ //@left\n    else hi-- //@right\n  }\n  return [] //@none\n}",
+      "py": "def pair_in_sorted(nums, target):\n    lo, hi = 0, len(nums) - 1  #@init\n    while lo < hi:  #@loop\n        total = nums[lo] + nums[hi]  #@sum\n        if total == target: return [lo, hi]  #@found\n        if total < target: lo += 1  #@left\n        else: hi -= 1  #@right\n    return []  #@none"
+    },
+    "examples": [
+      { "label": "Pair found", "input": { "nums": "1, 3, 4, 6, 8, 11", "target": "10" } },
+      { "label": "Negatives", "input": { "nums": "-7, -2, 0, 5, 9", "target": "3" } },
+      { "label": "No pair", "input": { "nums": "2, 4, 6", "target": "5" } }
+    ],
+    "inputHelp": "Up to 12 whole numbers between -99 and 99, smallest first, separated by commas. The target is one whole number."
+  },
+  "template": {
+    "py": "def solve(items, target):\n    lo, hi = 0, len(items) - 1  # one pointer at each end of SORTED items\n    while lo < hi:  # stop when the pointers meet\n        total = items[lo] + items[hi]\n        if total == target:\n            return [lo, hi]  # found it\n        if total < target:\n            lo += 1  # need a bigger sum: only moving lo right can help\n        else:\n            hi -= 1  # need a smaller sum: only moving hi left can help\n    return []  # pointers met: no pair\n",
+    "js": "function solve(items, target) {\n  let lo = 0 // one pointer at each end of SORTED items\n  let hi = items.length - 1\n  while (lo < hi) { // stop when the pointers meet\n    const total = items[lo] + items[hi]\n    if (total === target) return [lo, hi] // found it\n    if (total < target) lo++ // need a bigger sum: only moving lo right can help\n    else hi-- // need a smaller sum: only moving hi left can help\n  }\n  return [] // pointers met: no pair\n}\n",
+    "ts": "function solve(items: number[], target: number): number[] {\n  let lo = 0 // one pointer at each end of SORTED items\n  let hi = items.length - 1\n  while (lo < hi) { // stop when the pointers meet\n    const total = items[lo] + items[hi]\n    if (total === target) return [lo, hi] // found it\n    if (total < target) lo++ // need a bigger sum: only moving lo right can help\n    else hi-- // need a smaller sum: only moving hi left can help\n  }\n  return [] // pointers met: no pair\n}\n"
+  },
+  "oneLiner": "lo, hi = 0, n−1; while lo < hi: too small → lo++, too big → hi−−",
+  "exercise": {
+    "prompt": "times is sorted from smallest to largest. Count the pairs of different positions i < j whose times add up to strictly less than limit. When times[lo] + times[hi] is under the limit, every item from lo + 1 to hi pairs with lo. Fill in the missing count.",
+    "function": { "js": "countPairsBelow", "py": "count_pairs_below" },
+    "starter": {
+      "js": "function countPairsBelow(times, limit) {\n  let lo = 0\n  let hi = times.length - 1\n  let count = 0\n  while (lo < hi) {\n    if (times[lo] + times[hi] < limit) {\n      // Every j from lo + 1 to hi pairs with lo. Add how many that is to count.\n      lo++\n    } else {\n      hi--\n    }\n  }\n  return count\n}\n",
+      "py": "def count_pairs_below(times, limit):\n    lo, hi = 0, len(times) - 1\n    count = 0\n    while lo < hi:\n        if times[lo] + times[hi] < limit:\n            # Every j from lo + 1 to hi pairs with lo. Add how many that is to count.\n            lo += 1\n        else:\n            hi -= 1\n    return count\n",
+      "ts": "function countPairsBelow(times: number[], limit: number): number {\n  let lo = 0\n  let hi = times.length - 1\n  let count = 0\n  while (lo < hi) {\n    if (times[lo] + times[hi] < limit) {\n      // Every j from lo + 1 to hi pairs with lo. Add how many that is to count.\n      lo++\n    } else {\n      hi--\n    }\n  }\n  return count\n}\n"
+    },
+    "solution": {
+      "js": "function countPairsBelow(times, limit) {\n  let lo = 0\n  let hi = times.length - 1\n  let count = 0\n  while (lo < hi) {\n    if (times[lo] + times[hi] < limit) {\n      count += hi - lo\n      lo++\n    } else {\n      hi--\n    }\n  }\n  return count\n}\n",
+      "py": "def count_pairs_below(times, limit):\n    lo, hi = 0, len(times) - 1\n    count = 0\n    while lo < hi:\n        if times[lo] + times[hi] < limit:\n            count += hi - lo\n            lo += 1\n        else:\n            hi -= 1\n    return count\n",
+      "ts": "function countPairsBelow(times: number[], limit: number): number {\n  let lo = 0\n  let hi = times.length - 1\n  let count = 0\n  while (lo < hi) {\n    if (times[lo] + times[hi] < limit) {\n      count += hi - lo\n      lo++\n    } else {\n      hi--\n    }\n  }\n  return count\n}\n"
+    },
+    "tests": [
+      { "args": [[1, 2, 3, 4], 6], "expected": 4 },
+      { "args": [[5, 6, 7], 5], "expected": 0 },
+      { "args": [[-2, 0, 1, 3], 2], "expected": 4 }
+    ],
+    "hiddenTests": [
+      { "args": [[], 3], "expected": 0 },
+      { "args": [[1], 5], "expected": 0 },
+      { "args": [[1, 1, 1], 3], "expected": 3 },
+      { "args": [[-5, -4, 10, 11], 0], "expected": 1 },
+      { "args": [[0, 0], 0], "expected": 0 }
+    ],
+    "hints": [
+      "If times[lo] + times[hi] is under the limit, swapping hi for any smaller item keeps it under. That is hi − lo pairs at once.",
+      "Add hi − lo to count, then move lo right. Otherwise move hi left."
+    ]
+  },
+  "problems": [
+    { "id": "pair-in-sorted-list", "role": "warm-up" },
+    { "id": "zero-sum-triples", "role": "core" },
+    { "id": "rain-between-walls", "role": "stretch" }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "Every step moves one pointer inward, so there are at most n − 1 steps. Only two indexes are stored. If you must sort first, time becomes O(n log n)."
+  },
+  "mistakes": [
+    "Using two pointers on unsorted data. Sort first, or use a hash map instead.",
+    "Looping while lo <= hi, which pairs an item with itself.",
+    "Moving the wrong pointer: a sum that is too small needs lo to move right, not hi.",
+    "Forgetting to skip equal values when the answer must list distinct pairs or triples.",
+    "Sorting when the question needs the original positions. Keep the index with each value."
+  ],
+  "quiz": [
+    {
+      "question": "In a sorted list, the sum at lo and hi is too small. Which move is right?",
+      "choices": ["Move hi left", "Move lo right", "Move both pointers", "Restart from the ends"],
+      "answer": 1,
+      "explain": "Only a bigger left item can raise the sum. Moving hi left could only make it smaller."
+    },
+    {
+      "question": "Why does the loop run while lo < hi rather than lo <= hi?",
+      "choices": ["So an item is never paired with itself", "To save one step", "Because hi starts past the end"],
+      "answer": 0,
+      "explain": "When lo equals hi both pointers sit on the same item, and a pair needs two different positions."
+    },
+    {
+      "question": "The list is not sorted and you need the original positions of a pair. What is the simplest O(n) choice?",
+      "choices": ["Sort, then two pointers", "A hash map of value to index", "Binary search for each item"],
+      "answer": 1,
+      "explain": "Sorting costs O(n log n) and moves the positions. A one-pass hash map finds the pair in O(n) and keeps the indexes."
+    }
+  ],
+  "interviewTip": "Say why moving a pointer is safe: “if the sum is too small, lo cannot pair with anything left of hi, so drop it”. That one sentence proves the method is correct."
+}
