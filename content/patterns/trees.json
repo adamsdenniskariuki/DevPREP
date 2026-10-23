@@ -1,0 +1,435 @@
+{
+  "id": "trees",
+  "title": "Trees",
+  "category": "Trees",
+  "level": "se",
+  "summary": "Most tree questions are one recursive function: handle the empty tree, ask each child for its answer, then combine. Pick depth-first for whole-path answers and breadth-first for per-level ones.",
+  "minutes": 12,
+  "idea": "A tree is a root plus two smaller trees. Solve it for null, trust the recursion on both children, and combine their answers in one line.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The input is a root node with left and right children.",
+        "think": "Write f(node): return the answer for null, call f on both children, then combine. Most tree answers fit this shape."
+      },
+      {
+        "see": "The answer depends on whole root-to-leaf paths, heights or subtree totals.",
+        "think": "Use depth-first recursion. Pass state down as arguments, and return results up from each child."
+      },
+      {
+        "see": "The question talks about levels, rows, the nearest leaf or what you see from one side.",
+        "think": "Use breadth-first search with a queue, and handle one level per round of the loop."
+      },
+      {
+        "see": "The tree is a search tree, so left < node < right.",
+        "think": "In-order traversal visits the values in sorted order, and you can skip a whole side by comparing with node.val."
+      }
+    ],
+    "phrasings": [
+      "An org chart gives each manager at most two reports. How many levels deep is the company?",
+      "A folder tree must be checked: is any branch more than one level deeper than its sibling?",
+      "A family tree is stored from the oldest ancestor down. List each generation from left to right."
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "loops-vs-recursion",
+    "title": "Trust the recursion",
+    "alt": "On the left, nested loops try to walk every branch by hand and lose track of where they are. On the right, one function handles null, calls itself on the left and right child, and combines the two answers.",
+    "caption": "Solve null, ask both children, combine: the call stack remembers where you are.",
+    "before": {
+      "label": "Walk branches by hand",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Loop per level",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Track the path",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Lost branches",
+          "kind": "bad",
+          "col": 2,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: null, children, combine",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Base case",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "null returns 0"
+        },
+        {
+          "id": "b",
+          "label": "Ask children",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "f(left), f(right)"
+        },
+        {
+          "id": "c",
+          "label": "Combine",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "1 + max(l, r)"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "tree-depth",
+    "function": {
+      "js": "treeDepth",
+      "py": "tree_depth"
+    },
+    "code": {
+      "js": "function treeDepth(root) {\n  return depth(root) //@done\n}\n\nfunction depth(node) {\n  if (!node) return 0 //@base\n  const left = depth(node.left) //@left\n  const right = depth(node.right) //@right\n  return 1 + Math.max(left, right) //@combine\n}",
+      "py": "def tree_depth(root):\n    return depth(root)  #@done\n\ndef depth(node):\n    if not node:  #@base\n        return 0\n    left = depth(node['left'])  #@left\n    right = depth(node['right'])  #@right\n    return 1 + max(left, right)  #@combine"
+    },
+    "examples": [
+      {
+        "label": "Five nodes, three levels",
+        "input": {
+          "values": "3, 9, 20, _, _, 15, 7"
+        }
+      },
+      {
+        "label": "A long left branch",
+        "input": {
+          "values": "1, 2, _, 3, _, 4"
+        }
+      },
+      {
+        "label": "Empty tree",
+        "input": {
+          "values": ""
+        }
+      }
+    ],
+    "inputHelp": "Up to 15 values from 0 to 99 in level order, separated by commas. Use _ for a missing child. The tree can be at most 4 levels deep. Leave it empty for an empty tree."
+  },
+  "template": {
+    "py": "def solve(node):\n    if not node:  # the empty tree: the smallest case\n        return 0\n    left = solve(node['left'])  # trust the recursion on each child\n    right = solve(node['right'])\n    return 1 + max(left, right)  # combine the children's answers\n",
+    "js": "function solve(node) {\n  if (!node) return 0 // the empty tree: the smallest case\n  const left = solve(node.left) // trust the recursion on each child\n  const right = solve(node.right)\n  return 1 + Math.max(left, right) // combine the children's answers\n}\n",
+    "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction solve(node: TreeNode | null): number {\n  if (!node) return 0 // the empty tree: the smallest case\n  const left = solve(node.left) // trust the recursion on each child\n  const right = solve(node.right)\n  return 1 + Math.max(left, right) // combine the children's answers\n}\n"
+  },
+  "oneLiner": "f(node): if not node: return base; return combine(node, f(node.left), f(node.right))",
+  "exercise": {
+    "prompt": "A tree is balanced when, at every node, the heights of the left and right subtrees differ by at most 1. Return true if the tree is balanced. An empty tree is balanced. The starter only compares the two subtrees of the root, so it misses a lopsided node deeper down.",
+    "function": {
+      "js": "isBalanced",
+      "py": "is_balanced"
+    },
+    "starter": {
+      "js": "function isBalanced(root) {\n  const height = node => node ? 1 + Math.max(height(node.left), height(node.right)) : 0\n  if (!root) return true\n  return Math.abs(height(root.left) - height(root.right)) <= 1\n}\n",
+      "py": "def is_balanced(root):\n    def height(node):\n        return 1 + max(height(node['left']), height(node['right'])) if node else 0\n    if not root:\n        return True\n    return abs(height(root['left']) - height(root['right'])) <= 1\n",
+      "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction isBalanced(root: TreeNode | null): boolean {\n  const height = (node: TreeNode | null): number => node ? 1 + Math.max(height(node.left), height(node.right)) : 0\n  if (!root) return true\n  return Math.abs(height(root.left) - height(root.right)) <= 1\n}\n"
+    },
+    "solution": {
+      "js": "function isBalanced(root) {\n  const height = node => {\n    if (!node) return 0\n    const left = height(node.left)\n    const right = height(node.right)\n    if (left < 0 || right < 0 || Math.abs(left - right) > 1) return -1\n    return 1 + Math.max(left, right)\n  }\n  return height(root) >= 0\n}\n",
+      "py": "def is_balanced(root):\n    def height(node):\n        if not node:\n            return 0\n        left = height(node['left'])\n        right = height(node['right'])\n        if left < 0 or right < 0 or abs(left - right) > 1:\n            return -1\n        return 1 + max(left, right)\n    return height(root) >= 0\n",
+      "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction isBalanced(root: TreeNode | null): boolean {\n  const height = (node: TreeNode | null): number => {\n    if (!node) return 0\n    const left = height(node.left)\n    const right = height(node.right)\n    if (left < 0 || right < 0 || Math.abs(left - right) > 1) return -1\n    return 1 + Math.max(left, right)\n  }\n  return height(root) >= 0\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          {
+            "val": 3,
+            "left": {
+              "val": 9,
+              "left": null,
+              "right": null
+            },
+            "right": {
+              "val": 20,
+              "left": {
+                "val": 15,
+                "left": null,
+                "right": null
+              },
+              "right": {
+                "val": 7,
+                "left": null,
+                "right": null
+              }
+            }
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 3,
+                "left": {
+                  "val": 4,
+                  "left": null,
+                  "right": null
+                },
+                "right": {
+                  "val": 4,
+                  "left": null,
+                  "right": null
+                }
+              },
+              "right": {
+                "val": 3,
+                "left": null,
+                "right": null
+              }
+            },
+            "right": {
+              "val": 2,
+              "left": null,
+              "right": null
+            }
+          }
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 4,
+                "left": null,
+                "right": null
+              },
+              "right": null
+            },
+            "right": {
+              "val": 3,
+              "left": null,
+              "right": null
+            }
+          }
+        ],
+        "expected": true
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          null
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": null,
+            "right": null
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": null,
+              "right": null
+            },
+            "right": null
+          }
+        ],
+        "expected": true
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 3,
+                "left": null,
+                "right": null
+              },
+              "right": null
+            },
+            "right": null
+          }
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 3,
+                "left": {
+                  "val": 4,
+                  "left": null,
+                  "right": null
+                },
+                "right": null
+              },
+              "right": null
+            },
+            "right": {
+              "val": 2,
+              "left": null,
+              "right": {
+                "val": 3,
+                "left": null,
+                "right": {
+                  "val": 4,
+                  "left": null,
+                  "right": null
+                }
+              }
+            }
+          }
+        ],
+        "expected": false
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 4,
+                "left": {
+                  "val": 8,
+                  "left": null,
+                  "right": null
+                },
+                "right": null
+              },
+              "right": {
+                "val": 5,
+                "left": null,
+                "right": null
+              }
+            },
+            "right": {
+              "val": 3,
+              "left": {
+                "val": 6,
+                "left": null,
+                "right": null
+              },
+              "right": null
+            }
+          }
+        ],
+        "expected": true
+      }
+    ],
+    "hints": [
+      "Compute heights bottom-up with one recursive function, so each node is visited once.",
+      "Return -1 as a signal that a subtree is already unbalanced, and pass it straight up."
+    ]
+  },
+  "problems": [
+    {
+      "id": "tree-height",
+      "role": "warm-up"
+    },
+    {
+      "id": "level-sums",
+      "role": "core"
+    },
+    {
+      "id": "max-path-sum",
+      "role": "stretch"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(h)",
+    "why": "Each node is visited once. The call stack holds one frame per level, so it uses O(h) space for a tree of height h. That is O(log n) when balanced and O(n) for a chain."
+  },
+  "mistakes": [
+    "Forgetting the null base case, which crashes on a leaf's missing child.",
+    "Recomputing a child's height inside every ancestor, which makes the solution O(n²).",
+    "Confusing depth (counted from the root) with height (counted from the leaves).",
+    "Using recursion on a very deep chain in Python without thinking about the recursion limit."
+  ],
+  "quiz": [
+    {
+      "question": "What should depth(null) return so that a single leaf has depth 1?",
+      "choices": [
+        "0",
+        "1",
+        "-1"
+      ],
+      "answer": 0,
+      "explain": "A leaf returns 1 + max(0, 0) = 1, so the empty tree must count as 0."
+    },
+    {
+      "question": "Which question is the best fit for breadth-first search rather than depth-first recursion?",
+      "choices": [
+        "Is the tree balanced?",
+        "What is the sum of each level?",
+        "What is the largest root-to-leaf path sum?"
+      ],
+      "answer": 1,
+      "explain": "Per-level answers come straight out of a queue processed one level at a time."
+    },
+    {
+      "question": "A recursive tree function visits each node once. How much extra space does it use on a chain of n nodes?",
+      "choices": [
+        "O(1)",
+        "O(log n)",
+        "O(n)"
+      ],
+      "answer": 2,
+      "explain": "The call stack grows by one frame per level, and a chain has n levels."
+    }
+  ],
+  "interviewTip": "Before coding, say the three parts out loud: what null returns, what you ask each child, and how you combine. Then test on a single leaf and on an empty tree."
+}

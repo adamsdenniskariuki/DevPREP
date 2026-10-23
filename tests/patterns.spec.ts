@@ -194,6 +194,7 @@ test('the visualiser stays readable in every palette, light and dark', async ({ 
 })
 
 test('linked-list and stack visualisers stay readable in every palette, light and dark', async ({ page }) => {
+  test.slow()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   const checks: [string, string[]][] = [
     ['in-place-reversal', ['.pv-node .pv-value', '.pv-node .pv-next', '.pv-pointer', '.pv-node.marked .pv-value']],
@@ -217,6 +218,40 @@ test('linked-list and stack visualisers stay readable in every palette, light an
   }
 })
 
+test('tree, heap, trie and grid visualisers stay readable in every palette, light and dark', async ({ page }) => {
+  test.slow()
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  const checks: [string, string[]][] = [
+    ['dfs-traversals', ['.pv-tnode .pv-value', '.pv-tnode.active .pv-value', '.pv-tnode.marked .pv-value', '.pv-tnode .pv-pointer', '.pv-cell .pv-value']],
+    ['bfs-level-order', ['.pv-tnode .pv-value', '.pv-tnode.active .pv-value', '.pv-tnode.marked .pv-value', '.pv-cell .pv-value']],
+    ['tries', ['.pv-tnode .pv-value', '.pv-tnode.end .pv-value', '.pv-tnode.active .pv-value', '.pv-entry', '.pv-entry.active']],
+    ['heaps', ['.pv-tnode .pv-value', '.pv-tnode.pointed .pv-value', '.pv-cell .pv-value', '.pv-cell.pointed .pv-value', '.pv-pointer']],
+    ['top-k', ['.pv-tnode .pv-value', '.pv-tnode.marked .pv-value', '.pv-cell.pointed .pv-value']],
+    ['two-heaps', ['.pv-tnode .pv-value', '.pv-tnode.pointed .pv-value', '.pv-pointer', '.pv-array-label']],
+    ['matrix-traversal', ['.pv-gcell .pv-value', '.pv-gcell.visited .pv-value', '.pv-gcell.current .pv-value', '.pv-array-label']],
+    ['quickselect', ['.pv-cell .pv-value', '.pv-cell.in-window .pv-value', '.pv-cell.marked .pv-value', '.pv-pointer']],
+  ]
+  for (const [id, selectors] of checks) {
+    await openPage(page, pages.find(item => item.id === id))
+    await page.getByTestId('pv-stage').focus()
+    const pending = new Set(selectors)
+    for (let step = 0; step < 40 && pending.size; step++) {
+      for (const selector of [...pending]) {
+        if (await page.locator(selector).count() === 0) continue
+        pending.delete(selector)
+        for (const palette of palettes) {
+          for (const theme of ['light', 'dark'] as const) {
+            await page.evaluate(({ palette, theme }) => { document.documentElement.dataset.palette = palette; document.documentElement.dataset.theme = theme }, { palette: palette.id, theme })
+            expect(await textContrast(page.locator(selector).first()), `${id} ${palette.id}/${theme} ${selector}`).toBeGreaterThanOrEqual(4.5)
+          }
+        }
+      }
+      await page.keyboard.press('ArrowRight')
+    }
+    expect([...pending], `${id} selectors never shown`).toEqual([])
+  }
+})
+
 test('sub-pattern pages link back to their parent and the parent lists them', async ({ page }) => {
   const parent = pages.find(item => item.id === 'stack')
   const children = pages.filter(item => item.parent === 'stack')
@@ -235,6 +270,14 @@ for (const width of [360, 768, 1440]) {
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       await expect(page.getByText('Loading pattern…')).toHaveCount(0)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${hash} at ${width}`).toBe(true)
+    }
+    for (const id of ['dfs-traversals', 'bfs-level-order', 'tries', 'heaps', 'k-way-merge', 'two-heaps', 'matrix-traversal', 'quickselect']) {
+      await page.goto(`./#patterns/${id}`)
+      await page.getByTestId('pv-stage').focus()
+      for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${id} visualiser at ${width}`).toBe(true)
+      const stage = await page.getByTestId('pv-stage').evaluate(el => ({ scroll: el.scrollWidth, client: el.clientWidth }))
+      expect(stage.scroll, `${id} stage at ${width}`).toBeLessThanOrEqual(stage.client + 1)
     }
   })
 }

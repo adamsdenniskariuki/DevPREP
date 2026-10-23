@@ -1,0 +1,412 @@
+{
+  "id": "bfs-level-order",
+  "parent": "trees",
+  "title": "BFS / level-order",
+  "category": "Trees",
+  "level": "se",
+  "summary": "Breadth-first search visits a tree one level at a time with a queue. Read the queue's size at the start of each round: exactly that many pops belong to the current level.",
+  "minutes": 12,
+  "idea": "A queue serves nodes in the order they were found, so a whole level comes out before any node of the next one.",
+  "recognise": {
+    "signals": [
+      {
+        "see": "The question mentions levels, rows, generations or depth from the top.",
+        "think": "Use a queue. Snapshot its size at the start of each round and process exactly that many nodes as one level."
+      },
+      {
+        "see": "You need the nearest leaf, the shallowest match or the fewest steps.",
+        "think": "Breadth-first search reaches shallow nodes first, so the first match you pop is the closest one. Stop there."
+      },
+      {
+        "see": "You need the first or last node of each level, as seen from one side.",
+        "think": "Process each level as a group and keep its first or last value."
+      }
+    ],
+    "phrasings": [
+      "A company's org chart is stored as a tree. List the names on each management layer, top first.",
+      "In a decision tree, find how many questions it takes to reach the quickest final answer.",
+      "Looking at a tree of lamps from the right, which lamp do you see on each row?"
+    ]
+  },
+  "picture": {
+    "type": "compare",
+    "id": "dfs-vs-bfs",
+    "title": "Finish a level before going deeper",
+    "alt": "On the left, depth-first search dives down one branch, so it can find a deep leaf before a shallow one. On the right, a queue hands out all of one level before the next, so the first leaf found is the shallowest.",
+    "caption": "The size of the queue at the start of a round is the width of that level.",
+    "before": {
+      "label": "Dive down one branch first",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "Go deep left",
+          "kind": "state",
+          "col": 0,
+          "row": 0
+        },
+        {
+          "id": "b",
+          "label": "Deep leaf first",
+          "kind": "state",
+          "col": 1,
+          "row": 0
+        },
+        {
+          "id": "c",
+          "label": "Must search all",
+          "kind": "bad",
+          "col": 2,
+          "row": 0,
+          "sub": "for the nearest"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        }
+      ]
+    },
+    "after": {
+      "label": "Pattern: queue, one level per round",
+      "nodes": [
+        {
+          "id": "a",
+          "label": "size = len(q)",
+          "kind": "state",
+          "col": 0,
+          "row": 0,
+          "sub": "width of level"
+        },
+        {
+          "id": "b",
+          "label": "Pop size nodes",
+          "kind": "state",
+          "col": 1,
+          "row": 0,
+          "sub": "queue children"
+        },
+        {
+          "id": "c",
+          "label": "Level done",
+          "kind": "good",
+          "col": 2,
+          "row": 0,
+          "sub": "next round"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "b"
+        },
+        {
+          "from": "b",
+          "to": "c"
+        },
+        {
+          "from": "c",
+          "to": "a",
+          "label": "queue not empty"
+        }
+      ]
+    }
+  },
+  "visualiser": {
+    "tracer": "level-order",
+    "function": {
+      "js": "levelOrder",
+      "py": "level_order"
+    },
+    "code": {
+      "js": "function levelOrder(root) {\n  const queue = root ? [root] : [], levels = [] //@init\n  while (queue.length) { //@loop\n    const size = queue.length, level = [] //@size\n    for (let i = 0; i < size; i++) {\n      const node = queue.shift(); level.push(node.val) //@pop\n      for (const child of [node.left, node.right]) if (child) queue.push(child) //@push\n    }\n    levels.push(level) //@level\n  }\n  return levels //@done\n}",
+      "py": "from collections import deque\n\ndef level_order(root):\n    queue, levels = deque([root] if root else []), []  #@init\n    while queue:  #@loop\n        size, level = len(queue), []  #@size\n        for _ in range(size):\n            node = queue.popleft(); level.append(node['val'])  #@pop\n            for child in (node['left'], node['right']):\n                if child: queue.append(child)  #@push\n        levels.append(level)  #@level\n    return levels  #@done"
+    },
+    "examples": [
+      {
+        "label": "Three levels",
+        "input": {
+          "values": "3, 9, 20, _, _, 15, 7"
+        }
+      },
+      {
+        "label": "Full tree",
+        "input": {
+          "values": "1, 2, 3, 4, 5, 6, 7"
+        }
+      },
+      {
+        "label": "One node",
+        "input": {
+          "values": "8"
+        }
+      }
+    ],
+    "inputHelp": "Up to 15 values from 0 to 99 in level order, separated by commas. Use _ for a missing child. The tree can be at most 4 levels deep. Leave it empty for an empty tree."
+  },
+  "template": {
+    "py": "from collections import deque\n\ndef solve(root):\n    if not root:\n        return []\n    queue, out = deque([root]), []\n    while queue:\n        level = []\n        for _ in range(len(queue)):  # only this level's nodes\n            node = queue.popleft()\n            level.append(node['val'])\n            for child in (node['left'], node['right']):\n                if child:\n                    queue.append(child)  # next level waits behind\n        out.append(level)\n    return out\n",
+    "js": "function solve(root) {\n  if (!root) return []\n  const out = []\n  let queue = [root]\n  while (queue.length) {\n    const level = []\n    const next = [] // the next level, built while this one is read\n    for (const node of queue) {\n      level.push(node.val)\n      if (node.left) next.push(node.left)\n      if (node.right) next.push(node.right)\n    }\n    out.push(level)\n    queue = next\n  }\n  return out\n}\n",
+    "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction solve(root: TreeNode | null): number[][] {\n  if (!root) return []\n  const out: number[][] = []\n  let queue: TreeNode[] = [root]\n  while (queue.length) {\n    const level: number[] = []\n    const next: TreeNode[] = [] // the next level, built while this one is read\n    for (const node of queue) {\n      level.push(node.val)\n      if (node.left) next.push(node.left)\n      if (node.right) next.push(node.right)\n    }\n    out.push(level)\n    queue = next\n  }\n  return out\n}\n"
+  },
+  "oneLiner": "q = [root]; while q: size = len(q); pop size nodes into this level; push their children",
+  "exercise": {
+    "prompt": "Return the number of nodes on the shortest path from the root down to a leaf. A leaf has no children, and an empty tree has depth 0. Use breadth-first search so you can stop at the first leaf. The starter stops at the first node with a missing child, which is wrong when a node has exactly one child.",
+    "function": {
+      "js": "minDepth",
+      "py": "min_depth"
+    },
+    "starter": {
+      "js": "function minDepth(root) {\n  if (!root) return 0\n  let queue = [root]\n  let depth = 1\n  while (queue.length) {\n    const next = []\n    for (const node of queue) {\n      if (!node.left || !node.right) return depth\n      next.push(node.left, node.right)\n    }\n    queue = next\n    depth++\n  }\n  return depth\n}\n",
+      "py": "from collections import deque\n\ndef min_depth(root):\n    if not root:\n        return 0\n    queue, depth = deque([root]), 1\n    while queue:\n        for _ in range(len(queue)):\n            node = queue.popleft()\n            if not node['left'] or not node['right']:\n                return depth\n            queue.append(node['left'])\n            queue.append(node['right'])\n        depth += 1\n",
+      "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction minDepth(root: TreeNode | null): number {\n  if (!root) return 0\n  let queue: TreeNode[] = [root]\n  let depth = 1\n  while (queue.length) {\n    const next: TreeNode[] = []\n    for (const node of queue) {\n      if (!node.left || !node.right) return depth\n      next.push(node.left, node.right)\n    }\n    queue = next\n    depth++\n  }\n  return depth\n}\n"
+    },
+    "solution": {
+      "js": "function minDepth(root) {\n  if (!root) return 0\n  let queue = [root]\n  let depth = 1\n  while (queue.length) {\n    const next = []\n    for (const node of queue) {\n      if (!node.left && !node.right) return depth\n      if (node.left) next.push(node.left)\n      if (node.right) next.push(node.right)\n    }\n    queue = next\n    depth++\n  }\n  return depth\n}\n",
+      "py": "from collections import deque\n\ndef min_depth(root):\n    if not root:\n        return 0\n    queue, depth = deque([root]), 1\n    while queue:\n        for _ in range(len(queue)):\n            node = queue.popleft()\n            if not node['left'] and not node['right']:\n                return depth\n            for child in (node['left'], node['right']):\n                if child:\n                    queue.append(child)\n        depth += 1\n",
+      "ts": "type TreeNode = { val: number; left: TreeNode | null; right: TreeNode | null }\n\nfunction minDepth(root: TreeNode | null): number {\n  if (!root) return 0\n  let queue: TreeNode[] = [root]\n  let depth = 1\n  while (queue.length) {\n    const next: TreeNode[] = []\n    for (const node of queue) {\n      if (!node.left && !node.right) return depth\n      if (node.left) next.push(node.left)\n      if (node.right) next.push(node.right)\n    }\n    queue = next\n    depth++\n  }\n  return depth\n}\n"
+    },
+    "tests": [
+      {
+        "args": [
+          {
+            "val": 3,
+            "left": {
+              "val": 9,
+              "left": null,
+              "right": null
+            },
+            "right": {
+              "val": 20,
+              "left": {
+                "val": 15,
+                "left": null,
+                "right": null
+              },
+              "right": {
+                "val": 7,
+                "left": null,
+                "right": null
+              }
+            }
+          }
+        ],
+        "expected": 2
+      },
+      {
+        "args": [
+          {
+            "val": 2,
+            "left": null,
+            "right": {
+              "val": 3,
+              "left": null,
+              "right": {
+                "val": 4,
+                "left": null,
+                "right": {
+                  "val": 5,
+                  "left": null,
+                  "right": null
+                }
+              }
+            }
+          }
+        ],
+        "expected": 4
+      },
+      {
+        "args": [
+          null
+        ],
+        "expected": 0
+      }
+    ],
+    "hiddenTests": [
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": null,
+            "right": null
+          }
+        ],
+        "expected": 1
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": null,
+              "right": null
+            },
+            "right": null
+          }
+        ],
+        "expected": 2
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 4,
+                "left": {
+                  "val": 6,
+                  "left": null,
+                  "right": null
+                },
+                "right": null
+              },
+              "right": null
+            },
+            "right": {
+              "val": 3,
+              "left": null,
+              "right": {
+                "val": 5,
+                "left": null,
+                "right": null
+              }
+            }
+          }
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": {
+                "val": 4,
+                "left": null,
+                "right": null
+              },
+              "right": {
+                "val": 5,
+                "left": null,
+                "right": null
+              }
+            },
+            "right": {
+              "val": 3,
+              "left": {
+                "val": 6,
+                "left": null,
+                "right": null
+              },
+              "right": {
+                "val": 7,
+                "left": null,
+                "right": null
+              }
+            }
+          }
+        ],
+        "expected": 3
+      },
+      {
+        "args": [
+          {
+            "val": 1,
+            "left": {
+              "val": 2,
+              "left": null,
+              "right": {
+                "val": 4,
+                "left": null,
+                "right": {
+                  "val": 6,
+                  "left": null,
+                  "right": null
+                }
+              }
+            },
+            "right": {
+              "val": 3,
+              "left": {
+                "val": 5,
+                "left": null,
+                "right": null
+              },
+              "right": null
+            }
+          }
+        ],
+        "expected": 3
+      }
+    ],
+    "hints": [
+      "Process the tree one level at a time and count the levels as you go.",
+      "A leaf has neither a left nor a right child. The first leaf you meet is on the shallowest level, so return at once."
+    ]
+  },
+  "problems": [
+    {
+      "id": "tree-height",
+      "role": "warm-up"
+    },
+    {
+      "id": "level-sums",
+      "role": "core"
+    },
+    {
+      "id": "right-side-view",
+      "role": "core"
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(w)",
+    "why": "Each node is queued and popped once. The queue holds at most one level plus part of the next, so the space is the tree's widest level w, which can be about n / 2."
+  },
+  "mistakes": [
+    "Reading len(queue) inside the loop instead of once before it, which mixes two levels together.",
+    "Using list.pop(0) in Python, which is O(n) per pop. Use collections.deque.",
+    "Queueing missing children, then crashing when you read .val from null.",
+    "Searching the whole tree for the nearest leaf when breadth-first search could stop at the first one."
+  ],
+  "quiz": [
+    {
+      "question": "Why read the queue's size before the inner loop starts?",
+      "choices": [
+        "It is faster than reading it each time",
+        "Children added during the loop belong to the next level",
+        "The queue cannot change during the loop"
+      ],
+      "answer": 1,
+      "explain": "The snapshot marks where the current level ends, even though new children keep joining the back."
+    },
+    {
+      "question": "You need the fewest steps from the root to any leaf. Why is breadth-first search a good fit?",
+      "choices": [
+        "It uses less memory than depth-first search",
+        "The first leaf it reaches is on the shallowest level",
+        "It visits nodes in sorted order"
+      ],
+      "answer": 1,
+      "explain": "Levels come out in order of depth, so you can stop at the first leaf."
+    },
+    {
+      "question": "Which data structure makes a level-order traversal work?",
+      "choices": [
+        "A stack",
+        "A queue",
+        "A hash map"
+      ],
+      "answer": 1,
+      "explain": "A queue serves nodes first in, first out, so every node of one level comes out before the next level."
+    }
+  ],
+  "interviewTip": "Say why you take a size snapshot before the inner loop. Interviewers often ask how you know where one level ends."
+}

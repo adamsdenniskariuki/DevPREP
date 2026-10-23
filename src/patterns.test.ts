@@ -77,6 +77,8 @@ describe('pattern content', () => {
     expect(kids('stack')).toEqual(['basic-stack', 'monotonic-stack'])
     expect(kids('binary-search')).toEqual(['search-on-answer'])
     expect(kids('linked-lists')).toEqual(['fast-slow-pointers', 'in-place-reversal'])
+    expect(kids('trees')).toEqual(['dfs-traversals', 'bfs-level-order'])
+    expect(kids('heaps')).toEqual(['top-k', 'k-way-merge', 'two-heaps'])
   })
 
   it('links problems to their pattern page', () => {

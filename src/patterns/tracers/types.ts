@@ -36,9 +36,43 @@ export interface ListView {
   dropped?: number[]
 }
 
+export interface TreeViewNode {
+  label: string
+  /** Child indexes in order. A null keeps an empty slot, so a binary tree still shows left and right. */
+  children: (number | null)[]
+  /** Ends a word in a trie. Drawn as a square instead of a circle. */
+  end?: boolean
+}
+
+/** A rooted tree drawn top-down. Node 0 is the root. */
+export interface TreeView {
+  name: string
+  label: string
+  nodes: TreeViewNode[]
+  /** Named pointers drawn under nodes. */
+  pointers?: { name: string; index: number }[]
+  /** Nodes in play: on the call stack, in the queue or on the current path. */
+  active?: number[]
+  /** Nodes that are finished, e.g. already output. */
+  marked?: number[]
+}
+
+/** A small matrix drawn as a grid of cells. */
+export interface GridView {
+  name: string
+  label: string
+  cells: (number | string)[][]
+  /** [row, col] of the cell this step reads. */
+  current?: [number, number]
+  /** Cells already visited. */
+  visited?: [number, number][]
+}
+
 export interface TraceView {
   arrays: ArrayView[]
   lists?: ListView[]
+  trees?: TreeView[]
+  grids?: GridView[]
   map?: MapView
 }
 
