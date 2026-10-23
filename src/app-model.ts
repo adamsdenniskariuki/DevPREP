@@ -53,6 +53,8 @@ export interface AppModel {
   scorePatternQuiz: (pageId: string, percent: number) => number
   /** Records a finished pattern picker round and returns the XP gained. */
   finishPicker: (score: number) => number
+  /** Records that a whiteboard was created or imported and returns the XP gained (0 after the first). */
+  createdBoard: () => number
   /** Saves a language placement check; returns the lessons it marked known. */
   placeTrack: (track: Track, answers: (number | undefined)[]) => { percent: number; known: string[] }
   /** Grades a flashcard and returns the XP it earned. */

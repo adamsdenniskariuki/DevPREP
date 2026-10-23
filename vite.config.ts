@@ -9,6 +9,7 @@ import type { Plugin } from 'vite'
 import { PYODIDE_VERSION } from './src/runner/pyodide-version'
 import { TYPESCRIPT_VERSION } from './src/runner/ts-version'
 import { PGLITE_VERSION } from './src/runner/pglite-version'
+import { EXCALIDRAW_VERSION } from './src/excalidraw-version'
 import { libClosure } from './src/runner/ts-core'
 import { readdirSync, readFileSync } from 'node:fs'
 
@@ -101,6 +102,61 @@ function pgliteAssets(): Plugin {
   }
 }
 
+// Excalidraw's fonts are self-hosted at excalidraw/<version>/fonts/ (window.EXCALIDRAW_ASSET_PATH) instead of
+// its CDN. The Latin families are precached; the large CJK family (Xiaolai) is cached at runtime if ever used.
+const EXCALIDRAW_FONTS = resolve('node_modules/@excalidraw/excalidraw/dist/prod/fonts')
+function excalidrawFonts() {
+  return readdirSync(EXCALIDRAW_FONTS, { recursive: true, encoding: 'utf8' }).map(name => name.replaceAll('\\', '/')).filter(name => name.endsWith('.woff2'))
+}
+function excalidrawAssets(): Plugin {
+  const prefix = `excalidraw/${EXCALIDRAW_VERSION}/fonts/`
+  return {
+    name: 'devprep-excalidraw-assets',
+    configureServer(server) {
+      const files = new Set(excalidrawFonts())
+      server.middlewares.use((request, response, next) => {
+        const path = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname)
+        const at = path.indexOf(`/${prefix}`)
+        const name = at >= 0 ? path.slice(at + prefix.length + 1) : ''
+        if (!files.has(name)) return next()
+        response.setHeader('Content-Type', 'font/woff2')
+        createReadStream(resolve(EXCALIDRAW_FONTS, name)).pipe(response)
+      })
+    },
+    async generateBundle() {
+      for (const name of excalidrawFonts()) this.emitFile({ type: 'asset', fileName: `${prefix}${name}`, source: await readFile(resolve(EXCALIDRAW_FONTS, name)) })
+    },
+  }
+}
+
+// Excalidraw lazily imports optional extras (Mermaid text-to-diagram, ~50 UI translations, image tools) that a board
+// never needs to open or draw. They load online when used but are left out of the precache, which would otherwise
+// nearly double. Everything reachable from the app, and everything Excalidraw imports statically, is precached.
+const runtimeOnlyChunks = new Set<string>()
+function excalidrawExtras(): Plugin {
+  return {
+    name: 'devprep-excalidraw-extras',
+    apply: 'build',
+    generateBundle(_options, bundle) {
+      const chunks = new Map(Object.values(bundle).flatMap(item => item.type === 'chunk' ? [[item.fileName, item] as const] : []))
+      const fromExcalidraw = (fileName: string) => chunks.get(fileName)!.moduleIds.some(id => id.replaceAll('\\', '/').includes('/node_modules/@excalidraw/'))
+      const needed = new Set<string>()
+      const visit = (fileName: string) => {
+        if (needed.has(fileName) || !chunks.has(fileName)) return
+        needed.add(fileName)
+        const chunk = chunks.get(fileName)!
+        chunk.imports.forEach(visit)
+        if (!fromExcalidraw(fileName)) chunk.dynamicImports.forEach(visit)
+      }
+      for (const chunk of chunks.values()) if (chunk.isEntry) visit(chunk.fileName)
+      runtimeOnlyChunks.clear()
+      for (const fileName of chunks.keys()) if (!needed.has(fileName)) runtimeOnlyChunks.add(fileName)
+      // Lists the online-only chunks so the PWA tests can tell them apart from files that must be precached.
+      this.emitFile({ type: 'asset', fileName: `excalidraw/${EXCALIDRAW_VERSION}/online-only.json`, source: JSON.stringify([...runtimeOnlyChunks].sort()) })
+    },
+  }
+}
+
 export default defineConfig({
   base: './',
   define: {
@@ -111,6 +167,8 @@ export default defineConfig({
     pyodideAssets(),
     typescriptAssets(),
     pgliteAssets(),
+    excalidrawAssets(),
+    excalidrawExtras(),
     { name: 'devprep-output-directory', configResolved(config) { outputDirectory = resolve(config.root, config.build.outDir) } },
     VitePWA({
       strategies: 'injectManifest',
@@ -136,11 +194,11 @@ export default defineConfig({
       },
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,png,svg,webmanifest,woff2}'],
-        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**', '**/typescript/**', '**/pglite/**'],
+        globIgnores: ['**/sw.js', '**/sw.js.map', '**/pyodide/**', '**/typescript/**', '**/pglite/**', '**/excalidraw/*/fonts/Xiaolai/**'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         rollupFormat: 'iife',
         manifestTransforms: [async entries => ({
-          manifest: await Promise.all(entries.map(async entry => ({
+          manifest: await Promise.all(entries.filter(entry => !runtimeOnlyChunks.has(entry.url)).map(async entry => ({
             ...entry,
             revision: createHash('sha256').update(await readFile(resolve(outputDirectory, entry.url))).digest('hex'),
           }))),
@@ -153,6 +211,8 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
+        // Names the lazy Excalidraw chunk after BoardCanvas (Rollup would otherwise name it after an Excalidraw module).
+        chunkFileNames: chunk => chunk.moduleIds.some(id => id.replaceAll('\\', '/').endsWith('/src/components/BoardCanvas.tsx')) ? 'assets/BoardCanvas-[hash].js' : 'assets/[name]-[hash].js',
         manualChunks(id) {
           const path = id.replaceAll('\\', '/')
           if (path.endsWith('/src/generated/problems.json')) return 'problems'

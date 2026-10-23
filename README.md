@@ -14,7 +14,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
 | **Patterns** (`#patterns`, `#patterns/<id>`, `#patterns/pick`, `#patterns/cheatsheet`) | Algorithm pattern pages with a step-through visualiser, templates, an exercise and a quick check, plus a pattern picker and a printable cheat sheet |
 | **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
-| **Whiteboard** (`#board`) | A free diagram board saved on this device |
+| **Whiteboards** (`#board`, `#board/<id>`) | Excalidraw boards with system-design stencils, saved on this device |
 | **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
@@ -68,7 +68,21 @@ A course on recognising algorithm patterns. It covers **arrays & hashing, prefix
 - **Timed mode**: start, pause and resume a countdown. Screen readers hear a notice at 5 minutes left and at time up.
 - **Whiteboard**: add, rename, drag and connect components with labelled arrows. It works by keyboard too (arrow keys move, Delete removes) and has a text description.
 - **Review** puts your notes beside the model answer and model diagram. You then self-score each rubric item as Missed, Partly or Covered. SSE items count on SSE cases or for the Senior role; otherwise they show as stretch goals.
-- Notes, boards and timers are saved per case in `devprep.design.v1` and are not part of backups. Saving a score records the best percentage (`designs`): 25 XP per case, plus 10 at 80% or more. Badges: Architect, Blueprint pro, Staff-ready.
+- Notes, case boards and timers are saved per case in `devprep.design.v1` and are not part of backups. Saving a score records the best percentage (`designs`): 25 XP per case, plus 10 at 80% or more. Badges: Architect, Blueprint pro, Staff-ready.
+
+## Whiteboards
+
+`#board` lists your boards: create, open, rename, delete (with confirmation) or import a `.excalidraw` file (up to 5 MB). `#board/<id>` opens one in [Excalidraw](https://github.com/excalidraw/excalidraw) (`@excalidraw/excalidraw` 0.18.1, MIT).
+
+- **Autosave**: changes are saved to IndexedDB (`devprep-boards`) about a second after you stop, and when you leave the page. The heading shows the save status.
+- **Export** a PNG or an `.excalidraw` file that opens on excalidraw.com.
+- **Stencils**: the Library panel has 12 original system-design stencils (client, load balancer, API gateway, service, cache, SQL and NoSQL databases, queue/stream, CDN, object storage, search index, worker). They are built in code in `src/board-library.ts`.
+- **Theme**: the canvas follows the app’s light or dark mode.
+- **Offline**: Excalidraw loads only on board pages, in its own chunk. Its code and Latin fonts are self-hosted under `excalidraw/<version>/` and precached, so boards open and draw offline. The large CJK font (Xiaolai) is cached when first used. Optional extras (Mermaid import, translations, image tools) load online only.
+- **Fallback**: if the drawing tool can’t load, the page shows the simple SVG whiteboard instead. That sketch is saved separately in the same board.
+- **Old free board**: the first visit to `#board` copies the old free whiteboard into a board called “My first board”, once. The original stays in `devprep.design.v1`.
+- Your first board earns 10 XP and the **First sketch** badge (`whiteboard` in the backup).
+- Each board has a kind (`free`, `practice` or `scratch`) and an optional `caseId` or `problemId`, ready for timed design practice and coding scratchpads.
 
 ## Field Guide
 
@@ -254,9 +268,9 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, pattern course progress, story bank, and the latest 5,000 activity events. Code drafts and design notes or boards are not included.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, pattern course progress, story bank, and the latest 5,000 activity events. Code drafts and design case notes and boards are not included. **Include whiteboards** (on by default) adds your boards under `boards`.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
-- Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes**; draft limit: **20,000 characters**.
+- Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes** for progress; draft limit: **20,000 characters**. Whiteboards may add up to **5 MB per board and 20 MB in total**; larger exports and imports are refused with a message. A backup with `boards` replaces this device’s whiteboards; one without them (including every older backup) leaves them alone.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
 - Unreadable stored data opens a recovery screen without overwriting it. Download the original data, restore a valid backup, or explicitly confirm a fresh start.
 - Other-tab changes are detected through storage events and a pre-write snapshot check. Export this tab’s work before reloading the saved version. Use one editing tab at a time: local storage has no cross-tab transactional locking.
@@ -360,6 +374,9 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/cases.test.ts`, `tests/fixtures/case-ids.json` | Case schema, diagram and rubric checks, append-only IDs |
 | `src/screens/DesignScreen.tsx`, `src/components/Whiteboard.tsx`, `src/design-drafts.ts`, `src/design-score.ts` | Case list, timed workspace, review and rubric, SVG whiteboard, local drafts |
 | `tests/design.spec.ts` | Timer, persisted notes and board, keyboard whiteboard, scoring, backups and narrow layouts |
+| `src/screens/BoardScreen.tsx`, `src/components/BoardEditor.tsx`, `src/components/BoardCanvas.tsx`, `src/board.css` | Whiteboard list and page; lazy Excalidraw wrapper with the simple-whiteboard fallback |
+| `src/boards.ts`, `src/board-elements.ts`, `src/board-library.ts`, `src/board-backup.ts`, `src/backup-flow.tsx` | IndexedDB boards, autosave, legacy migration, stencils; lazy backup export/import, import dialog and recovery screen |
+| `tests/board.spec.ts` | Draw, autosave, reload, export, import, rename, delete, migration, fallback, axe and layouts |
 | `content/patterns/` | One JSON file per pattern page plus `index.json` (order); bundled to `src/generated/patterns.json` (lazy) and `pattern-index.json` |
 | `src/patterns.ts`, `src/patterns/`, `src/screens/PatternsScreen.tsx`, `src/components/PatternVisualiser.tsx`, `src/patterns.css` | Pattern index, tracers and markers, pages, visualiser, picker and cheat sheet |
 | `src/patterns.test.ts`, `tests/fixtures/pattern-ids.json`, `tests/patterns.spec.ts` | Schema, tracer-vs-runtime checks (JS and Pyodide), exercises, progress, XP and badges; browser flows, palette contrast and layouts at 360/768/1440 |

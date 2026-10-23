@@ -9,7 +9,7 @@ const types = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
   '.wasm': 'application/wasm', '.zip': 'application/zip',
   '.webmanifest': 'application/manifest+json', '.json': 'application/json',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 }
 const mounts = new Map()
 function reset() {

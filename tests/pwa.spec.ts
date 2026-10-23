@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { ACCENT_KEY } from '../src/accent-preference'
+import { EXCALIDRAW_VERSION } from '../src/excalidraw-version'
 import { lessons } from '../src/curriculum'
 import { beginSession, emptyProgress, STORAGE_KEY } from '../src/progress'
 
@@ -79,17 +80,20 @@ async function waitForUpdate(page: Page) {
 
 async function inventory(release: 'v1' | 'v2') {
   const files: { path: string; sha256: string }[] = []
+  const root = resolve('dist-pwa-tests', release)
+  const onlineOnly = new Set<string>(JSON.parse(await readFile(join(root, 'excalidraw', EXCALIDRAW_VERSION, 'online-only.json'), 'utf8')))
+  expect(onlineOnly.size).toBeGreaterThan(0)
   async function visit(directory: string, prefix = '') {
     for (const item of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, item.name)
       const relative = `${prefix}${item.name}`
       if (item.isDirectory()) { if (!['pyodide', 'typescript', 'pglite'].includes(relative)) await visit(path, `${relative}/`) }
-      else if (/\.(html|js|css|png|svg|webmanifest)$/.test(item.name) && relative !== 'sw.js') {
+      else if (/\.(html|js|css|png|svg|webmanifest|woff2)$/.test(item.name) && relative !== 'sw.js' && !onlineOnly.has(relative) && !relative.includes('/fonts/Xiaolai/')) {
         files.push({ path: relative, sha256: createHash('sha256').update(await readFile(path)).digest('hex') })
       }
     }
   }
-  await visit(resolve('dist-pwa-tests', release))
+  await visit(root)
   return files
 }
 
@@ -220,6 +224,58 @@ for (const mount of mounts) {
       expect(await offline.evaluate(key => localStorage.getItem(key), STORAGE_KEY)).toBe(before)
       await offline.getByRole('button', { name: 'Resume session' }).click()
       await expect(offline.getByLabel('Your approach & answer')).toHaveValue('Offline answer for behavioral')
+    })
+
+    test('after one online visit a whiteboard opens and draws offline with precached fonts', async ({ page, context }) => {
+      await page.goto(mount)
+      await ready(page)
+      await context.setOffline(true)
+      await page.close()
+      const offline = await context.newPage()
+      const fonts: { url: string; status: number; fromWorker: boolean }[] = []
+      offline.on('response', response => {
+        if (response.url().endsWith('.woff2')) fonts.push({ url: response.url(), status: response.status(), fromWorker: response.fromServiceWorker() })
+      })
+      await offline.goto(`${mount}#board`)
+      await offline.getByRole('button', { name: 'New board' }).click()
+      const area = offline.getByTestId('excalidraw-canvas')
+      await expect(area.locator('canvas.interactive')).toBeVisible()
+      await expect(offline.getByText('The drawing tool couldn’t load')).toHaveCount(0)
+      await area.evaluate(element => element.scrollIntoView({ block: 'center' }))
+      const box = (await area.locator('canvas.interactive').boundingBox())!
+      await offline.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.3)
+      await offline.keyboard.press('r')
+      await offline.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4)
+      await offline.mouse.down()
+      await offline.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.6, { steps: 6 })
+      await offline.mouse.up()
+      await offline.keyboard.press('Escape')
+      await offline.keyboard.press('t')
+      await offline.mouse.click(box.x + box.width * 0.6, box.y + box.height * 0.3)
+      await offline.keyboard.type('Offline')
+      await offline.keyboard.press('Escape')
+      await expect(offline.locator('.board-save')).toHaveAttribute('data-save', 'saved')
+      const types = () => offline.evaluate(() => new Promise<string[]>((resolve, reject) => {
+        const open = indexedDB.open('devprep-boards')
+        open.onerror = () => reject(open.error)
+        open.onsuccess = () => {
+          const request = open.result.transaction('boards').objectStore('boards').getAll()
+          request.onsuccess = () => {
+            open.result.close()
+            resolve(request.result.flatMap((board: { elements: { type: string; isDeleted?: boolean }[] }) => board.elements.filter(element => !element.isDeleted).map(element => element.type)))
+          }
+          request.onerror = () => reject(request.error)
+        }
+      }))
+      await expect.poll(async () => (await types()).sort(), { timeout: 10_000 }).toEqual(['rectangle', 'text'])
+      await expect(offline.locator('.board-save')).toHaveAttribute('data-save', 'saved')
+      // The hand-drawn font that text uses came from the service worker's precache, not the network.
+      await expect.poll(() => offline.evaluate(() => [...document.fonts].some(font => font.family.replaceAll('"', '') === 'Excalifont' && font.status === 'loaded'))).toBe(true)
+      const excalifont = fonts.filter(font => font.url.includes(`/excalidraw/${EXCALIDRAW_VERSION}/fonts/Excalifont/`))
+      expect(excalifont.length).toBeGreaterThan(0)
+      for (const font of excalifont) expect(font).toMatchObject({ status: 200, fromWorker: true })
+      const precached = await offline.evaluate(async url => !!(await caches.match(url)), excalifont[0].url)
+      expect(precached).toBe(true)
     })
 
     for (const fault of ['network', 'tamper'] as const) {

@@ -103,17 +103,18 @@ test('review shows the model answer, scores the rubric, earns XP once and lands 
   expect(backup.designs[item.id].best).toBe(percent)
 })
 
-test('the free whiteboard and case pages fit a 320px screen', async ({ page }) => {
+test('the whiteboard list and case pages fit a 320px screen', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 720 })
   await page.goto('./#design/not-a-case')
   await expect(page.getByRole('heading', { level: 1, name: 'This page isn’t on the roadmap.' })).toBeVisible()
   await page.goto('./#design')
   await expect(page.getByRole('heading', { level: 1, name: 'Case studies' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await page.getByRole('link', { name: /Blank whiteboard/ }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Whiteboard' })).toBeFocused()
-  await page.getByRole('button', { name: 'Add', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Service, Service' })).toBeVisible()
+  await page.getByRole('link', { name: /Whiteboards/ }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Whiteboards' })).toBeFocused()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.getByRole('button', { name: 'New board' }).click()
+  await expect(page.getByTestId('excalidraw-canvas').locator('canvas').first()).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.goto(`./#design/${item.id}`)
   await expect(page.getByRole('heading', { level: 1, name: item.title })).toBeVisible()

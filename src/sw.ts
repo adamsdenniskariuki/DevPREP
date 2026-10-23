@@ -4,6 +4,7 @@ import type { WorkerReply } from './pwa-types'
 import { PYODIDE_VERSION } from './runner/pyodide-version'
 import { TYPESCRIPT_VERSION } from './runner/ts-version'
 import { PGLITE_VERSION } from './runner/pglite-version'
+import { EXCALIDRAW_VERSION } from './excalidraw-version'
 
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: PrecacheEntry[] }
 
@@ -23,6 +24,9 @@ const typescriptCache = typescriptCachePrefix + TYPESCRIPT_VERSION
 // And Postgres (PGlite, ~17 MB), fetched when a SQL lab first runs.
 const pgliteCachePrefix = `devprep-runtime-pglite:${encodeURIComponent(scope)}:`
 const pgliteCache = pgliteCachePrefix + PGLITE_VERSION
+// Excalidraw's Latin fonts are precached; its large CJK font files are cached as they are first used.
+const excalidrawCachePrefix = `devprep-runtime-excalidraw:${encodeURIComponent(scope)}:`
+const excalidrawCache = excalidrawCachePrefix + EXCALIDRAW_VERSION
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Browser offline storage is unavailable.'
@@ -73,12 +77,12 @@ self.addEventListener('install', event => {
 })
 
 // Never remove old build caches during activation: other windows can still need their hashed chunks.
-// Only superseded Python, TypeScript and Postgres runtimes are pruned, since every build loads exactly one pinned version of each.
+// Only superseded Python, TypeScript, Postgres and Excalidraw font runtimes are pruned, since every build loads exactly one pinned version of each.
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const stale = (await caches.keys()).filter(name =>
       (name.startsWith(pyodideCachePrefix) && name !== pyodideCache) || (name.startsWith(typescriptCachePrefix) && name !== typescriptCache) ||
-      (name.startsWith(pgliteCachePrefix) && name !== pgliteCache))
+      (name.startsWith(pgliteCachePrefix) && name !== pgliteCache) || (name.startsWith(excalidrawCachePrefix) && name !== excalidrawCache))
     await Promise.all(stale.map(name => caches.delete(name)))
     await self.clients.claim()
   })())
@@ -126,6 +130,10 @@ self.addEventListener('fetch', event => {
   }
   if (url.pathname.startsWith(`${base.pathname}pglite/${PGLITE_VERSION}/`)) {
     event.respondWith(runtimeAsset(event.request, pgliteCache))
+    return
+  }
+  if (url.pathname.startsWith(`${base.pathname}excalidraw/${EXCALIDRAW_VERSION}/`) && !urls.has(url.href)) {
+    event.respondWith(runtimeAsset(event.request, excalidrawCache))
     return
   }
   if (urls.has(url.href) || url.pathname.startsWith(`${base.pathname}assets/`) || url.pathname.startsWith(`${base.pathname}icons/`)) {
