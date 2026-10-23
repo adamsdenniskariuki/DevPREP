@@ -278,6 +278,35 @@ for (const mount of mounts) {
       expect(precached).toBe(true)
     })
 
+    test('after one online visit a timed practice board opens, draws and reviews offline', async ({ page, context }) => {
+      await page.goto(mount)
+      await ready(page)
+      await context.setOffline(true)
+      await page.close()
+      const offline = await context.newPage()
+      await offline.goto(`${mount}#design/url-shortener`)
+      await offline.getByRole('button', { name: 'Start 35 min' }).click()
+      const area = offline.getByTestId('excalidraw-canvas')
+      await expect(area.locator('canvas.interactive')).toBeVisible()
+      await expect(offline.getByRole('timer')).toHaveText(/^3[45]:\d\d$/)
+      await area.evaluate(element => element.scrollIntoView({ block: 'center' }))
+      const box = (await area.locator('canvas.interactive').boundingBox())!
+      await offline.mouse.click(box.x + box.width * 0.2, box.y + box.height * 0.3)
+      await offline.keyboard.press('r')
+      await offline.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4)
+      await offline.mouse.down()
+      await offline.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.6, { steps: 6 })
+      await offline.mouse.up()
+      await expect(offline.locator('.board-save')).toHaveAttribute('data-save', 'saved')
+      await offline.getByRole('button', { name: 'Finish & review' }).click()
+      await expect(offline.getByRole('heading', { level: 2, name: 'Review your design' })).toBeVisible()
+      await expect(offline.getByRole('figure', { name: /^Reference design for / })).toBeVisible()
+      await offline.getByRole('checkbox', { name: 'Trade-offs' }).check()
+      await offline.reload()
+      await expect(area.locator('canvas.interactive')).toBeVisible()
+      await expect(offline.getByRole('checkbox', { name: 'Trade-offs' })).toBeChecked()
+    })
+
     for (const fault of ['network', 'tamper'] as const) {
       test(`initial ${fault} precache failure never advertises readiness; repair and explicit retry recover`, async ({ page, request }) => {
         await control(request, 'fault', { mount, fault })

@@ -82,7 +82,11 @@ A course on recognising algorithm patterns. It covers **arrays & hashing, prefix
 - **Fallback**: if the drawing tool can’t load, the page shows the simple SVG whiteboard instead. That sketch is saved separately in the same board.
 - **Old free board**: the first visit to `#board` copies the old free whiteboard into a board called “My first board”, once. The original stays in `devprep.design.v1`.
 - Your first board earns 10 XP and the **First sketch** badge (`whiteboard` in the backup).
-- Each board has a kind (`free`, `practice` or `scratch`) and an optional `caseId` or `problemId`, ready for timed design practice and coding scratchpads.
+- Each board has a kind: `free`, `practice` (with a `caseId`) or `scratch` (with a `problemId`). The list shows free boards first; the **Practice** and **Scratchpads** filters show the others.
+- **Timed practice**: on a case page (`#design/<case-id>`), **Whiteboard practice** starts a 35 or 45 minute practice board. The clock is stored with the board, so it keeps running across reloads; you can pause it, and it counts overtime. Screen readers hear a notice at 5 minutes left and at time up, and the progress bar and warning pulse stop under reduced motion. **Finish & review** shows your board beside the case’s reference diagram (stacked on narrow screens) and a self-review checklist: requirements, estimates, API, data model, high-level design, deep dive and bottlenecks, trade-offs. Time taken and ticks are saved with the board, and the case page lists past attempts. The case’s own timer, notes, simple whiteboard and rubric are unchanged.
+- The first finished practice of each case earns 20 XP (`whiteboard.practised` in the backup). Badges: **Against the clock** (first practice) and **Whiteboard regular** (5 cases).
+- **Scratchpad**: each coding problem (`#code/<id>`) has a collapsed **Scratchpad** panel for tracing arrays, trees and pointers. Excalidraw loads only when you open it, and the board is made on your first stroke, one per problem.
+- Backups that include whiteboards carry practice attempts and scratchpads too. Older backups still import.
 
 ## Field Guide
 
@@ -377,6 +381,8 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/screens/BoardScreen.tsx`, `src/components/BoardEditor.tsx`, `src/components/BoardCanvas.tsx`, `src/board.css` | Whiteboard list and page; lazy Excalidraw wrapper with the simple-whiteboard fallback |
 | `src/boards.ts`, `src/board-elements.ts`, `src/board-library.ts`, `src/board-backup.ts`, `src/backup-flow.tsx` | IndexedDB boards, autosave, legacy migration, stencils; lazy backup export/import, import dialog and recovery screen |
 | `tests/board.spec.ts` | Draw, autosave, reload, export, import, rename, delete, migration, fallback, axe and layouts |
+| `src/practice.ts`, `src/components/PracticeParts.tsx`, `src/components/Scratchpad.tsx` | Practice timer, checklist and attempt storage; reference comparison; per-problem scratchpad |
+| `tests/practice-board.spec.ts` | Practice timer (fake clock), reload, finish and review, checklist, attempts, scratchpad, axe and layouts |
 | `content/patterns/` | One JSON file per pattern page plus `index.json` (order); bundled to `src/generated/patterns.json` (lazy) and `pattern-index.json` |
 | `src/patterns.ts`, `src/patterns/`, `src/screens/PatternsScreen.tsx`, `src/components/PatternVisualiser.tsx`, `src/patterns.css` | Pattern index, tracers and markers, pages, visualiser, picker and cheat sheet |
 | `src/patterns.test.ts`, `tests/fixtures/pattern-ids.json`, `tests/patterns.spec.ts` | Schema, tracer-vs-runtime checks (JS and Pyodide), exercises, progress, XP and badges; browser flows, palette contrast and layouts at 360/768/1440 |

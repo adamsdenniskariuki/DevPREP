@@ -4,6 +4,7 @@ import { NODE_KIND_LABELS } from './case-types'
 import type { NodeKind } from './case-types'
 import { NODE_HEIGHT, NODE_WIDTH } from './design-drafts'
 import type { Board } from './design-drafts'
+import type { PracticeState } from './practice'
 
 /** Whiteboards live in IndexedDB, not localStorage, because drawings and pasted images get large. */
 export const BOARDS_DB = 'devprep-boards'
@@ -51,6 +52,8 @@ export interface BoardRecord extends BoardScene {
   updatedAt: string
   /** Sketch from the simple whiteboard, used only when the drawing tool can't load. */
   fallback?: Board
+  /** Timer and self-review for a practice board. */
+  practice?: PracticeState
 }
 
 export const emptyScene = (): BoardScene => ({ elements: [], appState: {}, files: {} })
@@ -215,6 +218,7 @@ export interface NewBoard {
   caseId?: string
   problemId?: string
   scene?: BoardScene
+  practice?: PracticeState
 }
 
 function record(options: NewBoard, now = new Date()): BoardRecord {
@@ -222,7 +226,7 @@ function record(options: NewBoard, now = new Date()): BoardRecord {
   return {
     id: newId(), title: cleanTitle(options.title ?? ''), kind: options.kind ?? 'free',
     ...options.caseId ? { caseId: options.caseId } : {}, ...options.problemId ? { problemId: options.problemId } : {},
-    ...options.scene ?? emptyScene(), createdAt: at, updatedAt: at,
+    ...options.scene ?? emptyScene(), createdAt: at, updatedAt: at, ...options.practice ? { practice: options.practice } : {},
   }
 }
 
@@ -236,6 +240,11 @@ export async function createBoard(options: NewBoard = {}): Promise<BoardRecord> 
 export async function listBoards(kind?: BoardKind): Promise<BoardRecord[]> {
   const all = await transact([STORE], 'readonly', tx => request(tx.objectStore(STORE).getAll() as IDBRequest<BoardRecord[]>))
   return all.filter(board => !kind || board.kind === kind).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.title.localeCompare(b.title))
+}
+
+/** Boards of one kind linked to a case or problem, newest first. */
+export async function findBoards(kind: BoardKind, link: { caseId?: string; problemId?: string }): Promise<BoardRecord[]> {
+  return (await listBoards(kind)).filter(board => (!link.caseId || board.caseId === link.caseId) && (!link.problemId || board.problemId === link.problemId))
 }
 
 export async function getBoard(id: string): Promise<BoardRecord | undefined> {
@@ -260,6 +269,10 @@ export function saveScene(id: string, scene: BoardScene): Promise<BoardRecord> {
 
 export function saveFallback(id: string, fallback: Board): Promise<BoardRecord> {
   return update(id, board => ({ ...board, fallback }))
+}
+
+export function savePractice(id: string, practice: PracticeState): Promise<BoardRecord> {
+  return update(id, board => ({ ...board, practice }))
 }
 
 export function renameBoard(id: string, title: string): Promise<BoardRecord> {

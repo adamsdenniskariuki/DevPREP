@@ -81,6 +81,8 @@ export interface Progress {
 export interface WhiteboardProgress {
   /** When the first board was created or imported. */
   firstBoard: string
+  /** First finished whiteboard practice per design case. Attempt details live with the boards. */
+  practised?: Record<string, string>
 }
 export interface PatternProgress {
   exercise?: Partial<Record<PatternLang, string>>
@@ -297,14 +299,20 @@ function parsePatterns(value: unknown): Record<string, PatternProgress> {
 }
 
 function parseWhiteboard(value: unknown): WhiteboardProgress {
-  const raw = object(value, ['firstBoard'])
-  return { firstBoard: timestamp(raw.firstBoard) }
+  const raw = object(value, ['firstBoard'], ['practised'])
+  const board: WhiteboardProgress = { firstBoard: timestamp(raw.firstBoard) }
+  if (Object.hasOwn(raw, 'practised')) {
+    board.practised = object(raw.practised) as Record<string, string>
+    for (const id in board.practised) if (!caseIds.has(id)) invalid('unknown case study. This backup may need a newer app version.'); else timestamp(board.practised[id])
+  }
+  return board
 }
 
-/** Notes the first whiteboard. Later boards change nothing. */
-export function recordBoardCreated(progress: Progress, now = new Date()): Progress {
-  if (progress.whiteboard) return progress
-  return { ...progress, updatedAt: now.toISOString(), whiteboard: { firstBoard: now.toISOString() } }
+/** Notes the first whiteboard, or the first finished practice of a case. Repeats change nothing. */
+export function recordBoardCreated(progress: Progress, caseId?: string, now = new Date()): Progress {
+  const at = now.toISOString(), board = progress.whiteboard ?? { firstBoard: at }
+  if (caseId ? board.practised?.[caseId] : progress.whiteboard) return progress
+  return { ...progress, updatedAt: at, whiteboard: caseId ? { ...board, practised: { ...board.practised, [caseId]: at } } : board }
 }
 
 function parsePicker(value: unknown): PickerProgress {

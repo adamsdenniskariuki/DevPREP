@@ -11,7 +11,7 @@ import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
 import { patternIndex, PICKER_ROUND } from './patterns'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10, practice: 20 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -73,9 +73,11 @@ export function patternPageDone(progress: Pick<Progress, 'patterns'>, pageId: st
   return !!page?.quiz && Object.keys(page.exercise ?? {}).length > 0
 }
 
-/** Whiteboards: a one-off bonus for the first board. */
+/** Whiteboards: a one-off bonus for the first board, then XP for each design case practised on one. */
+const practised = (progress: Pick<Progress, 'whiteboard'>) => Object.values(progress.whiteboard?.practised ?? {})
+
 export function boardXp(progress: Pick<Progress, 'whiteboard'>): number {
-  return progress.whiteboard ? XP_RULES.firstBoard : 0
+  return progress.whiteboard ? XP_RULES.firstBoard + practised(progress).length * XP_RULES.practice : 0
 }
 
 export function cardXp(progress: Pick<Progress, 'cards'>): number {
@@ -163,7 +165,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const guideDays = guides.map(([, score]) => localDay(new Date(score.at)))
   const patternDays = Object.values(progress.patterns ?? {}).flatMap(page => [...Object.values(page.exercise ?? {}), ...page.quiz ? [page.quiz.at] : []]).map(at => localDay(new Date(at!)))
   if (progress.patternPicker) patternDays.push(localDay(new Date(progress.patternPicker.at)))
-  if (progress.whiteboard) patternDays.push(localDay(new Date(progress.whiteboard.firstBoard)))
+  if (progress.whiteboard) patternDays.push(...[progress.whiteboard.firstBoard, ...practised(progress)].map(at => localDay(new Date(at))))
   const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
@@ -218,6 +220,8 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'patterns-course', title: 'Pattern course', description: `Finish all ${patternIndex.length} pattern pages.`, earned: patternIndex.length > 0 && patternIndex.every(page => patternPageDone(progress, page.id)) },
     { id: 'picker-sharp', title: 'Quick eye', description: `Score 9 or more out of ${PICKER_ROUND} in a pattern picker round.`, earned: (progress.patternPicker?.best ?? 0) >= 9 },
     { id: 'first-board', title: 'First sketch', description: 'Create your first whiteboard.', earned: !!progress.whiteboard },
+    { id: 'first-practice', title: 'Against the clock', description: 'Finish a timed whiteboard practice.', earned: practised(progress).length > 0 },
+    { id: 'practice-5', title: 'Whiteboard regular', description: 'Practise 5 design cases on a whiteboard.', earned: practised(progress).length >= 5 },
   ]
   return { xp, level: Math.floor(xp / LEVEL_XP) + 1, levelXp: xp % LEVEL_XP, streak, badges }
 }
