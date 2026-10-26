@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { lessons, tracks } from '../curriculum'
 import { learningPaths, pathProgress } from '../learning-paths'
 import { LEVEL_XP } from '../gamification'
@@ -8,6 +9,7 @@ import { patternProgress } from '../problems'
 
 export default function ProgressScreen({ app }: { app: AppModel }) {
   const { progress, due, completed, heading, game, weak, browseAll } = app
+  useEffect(() => { heading.current?.focus() }, [heading])
   const earned = game.badges.filter(badge => badge.earned).length
   const needs = weak.filter(area => area.needsPractice > 0)
   return <>

@@ -14,6 +14,7 @@ import type { CodeLanguage } from './problem-types'
 import { defaultEditorPrefs, type EditorPrefs } from './editor-prefs'
 import { patternIds, PICKER_ROUND } from './patterns'
 import { PATTERN_LANGS, type PatternLang } from './pattern-types'
+import { companyIds } from './companies'
 
 export const STORAGE_KEY = 'devprep.progress.v1'
 export const MAX_BACKUP_BYTES = 1_000_000
@@ -77,7 +78,18 @@ export interface Progress {
   patternPicker?: PickerProgress
   /** Whiteboard milestones. The boards themselves live in IndexedDB and back up under a separate key. */
   whiteboard?: WhiteboardProgress
+  /** Timed company practice runs per company, newest last (capped at MAX_COMPANY_RUNS). */
+  companies?: Record<string, CompanyRun[]>
 }
+export interface CompanyRun {
+  at: string
+  /** Time taken in whole seconds. */
+  seconds: number
+  /** Problems marked done in the run, out of total. */
+  done: number
+  total: number
+}
+export const MAX_COMPANY_RUNS = 20
 export interface WhiteboardProgress {
   /** When the first board was created or imported. */
   firstBoard: string
@@ -195,7 +207,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker', 'whiteboard'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker', 'whiteboard', 'companies'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -257,6 +269,7 @@ export function parseBackup(text: string): Progress {
   const patterns = Object.hasOwn(root, 'patterns') ? parsePatterns(root.patterns) : undefined
   const patternPicker = Object.hasOwn(root, 'patternPicker') ? parsePicker(root.patternPicker) : undefined
   const whiteboard = Object.hasOwn(root, 'whiteboard') ? parseWhiteboard(root.whiteboard) : undefined
+  const companies = Object.hasOwn(root, 'companies') ? parseCompanies(root.companies) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -273,6 +286,7 @@ export function parseBackup(text: string): Progress {
     ...(patterns ? { patterns } : {}),
     ...(patternPicker ? { patternPicker } : {}),
     ...(whiteboard ? { whiteboard } : {}),
+    ...(companies ? { companies } : {}),
   }
 }
 
@@ -313,6 +327,27 @@ export function recordBoardCreated(progress: Progress, caseId?: string, now = ne
   const at = now.toISOString(), board = progress.whiteboard ?? { firstBoard: at }
   if (caseId ? board.practised?.[caseId] : progress.whiteboard) return progress
   return { ...progress, updatedAt: at, whiteboard: caseId ? { ...board, practised: { ...board.practised, [caseId]: at } } : board }
+}
+
+function parseCompanies(value: unknown): Record<string, CompanyRun[]> {
+  const raw = object(value), companies: Record<string, CompanyRun[]> = {}
+  for (const [id, runs] of Object.entries(raw)) {
+    if (!companyIds.includes(id)) invalid('unknown company. This backup may need a newer app version.')
+    if (!Array.isArray(runs) || !runs.length || runs.length > MAX_COMPANY_RUNS) invalid('invalid company practice runs.')
+    companies[id] = runs.map(entry => {
+      const run = object(entry, ['at', 'seconds', 'done', 'total'])
+      const total = integer(run.total, 1, 10)
+      return { at: timestamp(run.at), seconds: integer(run.seconds, 0, 86_400), done: integer(run.done, 0, total), total }
+    })
+  }
+  return companies
+}
+
+/** Saves a finished company practice run, keeping the latest MAX_COMPANY_RUNS per company. */
+export function recordCompanyRun(progress: Progress, companyId: string, run: Omit<CompanyRun, 'at'>, now = new Date()): Progress {
+  if (!companyIds.includes(companyId)) throw new Error('Unknown company.')
+  const at = now.toISOString(), runs = [...progress.companies?.[companyId] ?? [], { at, ...run }].slice(-MAX_COMPANY_RUNS)
+  return { ...progress, updatedAt: at, companies: { ...progress.companies, [companyId]: runs } }
 }
 
 function parsePicker(value: unknown): PickerProgress {

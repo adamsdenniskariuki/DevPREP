@@ -10,7 +10,7 @@ const read = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as unknown
 describe('content schema', () => {
   it('has a directory for every track and no stray directories', () => {
     const dirs = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
-    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns'].sort())
+    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies'].sort())
   })
 
   for (const track of TRACK_IDS) {

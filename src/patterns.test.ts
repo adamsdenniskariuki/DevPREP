@@ -296,7 +296,7 @@ describe('pattern progress, XP and badges', () => {
     expect(earned).not.toContain('picker-sharp')
     // Existing badge ids keep their positions; pattern badges are appended.
     const ids = stats.badges.map(badge => badge.id)
-    expect(ids.slice(-order.length - 6)).toEqual([...order.map(id => `pattern-course-${id}`), 'first-pattern', 'patterns-course', 'picker-sharp', 'first-board', 'first-practice', 'practice-5'])
+    expect(ids.slice(-order.length - 8)).toEqual([...order.map(id => `pattern-course-${id}`), 'first-pattern', 'patterns-course', 'picker-sharp', 'first-board', 'first-practice', 'practice-5', 'first-company', 'companies-3'])
     for (const id of order) progress = recordPatternQuiz(recordPatternExercise(progress, id, 'js', NOW), id, 67, NOW)
     progress = recordPicker(progress, 9, NOW)
     const all = new Set(gameStats(progress, NOW).badges.filter(badge => badge.earned).map(badge => badge.id))

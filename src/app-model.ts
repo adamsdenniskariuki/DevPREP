@@ -3,11 +3,11 @@ import type { Lesson, Track } from './curriculum'
 import type { GameStats, WeakArea } from './gamification'
 import type { LearningPath, PathId } from './learning-paths'
 import type { CodeLanguage } from './problem-types'
-import type { Activity, MockResult, Mode, Profile, Progress, Story } from './progress'
+import type { Activity, CompanyRun, MockResult, Mode, Profile, Progress, Story } from './progress'
 import type { Grade } from './flashcards'
 import type { PatternLang } from './pattern-types'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql' | 'patterns'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql' | 'patterns' | 'company'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {
@@ -61,6 +61,8 @@ export interface AppModel {
   gradeCard: (cardId: string, grade: Grade) => number
   /** Saves a finished mock interview and returns the XP it earned. */
   finishMock: (result: Omit<MockResult, 'at'>) => number
+  /** Saves a timed company practice run and returns the XP gained. */
+  finishCompanyRun: (companyId: string, run: Omit<CompanyRun, 'at'>) => number
   /** Adds or updates a story. Returns an error message, or an empty string on success. */
   saveStory: (story: Omit<Story, 'updatedAt'>) => string
   deleteStory: (id: string) => void

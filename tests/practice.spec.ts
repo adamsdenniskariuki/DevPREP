@@ -95,7 +95,7 @@ test('study plan: default week, dated plan and starting a planned lesson', async
 
 test('home links to flashcards and the full plan; practice tools are all live', async ({ page }) => {
   await page.goto('./#practice')
-  await expect(page.locator('.tool-card.live')).toHaveCount(8)
+  await expect(page.locator('.tool-card.live')).toHaveCount(9)
   await expect(page.getByText('Coming soon')).toHaveCount(0)
   await page.goto('./#home')
   await expect(page.locator('.daily-plan').getByRole('link', { name: /Full study plan/ })).toBeVisible()

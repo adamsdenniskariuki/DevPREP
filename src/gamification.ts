@@ -11,7 +11,7 @@ import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
 import { patternIndex, PICKER_ROUND } from './patterns'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10, practice: 20 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10, practice: 20, company: 20, companyRepeat: 5 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -78,6 +78,11 @@ const practised = (progress: Pick<Progress, 'whiteboard'>) => Object.values(prog
 
 export function boardXp(progress: Pick<Progress, 'whiteboard'>): number {
   return progress.whiteboard ? XP_RULES.firstBoard + practised(progress).length * XP_RULES.practice : 0
+}
+
+/** Company practice: XP for the first timed run per company, then a little for each repeat. */
+export function companyXp(progress: Pick<Progress, 'companies'>): number {
+  return Object.values(progress.companies ?? {}).reduce((sum, runs) => sum + XP_RULES.company + (runs.length - 1) * XP_RULES.companyRepeat, 0)
 }
 
 export function cardXp(progress: Pick<Progress, 'cards'>): number {
@@ -153,7 +158,7 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress) + patternXp(progress) + boardXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress) + patternXp(progress) + boardXp(progress) + companyXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
   const sqlSolves = Object.values(progress.sqlSolved ?? {})
@@ -166,7 +171,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const patternDays = Object.values(progress.patterns ?? {}).flatMap(page => [...Object.values(page.exercise ?? {}), ...page.quiz ? [page.quiz.at] : []]).map(at => localDay(new Date(at!)))
   if (progress.patternPicker) patternDays.push(localDay(new Date(progress.patternPicker.at)))
   if (progress.whiteboard) patternDays.push(...[progress.whiteboard.firstBoard, ...practised(progress)].map(at => localDay(new Date(at))))
-  const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at)))]
+  const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at))), ...Object.values(progress.companies ?? {}).flat().map(run => localDay(new Date(run.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
@@ -222,6 +227,8 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'first-board', title: 'First sketch', description: 'Create your first whiteboard.', earned: !!progress.whiteboard },
     { id: 'first-practice', title: 'Against the clock', description: 'Finish a timed whiteboard practice.', earned: practised(progress).length > 0 },
     { id: 'practice-5', title: 'Whiteboard regular', description: 'Practise 5 design cases on a whiteboard.', earned: practised(progress).length >= 5 },
+    { id: 'first-company', title: 'Company practice', description: 'Finish a timed company practice run.', earned: Object.keys(progress.companies ?? {}).length >= 1 },
+    { id: 'companies-3', title: 'Shopping around', description: 'Finish timed practice runs for 3 companies.', earned: Object.keys(progress.companies ?? {}).length >= 3 },
   ]
   return { xp, level: Math.floor(xp / LEVEL_XP) + 1, levelXp: xp % LEVEL_XP, streak, badges }
 }
