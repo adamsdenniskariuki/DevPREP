@@ -91,6 +91,22 @@ export function buildCases(root = 'content') {
   return { cases, index }
 }
 
+export const COMPANIES_OUTPUT = 'src/generated/companies.json'
+export const COMPANY_IDS_OUTPUT = 'src/generated/company-ids.json'
+
+/** Company prep pages, in hub order. Only the id list is eager (for backups); the pages load lazily. */
+export function buildCompanies(root = 'content') {
+  const dir = join(root, 'companies')
+  const { companies: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const companies = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/companies/index.json lists ${id} but the file is missing`)
+    return read(join(dir, `${id}.json`))
+  })
+  if (files.size) throw new Error(`content/companies has pages not listed in index.json: ${[...files].join(', ')}`)
+  return { companies, ids: companies.map(company => company.id) }
+}
+
 /** First sentence of a prompt, so a card can recall a problem without its full statement. */
 export function firstSentence(text) {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -220,6 +236,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const designs = buildCases()
   writeIfChanged(CASES_OUTPUT, designs.cases)
   writeIfChanged(CASE_INDEX_OUTPUT, designs.index)
+  const companySet = buildCompanies()
+  writeIfChanged(COMPANIES_OUTPUT, companySet.companies)
+  writeIfChanged(COMPANY_IDS_OUTPUT, companySet.ids)
   const field = buildGuides()
   writeIfChanged(GUIDES_OUTPUT, field.guides)
   writeIfChanged(GUIDE_INDEX_OUTPUT, field.index)

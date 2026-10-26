@@ -83,7 +83,7 @@ describe('first board', () => {
     expect(recordBoardCreated(once)).toBe(once)
     expect(gameStats(once, new Date(at)).xp - gameStats(start, new Date(at)).xp).toBe(10)
     expect(gameStats(once, new Date(at)).badges.find(badge => badge.id === 'first-board')?.earned).toBe(true)
-    expect(gameStats(start).badges.slice(-3).map(badge => badge.id)).toEqual(['first-board', 'first-practice', 'practice-5'])
+    expect(gameStats(start).badges.slice(-5).map(badge => badge.id)).toEqual(['first-board', 'first-practice', 'practice-5', 'first-company', 'companies-3'])
     expect(parseBackup(serializeBackup(once)).whiteboard).toEqual({ firstBoard: at })
     expect(() => parseBackup(JSON.stringify({ ...once, whiteboard: { firstBoard: 'x' } }))).toThrow('invalid timestamp')
     expect(() => parseBackup(JSON.stringify({ ...once, whiteboard: {} }))).toThrow('unexpected or missing fields')

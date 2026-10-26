@@ -2,6 +2,7 @@ import type { LabLanguage, Track } from './curriculum-types'
 import { PROBLEM_PATTERNS, SQL_TOPICS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
+import { FOCUS_LEVELS, SOURCE_KINDS } from './company-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
 export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript', 'sql']
@@ -806,5 +807,116 @@ export function validatePattern(value: unknown, where = 'pattern'): string[] {
   }
   check.texts(value.mistakes, 'mistakes', 3)
   quizItems(check, value.quiz, 3, 3)
+  return check.errors
+}
+
+// ---- Company prep -----------------------------------------------------------------------------
+export const COMPANY_STAGE_MAX = 26
+export const COMPANY_ROUND_MAX = 56
+export const COMPANY_FOCUS_MAX = 24
+const HTTPS = /^https:\/\/[^\s]+$/
+
+function idList(check: Checker, value: unknown, path: string, min: number, known?: Set<string>) {
+  if (!Array.isArray(value) || value.length < min) return check.fail(path, `expected at least ${min} ids`)
+  if (new Set(value).size !== value.length) check.fail(path, 'expected unique ids')
+  value.forEach((id, index) => {
+    if (typeof id !== 'string' || !KEBAB.test(id)) check.fail(`${path}[${index}]`, 'expected kebab-case id')
+    else if (known && !known.has(id)) check.fail(`${path}[${index}]`, `unknown id ${id}`)
+  })
+}
+
+export interface CompanyRefs { problems?: Set<string>; patterns?: Set<string>; cases?: Set<string> }
+
+/** Validates one company prep page. Pass the known ids to cross-check practice, focus and design links. */
+export function validateCompany(value: unknown, where = 'company', refs: CompanyRefs = {}): string[] {
+  const check = new Checker(where)
+  if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
+  check.keys(value, '', ['id', 'name', 'summary', 'asOf', 'sources', 'process', 'focus', 'practice', 'design', 'values'])
+  if (typeof value.id !== 'string' || !KEBAB.test(value.id)) check.fail('id', 'expected kebab-case id')
+  check.text(value.name, 'name')
+  maxLength(check, value.summary, 'summary', 200)
+  if (typeof value.asOf !== 'string' || !/^20\d\d-(0[1-9]|1[0-2])$/.test(value.asOf)) check.fail('asOf', 'expected YYYY-MM')
+  if (!Array.isArray(value.sources) || value.sources.length < 1) check.fail('sources', 'expected at least 1 source')
+  else {
+    value.sources.forEach((source, index) => {
+      const path = `sources[${index}]`
+      if (!isRec(source)) return check.fail(path, 'expected object')
+      check.keys(source, path, ['title', 'url', 'kind'])
+      check.text(source.title, `${path}.title`)
+      if (typeof source.url !== 'string' || !HTTPS.test(source.url)) check.fail(`${path}.url`, 'expected https URL')
+      if (!(SOURCE_KINDS as readonly unknown[]).includes(source.kind)) check.fail(`${path}.kind`, 'expected official or reported')
+    })
+    if (!value.sources.some(source => isRec(source) && source.kind === 'official')) check.fail('sources', 'expected at least 1 official source')
+  }
+  const process = value.process
+  if (!isRec(process)) check.fail('process', 'expected object')
+  else {
+    check.keys(process, 'process', ['note', 'stages'])
+    check.text(process.note, 'process.note')
+    if (!Array.isArray(process.stages) || process.stages.length < 3 || process.stages.length > 7) check.fail('process.stages', 'expected 3–7 stages')
+    else process.stages.forEach((stage, index) => {
+      const path = `process.stages[${index}]`
+      if (!isRec(stage)) return check.fail(path, 'expected object')
+      check.keys(stage, path, ['name', 'basis', 'detail', 'rounds'])
+      maxLength(check, stage.name, `${path}.name`, COMPANY_STAGE_MAX)
+      if (!(SOURCE_KINDS as readonly unknown[]).includes(stage.basis)) check.fail(`${path}.basis`, 'expected official or reported')
+      check.text(stage.detail, `${path}.detail`)
+      if (!Array.isArray(stage.rounds) || stage.rounds.length < 1 || stage.rounds.length > 4) check.fail(`${path}.rounds`, 'expected 1–4 rounds')
+      else stage.rounds.forEach((round, n) => maxLength(check, round, `${path}.rounds[${n}]`, COMPANY_ROUND_MAX))
+    })
+  }
+  if (!Array.isArray(value.focus) || value.focus.length < 4 || value.focus.length > 8) check.fail('focus', 'expected 4–8 focus areas')
+  else value.focus.forEach((item, index) => {
+    const path = `focus[${index}]`
+    if (!isRec(item)) return check.fail(path, 'expected object')
+    check.keys(item, path, ['label', 'level', 'patterns'])
+    maxLength(check, item.label, `${path}.label`, COMPANY_FOCUS_MAX)
+    if (!(FOCUS_LEVELS as readonly unknown[]).includes(item.level)) check.fail(`${path}.level`, 'expected low, medium or high')
+    idList(check, item.patterns, `${path}.patterns`, 1, refs.patterns)
+  })
+  const practice = value.practice
+  if (!isRec(practice)) check.fail('practice', 'expected object')
+  else {
+    check.keys(practice, 'practice', ['minutes', 'count', 'problems', 'patterns'])
+    if (!Number.isInteger(practice.minutes) || (practice.minutes as number) < 15 || (practice.minutes as number) > 120) check.fail('practice.minutes', 'expected integer 15–120')
+    if (!Number.isInteger(practice.count) || (practice.count as number) < 1 || (practice.count as number) > 4) check.fail('practice.count', 'expected integer 1–4')
+    idList(check, practice.problems, 'practice.problems', 6, refs.problems)
+    idList(check, practice.patterns, 'practice.patterns', 2, refs.patterns)
+  }
+  const design = value.design
+  if (!isRec(design)) check.fail('design', 'expected object')
+  else {
+    check.keys(design, 'design', ['note', 'cases'])
+    check.text(design.note, 'design.note')
+    idList(check, design.cases, 'design.cases', 2, refs.cases)
+  }
+  const values = value.values
+  if (!isRec(values)) check.fail('values', 'expected object')
+  else {
+    check.keys(values, 'values', ['title', 'url', 'summary', 'items', 'prompts'])
+    check.text(values.title, 'values.title')
+    check.text(values.summary, 'values.summary')
+    if (typeof values.url !== 'string' || !HTTPS.test(values.url)) check.fail('values.url', 'expected https URL')
+    if (!Array.isArray(values.items) || values.items.length < 3) check.fail('values.items', 'expected at least 3 values')
+    else values.items.forEach((item, index) => {
+      const path = `values.items[${index}]`
+      if (!isRec(item)) return check.fail(path, 'expected object')
+      check.keys(item, path, ['name', 'gist'])
+      check.text(item.name, `${path}.name`)
+      maxLength(check, item.gist, `${path}.gist`, 120)
+    })
+    if (!Array.isArray(values.prompts) || values.prompts.length < 3) check.fail('values.prompts', 'expected at least 3 prompts')
+    else {
+      const ids = new Set<string>()
+      values.prompts.forEach((item, index) => {
+        const path = `values.prompts[${index}]`
+        if (!isRec(item)) return check.fail(path, 'expected object')
+        check.keys(item, path, ['id', 'text'])
+        if (typeof item.id !== 'string' || !KEBAB.test(item.id) || ids.has(item.id)) check.fail(`${path}.id`, 'expected unique kebab-case id')
+        else ids.add(item.id)
+        maxLength(check, item.text, `${path}.text`, 160)
+      })
+    }
+  }
   return check.errors
 }

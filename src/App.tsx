@@ -1,17 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
+import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, recordCompanyRun, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
 import { EditorPrefsContext } from './editor-context'
 import type { EditorPrefs } from './editor-prefs'
-import type { MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
+import type { CompanyRun, MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
 import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, boardXp, cardXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
+import { activityXp, boardXp, cardXp, companyXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { placementResult } from './placement'
@@ -29,9 +29,9 @@ import { usePwa } from './usePwa'
 import HomeScreen from './screens/HomeScreen'
 import TracksScreen from './screens/TracksScreen'
 import PracticeScreen from './screens/PracticeScreen'
-import ProgressScreen from './screens/ProgressScreen'
 import Study from './screens/Study'
 import PlanScreen from './screens/PlanScreen'
+import { companyIds } from './companies'
 import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
 
@@ -43,6 +43,8 @@ const MockScreen = lazy(() => import('./screens/MockScreen'))
 const StoriesScreen = lazy(() => import('./screens/StoriesScreen'))
 const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
 const PatternsScreen = lazy(() => import('./screens/PatternsScreen'))
+const CompanyScreen = lazy(() => import('./screens/CompanyScreen'))
+const ProgressScreen = lazy(() => import('./screens/ProgressScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
@@ -58,7 +60,7 @@ const navigation = [
   { id: 'progress', label: 'Progress', icon: 'chart' },
   { id: 'settings', label: 'Settings', icon: 'gear' },
 ] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns']
+const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company']
 /** Hashes from earlier releases keep working as bookmarks. */
 const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
@@ -66,7 +68,7 @@ const PATTERN_VIEWS = new Set(['pick', 'cheatsheet'])
 /** Same as BOARD_ID in boards.ts, repeated so board storage stays out of the main bundle. */
 const BOARD_ID = /^[a-z0-9-]{1,64}$/
 
-function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string; boardId?: string } {
+function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string; boardId?: string; companyId?: string } {
   const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
   const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
   if (!route || rest.length) return { route: 'unknown' }
@@ -74,6 +76,7 @@ function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: str
   if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
   if (route === 'sql') return sqlProblemIds.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
   if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
+  if (route === 'company') return companyIds.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
   if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return patternIds.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
@@ -98,6 +101,7 @@ export default function App() {
   const [sqlId, setSqlId] = useState(() => parseHash().sqlId)
   const [patternView, setPatternView] = useState(() => parseHash().patternView)
   const [boardId, setBoardId] = useState(() => parseHash().boardId)
+  const [companyId, setCompanyId] = useState(() => parseHash().companyId)
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
@@ -127,6 +131,7 @@ export default function App() {
       setSqlId(parsed.sqlId)
       setPatternView(parsed.patternView)
       setBoardId(parsed.boardId)
+      setCompanyId(parsed.companyId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -134,7 +139,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -160,6 +165,7 @@ export default function App() {
     setGuideId(undefined)
     setSqlId(undefined)
     setPatternView(undefined)
+    setCompanyId(undefined)
   }
 
   const latest = useRef(progress)
@@ -247,6 +253,13 @@ export default function App() {
     latest.current = after
     return mockXp(after) - mockXp(before)
   }
+  function finishCompanyRun(id: string, run: Omit<CompanyRun, 'at'>) {
+    const before = latest.current
+    const after = recordCompanyRun(before, id, run)
+    store.update(value => recordCompanyRun(value, id, run))
+    latest.current = after
+    return companyXp(after) - companyXp(before)
+  }
   function saveStory(story: Omit<Story, 'updatedAt'>) {
     try { latest.current = saveStoryTo(latest.current, story) } catch (error) { return (error as Error).message }
     store.update(value => saveStoryTo(value, story))
@@ -325,10 +338,10 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, finishCompanyRun, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
+  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns', 'company'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
 
   const editorContext = { prefs: editorPrefs(progress), setPrefs: changeEditorPrefs }
   return <EditorPrefsContext.Provider value={editorContext}><div className="app-shell">
@@ -388,8 +401,9 @@ export default function App() {
             {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
             {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}
       {route === 'patterns' && <Suspense fallback={<p role="status">Loading patterns…</p>}><PatternsScreen app={app} view={patternView} /></Suspense>}
+            {route === 'company' && <Suspense fallback={<p role="status">Loading company prep…</p>}><CompanyScreen app={app} companyId={companyId} /></Suspense>}
             {route === 'plan' && <PlanScreen app={app} />}
-            {route === 'progress' && <ProgressScreen app={app} />}
+            {route === 'progress' && <Suspense fallback={<p role="status">Loading progress…</p>}><ProgressScreen app={app} /></Suspense>}
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
