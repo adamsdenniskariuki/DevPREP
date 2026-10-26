@@ -50,11 +50,11 @@ export function seeded(seed: number): () => number {
   }
 }
 
-function pick<T>(items: readonly T[], random: () => number): T {
+export function pick<T>(items: readonly T[], random: () => number): T {
   return items[Math.floor(random() * items.length)]
 }
 
-function shuffle<T>(items: readonly T[], random: () => number): T[] {
+export function shuffle<T>(items: readonly T[], random: () => number): T[] {
   const copy = [...items]
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1))
@@ -88,6 +88,24 @@ export const TRIVIA_ROUNDS = 4
 export const PATTERN_RUBRIC = ['Named the pattern before writing code', 'Pointed to the clue in the problem that suggests it', 'Gave the time and space of the pattern approach']
 const TRIVIA_RUBRIC = ['Predicted the exact output', 'Explained why in one or two sentences']
 
+/** A coding question for a DevPREP problem, with the shared coding rubric. */
+export function problemQuestion(problem: Problem): MockQuestion {
+  return {
+    kind: 'problem', ref: problem.id, title: problem.title, prompt: problem.prompt,
+    answer: `${problem.solution.explanation}\n\nTime ${problem.complexity.time}, space ${problem.complexity.space}. ${problem.complexity.notes}`,
+    rubric: ['Clarified inputs, outputs and edge cases first', 'Described a brute-force approach and its cost', `Reached ${problem.complexity.time} time and ${problem.complexity.space} space`, 'Wrote working code and traced a test by hand', 'Named the edge cases the solution handles'],
+  }
+}
+
+/** A design question for a case; SSE-only rubric items count at SSE level. */
+export function caseQuestion(design: DesignCase, level: MockLevel): MockQuestion {
+  return {
+    kind: 'case', ref: design.id, title: design.title, prompt: design.prompt,
+    answer: [...design.steps.design, ...design.steps.tradeoffs].map(line => `• ${line}`).join('\n'),
+    rubric: design.rubric.filter(item => level === 'sse' || !item.sse).map(item => item.text),
+  }
+}
+
 /** Builds a mock interview for a track from existing content. The same seed always gives the same mock. */
 export function buildMock(track: Track, level: MockLevel, seed: number, data: MockData): Mock {
   const random = seeded(seed)
@@ -97,21 +115,13 @@ export function buildMock(track: Track, level: MockLevel, seed: number, data: Mo
     const all = [...data.problems.values()]
     const pool = all.filter(problem => level === 'sse' ? problem.difficulty !== 'warm-up' : problem.level === 'se')
     const problem = pick(pool.length ? pool : all, random)
-    questions.push({
-      kind: 'problem', ref: problem.id, title: problem.title, prompt: problem.prompt,
-      answer: `${problem.solution.explanation}\n\nTime ${problem.complexity.time}, space ${problem.complexity.space}. ${problem.complexity.notes}`,
-      rubric: ['Clarified inputs, outputs and edge cases first', 'Described a brute-force approach and its cost', `Reached ${problem.complexity.time} time and ${problem.complexity.space} space`, 'Wrote working code and traced a test by hand', 'Named the edge cases the solution handles'],
-    })
+    questions.push(problemQuestion(problem))
     questions.push(...followUps(trackLessons, 2, random, problem.lessonId))
   } else if (track === 'system-design') {
     const all = [...data.cases.values()]
     const pool = all.filter(item => item.level === level)
     const design = pick(pool.length ? pool : all, random)
-    questions.push({
-      kind: 'case', ref: design.id, title: design.title, prompt: design.prompt,
-      answer: [...design.steps.design, ...design.steps.tradeoffs].map(line => `• ${line}`).join('\n'),
-      rubric: design.rubric.filter(item => level === 'sse' || !item.sse).map(item => item.text),
-    })
+    questions.push(caseQuestion(design, level))
     questions.push(...followUps(trackLessons, 1, random))
   } else if (track === 'behavioral') {
     const signals = COMPETENCIES.filter(item => SSE_SIGNALS.includes(item.id))

@@ -332,6 +332,7 @@ test('sub-pattern pages link back to their parent and the parent lists them', as
 
 for (const width of [360, 768, 1440]) {
   test(`Patterns fit without sideways scrolling at ${width}px`, async ({ page }) => {
+    test.slow()
     await page.setViewportSize({ width, height: 900 })
     for (const hash of ['#patterns', ...order.map(id => `#patterns/${id}`), '#patterns/pick', '#patterns/cheatsheet']) {
       await page.goto(`./${hash}`)

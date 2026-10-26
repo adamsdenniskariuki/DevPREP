@@ -14,7 +14,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
 | **Patterns** (`#patterns`, `#patterns/<id>`, `#patterns/pick`, `#patterns/cheatsheet`) | Algorithm pattern pages with a step-through visualiser, templates, an exercise and a quick check, plus a pattern picker and a printable cheat sheet |
 | **Field Guide** (`#guide`, `#guide/<id>`, `#antipatterns`) | Best-practice guides, real-world case studies and an anti-pattern gallery, each with diagrams, a checklist and a quiz |
-| **Company prep** (`#company`, `#company/<id>`) | Interview loops for Google, Meta, Amazon, Microsoft, Apple and Netflix: process diagram, reported focus areas, a timed practice set, design themes and STAR prompts on each company's values |
+| **Company prep** (`#company`, `#company/<id>`) | Interview loops for Google, Meta, Amazon, Microsoft, Apple, Netflix, Stripe, Uber and Safaricom: process diagram, reported focus areas, a timed practice set, design themes, STAR prompts on each company's values and a timed company mock loop |
 | **Whiteboards** (`#board`, `#board/<id>`) | Excalidraw boards with system-design stencils, saved on this device |
 | **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
@@ -79,7 +79,8 @@ A course on recognising algorithm patterns. It covers **arrays & hashing, prefix
 - **Commonly reported focus areas** (Figure 2): an editorial estimate of emphasis (low, medium, high), clearly labelled as not official, with links to the matching pattern pages.
 - **Practice set**: DevPREP's own problems (never real interview questions). **Start** picks a few problems for a timed run, rotating through the set and putting unsolved ones first. Passing a problem in the code runner during the run ticks it, or tick it yourself. **Finish run** saves it to the backup as `companies`: 20 XP for a company's first run, then 5 per repeat. Badges: **Company practice** (first run) and **Shopping around** (3 companies).
 - **System design themes** linking to design cases, and **Behavioural** notes: the company's values in brief, with STAR prompts written in our own words. Answers and the run in progress are saved on this device in `devprep.company.v1` and are not part of backups.
-- **Adding a company**: write `content/companies/<id>.json`, then append the id to `content/companies/index.json` and to `tests/fixtures/company-ids.json` (append-only). `npm run content` bundles it to `src/generated/companies.json` (lazy) and `company-ids.json`; `src/companies.test.ts` validates it and checks every problem, pattern and case id it links. Paraphrase official pages and cite them; never copy interview questions.
+- **Mock loop** (`#mock/<id>`): a timed sequence of rounds in the company's format (`mock.rounds` in the JSON: 2–6 rounds of `coding`, `design` or `behavioural`, 10–60 minutes each, at least one coding round). Coding rounds draw distinct problems from the practice set, design rounds draw from the design themes and behavioural rounds from the STAR prompts, seeded so a loop in progress survives a reload. Each round has its own timer; at the end you score yourself against each round's rubric (SE or SSE), like the track mocks. **Save result** stores it under `companyMocks` in the backup and shows it on the company page and the Progress page: 30 XP (+10 at 80%+). Badge: **Full loop** (first company mock). The loop in progress is saved on this device in `devprep.company-mock.v1`.
+- **Adding a company**: write `content/companies/<id>.json` (including its `mock` loop), then append the id to `content/companies/index.json` and to `tests/fixtures/company-ids.json` (append-only). `npm run content` bundles it to `src/generated/companies.json` (lazy) and `company-ids.json`; `src/companies.test.ts` validates it and checks every problem, pattern and case id it links. Paraphrase official pages and cite them; never copy interview questions.
 
 ## Whiteboards
 
@@ -141,13 +142,13 @@ Interview-focused **Python**, **TypeScript** and **SQL & Postgres** lessons, lis
 - **Flashcards**: Leitner boxes with intervals of 0/1/3/7/14/30/60 days. Again resets to box 0 and re-queues the card once; Hard keeps it (minimum box 1); Good moves +1; Easy +2. Sessions show due cards first, then up to 10 new ones. Keys: Space/Enter reveals, 1–4 grades. A card counts as mastered from box 4.
 - **Mock interviews**: DSA and system design take 45 minutes, ML and AI 40, behavioral 30. Questions come from a seeded pick for SE or SSE: a coding problem or design case plus follow-ups, or three competency prompts. The draft (`devprep.mock.v1`) survives reloads. Review shows your answer beside the model answer and you tick rubric items to get a score.
 - **Story bank**: up to 50 STAR stories, each tagged with competencies. Coverage shows gaps, and SSE signals (influence, mentoring, ambiguity, conflict) are highlighted for the Senior role.
-- **Study plan**: unfinished lessons (path first, then focus tracks and weak areas), spread at most 3 a day up to the interview date (90 days at most; 7 days without a date). Each day also gets cards plus a problem or case, a weekly mock, mocks on the two days before, and a light interview day.
+- **Study plan**: unfinished lessons (path first, then focus tracks and weak areas), spread at most 3 a day up to the interview date (90 days at most; 7 days without a date). Each day also gets cards plus a problem or case, a weekly mock, mocks on the two days before, and a light interview day. An optional **target company** (saved in the profile as `targetCompany`, so it is in backups) puts that company's unsolved practice-set problems first, adds a values (STAR) session every third day up to its number of prompts, and schedules its mock loop 3 days before the interview (or on the last day without a date). Plans without a company are unchanged.
 
 ## Gamification (light)
 
 Derived entirely from saved activity and solves, so old backups get credit automatically.
 
-- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 15 per solved SQL problem, 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+), 15 per Field Guide entry (+5 for a perfect quiz), 20 per company practised (+5 per repeat run). A level every 200 XP.
+- **XP**: 20 per lesson, 10 per review, +5 when rated Confident, 15 per solved coding problem (+5 for a second language), 15 per solved SQL problem, 25 per scored design case (+10 at 80%+), 2 per card review, 30 per mock (+10 at 80%+), 15 per Field Guide entry (+5 for a perfect quiz), 20 per company practised (+5 per repeat run), 30 per company mock loop (+10 at 80%+). A level every 200 XP.
 - **Streaks** count local study days. A **freeze** is earned every 7 streak days (max 2) and is spent automatically on a missed day.
 - **Badges** for milestones (lessons, reviews, confidence, streaks, finished tracks and paths, cards, mocks and the story bank). No lives, no leaderboards.
 
@@ -283,7 +284,7 @@ Install icons are checked in. To reproduce them after editing their original SVG
 Progress lives under `devprep.progress.v1` in this browser’s local storage. It is not sent to a server. GitHub Pages still serves static files and may log ordinary HTTP requests.
 
 - Clearing site data, private browsing, changing browser profiles, or changing devices can make progress unavailable. There is **no automatic backup or cross-device sync**.
-- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, pattern course progress, company practice runs, story bank, and the latest 5,000 activity events. Code drafts, design case notes and boards, and company STAR notes are not included. **Include whiteboards** (on by default) adds your boards under `boards`.
+- **Settings → About your data → Export backup** downloads versioned JSON. Import it into another browser to transfer your progress. The file contains completion records, due dates, the current unfinished session (including its answer), the optional path choice, the optional profile (interview date, focus tracks), solved coding problems, best system design scores, flashcard boxes, mock results, Field Guide quiz scores, pattern course progress, company practice runs and mock loops, story bank, and the latest 5,000 activity events. Code drafts, design case notes and boards, and company STAR notes are not included. **Include whiteboards** (on by default) adds your boards under `boards`.
 - Finishing a session keeps its completion and confidence, **not its answer or checklist**. Export before finishing to keep an unfinished draft. This makes later reviews fresh recall rather than replaying an old answer.
 - Import is replacement, not merge. It validates the entire file before asking for confirmation. Cancel leaves existing progress untouched. Unknown schema versions, lesson IDs, fields, enum values, malformed dates, and out-of-range values are rejected. File limit: **1,000,000 bytes** for progress; draft limit: **20,000 characters**. Whiteboards may add up to **5 MB per board and 20 MB in total**; larger exports and imports are refused with a message. A backup with `boards` replaces this device’s whiteboards; one without them (including every older backup) leaves them alone.
 - A failed save retains the previous persisted data and keeps the latest work in memory with a visible warning, export action, and retry. Do not close the page with unsaved work.
@@ -310,6 +311,8 @@ The optional root field `cards` maps a card ID to `{ "box": 0–6, "due": YYYY-M
 The optional root field `guides` maps a Field Guide entry ID to `{ "best": 0–100 integer, "at": ISO time }`, the best quiz score. Unknown entry IDs and malformed values are rejected; entry IDs are append-only (`tests/fixtures/guide-ids.json`).
 
 The optional root field `companies` maps a company ID to a list of up to 20 finished timed runs, `{ "at": ISO time, "seconds": 0–86400, "done": 0–total, "total": 1–10 }`. Unknown company IDs, empty lists, extra keys and out-of-range values are rejected; company IDs are append-only (`tests/fixtures/company-ids.json`). STAR notes are not included.
+
+The optional root field `companyMocks` maps a company ID to up to 20 saved mock loops, `{ "at": ISO time, "level": "se" | "sse", "percent": 0–100, "minutes": 0–600, "rounds": 1–8 }`, with the same rejection rules. The optional `profile.targetCompany` must be a known company ID. Older backups without these fields still import.
 
 The optional root field `placements` maps a language track ID to `{ "percent": 0–100 integer, "at": ISO time, "known": [lesson IDs of that track] }`. Interview tracks, unknown lessons and lessons from another track are rejected.
 
@@ -407,12 +410,14 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `content/companies/` | One JSON file per company plus `index.json` (order); bundled to `src/generated/companies.json` (lazy) and `company-ids.json` |
 | `src/companies.ts`, `src/company-types.ts`, `src/company-layout.ts`, `src/company-notes.ts` | Company ids and lazy loader, types, diagram layout and text descriptions, local STAR notes and practice picks |
 | `src/screens/CompanyScreen.tsx`, `src/company.css` | Company list and pages, timed practice run, diagrams |
+| `src/company-mock.ts`, `src/screens/CompanyMock.tsx` | Company mock loop builder (seeded picks per round) and its timed UI, opened through `MockScreen` at `#mock/<id>` |
+| `src/company-mock.test.ts` | Mock loops for every company, schema rules, XP/badge, backups (including older shapes), target company and planner with and without a company |
 | `src/companies.test.ts`, `tests/fixtures/company-ids.json`, `tests/company.spec.ts` | Schema and cross-links, append-only IDs, layouts, notes, runs, XP, badges and backups; browser flow, notes after reload, axe, diagram contrast in every palette and layouts at 360/768/1440 |
 | `content/flashcards/<track>.json` | Flashcard decks; bundled to `src/generated/flashcards.json` (lazy) and `flashcard-index.json` |
 | `src/flashcards.ts`, `src/screens/FlashcardsScreen.tsx` | Leitner scheduling, session queue and review UI |
 | `src/mocks.ts`, `src/screens/MockScreen.tsx` | Seeded mock builder, rubrics, timer and review |
 | `src/stories.ts`, `src/screens/StoriesScreen.tsx` | Competencies, SSE signals and the STAR story bank |
-| `src/planner.ts`, `src/screens/PlanScreen.tsx` | Interview-date study planner |
+| `src/planner.ts`, `src/screens/PlanScreen.tsx`, `src/components/PlanItem.tsx` | Interview-date study planner, optional target company, plan item links |
 | `src/practice.test.ts`, `tests/practice.spec.ts` | Unit and browser tests for cards, mocks, stories and plan |
 | `src/progress.ts` | Data model, full backup validation, review scheduling, storage primitives |
 | `src/useProgress.ts` | React state, save/recovery errors, and other-tab conflict handling |

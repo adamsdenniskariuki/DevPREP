@@ -1,17 +1,17 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
-import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, recordCompanyRun, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
+import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, recordCompanyRun, recordCompanyMock, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
 import { EditorPrefsContext } from './editor-context'
 import type { EditorPrefs } from './editor-prefs'
-import type { CompanyRun, MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
+import type { CompanyMockResult, CompanyRun, MockResult, Mode, Profile, Rating, StudySession, Story } from './progress'
 import { gradeCard as gradeFlashcard } from './flashcards'
 import type { Grade } from './flashcards'
 import { useProgress } from './useProgress'
 import { displayDate } from './format'
 import { getLearningPath, nextLessonFor, pathLessonIds, pathProgress, selectPath } from './learning-paths'
 import type { PathId } from './learning-paths'
-import { activityXp, boardXp, cardXp, companyXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
+import { activityXp, boardXp, cardXp, companyMockXp, companyXp, daysUntil, designXp, gameStats, guideXp, mockXp, patternXp, solveXp, sqlSolveXp, weakAreas } from './gamification'
 import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { placementResult } from './placement'
@@ -28,9 +28,7 @@ import { useAppearance } from './useAppearance'
 import { usePwa } from './usePwa'
 import HomeScreen from './screens/HomeScreen'
 import TracksScreen from './screens/TracksScreen'
-import PracticeScreen from './screens/PracticeScreen'
 import Study from './screens/Study'
-import PlanScreen from './screens/PlanScreen'
 import { companyIds } from './companies'
 import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
@@ -45,6 +43,8 @@ const FieldGuideScreen = lazy(() => import('./screens/FieldGuideScreen'))
 const PatternsScreen = lazy(() => import('./screens/PatternsScreen'))
 const CompanyScreen = lazy(() => import('./screens/CompanyScreen'))
 const ProgressScreen = lazy(() => import('./screens/ProgressScreen'))
+const PlanScreen = lazy(() => import('./screens/PlanScreen'))
+const PracticeScreen = lazy(() => import('./screens/PracticeScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
@@ -76,7 +76,7 @@ function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: str
   if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
   if (route === 'sql') return sqlProblemIds.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
   if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
-  if (route === 'company') return companyIds.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
+  if (route === 'company' || route === 'mock') return companyIds.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
   if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return patternIds.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
@@ -260,6 +260,13 @@ export default function App() {
     latest.current = after
     return companyXp(after) - companyXp(before)
   }
+  function finishCompanyMock(id: string, result: Omit<CompanyMockResult, 'at'>) {
+    const before = latest.current
+    const after = recordCompanyMock(before, id, result)
+    store.update(value => recordCompanyMock(value, id, result))
+    latest.current = after
+    return companyMockXp(after) - companyMockXp(before)
+  }
   function saveStory(story: Omit<Story, 'updatedAt'>) {
     try { latest.current = saveStoryTo(latest.current, story) } catch (error) { return (error as Error).message }
     store.update(value => saveStoryTo(value, story))
@@ -338,7 +345,7 @@ export default function App() {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
     heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
-    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, finishCompanyRun, saveStory, deleteStory, tourOpen, closeTour,
+    navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, finishCompanyRun, finishCompanyMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
   const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns', 'company'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
@@ -391,18 +398,18 @@ export default function App() {
           : <>
             {route === 'home' && <HomeScreen app={app} />}
             {route === 'tracks' && <TracksScreen app={app} />}
-            {route === 'practice' && <PracticeScreen app={app} />}
+            {route === 'practice' && <Suspense fallback={<p role="status">Loading practice…</p>}><PracticeScreen app={app} /></Suspense>}
             {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
             {route === 'sql' && <Suspense fallback={<p role="status">Loading SQL problems…</p>}><SqlProblemsScreen app={app} problemId={sqlId} /></Suspense>}
             {(route === 'guide' || route === 'antipatterns') && <Suspense fallback={<p role="status">Loading the Field Guide…</p>}><FieldGuideScreen app={app} guideId={guideId} gallery={route === 'antipatterns'} /></Suspense>}
             {route === 'design' && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} /></Suspense>}
             {route === 'board' && <Suspense fallback={<p role="status">Loading whiteboards…</p>}><BoardScreen app={app} boardId={boardId} /></Suspense>}
             {route === 'cards' && <Suspense fallback={<p role="status">Loading flashcards…</p>}><FlashcardsScreen app={app} /></Suspense>}
-            {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} /></Suspense>}
+            {route === 'mock' && <Suspense fallback={<p role="status">Loading mock interviews…</p>}><MockScreen app={app} companyId={companyId} /></Suspense>}
             {route === 'stories' && <Suspense fallback={<p role="status">Loading story bank…</p>}><StoriesScreen app={app} /></Suspense>}
       {route === 'patterns' && <Suspense fallback={<p role="status">Loading patterns…</p>}><PatternsScreen app={app} view={patternView} /></Suspense>}
             {route === 'company' && <Suspense fallback={<p role="status">Loading company prep…</p>}><CompanyScreen app={app} companyId={companyId} /></Suspense>}
-            {route === 'plan' && <PlanScreen app={app} />}
+            {route === 'plan' && <Suspense fallback={<p role="status">Loading study plan…</p>}><PlanScreen app={app} /></Suspense>}
             {route === 'progress' && <Suspense fallback={<p role="status">Loading progress…</p>}><ProgressScreen app={app} /></Suspense>}
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}

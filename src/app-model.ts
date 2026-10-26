@@ -3,7 +3,7 @@ import type { Lesson, Track } from './curriculum'
 import type { GameStats, WeakArea } from './gamification'
 import type { LearningPath, PathId } from './learning-paths'
 import type { CodeLanguage } from './problem-types'
-import type { Activity, CompanyRun, MockResult, Mode, Profile, Progress, Story } from './progress'
+import type { Activity, CompanyMockResult, CompanyRun, MockResult, Mode, Profile, Progress, Story } from './progress'
 import type { Grade } from './flashcards'
 import type { PatternLang } from './pattern-types'
 
@@ -63,6 +63,8 @@ export interface AppModel {
   finishMock: (result: Omit<MockResult, 'at'>) => number
   /** Saves a timed company practice run and returns the XP gained. */
   finishCompanyRun: (companyId: string, run: Omit<CompanyRun, 'at'>) => number
+  /** Saves a finished company mock loop and returns the XP gained. */
+  finishCompanyMock: (companyId: string, result: Omit<CompanyMockResult, 'at'>) => number
   /** Adds or updates a story. Returns an error message, or an empty string on success. */
   saveStory: (story: Omit<Story, 'updatedAt'>) => string
   deleteStory: (id: string) => void
