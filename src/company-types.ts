@@ -12,6 +12,10 @@ export interface CompanyStage { name: string; basis: SourceKind; detail: string;
 export interface CompanyFocus { label: string; level: FocusLevel; patterns: string[] }
 export interface CompanyValue { name: string; gist: string }
 export interface CompanyPrompt { id: string; text: string }
+export const MOCK_ROUND_KINDS = ['coding', 'design', 'behavioural'] as const
+export type MockRoundKind = (typeof MOCK_ROUND_KINDS)[number]
+/** One timed round of the company mock loop; the loop follows the company's usual interview format. */
+export interface CompanyMockRound { kind: MockRoundKind; minutes: number }
 
 export interface Company {
   id: string
@@ -24,4 +28,5 @@ export interface Company {
   practice: { minutes: number; count: number; problems: string[]; patterns: string[] }
   design: { note: string; cases: string[] }
   values: { title: string; url: string; summary: string; items: CompanyValue[]; prompts: CompanyPrompt[] }
+  mock: { note: string; rounds: CompanyMockRound[] }
 }

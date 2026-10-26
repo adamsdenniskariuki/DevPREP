@@ -12,6 +12,7 @@ import { loadLabs } from '../curriculum'
 import { displayDate } from '../format'
 import { buildMock, mockScore, MOCK_MINUTES } from '../mocks'
 import type { Mock, MockData, MockLevel } from '../mocks'
+import CompanyMock from './CompanyMock'
 
 const DRAFT_KEY = 'devprep.mock.v1'
 const MAX_ANSWER = 8_000
@@ -46,7 +47,11 @@ const formatTime = (ms: number) => {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
 }
 
-export default function MockScreen({ app }: { app: AppModel }) {
+export default function MockScreen({ app, companyId }: { app: AppModel; companyId?: string }) {
+  return companyId ? <CompanyMock key={companyId} app={app} companyId={companyId} /> : <TrackMock app={app} />
+}
+
+function TrackMock({ app }: { app: AppModel }) {
   const [draft, setDraft] = useState<Draft | undefined>(readDraft)
   const [data, setData] = useState<MockData>()
   const [error, setError] = useState('')

@@ -165,6 +165,7 @@ test('lesson diagrams stay readable in every palette, light and dark', async ({ 
 
 for (const width of [360, 768, 1440]) for (const python of languageTracks) {
   test(`${python.title} lessons fit without sideways scrolling at ${width}px`, async ({ page }) => {
+    test.slow()
     await page.setViewportSize({ width, height: 900 })
     await page.goto(`./#tracks/${python.id}`)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

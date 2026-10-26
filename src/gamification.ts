@@ -11,7 +11,7 @@ import { GUIDE_TOPICS, TOPIC_LABELS } from './guide-types'
 import { patternIndex, PICKER_ROUND } from './patterns'
 
 /** Light gamification derived entirely from saved activity, so old backups need no migration. */
-export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10, practice: 20, company: 20, companyRepeat: 5 } as const
+export const XP_RULES = { learn: 20, review: 10, confidentBonus: 5, solve: 15, secondLanguage: 5, design: 25, designStrong: 10, card: 2, mock: 30, mockStrong: 10, guide: 15, guidePerfect: 5, sqlSolve: 15, patternExercise: 15, patternSecondLanguage: 5, patternQuiz: 10, patternQuizPerfect: 5, pickerRound: 5, firstBoard: 10, practice: 20, company: 20, companyRepeat: 5, companyMock: 30, companyMockStrong: 10 } as const
 /** A design score at or above this percentage earns the strong-answer bonus. */
 export const STRONG_DESIGN = 80
 /** A mock interview score at or above this percentage earns the strong-mock bonus. */
@@ -89,6 +89,11 @@ export function cardXp(progress: Pick<Progress, 'cards'>): number {
   return Object.values(progress.cards ?? {}).reduce((sum, card) => sum + card.reviews * XP_RULES.card, 0)
 }
 
+/** Company mock loops: like a mock interview, with the same strong-score bonus. */
+export function companyMockXp(progress: Pick<Progress, 'companyMocks'>): number {
+  return Object.values(progress.companyMocks ?? {}).flat().reduce((sum, mock) => sum + XP_RULES.companyMock + (mock.percent >= STRONG_MOCK ? XP_RULES.companyMockStrong : 0), 0)
+}
+
 export function mockXp(progress: Pick<Progress, 'mocks'>): number {
   return (progress.mocks ?? []).reduce((sum, mock) => sum + XP_RULES.mock + (mock.percent >= STRONG_MOCK ? XP_RULES.mockStrong : 0), 0)
 }
@@ -158,7 +163,7 @@ function trackComplete(progress: Progress, track: Track) {
 }
 
 export function gameStats(progress: Progress, now = new Date()): GameStats {
-  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress) + patternXp(progress) + boardXp(progress) + companyXp(progress)
+  const xp = progress.activity.reduce((sum, item) => sum + activityXp(item), 0) + solveXp(progress) + designXp(progress) + cardXp(progress) + mockXp(progress) + guideXp(progress) + sqlSolveXp(progress) + patternXp(progress) + boardXp(progress) + companyXp(progress) + companyMockXp(progress)
   const solves = Object.values(progress.solved ?? {})
   const solveDays = solves.flatMap(langs => Object.values(langs).map(at => localDay(new Date(at!))))
   const sqlSolves = Object.values(progress.sqlSolved ?? {})
@@ -171,7 +176,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
   const patternDays = Object.values(progress.patterns ?? {}).flatMap(page => [...Object.values(page.exercise ?? {}), ...page.quiz ? [page.quiz.at] : []]).map(at => localDay(new Date(at!)))
   if (progress.patternPicker) patternDays.push(localDay(new Date(progress.patternPicker.at)))
   if (progress.whiteboard) patternDays.push(...[progress.whiteboard.firstBoard, ...practised(progress)].map(at => localDay(new Date(at))))
-  const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at))), ...Object.values(progress.companies ?? {}).flat().map(run => localDay(new Date(run.at)))]
+  const practiceDays = [...patternDays, ...sqlSolves.map(at => localDay(new Date(at))), ...guideDays, ...cards.map(card => localDay(new Date(card.at))), ...mocks.map(mock => localDay(new Date(mock.at))), ...[...Object.values(progress.companies ?? {}), ...Object.values(progress.companyMocks ?? {})].flat().map(run => localDay(new Date(run.at)))]
   const streak = streakFrom([...progress.activity.map(item => localDay(new Date(item.at))), ...solveDays, ...designDays, ...practiceDays], localDay(now))
   const completed = Object.keys(progress.records).length
   const reviews = progress.activity.filter(item => item.mode === 'review').length
@@ -229,6 +234,7 @@ export function gameStats(progress: Progress, now = new Date()): GameStats {
     { id: 'practice-5', title: 'Whiteboard regular', description: 'Practise 5 design cases on a whiteboard.', earned: practised(progress).length >= 5 },
     { id: 'first-company', title: 'Company practice', description: 'Finish a timed company practice run.', earned: Object.keys(progress.companies ?? {}).length >= 1 },
     { id: 'companies-3', title: 'Shopping around', description: 'Finish timed practice runs for 3 companies.', earned: Object.keys(progress.companies ?? {}).length >= 3 },
+    { id: 'first-company-mock', title: 'Full loop', description: 'Finish a company mock loop.', earned: Object.keys(progress.companyMocks ?? {}).length >= 1 },
   ]
   return { xp, level: Math.floor(xp / LEVEL_XP) + 1, levelXp: xp % LEVEL_XP, streak, badges }
 }

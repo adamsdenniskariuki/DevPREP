@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { lessons, tracks } from '../curriculum'
 import { learningPaths, pathProgress } from '../learning-paths'
 import { LEVEL_XP } from '../gamification'
@@ -6,12 +6,21 @@ import Icon from '../components/Icon'
 import { ratingLabels } from '../labels'
 import type { AppModel } from '../app-model'
 import { patternProgress } from '../problems'
+import { companyIds, loadCompanies } from '../companies'
 
 export default function ProgressScreen({ app }: { app: AppModel }) {
   const { progress, due, completed, heading, game, weak, browseAll } = app
   useEffect(() => { heading.current?.focus() }, [heading])
   const earned = game.badges.filter(badge => badge.earned).length
   const needs = weak.filter(area => area.needsPractice > 0)
+  const companyMocks = companyIds.flatMap(id => (progress.companyMocks?.[id] ?? []).map(result => ({ id, ...result }))).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5)
+  const [names, setNames] = useState<Map<string, string>>()
+  useEffect(() => {
+    if (!companyMocks.length) return
+    let live = true
+    loadCompanies().then(all => { if (live) setNames(new Map([...all.values()].map(item => [item.id, item.name]))) }, () => undefined)
+    return () => { live = false }
+  }, [companyMocks.length])
   return <>
 <div className="page-heading"><div><div className="eyebrow">PROGRESS</div><h1 ref={heading} tabIndex={-1}>Progress</h1><p>Practice milestones, not a readiness score.</p></div></div>
 <div className="summary-grid">
@@ -35,6 +44,7 @@ export default function ProgressScreen({ app }: { app: AppModel }) {
   return <div key={item.id}><div className="section-heading"><h3>{item.title}</h3><span>{count} / {subset.length}</span></div><progress value={count} max={subset.length} aria-label={`${item.title} progress`} /></div>
 })}</div></section>
 <section className="card"><h2>Coding patterns</h2><div className="track-progress-list">{patternProgress(progress).map(row => <div key={row.pattern}><div className="section-heading"><h3>{row.pattern}</h3><span>{row.solved} / {row.total}</span></div><progress value={row.solved} max={row.total} aria-label={`${row.pattern} problems solved`} /></div>)}</div></section>
+<section className="card"><h2>Company mock loops</h2>{companyMocks.length ? <ol className="activity-list">{companyMocks.map(item => <li key={`${item.id}-${item.at}`}><span className="activity-check"><Icon name="check" size={16} /></span><div><strong><a href={`#company/${item.id}`}>{names?.get(item.id) ?? item.id}</a></strong><p>{item.percent}% · {item.level === 'sse' ? 'SSE' : 'SE'} · {item.rounds} rounds in {item.minutes} min</p></div><time dateTime={item.at}>{new Date(item.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></li>)}</ol> : <p className="muted">Finish a mock loop from a <a href="#company">company page</a> to see it here.</p>}</section>
 <section className="card"><h2>Recent practice</h2>{progress.activity.length ? <ol className="activity-list">{progress.activity.slice(-10).reverse().map((item, index) => <li key={`${item.at}-${index}`}><span className="activity-check"><Icon name="check" size={16} /></span><div><strong>{lessons.find(lesson => lesson.id === item.lessonId)?.title}</strong><p>{item.mode === 'review' ? 'Review' : 'Lesson'} · {ratingLabels[item.rating]}</p></div><time dateTime={item.at}>{new Date(item.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</time></li>)}</ol> : <p className="muted">Your first completed session will appear here.</p>}</section>
   </>
 }

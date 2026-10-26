@@ -45,6 +45,70 @@ test('practice links to company prep, and a timed run can be started, worked and
   await expect(page.locator('.page-heading .pill')).toHaveText(`1 of ${companies.length} practised`)
 })
 
+const stripe = companies.find(company => company.id === 'stripe')
+const mockMinutes = (company: typeof google) => company.mock.rounds.reduce((sum: number, round: { minutes: number }) => sum + round.minutes, 0)
+const axe = async (page: Page) => expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+
+test('browse to a new company, run its practice timer, then take its mock loop and keep the result after a reload', async ({ page }) => {
+  test.slow()
+  await page.goto('./#company')
+  await expect(page.locator('.company-card')).toHaveCount(companies.length)
+  await page.getByRole('link', { name: new RegExp(`^${stripe.name}`) }).click()
+  await expect(page.getByRole('heading', { level: 1, name: stripe.name })).toBeFocused()
+  await page.getByRole('button', { name: `Start ${stripe.practice.minutes}-minute practice` }).click()
+  await expect(page.getByRole('timer')).toBeVisible()
+  await page.getByRole('button', { name: 'Finish run' }).click()
+  await expect(page.getByText(/Last run: 0 of/)).toBeVisible()
+
+  await expect(page.getByRole('heading', { level: 2, name: 'Mock loop' })).toBeVisible()
+  await page.getByRole('button', { name: `Start ${mockMinutes(stripe)}-minute mock loop` }).click()
+  await expect(page.getByRole('heading', { level: 1, name: `${stripe.name} mock loop` })).toBeFocused()
+  await expect(page.locator('.mock-round-card')).toHaveCount(stripe.mock.rounds.length)
+  await axe(page)
+  await page.getByRole('button', { name: 'Start mock loop' }).click()
+  const rounds = stripe.mock.rounds.length
+  for (let index = 0; index < rounds; index++) {
+    await expect(page.getByRole('heading', { level: 2, name: new RegExp(`^Round ${index + 1} of ${rounds}`) })).toBeVisible()
+    await expect(page.getByRole('timer', { name: `Round ${index + 1} time remaining` })).toHaveText(`${stripe.mock.rounds[index].minutes}:00`)
+    await page.getByLabel('Your answer').fill(`Round ${index + 1} notes`)
+    if (index === 0) {
+      await axe(page)
+      await page.reload()
+      await expect(page.getByLabel('Your answer')).toHaveValue('Round 1 notes')
+    }
+    await page.getByRole('button', { name: index === rounds - 1 ? 'Finish & review' : 'Next round' }).click()
+  }
+  await expect(page.getByRole('heading', { level: 2, name: 'Score yourself' })).toBeFocused()
+  await expect(page.locator('.mock-rubric')).toHaveCount(rounds)
+  await axe(page)
+  await page.getByRole('group', { name: 'Rubric, round 1' }).getByRole('checkbox').first().check()
+  await expect(page.getByText(/^Score: \d+%$/)).not.toHaveText('Score: 0%')
+  await page.getByRole('button', { name: 'Save result' }).click()
+  await expect(page.getByRole('status').filter({ hasText: /^Saved \d+%\. \+30 XP$/ })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: `Recent ${stripe.name} mocks` })).toBeVisible()
+
+  await page.goto(`./#company/${stripe.id}`)
+  await page.reload()
+  await expect(page.getByText(/^Last mock: \d+% at SE level in \d+ min\. 1 mock so far\.$/)).toBeVisible()
+  await page.goto('./#progress')
+  const section = page.locator('section').filter({ has: page.getByRole('heading', { level: 2, name: 'Company mock loops' }) })
+  await expect(section.getByRole('link', { name: stripe.name })).toBeVisible()
+  await expect(section).toContainText(`SE · ${rounds} rounds in`)
+  await expect(page.locator('.badge.earned').filter({ hasText: 'Full loop' })).toHaveCount(1)
+})
+
+test('a target company adds its set, values practice and mock loop to the study plan', async ({ page }) => {
+  await page.goto('./#plan')
+  await expect(page.getByLabel('Target company (optional)')).toHaveValue('')
+  await expect(page.locator('.plan-days').getByText(/mock loop$/)).toHaveCount(0)
+  await page.getByLabel('Target company (optional)').selectOption(stripe.id)
+  await expect(page.getByText(`${stripe.name} mock loop`).first()).toBeVisible()
+  await expect(page.getByText(/Stripe values: STAR story 1/).first()).toBeVisible()
+  await page.reload()
+  await expect(page.getByLabel('Target company (optional)')).toHaveValue(stripe.id)
+  await axe(page)
+})
+
 test('STAR notes are saved on the device and come back after a reload', async ({ page }) => {
   await openCompany(page)
   const prompt = google.values.prompts[0]
@@ -118,8 +182,9 @@ test('company diagram text, lines and bars stay readable in every palette, light
 
 for (const width of [360, 768, 1440]) {
   test(`company prep fits without sideways scrolling at ${width}px`, async ({ page }) => {
+    test.slow()
     await page.setViewportSize({ width, height: 900 })
-    for (const hash of ['#company', ...ids.map(id => `#company/${id}`)]) {
+    for (const hash of ['#company', ...ids.map(id => `#company/${id}`), `#mock/${stripe.id}`]) {
       await page.goto(`./${hash}`)
       await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
       await expect(page.getByText('Loading company prep…')).toHaveCount(0)
@@ -128,5 +193,12 @@ for (const width of [360, 768, 1440]) {
     await page.goto(`./#company/${google.id}`)
     const svgWidth = await page.locator('.company-svg').first().evaluate(node => node.getBoundingClientRect().width)
     expect(svgWidth).toBeGreaterThan(Math.min(width - 80, 300))
+    await page.goto(`./#mock/${stripe.id}`)
+    await page.getByRole('button', { name: 'Start mock loop' }).click()
+    await expect(page.getByRole('timer')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `mock answer at ${width}`).toBe(true)
+    for (let index = 0; index < stripe.mock.rounds.length; index++) await page.getByRole('button', { name: /^(Next round|Finish & review)$/ }).click()
+    await expect(page.getByRole('heading', { level: 2, name: 'Score yourself' })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `mock review at ${width}`).toBe(true)
   })
 }

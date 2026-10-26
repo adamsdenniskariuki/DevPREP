@@ -44,3 +44,25 @@ Apple does not publish a step-by-step software engineering loop, so every Apple 
 - [Careers at Netflix](https://explore.jobs.netflix.net/careers) (official, accessed 2026-10-26): the careers site.
 
 Netflix does not publish a step-by-step interview loop, so every Netflix stage is marked **Reported**.
+
+## Stripe
+
+- [Careers at Stripe](https://stripe.com/careers) (official, accessed 2026-10-26): the hiring steps (recruiter conversation, a skills assessment, then team interviews, with timelines that vary by role).
+- [Compatibility and operating principles](https://stripe.com/careers/compatibility) (official, accessed 2026-10-26): the operating principles, summarised in the behavioural section.
+
+Every Stripe stage is marked **Official**. The mock loop's round lengths are our own estimate.
+
+## Uber
+
+- [How we hire](https://jobs.uber.com/en/what-moves-us/how-we-hire/) (official, accessed 2026-10-26): the published hiring steps.
+- [What moves us](https://jobs.uber.com/en/what-moves-us/) (official, accessed 2026-10-26): culture and ways of working.
+- [About Uber](https://www.uber.com/us/en/about/) (official, accessed 2026-10-26): the mission.
+
+Every Uber stage is marked **Official**. We could not find a current official list of named values, so the behavioural section paraphrases the hiring themes on these pages and says so.
+
+## Safaricom
+
+- [Careers at Safaricom](https://www.safaricom.co.ke/careers) (official, accessed 2026-10-26): the careers portal.
+- [The Spirit of Safaricom](https://www.safaricom.co.ke/annualreport_2024/who-we-are/the-spirit-of-safaricom/) (official, accessed 2026-10-26): the values, summarised in the behavioural section.
+
+Both pages refused automated fetches (HTTP 403) when checked, so the values summary relies on search summaries of these pages. Safaricom does not publish a step-by-step engineering loop, so every Safaricom stage is marked **Reported** and worded cautiously. Check the live pages before relying on them.

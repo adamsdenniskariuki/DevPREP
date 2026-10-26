@@ -40,7 +40,7 @@ function CompanyList({ app, companies }: { app: AppModel; companies: Map<string,
   const practised = list.filter(item => app.progress.companies?.[item.id]).length
   return <>
     <a className="back-link" href="#practice"><Icon name="back" size={16} /> Practice</a>
-    <div className="page-heading"><div><div className="eyebrow">PRACTICE · COMPANY PREP</div><h1 ref={app.heading} tabIndex={-1}>Company prep</h1><p>How big tech firms interview, what candidates report they focus on, and a timed practice set built from DevPREP problems.</p></div><span className="pill">{practised} of {list.length} practised</span></div>
+    <div className="page-heading"><div><div className="eyebrow">PRACTICE · COMPANY PREP</div><h1 ref={app.heading} tabIndex={-1}>Company prep</h1><p>How leading tech employers interview, what candidates report they focus on, and a timed practice set built from DevPREP problems.</p></div><span className="pill">{practised} of {list.length} practised</span></div>
     <p className="muted company-disclaimer">Processes are paraphrased from each company’s careers pages and change often. Practice sets use DevPREP’s own problems, never real interview questions.</p>
     <ul className="company-grid">{list.map(item => {
       const runs = app.progress.companies?.[item.id]?.length ?? 0
@@ -80,6 +80,8 @@ function CompanyPage({ app, company }: { app: AppModel; company: Company }) {
 
     <Practice app={app} company={company} local={local} save={save} />
 
+    <MockLoop app={app} company={company} />
+
     <section className="card company-section" aria-labelledby="co-design">
       <h2 id="co-design">System design themes</h2>
       <p>{company.design.note}</p>
@@ -112,6 +114,21 @@ function CompanyPage({ app, company }: { app: AppModel; company: Company }) {
 
 function solvedSince(app: AppModel, id: string, since: number) {
   return Object.values(app.progress.solved?.[id] ?? {}).some(at => Date.parse(at as string) >= since)
+}
+
+const ROUND_NAME = { coding: 'Coding', design: 'System design', behavioural: 'Behavioural' } as const
+
+function MockLoop({ app, company }: { app: AppModel; company: Company }) {
+  const results = app.progress.companyMocks?.[company.id] ?? []
+  const last = results.at(-1)
+  const total = company.mock.rounds.reduce((sum, round) => sum + round.minutes, 0)
+  return <section className="card company-section" aria-labelledby="co-mock">
+    <h2 id="co-mock">Mock loop</h2>
+    <p>{company.mock.note} Each round has its own timer; score yourself against the rubric at the end.</p>
+    <ol className="company-mock-rounds">{company.mock.rounds.map((round, index) => <li key={index}>{ROUND_NAME[round.kind]} · {round.minutes} min</li>)}</ol>
+    <div className="button-row"><button type="button" className="primary" onClick={() => { window.location.hash = `mock/${company.id}` }}><Icon name="clock" size={16} />Start {total}-minute mock loop</button></div>
+    {last && <p className="muted company-mock-last">Last mock: {last.percent}% at {last.level === 'sse' ? 'SSE' : 'SE'} level in {last.minutes} min. {results.length} {results.length === 1 ? 'mock' : 'mocks'} so far.</p>}
+  </section>
 }
 
 function Practice({ app, company, local, save }: { app: AppModel; company: Company; local: CompanyLocal; save: (next: CompanyLocal) => void }) {

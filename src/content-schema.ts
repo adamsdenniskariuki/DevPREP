@@ -2,7 +2,7 @@ import type { LabLanguage, Track } from './curriculum-types'
 import { PROBLEM_PATTERNS, SQL_TOPICS } from './problem-types'
 import { NODE_KINDS, STEP_KEYS } from './case-types'
 import type { NodeKind } from './case-types'
-import { FOCUS_LEVELS, SOURCE_KINDS } from './company-types'
+import { FOCUS_LEVELS, MOCK_ROUND_KINDS, SOURCE_KINDS } from './company-types'
 import { DIAGRAM_TYPES, EDGE_STYLES, FLOW_NODE_KINDS, GUIDE_TOPICS, SNIPPET_LANGS, TIMELINE_KINDS } from './guide-types'
 
 export const TRACK_IDS: readonly Track[] = ['dsa', 'system-design', 'ml', 'ai', 'behavioral', 'python', 'typescript', 'sql']
@@ -831,7 +831,7 @@ export interface CompanyRefs { problems?: Set<string>; patterns?: Set<string>; c
 export function validateCompany(value: unknown, where = 'company', refs: CompanyRefs = {}): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
-  check.keys(value, '', ['id', 'name', 'summary', 'asOf', 'sources', 'process', 'focus', 'practice', 'design', 'values'])
+  check.keys(value, '', ['id', 'name', 'summary', 'asOf', 'sources', 'process', 'focus', 'practice', 'design', 'values', 'mock'])
   if (typeof value.id !== 'string' || !KEBAB.test(value.id)) check.fail('id', 'expected kebab-case id')
   check.text(value.name, 'name')
   maxLength(check, value.summary, 'summary', 200)
@@ -916,6 +916,30 @@ export function validateCompany(value: unknown, where = 'company', refs: Company
         else ids.add(item.id)
         maxLength(check, item.text, `${path}.text`, 160)
       })
+    }
+  }
+  const mock = value.mock
+  if (!isRec(mock)) check.fail('mock', 'expected object')
+  else {
+    check.keys(mock, 'mock', ['note', 'rounds'])
+    check.text(mock.note, 'mock.note')
+    if (!Array.isArray(mock.rounds) || mock.rounds.length < 2 || mock.rounds.length > 6) check.fail('mock.rounds', 'expected 2–6 rounds')
+    else {
+      const counts: Record<string, number> = {}
+      mock.rounds.forEach((round, index) => {
+        const path = `mock.rounds[${index}]`
+        if (!isRec(round)) return check.fail(path, 'expected object')
+        check.keys(round, path, ['kind', 'minutes'])
+        if (!(MOCK_ROUND_KINDS as readonly unknown[]).includes(round.kind)) check.fail(`${path}.kind`, 'expected coding, design or behavioural')
+        else counts[round.kind as string] = (counts[round.kind as string] ?? 0) + 1
+        if (!Number.isInteger(round.minutes) || (round.minutes as number) < 10 || (round.minutes as number) > 60) check.fail(`${path}.minutes`, 'expected integer 10–60')
+      })
+      if (!counts.coding) check.fail('mock.rounds', 'expected at least 1 coding round')
+      const pools: Record<string, unknown> = { coding: isRec(practice) ? practice.problems : [], design: isRec(design) ? design.cases : [], behavioural: isRec(values) ? values.prompts : [] }
+      for (const [kind, count] of Object.entries(counts)) {
+        const pool = pools[kind]
+        if (Array.isArray(pool) && count > pool.length) check.fail('mock.rounds', `more ${kind} rounds than items to draw from`)
+      }
     }
   }
   return check.errors

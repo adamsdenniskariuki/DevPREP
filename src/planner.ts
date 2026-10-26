@@ -11,6 +11,7 @@ import { guideIndex } from './guides'
 import { sqlProblemIndex, sqlTopicProgress } from './sql-problems'
 import { TOPIC_TRACK } from './guide-types'
 import { patternIndex } from './patterns'
+import type { Company } from './company-types'
 
 export const PICKER_MINUTES = 10
 
@@ -19,10 +20,10 @@ export function patternQueue(progress: Progress) {
   return patternIndex.filter(page => !patternPageDone(progress, page.id))
 }
 
-export type PlanKind = 'lesson' | 'cards' | 'problem' | 'sql' | 'case' | 'guide' | 'pattern' | 'mock' | 'rest'
+export type PlanKind = 'lesson' | 'cards' | 'problem' | 'sql' | 'case' | 'guide' | 'pattern' | 'mock' | 'values' | 'company-mock' | 'rest'
 export interface PlanItem {
   kind: PlanKind
-  /** Lesson, problem, SQL problem, case, Field Guide or pattern page id ('pick' for picker drills); the track for mocks. */
+  /** Lesson, problem, SQL problem, case, Field Guide or pattern page id ('pick' for picker drills); the track for mocks; the company id for values prompts and company mocks. */
   ref?: string
   title: string
   minutes: number
@@ -44,6 +45,11 @@ export const DEFAULT_DAYS = 7
 export const MAX_PLAN_DAYS = 90
 export const MAX_LESSONS_PER_DAY = 3
 export const CARD_MINUTES = 10
+export const VALUES_MINUTES = 15
+/** Days before the interview that the company mock loop lands on. */
+export const COMPANY_MOCK_LEAD = 3
+/** The parts of a company page the planner uses. */
+export type PlanCompany = Pick<Company, 'id' | 'name' | 'practice' | 'values' | 'mock'>
 const TRACK_NAMES: Record<Track, string> = { dsa: 'DSA', 'system-design': 'System design', ml: 'ML', ai: 'AI/LLM', behavioral: 'Behavioral', python: 'Python', typescript: 'TypeScript', sql: 'SQL' }
 
 function dayNumber(day: string): number {
@@ -130,8 +136,11 @@ export function guideQueue(progress: Progress) {
  * Every day has flashcards; lessons are spread evenly (up to 3 a day); coding problems and
  * design cases alternate; every third day adds a Field Guide entry (and a SQL problem once the SQL track is opted in) and, from day one, a pattern page or picker drill; mocks land weekly and on the two days before the interview,
  * which itself is a light review day.
+ * With a target company, its unsolved practice-set problems jump the problem queue, every third day adds one of its
+ * values prompts, and its mock loop lands a few days before the interview (or on the last day of an undated week).
+ * Without one, the plan is unchanged.
  */
-export function planStudy(progress: Progress, today: string): StudyPlan {
+export function planStudy(progress: Progress, today: string, company?: PlanCompany): StudyPlan {
   const start = dayNumber(today)
   const saved = progress.profile?.interviewDate
   const dated = !!saved && dayNumber(saved) >= start
@@ -142,7 +151,12 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
   const perDay = Math.min(MAX_LESSONS_PER_DAY, Math.max(1, Math.ceil(queue.length / studyDays)))
   const lessonById = new Map(lessons.map(lesson => [lesson.id, lesson]))
   const senior = progress.selectedPath === 'senior'
-  const problems = problemQueue(progress)
+  const queued = problemQueue(progress)
+  const companySet = new Set(company?.practice.problems)
+  const problems = company ? [...queued.filter(problem => companySet.has(problem.id)), ...queued.filter(problem => !companySet.has(problem.id))] : queued
+  const companyMockDay = company ? (dated ? Math.max(start, dayNumber(saved!) - COMPANY_MOCK_LEAD) : endNumber) : NaN
+  const companyMockMinutes = company ? company.mock.rounds.reduce((sum, round) => sum + round.minutes, 0) : 0
+  let valuesAt = 0
   const cases = caseIndex.filter(item => !progress.designs?.[item.id]).sort((a, b) => Number(senior ? b.level === 'sse' : a.level === 'sse') - Number(senior ? a.level === 'sse' : b.level === 'sse'))
   const mockTracks = [...new Set([...progress.profile?.focusTracks ?? [], ...weakAreas(progress).map(area => area.track)])]
   const guides = guideQueue(progress)
@@ -164,7 +178,7 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
     }
     if (index % 2 === 0 && problemAt < problems.length) {
       const problem = problems[problemAt++]
-      items.push({ kind: 'problem', ref: problem.id, title: problem.title, minutes: 30 })
+      items.push({ kind: 'problem', ref: problem.id, title: company && companySet.has(problem.id) ? `${company.name} set: ${problem.title}` : problem.title, minutes: 30 })
     } else if (index % 2 === 1 && caseAt < cases.length) {
       const item = cases[caseAt++]
       items.push({ kind: 'case', ref: item.id, title: item.title, minutes: item.minutes })
@@ -183,6 +197,11 @@ export function planStudy(progress: Progress, today: string): StudyPlan {
         ? { kind: 'pattern', ref: page.id, title: `Pattern: ${page.title}`, minutes: page.minutes }
         : { kind: 'pattern', ref: 'pick', title: 'Pattern picker drill', minutes: PICKER_MINUTES })
     }
+    if (company && index % 3 === 1 && valuesAt < company.values.prompts.length) {
+      valuesAt++
+      items.push({ kind: 'values', ref: company.id, title: `${company.name} values: STAR story ${valuesAt}`, minutes: VALUES_MINUTES })
+    }
+    if (company && value === companyMockDay) items.push({ kind: 'company-mock', ref: company.id, title: `${company.name} mock loop`, minutes: companyMockMinutes })
     const daysLeft = dated ? dayNumber(saved!) - value : Infinity
     if (index % 7 === 6 || daysLeft === 1 || daysLeft === 2) {
       const track = mockTracks[mockAt++ % mockTracks.length] ?? 'dsa'

@@ -80,6 +80,16 @@ export interface Progress {
   whiteboard?: WhiteboardProgress
   /** Timed company practice runs per company, newest last (capped at MAX_COMPANY_RUNS). */
   companies?: Record<string, CompanyRun[]>
+  /** Finished company mock loops per company, newest last (capped at MAX_COMPANY_RUNS). */
+  companyMocks?: Record<string, CompanyMockResult[]>
+}
+export interface CompanyMockResult {
+  at: string
+  level: 'se' | 'sse'
+  /** Rubric percentage across all rounds. */
+  percent: number
+  minutes: number
+  rounds: number
 }
 export interface CompanyRun {
   at: string
@@ -146,6 +156,8 @@ export interface DesignScore {
 export interface Profile {
   interviewDate?: string
   focusTracks?: Track[]
+  /** Company prep page the planner should add practice, values prompts and a mock loop for. */
+  targetCompany?: string
 }
 
 export function emptyProgress(now = new Date()): Progress {
@@ -207,7 +219,7 @@ export function parseBackup(text: string): Progress {
   if (new TextEncoder().encode(text).length > MAX_BACKUP_BYTES) invalid('file is larger than 1 MB.')
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { invalid('not valid JSON.') }
-  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker', 'whiteboard', 'companies'])
+  const root = object(parsed, ['version', 'updatedAt', 'records', 'session', 'activity'], ['selectedPath', 'profile', 'solved', 'designs', 'cards', 'mocks', 'stories', 'guides', 'placements', 'sqlSolved', 'editor', 'patterns', 'patternPicker', 'whiteboard', 'companies', 'companyMocks'])
   if (root.version !== 1) invalid('unsupported version.')
   if (Object.hasOwn(root, 'selectedPath') && !isPathId(root.selectedPath)) invalid('unknown learning path.')
   const updatedAt = timestamp(root.updatedAt)
@@ -270,6 +282,7 @@ export function parseBackup(text: string): Progress {
   const patternPicker = Object.hasOwn(root, 'patternPicker') ? parsePicker(root.patternPicker) : undefined
   const whiteboard = Object.hasOwn(root, 'whiteboard') ? parseWhiteboard(root.whiteboard) : undefined
   const companies = Object.hasOwn(root, 'companies') ? parseCompanies(root.companies) : undefined
+  const companyMocks = Object.hasOwn(root, 'companyMocks') ? parseCompanyMocks(root.companyMocks) : undefined
   return {
     version: 1, updatedAt, records, session, activity,
     ...(isPathId(root.selectedPath) ? { selectedPath: root.selectedPath } : {}),
@@ -287,6 +300,7 @@ export function parseBackup(text: string): Progress {
     ...(patternPicker ? { patternPicker } : {}),
     ...(whiteboard ? { whiteboard } : {}),
     ...(companies ? { companies } : {}),
+    ...(companyMocks ? { companyMocks } : {}),
   }
 }
 
@@ -348,6 +362,30 @@ export function recordCompanyRun(progress: Progress, companyId: string, run: Omi
   if (!companyIds.includes(companyId)) throw new Error('Unknown company.')
   const at = now.toISOString(), runs = [...progress.companies?.[companyId] ?? [], { at, ...run }].slice(-MAX_COMPANY_RUNS)
   return { ...progress, updatedAt: at, companies: { ...progress.companies, [companyId]: runs } }
+}
+
+function parseCompanyMocks(value: unknown): Record<string, CompanyMockResult[]> {
+  const raw = object(value), result: Record<string, CompanyMockResult[]> = {}
+  for (const [id, list] of Object.entries(raw)) {
+    if (!companyIds.includes(id)) invalid('unknown company. This backup may need a newer app version.')
+    if (!Array.isArray(list) || !list.length || list.length > MAX_COMPANY_RUNS) invalid('invalid company mock history.')
+    result[id] = list.map(entry => {
+      const item = object(entry, ['at', 'level', 'percent', 'minutes', 'rounds'])
+      if (item.level !== 'se' && item.level !== 'sse') invalid('unknown company mock level.')
+      return { at: timestamp(item.at), level: item.level, percent: integer(item.percent, 0, 100), minutes: integer(item.minutes, 0, 600), rounds: integer(item.rounds, 1, 8) }
+    })
+  }
+  return result
+}
+
+/** Saves a finished company mock loop, keeping the latest MAX_COMPANY_RUNS per company. */
+export function recordCompanyMock(progress: Progress, companyId: string, result: Omit<CompanyMockResult, 'at'>, now = new Date()): Progress {
+  if (!companyIds.includes(companyId)) throw new Error('Unknown company.')
+  if (!Number.isInteger(result.percent) || result.percent < 0 || result.percent > 100) throw new Error('Score must be a whole percentage.')
+  const at = now.toISOString()
+  const entry: CompanyMockResult = { at, level: result.level, percent: result.percent, minutes: Math.max(0, Math.min(600, Math.round(result.minutes))), rounds: Math.max(1, Math.min(8, Math.round(result.rounds))) }
+  const list = [...progress.companyMocks?.[companyId] ?? [], entry].slice(-MAX_COMPANY_RUNS)
+  return { ...progress, updatedAt: at, companyMocks: { ...progress.companyMocks, [companyId]: list } }
 }
 
 function parsePicker(value: unknown): PickerProgress {
@@ -601,8 +639,12 @@ export function recordSqlSolve(progress: Progress, problemId: string, now = new 
 }
 
 function parseProfile(value: unknown): Profile {
-  const raw = object(value, [], ['interviewDate', 'focusTracks'])
+  const raw = object(value, [], ['interviewDate', 'focusTracks', 'targetCompany'])
   const profile: Profile = {}
+  if (Object.hasOwn(raw, 'targetCompany')) {
+    if (typeof raw.targetCompany !== 'string' || !companyIds.includes(raw.targetCompany)) invalid('unknown target company. This backup may need a newer app version.')
+    profile.targetCompany = raw.targetCompany
+  }
   if (Object.hasOwn(raw, 'interviewDate')) {
     try { profile.interviewDate = day(raw.interviewDate) } catch { invalid('invalid interview date.') }
   }
@@ -616,10 +658,11 @@ function parseProfile(value: unknown): Profile {
 }
 
 /** Merges profile changes; empty values are removed so backups stay minimal. */
-export function updateProfile(progress: Progress, patch: { interviewDate?: string; focusTracks?: Track[] }, now = new Date()): Progress {
+export function updateProfile(progress: Progress, patch: Partial<Profile>, now = new Date()): Progress {
   const profile: Profile = { ...progress.profile, ...patch }
   if (!profile.interviewDate) delete profile.interviewDate
   if (!profile.focusTracks?.length) delete profile.focusTracks
+  if (!profile.targetCompany || !companyIds.includes(profile.targetCompany)) delete profile.targetCompany
   const next: Progress = { ...progress, updatedAt: now.toISOString() }
   if (Object.keys(profile).length) next.profile = profile
   else delete next.profile
