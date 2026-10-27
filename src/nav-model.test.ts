@@ -43,6 +43,11 @@ describe('nav index', () => {
     expect(index.patterns).toEqual(patternIndex.map(item => [item.id, item.title, item.parent ?? '']))
     expect(index.companies.map(([id]) => id)).toEqual(companyIds)
     expect(index.decks.map(([track]) => track)).toEqual(tracks.map(item => item.id))
+    expect(index.antipatterns.length).toBe(guideIndex.reduce((sum, item) => sum + item.antipatterns, 0))
+    for (const [guide, title] of index.antipatterns) {
+      expect(guideIds.has(guide), guide).toBe(true)
+      expect(title.length).toBeGreaterThan(0)
+    }
   })
 })
 
@@ -56,7 +61,7 @@ describe('buildNavTree', () => {
       ['Coding problems', 'SQL problems', 'Flashcards'],
       ['Design cases', 'Whiteboard'],
       ['Company prep', 'Mock interviews', 'Story bank'],
-      ['Today', 'Plan', 'Progress', 'Settings'],
+      ['Today', 'Plan', 'Progress', 'Settings', 'Site map'],
     ])
     expect(tree.find(node => node.id === 'practise')!.href).toBe('#practice')
   })
@@ -127,7 +132,7 @@ describe('groupFor', () => {
       tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
       practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise',
       design: 'design', board: 'design', company: 'interview', mock: 'interview', stories: 'interview',
-      home: 'me', plan: 'me', progress: 'me', settings: 'me',
+      home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me',
     }
     for (const route of ROUTES) expect(groupFor({ route }), route).toBe(expected[route])
     expect(groupFor({ route: 'unknown' })).toBeUndefined()
@@ -144,6 +149,7 @@ describe('breadcrumbs, current node and auto-expansion', () => {
     expect(labels('#practice')).toEqual(['Practise'])
     expect(labels('#review')).toEqual(['Practise'])
     expect(labels('#cards')).toEqual(['Practise', 'Flashcards'])
+    expect(labels('#map')).toEqual(['Me', 'Site map'])
     const problem = problemIndex[0]
     expect(labels(`#code/${problem.id}`)).toEqual(['Practise', 'Coding problems', problem.pattern, problem.title])
     expect(labels(`#tracks/${tracks[0].id}`)).toEqual(['Learn', 'Tracks', tracks[0].title])

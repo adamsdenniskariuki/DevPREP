@@ -46,13 +46,23 @@ const hashes = [
   ...companyIds.flatMap(id => [`#company/${id}`, `#mock/${id}`]),
   '#board/abc-123', '#board/Bad_Id', `#board/${'a'.repeat(65)}`, '#board/',
   '#code/nope', '#sql/nope', '#design/nope', '#guide/nope', '#patterns/nope', '#company/nope', '#mock/nope', '#tracks/nope',
-  '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#map', '#search', '#Home', '#practise', '#nope',
+  '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
+/** Routes added by the redesign, which the legacy parser did not know. */
+const ADDED = new Set(['#map'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
     expect(hashes.length).toBeGreaterThan(300)
-    for (const hash of hashes) expect(parseHash(hash, ids), hash).toEqual(legacyParse(hash || '#'))
+    for (const hash of hashes.filter(item => !ADDED.has(item))) expect(parseHash(hash, ids), hash).toEqual(legacyParse(hash || '#'))
+  })
+
+  it('adds the site map as a new top-level route with no sub-pages', () => {
+    expect(ROUTES).toContain('map')
+    expect(parseHash('#map', ids)).toEqual({ route: 'map' })
+    expect(parseHash('map', ids)).toEqual({ route: 'map' })
+    expect(hrefFor({ route: 'map' })).toBe('#map')
+    for (const hash of ['#map/x', '#map/a/b', '#Map', '#sitemap']) expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })
   })
 
   it('keeps the old aliases pointing at the same screens', () => {

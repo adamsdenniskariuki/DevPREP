@@ -224,15 +224,17 @@ export const NAV_INDEX_OUTPUT = 'src/generated/nav-index.json'
 export function buildNavIndex(root = 'content') {
   const { tracks, lessons } = buildCurriculum(root)
   const decks = buildFlashcards(root).decks
+  const guides = existsSync(join(root, 'field-guide', 'index.json')) ? buildGuides(root) : { guides: [], index: [] }
   return {
     tracks: tracks.map(track => [track.id, track.title, lessons.filter(lesson => lesson.track === track.id).map(lesson => lesson.id)]),
     patterns: buildPatterns(root).index.map(page => [page.id, page.title, page.parent ?? '']),
     problems: buildProblems(root).index.map(problem => [problem.id, problem.title, problem.pattern]),
     sql: buildSqlProblems(root).index.map(problem => [problem.id, problem.title, problem.topic]),
-    guides: existsSync(join(root, 'field-guide', 'index.json')) ? buildGuides(root).index.map(entry => [entry.id, entry.title, entry.topic, entry.kind]) : [],
+    guides: guides.index.map(entry => [entry.id, entry.title, entry.topic, entry.kind]),
     cases: buildCases(root).index.map(item => [item.id, item.title]),
     companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
+    antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
   }
 }
 

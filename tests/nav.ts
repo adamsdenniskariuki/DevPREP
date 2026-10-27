@@ -7,7 +7,7 @@ const GROUP_OF: Record<string, string> = {
   Practise: 'Practise', 'Coding problems': 'Practise', 'SQL problems': 'Practise', Flashcards: 'Practise',
   Design: 'Design', 'Design cases': 'Design', Whiteboard: 'Design',
   Interview: 'Interview', 'Company prep': 'Interview', 'Mock interviews': 'Interview', 'Story bank': 'Interview',
-  Me: 'Me', Today: 'Me', Plan: 'Me', Progress: 'Me', Settings: 'Me',
+  Me: 'Me', Today: 'Me', Plan: 'Me', Progress: 'Me', Settings: 'Me', 'Site map': 'Me',
 }
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

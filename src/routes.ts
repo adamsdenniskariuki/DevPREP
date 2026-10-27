@@ -1,7 +1,7 @@
 import type { Track } from './curriculum'
 import type { Route } from './app-model'
 
-export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company']
+export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map']
 /** Hashes from earlier releases keep working as bookmarks. */
 export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */

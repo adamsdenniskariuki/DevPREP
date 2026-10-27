@@ -58,6 +58,7 @@ test.describe('route compatibility', () => {
       ['#patterns/cheatsheet', 'Learn', 'Cheat sheet'],
       [`#company/${company[0]}`, 'Interview', company[1]],
       [`#mock/${company[0]}`, 'Interview', `${company[1]} mock loop`],
+      ['#map', 'Me', 'Site map'],
     ]
     for (const [hash, group, title] of leaves) {
       await open(page, hash)
@@ -117,7 +118,7 @@ test.describe('desktop tree', () => {
     await expect(learn).toBeFocused()
     await expect(learn).toHaveAttribute('tabindex', '0')
     await page.keyboard.press('End')
-    await expect(treeItem(page, 'Settings')).toBeFocused()
+    await expect(treeItem(page, 'Site map')).toBeFocused()
     await page.keyboard.press('Home')
     await page.keyboard.press('ArrowDown')
     await expect(treeItem(page, 'Tracks')).toBeFocused()
