@@ -55,6 +55,9 @@ const PlanScreen = lazy(() => import('./screens/PlanScreen'))
 const PracticeScreen = lazy(() => import('./screens/PracticeScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
+const MapScreen = lazy(() => import('./screens/MapScreen'))
+const CommandPalette = lazy(() => import('./components/CommandPalette'))
+const MAC = /Mac|iP(hone|ad)/.test(navigator.platform)
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
 const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
@@ -93,6 +96,19 @@ export default function App() {
   const [navData, setNavData] = useState<NavData>()
   const needIndex = useCallback(() => { loadNavData().then(setNavData, () => undefined) }, [])
   useEffect(needIndex, [needIndex])
+  const [palette, setPalette] = useState(false)
+  useEffect(() => {
+    // Capture phase, so Ctrl/Cmd+K opens search even from inside an editor. Shift+K reports 'K'.
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === 'k') {
+        event.preventDefault()
+        event.stopPropagation()
+        setPalette(true)
+      }
+    }
+    addEventListener('keydown', onKey, true)
+    return () => removeEventListener('keydown', onKey, true)
+  }, [])
   const importInput = useRef<HTMLInputElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const reloadBlocked = !!(store.error || store.unsaved || store.conflict || accent.error)
@@ -369,6 +385,7 @@ export default function App() {
     <div className="main-shell">
       <header className="topbar"><a className="mobile-brand" href="#home">Dev<span>PREP</span></a>
         <div className="topbar-right">
+          <button type="button" className="search-button" aria-keyshortcuts={MAC ? 'Meta+K' : 'Control+K'} onClick={() => setPalette(true)}><Icon name="search" size={18} /><span className="search-text">Search</span><kbd aria-hidden="true">{MAC ? '⌘K' : 'Ctrl K'}</kbd></button>
           <a className="game-chip" href="#progress"><span className={game.streak.activeToday ? 'chip-part lit' : 'chip-part'}><Icon name="flame" size={16} />{game.streak.current}<span className="sr-only"> day streak, </span></span><span className="chip-part"><Icon name="bolt" size={16} />{game.xp}<span className="sr-only"> XP</span></span></a>
           {pwa.updateReady && <a className="update-chip" href="#settings">Update ready</a>}
           <span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Saved'}</span>
@@ -410,12 +427,14 @@ export default function App() {
             {route === 'plan' && <Suspense fallback={<p role="status">Loading study plan…</p>}><PlanScreen app={app} /></Suspense>}
             {route === 'progress' && <Suspense fallback={<p role="status">Loading progress…</p>}><ProgressScreen app={app} /></Suspense>}
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
+            {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
             <footer className="app-footer"><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></footer>
           </>}
       </main>
     </div>
+    {palette && <Suspense fallback={null}><CommandPalette close={() => setPalette(false)} /></Suspense>}
     {pendingImport && <Suspense fallback={null}><ImportDialog backup={pendingImport} cancel={() => setPendingImport(null)} fail={setBackupError} restored={setNotice} replace={next => {
       setPendingImport(null)
       if (!store.replace(next)) return false

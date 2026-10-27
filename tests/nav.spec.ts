@@ -58,6 +58,7 @@ test.describe('route compatibility', () => {
       ['#patterns/cheatsheet', 'Learn', 'Cheat sheet'],
       [`#company/${company[0]}`, 'Interview', company[1]],
       [`#mock/${company[0]}`, 'Interview', `${company[1]} mock loop`],
+      ['#map', 'Me', 'Site map'],
     ]
     for (const [hash, group, title] of leaves) {
       await open(page, hash)
@@ -117,7 +118,7 @@ test.describe('desktop tree', () => {
     await expect(learn).toBeFocused()
     await expect(learn).toHaveAttribute('tabindex', '0')
     await page.keyboard.press('End')
-    await expect(treeItem(page, 'Settings')).toBeFocused()
+    await expect(treeItem(page, 'Site map')).toBeFocused()
     await page.keyboard.press('Home')
     await page.keyboard.press('ArrowDown')
     await expect(treeItem(page, 'Tracks')).toBeFocused()
@@ -296,6 +297,11 @@ test.describe('accessibility', () => {
           const practise = sheet(page, 'Practise')
           await expect(practise).toBeVisible()
           await expect(practise.getByRole('treeitem', { name: itemName('Coding problems') })).toHaveAttribute('aria-expanded', 'true')
+          // Wait for the sheet's open transition so axe samples settled colours, not a mid-fade blend.
+          await page.evaluate(() => Promise.all(document.getAnimations()
+            .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
+            .map(animation => animation.finished.catch(() => undefined))))
+          await page.mouse.move(0, 0)
           // Axe's skip-link heuristic treats every in-page hash link as a skip link, so route rows scrolled
           // below the fold of a fixed-position modal sheet look like "off-screen skip links". They are routes.
           const sheetViolations = (await axe(page)).filter(violation => !(violation.id === 'skip-link' && violation.targets.every(target => /^a\[href\$="#[\w/:-]+"\]\[aria-level=/.test(target))))

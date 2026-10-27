@@ -28,11 +28,13 @@ Old links still work: `#today` → Today, `#roadmap` → Tracks, `#review` → P
 
 ### Navigation
 
-Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Story bank) and **Me** (Today, Plan, Progress, Settings).
+Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Story bank) and **Me** (Today, Plan, Progress, Settings, Site map).
 
 - **Desktop (1024px and wider)**: a sticky sidebar holds an ARIA tree of the sections. Branches go down to tracks, pattern pages, Field Guide topics, coding/SQL topics and problems, design cases, companies and mock loops, with done ticks and due counts. One row is in the Tab order; arrows move, Left/Right collapse and expand, Home/End jump, `*` expands siblings and typing a few letters finds a row. The chevron toggles a branch without navigating. **Hide menu** collapses the sidebar to a rail. Expanded branches and the collapsed state are saved in `devprep.nav.v1` (not in backups).
 - **Phones and tablets (below 1024px)**: a bottom bar with the five sections. Each opens a modal sheet with that section's tree and a link to its hub; the sheet traps focus and closes with Escape, its backdrop, Close or a link, returning focus to its button.
 - **Breadcrumbs** above every page show section → page → item; every crumb but the last is a link.
+- **Search (Ctrl+K, or ⌘K on a Mac)**: the **Search** button in the header, or the shortcut from anywhere (including inside the code editor), opens a command palette. It fuzzy-matches pages and settings, tracks and lessons, patterns and sub-patterns, Field Guide topics and anti-patterns, coding and SQL problems, flashcard decks, design cases, companies and mock loops. Results are grouped by type (five per group, with a count of the rest); before you type it shows your recent picks (saved in `devprep.palette.recent.v1`, not in backups) and suggestions. Up/Down move, Enter opens, Escape closes and returns focus. It is a modal ARIA combobox with a listbox, it works offline from the same generated index, and it loads lazily on first use.
+- **Site map (`#map`)**, under Me: the whole tree on one page, with a diagram of the five sections, a progress bar and done/total count for each section, and each section's items folded into a "Show N items" list.
 - The deep levels of the tree come from a small generated index (`src/generated/nav-index.json`, built by `npm run content`) and `src/nav-deep.ts`, both loaded lazily in their own chunks, so the main bundle carries only the five sections and their pages. "App & offline" (install, offline status, updates) sits at the bottom of every page.
 
 ## The study loop
