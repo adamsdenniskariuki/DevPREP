@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { expectCode } from './editor-helpers'
 import { readFileSync } from 'node:fs'
+import { expectInGroup, navTo } from './nav'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
 const DRAFTS_KEY = 'devprep.code.v1'
@@ -9,7 +10,7 @@ const index: { id: string; title: string; pattern: string; difficulty: string; l
 
 async function openProblem(page: Page) {
   await page.goto('./#practice')
-  await page.getByRole('link', { name: /Code runner/ }).click()
+  await page.getByRole('link', { name: /Coding problems/ }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Code runner' })).toBeFocused()
   await page.getByRole('link', { name: problem.title }).click()
   await expect(page.getByRole('heading', { level: 1, name: problem.title })).toBeFocused()
@@ -41,7 +42,7 @@ test('a JavaScript solve passes visible and hidden tests, earns XP once and is s
   await page.getByRole('link', { name: /All problems/ }).click()
   await expect(page.locator('.page-heading .pill')).toHaveText(`1 of ${index.length} solved`)
   await expect(page.getByRole('combobox', { name: 'Pattern' }).locator('option', { hasText: `${problem.pattern} (1/` })).toHaveCount(1)
-  await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
+  await navTo(page, 'Progress')
   await expect(page.getByText('Green tests')).toBeVisible()
   const patternTotal = index.filter(item => item.pattern === problem.pattern).length
   await expect(page.getByRole('progressbar', { name: `${problem.pattern} problems solved` })).toHaveJSProperty('value', 1)
@@ -156,7 +157,7 @@ test('Python loads lazily, solves, and earns the bilingual badge', async ({ page
   await editor.fill(problem.solution.py)
   await page.getByRole('button', { name: 'Run tests' }).click()
   await expect(page.locator('.run-results')).toContainText(/All \d+ tests passed · \+5 XP\./)
-  await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
+  await navTo(page, 'Progress')
   await expect(page.locator('.badge.earned', { hasText: 'Bilingual' })).toBeVisible()
 })
 
@@ -174,5 +175,5 @@ test('unknown problems are not found and narrow screens do not scroll sideways',
   await page.getByRole('button', { name: 'Run tests' }).click()
   await expect(page.locator('.run-results')).toContainText('Got')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await expect(page.getByRole('link', { name: 'Practice', exact: true }).first()).toHaveAttribute('class', /active/)
+  await expectInGroup(page, 'Practise')
 })

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { ACCENT_KEY, accents } from '../src/accent-preference'
 import { color, contrast, textContrast } from './contrast'
+import { navTo, sectionButton } from './nav'
 
 test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } })
 
@@ -9,10 +10,10 @@ for (const theme of ['light', 'dark']) {
     test(`${theme} ${accent.label}: menu taps avoid the browser rectangle and retain thin keyboard focus`, async ({ page }) => {
       await page.addInitScript(({ key, id }) => localStorage.setItem(key, id), { key: ACCENT_KEY, id: accent.id })
       await page.goto(`./?scoutTheme=${theme}`)
-      const menu = page.getByRole('link', { name: 'Tracks', exact: true })
+      const menu = sectionButton(page, 'Learn')
       await expect(menu).toHaveCSS('-webkit-tap-highlight-color', 'rgba(0, 0, 0, 0)')
       await expect(menu).toHaveCSS('box-shadow', 'none')
-      await menu.tap()
+      await navTo(page, 'Tracks', 'tap')
       await expect(menu).toHaveClass(/active/)
       expect(await menu.evaluate(element => element.matches(':focus-visible'))).toBe(false)
       await expect(menu).toHaveCSS('outline-style', 'none')
@@ -25,14 +26,14 @@ for (const theme of ['light', 'dark']) {
       await expect(menu).toHaveCSS('outline-style', 'solid')
       const focus = await menu.evaluate(element => ({
         outline: getComputedStyle(element).outlineColor,
-        surface: getComputedStyle(element.parentElement!.parentElement!).backgroundColor,
+        surface: getComputedStyle(element.parentElement!).backgroundColor,
       }))
       expect(contrast(color(focus.outline), color(focus.surface))).toBeGreaterThanOrEqual(3)
       const filter = page.getByRole('button', { name: 'All tracks', exact: true })
       await expect(filter).toHaveCSS('-webkit-tap-highlight-color', 'rgba(0, 0, 0, 0)')
       await filter.tap()
       await expect(filter).toHaveAttribute('aria-pressed', 'true')
-      await page.getByRole('link', { name: 'Settings', exact: true }).tap()
+      await navTo(page, 'Settings', 'tap')
       await expect(page.locator('.pwa-panel > summary')).toHaveCSS('-webkit-tap-highlight-color', 'rgba(0, 0, 0, 0)')
       await page.locator('.pwa-panel > summary').tap()
       expect(await textContrast(page.locator('.pwa-panel p').first())).toBeGreaterThanOrEqual(4.5)
@@ -43,7 +44,7 @@ for (const theme of ['light', 'dark']) {
       await expect(select).toBeFocused()
       await expect(select).toHaveCSS('outline-width', '2px')
       expect(await select.evaluate(element => getComputedStyle(element).getPropertyValue('-webkit-tap-highlight-color'))).not.toBe('rgba(0, 0, 0, 0)')
-      await menu.tap()
+      await navTo(page, 'Tracks', 'tap')
       await page.getByRole('article').first().getByRole('button', { name: 'Start lesson' }).tap()
       await page.getByRole('button', { name: 'Continue to practice' }).tap()
       const answer = page.getByLabel('Your approach & answer')

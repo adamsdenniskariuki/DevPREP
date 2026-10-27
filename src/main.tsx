@@ -15,6 +15,7 @@ import '@fontsource/opendyslexic/latin-700.css'
 import './styles.css'
 import './accents.css'
 import './design.css'
+import './nav.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,

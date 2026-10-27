@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import type { Page } from '@playwright/test'
 import { lessons } from '../src/curriculum'
 import { beginSession, completeSession, emptyProgress, STORAGE_KEY } from '../src/progress'
+import { isDesktop, itemName, navTo, sectionButton, sheet, treeItem } from './nav'
 
 const first = lessons[0]
 
@@ -50,7 +51,7 @@ test('learn, practice, hint, resume, reflect, schedule, and daily completion', a
   expect(progress.session).toBeNull()
   expect(progress.records[first.id].intervalDays).toBe(3)
   expect(progress.activity).toHaveLength(1)
-  await page.getByRole('link', { name: 'Practice', exact: true }).click()
+  await navTo(page, 'Practise')
   await expect(page.getByRole('heading', { name: 'You’re all caught up.' })).toBeVisible()
   await expect(page.getByText(first.title, { exact: true })).toBeVisible()
 })
@@ -239,7 +240,13 @@ test('keyboard skip link and navigation reach focused content', async ({ page })
   await page.getByRole('link', { name: 'Skip to content' }).focus()
   await page.keyboard.press('Enter')
   await expect(page.locator('main')).toBeFocused()
-  await page.getByRole('link', { name: 'Tracks', exact: true }).focus()
+  if (isDesktop(page)) {
+    await treeItem(page, 'Tracks').focus()
+  } else {
+    await sectionButton(page, 'Learn').focus()
+    await page.keyboard.press('Enter')
+    await expect(sheet(page, 'Learn').getByRole('treeitem', { name: itemName('Tracks') })).toBeFocused()
+  }
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { level: 1 })).toBeFocused()
   await expect(page).toHaveURL(/#tracks$/)
@@ -263,7 +270,7 @@ test('narrow screens have no horizontal overflow and a single focused study step
   for (const button of await page.locator('.rating-options button').all()) {
     expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44)
   }
-  await page.getByRole('button', { name: 'Learn', exact: false }).click()
+  await page.getByRole('main').getByRole('button', { name: 'Learn', exact: false }).click()
   await expect(page.locator('.lesson-content')).toBeVisible()
   await expect(page.locator('.practice-content')).toBeHidden()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)

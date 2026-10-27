@@ -1,6 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { navTo } from './nav'
 
 const DRAFTS_KEY = 'devprep.design.v1'
 const PROGRESS_KEY = 'devprep.progress.v1'
@@ -79,7 +80,7 @@ test('create, draw, autosave, reload, and export a board', async ({ page }) => {
 
   const progress = await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}'), PROGRESS_KEY)
   expect(progress.whiteboard.firstBoard).toBeTruthy()
-  await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
+  await navTo(page, 'Progress')
   await expect(page.locator('.badge.earned', { hasText: 'First sketch' })).toBeVisible()
 })
 

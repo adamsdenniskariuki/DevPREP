@@ -6,9 +6,9 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 
 | Screen | Purpose |
 | --- | --- |
-| **Home** (`#home`) | Target role, interview countdown, today's plan (next lesson + due reviews), XP/streak |
+| **Today** (`#home`) | Target role, interview countdown, today's plan (next lesson + due reviews), XP/streak |
 | **Tracks** (`#tracks`) | Your selected path, or all curriculum by track |
-| **Practice** (`#practice`) | Due spaced reviews (badge shows the count) and practice tools |
+| **Practise** (`#practice`) | Hub: due spaced reviews (badge shows the count) and every practice tool grouped as Drills, Design and Interview |
 | **Code runner** (`#code`, `#code/<problem-id>`) | Runnable DSA problems in JavaScript or Python with visible and hidden tests |
 | **SQL problems** (`#sql`, `#sql/<problem-id>`) | Interview SQL problems on in-browser Postgres with visible and hidden tests |
 | **System design** (`#design`, `#design/<case-id>`) | 20 timed case studies with framework notes, a whiteboard, model answers and a rubric |
@@ -24,7 +24,16 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Settings** (`#settings`) | Target role, interview date, focus tracks, appearance, About your data (backup/import), welcome tour |
 | **Study** (`#study`) | Chunked lesson → warm-up/core/stretch practice → explanation & confidence → scheduled review |
 
-Old links still work: `#today` → Home, `#roadmap` → Tracks, `#review` → Practice. "App & offline" (install, offline status, updates) sits at the bottom of every page.
+Old links still work: `#today` → Today, `#roadmap` → Tracks, `#review` → Practise.
+
+### Navigation
+
+Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Story bank) and **Me** (Today, Plan, Progress, Settings).
+
+- **Desktop (1024px and wider)**: a sticky sidebar holds an ARIA tree of the sections. Branches go down to tracks, pattern pages, Field Guide topics, coding/SQL topics and problems, design cases, companies and mock loops, with done ticks and due counts. One row is in the Tab order; arrows move, Left/Right collapse and expand, Home/End jump, `*` expands siblings and typing a few letters finds a row. The chevron toggles a branch without navigating. **Hide menu** collapses the sidebar to a rail. Expanded branches and the collapsed state are saved in `devprep.nav.v1` (not in backups).
+- **Phones and tablets (below 1024px)**: a bottom bar with the five sections. Each opens a modal sheet with that section's tree and a link to its hub; the sheet traps focus and closes with Escape, its backdrop, Close or a link, returning focus to its button.
+- **Breadcrumbs** above every page show section → page → item; every crumb but the last is a link.
+- The deep levels of the tree come from a small generated index (`src/generated/nav-index.json`, built by `npm run content`) and `src/nav-deep.ts`, both loaded lazily in their own chunks, so the main bundle carries only the five sections and their pages. "App & offline" (install, offline status, updates) sits at the bottom of every page.
 
 ## The study loop
 

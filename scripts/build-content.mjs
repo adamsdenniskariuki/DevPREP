@@ -215,6 +215,27 @@ export function buildFlashcards(root = 'content') {
   return { decks, index }
 }
 
+export const NAV_INDEX_OUTPUT = 'src/generated/nav-index.json'
+
+/**
+ * A compact, lazily loaded index for the navigation tree: ids, titles and grouping keys only, as tuples.
+ * The app renders the top two nav levels from a static model and loads this when a deep branch is needed.
+ */
+export function buildNavIndex(root = 'content') {
+  const { tracks, lessons } = buildCurriculum(root)
+  const decks = buildFlashcards(root).decks
+  return {
+    tracks: tracks.map(track => [track.id, track.title, lessons.filter(lesson => lesson.track === track.id).map(lesson => lesson.id)]),
+    patterns: buildPatterns(root).index.map(page => [page.id, page.title, page.parent ?? '']),
+    problems: buildProblems(root).index.map(problem => [problem.id, problem.title, problem.pattern]),
+    sql: buildSqlProblems(root).index.map(problem => [problem.id, problem.title, problem.topic]),
+    guides: existsSync(join(root, 'field-guide', 'index.json')) ? buildGuides(root).index.map(entry => [entry.id, entry.title, entry.topic, entry.kind]) : [],
+    cases: buildCases(root).index.map(item => [item.id, item.title]),
+    companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
+    decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
+  }
+}
+
 function writeIfChanged(path, value) {
   const text = JSON.stringify(value) + '\n'
   if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
@@ -248,4 +269,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const cards = buildFlashcards()
   writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
   writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)
+  writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
 }

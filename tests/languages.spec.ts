@@ -3,6 +3,7 @@ import { expectCode } from './editor-helpers'
 import { readdirSync, readFileSync } from 'node:fs'
 import { palettes } from '../src/appearance'
 import { color, contrast, over } from './contrast'
+import { navTo } from './nav'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
 const LANGUAGES = ['python', 'typescript', 'sql']
@@ -127,7 +128,7 @@ for (const track of languageTracks) test(`the ${track.title} placement check mar
   await expect(page.getByRole('button', { name: 'Retake placement check' })).toBeVisible()
   const saved = await page.evaluate(key => JSON.parse(localStorage.getItem(key)!), PROGRESS_KEY)
   expect(new Set(saved.placements[track.id].known)).toEqual(known)
-  await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
+  await navTo(page, 'Progress')
   await expect(page.locator('.badge.earned', { hasText: `${track.title} placed` })).toBeVisible()
 })
 

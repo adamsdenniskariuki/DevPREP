@@ -3,6 +3,7 @@ import { lessons, tracks } from '../src/curriculum'
 import { beginSession, completeSession, emptyProgress, parseBackup, STORAGE_KEY } from '../src/progress'
 import { lessonSections } from '../src/lesson-sections'
 import legacyBackup from './fixtures/v1-progress.json' with { type: 'json' }
+import { navTo } from './nav'
 
 test('real MVP backup resumes its original answer, checklist, hints, and review schedule', async ({ page }) => {
   await page.goto('./#progress')
@@ -32,7 +33,7 @@ test('reading bookmarks survive reload, pause, export/import and phase changes w
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(data))
   }, { key: STORAGE_KEY, data: legacyBackup })
   await page.goto('./#study')
-  await page.getByRole('button', { name: 'Learn', exact: false }).click()
+  await page.getByRole('main').getByRole('button', { name: 'Learn', exact: false }).click()
   await page.getByLabel('In this lesson').selectOption('walkthrough-1')
   const lesson = lessons.find(item => item.id === legacyBackup.session.lessonId)!
   await expect(page.getByRole('heading', { name: lesson.walkthrough[1].title, exact: true })).toBeVisible()
@@ -166,7 +167,7 @@ for (const track of tracks) {
       await expect(page.getByText(plain(lesson.extraPractice[1].prompt), { exact: true })).toBeVisible()
       await page.getByText('Stretch worked answer & rubric', { exact: true }).click()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-      await page.getByRole('link', { name: 'Tracks', exact: true }).click()
+      await navTo(page, 'Tracks')
     }
   })
 }

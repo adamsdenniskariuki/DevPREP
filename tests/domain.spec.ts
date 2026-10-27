@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { STORAGE_KEY } from '../src/progress'
+import { navTo } from './nav'
 
 async function builtFiles(directory = 'dist', prefix = ''): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true })
@@ -44,7 +45,7 @@ for (const mount of ['/', '/DevPREP/']) {
       expect(new URL(page.url()).pathname).toBe(mount)
       expect(new URL(page.url()).hash).toBe(`#${route}`)
     }
-    await page.getByRole('link', { name: 'Home', exact: true }).click()
+    await navTo(page, 'Today')
     await page.getByRole('button', { name: 'Start today’s lesson' }).click()
     await page.getByRole('button', { name: 'Continue to practice' }).click()
     await page.getByLabel('Your approach & answer').fill('A refresh-safe domain draft.')

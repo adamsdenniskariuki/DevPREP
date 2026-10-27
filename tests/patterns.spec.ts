@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { palettes } from '../src/appearance'
 import { codeOf, expectCode } from './editor-helpers'
 import { textContrast } from './contrast'
+import { expectInGroup } from './nav'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
 const read = (path: string) => JSON.parse(readFileSync(new URL(`../content/patterns/${path}`, import.meta.url), 'utf8'))
@@ -29,7 +30,7 @@ test('the course home lists pages in learning order and opens from Practice', as
   await expect(page.getByRole('link', { name: /Cheat sheet/ })).toHaveAttribute('href', '#patterns/cheatsheet')
   await page.getByRole('link', { name: hashing.title, exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: hashing.title })).toBeFocused()
-  await expect(page.getByRole('link', { name: 'Practice', exact: true }).first()).toHaveAttribute('class', /active/)
+  await expectInGroup(page, 'Learn')
 })
 
 test('a pattern page shows all 8 sections in order', async ({ page }) => {
@@ -325,9 +326,9 @@ test('sub-pattern pages link back to their parent and the parent lists them', as
   const children = pages.filter(item => item.parent === 'stack')
   expect(children.map(item => item.id)).toEqual(['basic-stack', 'monotonic-stack'])
   await openPage(page, parent)
-  for (const child of children) await expect(page.locator(`a[href="#patterns/${child.id}"]`).first()).toBeVisible()
+  for (const child of children) await expect(page.locator(`main a[href="#patterns/${child.id}"]`).first()).toBeVisible()
   await openPage(page, children[1])
-  await expect(page.locator('a[href="#patterns/stack"]').first()).toBeVisible()
+  await expect(page.locator('main a[href="#patterns/stack"]').first()).toBeVisible()
 })
 
 for (const width of [360, 768, 1440]) {

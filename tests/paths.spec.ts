@@ -5,6 +5,7 @@ import { getLearningPath, pathLessonIds, selectPath } from '../src/learning-path
 import type { PathId } from '../src/learning-paths'
 import { beginSession, completeSession, emptyProgress, STORAGE_KEY } from '../src/progress'
 import legacyBackup from './fixtures/v1-progress.json' with { type: 'json' }
+import { navTo } from './nav'
 
 const swe = getLearningPath('swe')!
 const senior = getLearningPath('senior')!
@@ -12,14 +13,14 @@ const senior = getLearningPath('senior')!
 /** The target role lives in Settings; choose it there and return to the screen under test. */
 async function choose(page: Page, id: PathId | '') {
   const back = new URL(page.url()).hash || '#home'
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await navTo(page, 'Settings')
   await page.getByLabel('Target role', { exact: true }).selectOption(id)
   await page.evaluate(hash => { window.location.hash = hash }, back)
   await expect(page).toHaveURL(new RegExp(`${back}$`))
 }
 
 async function role(page: Page) {
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await navTo(page, 'Settings')
   return page.getByLabel('Target role', { exact: true })
 }
 
@@ -43,7 +44,7 @@ test('path selection is optional and old users keep their original state and nex
   await expect(page.getByRole('button', { name: 'Resume session' })).toBeVisible()
   await expect(await role(page)).toHaveValue('')
   expect(await saved(page)).toEqual(legacyBackup)
-  await page.getByRole('link', { name: 'Tracks', exact: true }).click()
+  await navTo(page, 'Tracks')
   await expect(page.getByRole('article')).toHaveCount(lessons.length)
   await expect(page.getByRole('button', { name: 'Selected path', exact: true })).toHaveCount(0)
 })
@@ -58,7 +59,7 @@ test('SWE and Senior change Home deliberately and persist across reload', async 
   await expect(page.locator('.hero-copy h2')).toHaveText(first.title)
   await page.reload()
   await expect(await role(page)).toHaveValue('senior')
-  await page.getByRole('link', { name: 'Home', exact: true }).click()
+  await navTo(page, 'Today')
   await expect(page.locator('.hero-copy h2')).toHaveText(first.title)
   await page.getByRole('button', { name: 'Start today’s lesson' }).click()
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(first.title)
@@ -103,7 +104,7 @@ test('switching while studying preserves the whole notebook, bookmark, hints, ch
     expect(current.activity).toEqual(seed.activity)
     expect(current.selectedPath).toBe(id || undefined)
   }
-  await page.getByRole('button', { name: 'Learn', exact: false }).click()
+  await page.getByRole('main').getByRole('button', { name: 'Learn', exact: false }).click()
   await expect(page.getByLabel('In this lesson')).toHaveValue('walkthrough-1')
   await page.reload()
   await expect(page.getByLabel('In this lesson')).toHaveValue('walkthrough-1')
@@ -125,7 +126,7 @@ test('global pending reviews remain visible and resumable after either path is s
   await page.getByLabel('Your approach & answer').fill('Only use data available at prediction time.')
   await choose(page, 'swe')
   await page.getByRole('link', { name: 'Pause session' }).click()
-  await page.getByRole('link', { name: 'Practice', exact: false }).click()
+  await navTo(page, 'Practise')
   await page.getByRole('button', { name: 'Resume review' }).click()
   await expect(page.getByLabel('Your approach & answer')).toHaveValue('Only use data available at prediction time.')
   await page.getByRole('button', { name: 'Compare & reflect' }).click()
@@ -133,7 +134,7 @@ test('global pending reviews remain visible and resumable after either path is s
   const current = await saved(page)
   expect(current.selectedPath).toBe('swe')
   expect(current.records['ml-data-preparation'].attempts).toBe(2)
-  await page.getByRole('link', { name: 'Practice', exact: true }).click()
+  await navTo(page, 'Practise')
   await expect(page.getByRole('heading', { name: 'You’re all caught up.' })).toBeVisible()
 })
 
@@ -158,7 +159,7 @@ test('path completion does not auto-enroll supplemental lessons and switching fi
   await page.getByRole('button', { name: 'Explore all lessons', exact: true }).click()
   await expect(page.getByRole('article')).toHaveCount(lessons.length)
   await choose(page, 'senior')
-  await page.getByRole('link', { name: 'Home', exact: true }).click()
+  await navTo(page, 'Today')
   await expect(page.locator('.hero-copy h2')).toHaveText(lessons.find(lesson => lesson.id === 'design-replication-partitioning')!.title)
   await expect(page.getByRole('progressbar', { name: 'Selected path progress', exact: true })).toHaveAttribute('value', '24')
 })
@@ -234,7 +235,7 @@ test('failed path saves surface errors without losing existing data', async ({ p
 test('custom-domain root preserves path selection and refresh-safe navigation', async ({ page }) => {
   await page.goto('/')
   await choose(page, 'senior')
-  await page.getByRole('link', { name: 'Tracks', exact: true }).click()
+  await navTo(page, 'Tracks')
   expect(new URL(page.url()).pathname).toBe('/')
   await expect(page).toHaveURL(/#tracks$/)
   await page.reload()
