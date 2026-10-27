@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { expectInGroup, navTo } from './nav'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
 const DRAFTS_KEY = 'devprep.design.v1'
@@ -8,7 +9,7 @@ const index = JSON.parse(readFileSync(new URL('../content/cases/index.json', imp
 
 async function openCase(page: Page) {
   await page.goto('./#practice')
-  await page.getByRole('link', { name: /System design/ }).click()
+  await page.getByRole('link', { name: /Design cases/ }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Case studies' })).toBeFocused()
   await expect(page.locator('.code-row')).toHaveCount(index.cases.length)
   await page.getByRole('link', { name: item.title }).click()
@@ -93,10 +94,10 @@ test('review shows the model answer, scores the rubric, earns XP once and lands 
 
   await page.getByRole('link', { name: /All case studies/ }).click()
   await expect(page.locator('.code-row', { hasText: item.title }).locator('.pill.solved')).toHaveText(`Best ${percent}%`)
-  await page.getByRole('link', { name: 'Progress', exact: true }).first().click()
+  await navTo(page, 'Progress')
   await expect(page.locator('.badge.earned', { hasText: 'Architect' })).toBeVisible()
 
-  await page.getByRole('link', { name: 'Settings', exact: true }).first().click()
+  await navTo(page, 'Settings')
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: /Export/ }).first().click()
   const backup = JSON.parse(readFileSync(await (await download).path(), 'utf8'))
@@ -119,5 +120,5 @@ test('the whiteboard list and case pages fit a 320px screen', async ({ page }) =
   await page.goto(`./#design/${item.id}`)
   await expect(page.getByRole('heading', { level: 1, name: item.title })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await expect(page.getByRole('link', { name: 'Practice', exact: true }).first()).toHaveAttribute('class', /active/)
+  await expectInGroup(page, 'Design')
 })

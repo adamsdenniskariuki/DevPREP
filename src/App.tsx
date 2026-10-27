@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { lessons, tracks } from './curriculum'
 import type { Lesson, Track } from './curriculum'
 import { beginSession, completeSession, dueLessons, localDay, recordCard, recordDesign, recordGuide, recordMock, recordPatternExercise, recordPatternQuiz, recordPicker, recordPlacement, recordSolve, recordSqlSolve, recordBoardCreated, recordCompanyRun, recordCompanyMock, saveStory as saveStoryTo, deleteStory as deleteStoryFrom, updateProfile, editorPrefs, updateEditorPrefs } from './progress'
@@ -32,6 +32,14 @@ import Study from './screens/Study'
 import { companyIds } from './companies'
 import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
+import { parseHash as parseRoute } from './routes'
+import type { RouteIds } from './routes'
+import { breadcrumbsFor, buildNavTree, currentNode, expandedFor, groupFor, loadNavData } from './nav-model'
+import type { NavData } from './nav-model'
+import { useNavState } from './useNavState'
+import NavTree from './components/NavTree'
+import MobileNav from './components/MobileNav'
+import Breadcrumbs from './components/Breadcrumbs'
 
 const CodeScreen = lazy(() => import('./screens/CodeScreen'))
 const SqlProblemsScreen = lazy(() => import('./screens/SqlProblemsScreen'))
@@ -52,37 +60,8 @@ const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
 const Recovery = lazy(() => backupFlow().then(flow => ({ default: flow.Recovery })))
 
-const navigation = [
-  { id: 'home', label: 'Home', icon: 'home' },
-  { id: 'tracks', label: 'Tracks', icon: 'map' },
-  { id: 'practice', label: 'Practice', icon: 'repeat' },
-  { id: 'guide', label: 'Field Guide', icon: 'compass' },
-  { id: 'progress', label: 'Progress', icon: 'chart' },
-  { id: 'settings', label: 'Settings', icon: 'gear' },
-] as const
-const routes: Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company']
-/** Hashes from earlier releases keep working as bookmarks. */
-const aliases: Record<string, Route> = { today: 'home', roadmap: 'tracks', review: 'practice' }
-/** Pattern course views other than a page id. */
-const PATTERN_VIEWS = new Set(['pick', 'cheatsheet'])
-/** Same as BOARD_ID in boards.ts, repeated so board storage stays out of the main bundle. */
-const BOARD_ID = /^[a-z0-9-]{1,64}$/
-
-function parseHash(): { route: Route | 'unknown'; track?: Track; problemId?: string; caseId?: string; guideId?: string; sqlId?: string; patternView?: string; boardId?: string; companyId?: string } {
-  const [head, sub, ...rest] = window.location.hash.slice(1).split('/')
-  const route = aliases[head || 'home'] ?? (routes as string[]).find(item => item === (head || 'home')) as Route | undefined
-  if (!route || rest.length) return { route: 'unknown' }
-  if (sub === undefined) return { route }
-  if (route === 'code') return problemIds.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
-  if (route === 'sql') return sqlProblemIds.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
-  if (route === 'design') return caseIds.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
-  if (route === 'company' || route === 'mock') return companyIds.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
-  if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
-  if (route === 'guide') return guideIds.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
-  if (route === 'patterns') return patternIds.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
-  const track = tracks.find(item => item.id === sub)?.id
-  return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
-}
+const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds }
+const parseHash = () => parseRoute(window.location.hash, routeIds)
 
 function tourSeen() {
   try { return window.localStorage.getItem(TOUR_KEY) !== null } catch { return true }
@@ -93,6 +72,7 @@ export default function App() {
   const accent = useAccent()
   const look = useAppearance()
   const { progress } = store
+  const [hash, setHash] = useState(() => window.location.hash)
   const [route, setRoute] = useState(() => parseHash().route)
   const [track, setTrack] = useState<Track | 'all'>('all')
   const [problemId, setProblemId] = useState(() => parseHash().problemId)
@@ -109,6 +89,10 @@ export default function App() {
   const [pendingImport, setPendingImport] = useState<FullBackup | null>(null)
   const [clock, setClock] = useState(() => new Date())
   const [tour, setTour] = useState<'auto' | 'replay' | 'off'>(() => tourSeen() ? 'off' : 'auto')
+  const nav = useNavState()
+  const [navData, setNavData] = useState<NavData>()
+  const needIndex = useCallback(() => { loadNavData().then(setNavData, () => undefined) }, [])
+  useEffect(needIndex, [needIndex])
   const importInput = useRef<HTMLInputElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const reloadBlocked = !!(store.error || store.unsaved || store.conflict || accent.error)
@@ -124,6 +108,7 @@ export default function App() {
   useEffect(() => {
     const apply = () => {
       const parsed = parseHash()
+      setHash(window.location.hash)
       setRoute(parsed.route)
       setProblemId(parsed.problemId)
       setCaseId(parsed.caseId)
@@ -159,6 +144,7 @@ export default function App() {
 
   function navigate(next: Route) {
     window.location.hash = next
+    setHash(`#${next}`)
     setRoute(next)
     setProblemId(undefined)
     setCaseId(undefined)
@@ -348,26 +334,37 @@ export default function App() {
     navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, finishCompanyRun, finishCompanyMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const activeNav = route === 'study' || route === 'plan' ? 'home' : ['code', 'sql', 'design', 'board', 'cards', 'mock', 'stories', 'patterns', 'company'].includes(route) ? 'practice' : route === 'antipatterns' ? 'guide' : route
+  const parsed = parseRoute(hash, routeIds)
+  const tree = useMemo(() => buildNavTree(navData?.deepSections(progress, navData.index), due.length), [progress, navData, due.length])
+  const branch = expandedFor(tree, parsed)
+  const pathIds = new Set(branch)
+  const currentId = currentNode(tree, parsed)?.id
+  const crumbs = breadcrumbsFor(tree, parsed, { lesson: route === 'study' ? activeLesson?.title : undefined })
+  const branchKey = branch.join('|')
+  const { setOpen: openBranches } = nav
+  useEffect(() => { if (branchKey) openBranches(branchKey.split('|'), true) }, [branchKey, openBranches])
+  const treeProps = { expanded: nav.expanded, setOpen: nav.setOpen, current: currentId, path: pathIds, onNeedIndex: needIndex }
 
   const editorContext = { prefs: editorPrefs(progress), setPrefs: changeEditorPrefs }
-  return <EditorPrefsContext.Provider value={editorContext}><div className="app-shell">
+  return <EditorPrefsContext.Provider value={editorContext}><div className={nav.collapsed ? 'app-shell nav-collapsed' : 'app-shell'}>
     <a className="skip-link" href="#main-content" onClick={event => { event.preventDefault(); document.getElementById('main-content')?.focus() }}>Skip to content</a>
     <aside className="sidebar">
-      <a className="brand" href="#home" aria-label="DevPREP home"><span className="brand-mark"><Icon name="code" size={24} /></span><span>Dev<span className="brand-accent">PREP</span></span></a>
-      <p className="brand-tagline">Interview prep for SE &amp; SSE.</p>
-      <nav aria-label="Main navigation">
-        {navigation.map(item => <a key={item.id} href={`#${item.id}`} className={activeNav === item.id ? 'nav-item active' : 'nav-item'} aria-current={route === item.id ? 'page' : undefined}>
-          <Icon name={item.icon} /><span>{item.label}</span>{item.id === 'practice' && due.length > 0 && <span className="nav-badge" aria-label={`${due.length} due`}>{due.length}</span>}
-        </a>)}
-      </nav>
-      <div className="sidebar-journey">
-        <div className="eyebrow">{selectedPath ? `${selectedPath.shortTitle} PATH` : 'ALL TRACKS'}</div>
-        <progress aria-label={selectedPath ? 'Selected path completed' : 'Curriculum completed'} value={selectedStatus?.completed ?? completed} max={selectedStatus?.total ?? lessons.length} />
-        <span>{selectedStatus?.completed ?? completed} of {selectedStatus?.total ?? lessons.length} lessons</span>
+      <div className="sidebar-head">
+        <a className="brand" href="#home" aria-label="DevPREP home"><span className="brand-mark"><Icon name="code" size={24} /></span><span className="brand-name">Dev<span className="brand-accent">PREP</span></span></a>
+        <button type="button" className="icon-button sidebar-toggle" aria-expanded={!nav.collapsed} aria-label={nav.collapsed ? 'Show menu' : 'Hide menu'} onClick={() => nav.setCollapsed(!nav.collapsed)}><Icon name="back" size={18} /></button>
       </div>
-      <div className="sidebar-bottom"><span className="local-dot" /> Saved on this device<a className="text-button" href="#settings">Backup</a></div>
+      {!nav.collapsed && <>
+        <p className="brand-tagline">Interview prep for SE &amp; SSE.</p>
+        <nav aria-label="Main navigation"><NavTree {...treeProps} nodes={tree} label="Site" /></nav>
+        <div className="sidebar-journey">
+          <div className="eyebrow">{selectedPath ? `${selectedPath.shortTitle} PATH` : 'ALL TRACKS'}</div>
+          <progress aria-label={selectedPath ? 'Selected path completed' : 'Curriculum completed'} value={selectedStatus?.completed ?? completed} max={selectedStatus?.total ?? lessons.length} />
+          <span>{selectedStatus?.completed ?? completed} of {selectedStatus?.total ?? lessons.length} lessons</span>
+        </div>
+        <div className="sidebar-bottom"><span className="local-dot" /> Saved on this device<a className="text-button" href="#settings">Backup</a></div>
+      </>}
     </aside>
+    <MobileNav {...treeProps} tree={tree} group={groupFor(parsed)} />
 
     <div className="main-shell">
       <header className="topbar"><a className="mobile-brand" href="#home">Dev<span>PREP</span></a>
@@ -384,6 +381,7 @@ export default function App() {
           }}><Icon name="sun" size={18} /></button>
         </div></header>
       <main id="main-content" tabIndex={-1}>
+        <Breadcrumbs crumbs={crumbs} />
         <input ref={importInput} type="file" accept=".json,application/json" className="sr-only" aria-label="Import progress JSON" onChange={event => importBackup(event.target.files?.[0])} />
         {store.error && <div className="alert" role="alert"><strong>{store.recovery ? 'Your saved progress needs attention.' : 'Progress could not be saved safely.'}</strong><p>{store.error} {store.unsaved && 'Your latest work is only in memory. Export it before closing this page.'}</p><div className="button-row">
           {!store.recovery && !store.conflict && <button onClick={store.retry}>Retry saving</button>}

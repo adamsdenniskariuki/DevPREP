@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { palettes } from '../src/appearance'
 import { color, contrast, over } from './contrast'
+import { navTo } from './nav'
 
 const PROGRESS_KEY = 'devprep.progress.v1'
 const read = (path: string) => JSON.parse(readFileSync(new URL(`../content/field-guide/${path}`, import.meta.url), 'utf8'))
@@ -19,7 +20,7 @@ async function openEntry(page: Page, item = entry) {
 
 test('the Field Guide is in the main navigation and lists every entry with filters', async ({ page }) => {
   await page.goto('./')
-  await page.getByRole('link', { name: 'Field Guide', exact: true }).first().click()
+  await navTo(page, 'Field Guide')
   await expect(page.getByRole('heading', { level: 1, name: 'Field Guide' })).toBeFocused()
   await expect(page.locator('.fg-card')).toHaveCount(entries.length)
   const cases = entries.filter(item => item.kind === 'case').length
@@ -82,7 +83,7 @@ test('finishing the quiz scores it, awards XP once, marks the entry read and sur
   await expect(page.locator('.fg-quiz-result')).toHaveText(/^100% correct/)
   await expect(page.locator('.fg-quiz-result')).not.toContainText('XP')
 
-  await page.getByRole('link', { name: 'Field Guide', exact: true }).first().click()
+  await navTo(page, 'Field Guide')
   await expect(page.locator('.fg-card').filter({ hasText: entry.title })).toContainText('Read')
 })
 

@@ -216,6 +216,7 @@ export default defineConfig({
         manualChunks(id) {
           const path = id.replaceAll('\\', '/')
           if (path.endsWith('/src/generated/problems.json')) return 'problems'
+          if (path.endsWith('/src/generated/nav-index.json')) return 'nav-index'
           if ((path.includes('/content/') || path.includes('/src/generated/')) && path.endsWith('.json')) return 'curriculum'
         },
       },
