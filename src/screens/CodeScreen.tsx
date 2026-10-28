@@ -10,6 +10,7 @@ import { formatArgs, formatValue } from '../runner/core'
 import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
+import OpenInPlayground from '../components/OpenInPlayground'
 import { patternsForProblem } from '../patterns'
 
 /** The scratchpad and its drawing tool load only when the panel is first opened. */
@@ -199,6 +200,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
       <p id="editor-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : ''}{saveFailed ? ' Drafts can’t be saved in this browser.' : ''}</p>
       <div className="button-row">
         <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
+        <OpenInPlayground lang={lang} name={problem.title} code={code[lang]} />
       </div>
       <div className="run-results" role="status" aria-live="polite">
         {result && <RunResults tests={problem.tests} fn={problem.function[result.lang]} lang={result.lang} report={result.report} message={result.message} />}

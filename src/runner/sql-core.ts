@@ -33,7 +33,7 @@ export type SqlRunResponse =
   | { kind: 'error'; error: string }
 
 interface SqlField { name: string; dataTypeID: number }
-interface SqlResult { rows: unknown[]; fields: SqlField[] }
+interface SqlResult { rows: unknown[]; fields: SqlField[]; affectedRows?: number; command?: string; rowCount?: number }
 /** The slice of the PGlite API the runner needs. */
 export interface SqlDb {
   exec(sql: string, options?: { rowMode?: 'array' | 'object'; parsers?: Record<number, (value: string, type: number) => unknown> }): Promise<SqlResult[]>
@@ -194,4 +194,55 @@ export async function predictOutput(db: SqlDb, code: string): Promise<string> {
   } finally {
     await resetDb(db)
   }
+}
+
+/** One statement's outcome in the Playground: a result table, or a command with its row count. */
+export interface SqlFreeResultSet {
+  command?: string
+  columns?: string[]
+  rows?: SqlCell[][]
+  /** Rows returned (SELECT) or changed (INSERT, UPDATE, DELETE), when Postgres reports it. */
+  rowCount?: number
+  truncated?: boolean
+}
+
+export type SqlFreeResponse =
+  | { kind: 'done'; results: SqlFreeResultSet[]; ms: number }
+  | { kind: 'error'; error: string; ms: number }
+
+/**
+ * Runs Playground SQL on its own persistent database. Every statement's result is returned. Postgres runs a
+ * multi-statement batch as one implicit transaction, so an error rolls the whole batch back.
+ */
+export async function runFreeSql(db: SqlDb, sql: string): Promise<SqlFreeResponse> {
+  const started = performance.now()
+  const ms = () => Math.round(performance.now() - started)
+  if (!sql.trim()) return { kind: 'error', error: 'Write some SQL first.', ms: 0 }
+  try {
+    const results = await db.exec(sql, { rowMode: 'array', parsers: PARSERS })
+    return {
+      kind: 'done',
+      ms: ms(),
+      results: results.map(result => {
+        const command = result.command?.trim() || undefined
+        if (result.fields.length === 0) return { ...command ? { command } : {}, ...result.rowCount !== undefined || result.affectedRows !== undefined ? { rowCount: result.rowCount ?? result.affectedRows } : {} }
+        const { columns, rows } = table(result)
+        return { ...command ? { command } : {}, columns, rows: rows.slice(0, SQL_ROW_LIMIT), rowCount: result.rows.length, ...result.rows.length > SQL_ROW_LIMIT ? { truncated: true } : {} }
+      }),
+    }
+  } catch (error) {
+    // Leave no aborted transaction behind (for example after BEGIN without COMMIT), so the next run works.
+    try { await db.exec('ROLLBACK') } catch { /* nothing open */ }
+    return { kind: 'error', error: errorText(error), ms: ms() }
+  }
+}
+
+/** Empties the Playground database: drops every user schema and recreates public. */
+export async function resetFreeDb(db: SqlDb) {
+  await resetDb(db)
+}
+
+/** Applies the lab session settings (UTC, ISO dates) to a database without touching its tables. */
+export async function startFreeSession(db: SqlDb) {
+  await db.exec(SESSION)
 }

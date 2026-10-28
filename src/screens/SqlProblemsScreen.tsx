@@ -3,6 +3,7 @@ import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
 import TextBlocks from '../components/TextBlocks'
 import SqlLabRunner, { ResultTable } from '../components/SqlLab'
+import OpenInPlayground from '../components/OpenInPlayground'
 import { lessons } from '../curriculum'
 import type { SqlExercise } from '../curriculum-types'
 import { clearDraft, readDraft, writeDraft } from '../code-drafts'
@@ -142,6 +143,13 @@ function Workspace({ app, problem }: { app: AppModel; problem: SqlProblem }) {
       <h2 id="editor-title" className="sr-only">Your query</h2>
       <SqlLabRunner exercise={exercise} value={code} onChange={edit} onPass={() => app.solveSqlProblem(problem.id)} label="Your query" />
       {saveFailed && <p className="helper">Drafts can’t be saved in this browser.</p>}
+      <div className="button-row"><OpenInPlayground lang="sql" name={problem.title} code={playgroundSql(exercise.schema, code)} /></div>
     </section>
   </div>
+}
+
+/** The query for the Playground, with the problem's tables as a commented-out script to create them there. */
+function playgroundSql(schema: string, query: string): string {
+  const tables = schema.trim().split('\n').map(line => `-- ${line}`).join('\n')
+  return `-- Tables used by this problem. Uncomment to create them in the Playground database:\n${tables}\n\n${query}`
 }

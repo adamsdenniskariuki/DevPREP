@@ -49,7 +49,7 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map'])
+const ADDED = new Set(['#map', '#playground'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
@@ -63,6 +63,14 @@ describe('route compatibility', () => {
     expect(parseHash('map', ids)).toEqual({ route: 'map' })
     expect(hrefFor({ route: 'map' })).toBe('#map')
     for (const hash of ['#map/x', '#map/a/b', '#Map', '#sitemap']) expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })
+  })
+
+  it('adds the Playground, with an optional snippet id', () => {
+    expect(ROUTES).toContain('playground')
+    expect(parseHash('#playground', ids)).toEqual({ route: 'playground' })
+    expect(parseHash('#playground/s-lz3k9a-ab12cd', ids)).toEqual({ route: 'playground', snippetId: 's-lz3k9a-ab12cd' })
+    expect(hrefFor({ route: 'playground', snippetId: 's-1' })).toBe('#playground/s-1')
+    for (const hash of ['#playground/Bad_Id', '#playground/a/b', '#Playground', "#playground/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]) expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })
   })
 
   it('keeps the old aliases pointing at the same screens', () => {

@@ -71,7 +71,7 @@ describe('backups with whiteboards', () => {
     const big = ['a', 'b', 'c', 'd', 'e'].map(id => board(id, { files: image(4_200_000) }))
     expect(() => serializeFullBackup(emptyProgress(), big)).toThrow('more than 20 MB')
     expect(() => parseFullBackup(withBoards(big))).toThrow('whiteboards add up to more than 20 MB')
-    expect(() => parseFullBackup(' '.repeat(23_000_000))).toThrow('file is larger than 22.0 MB')
+    expect(() => parseFullBackup(' '.repeat(25_000_000))).toThrow('file is larger than 24.0 MB')
     expect(parseFullBackup(withBoards(big.slice(0, 4))).boards).toHaveLength(4)
   })
 })

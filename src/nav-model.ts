@@ -66,7 +66,7 @@ export const GROUPS: readonly { id: GroupId; label: string; icon: string; href?:
 
 const ROUTE_GROUP: Record<string, GroupId> = {
   tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
-  practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise',
+  practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
   company: 'interview', mock: 'interview', stories: 'interview',
   home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me',
@@ -101,6 +101,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
       branch({ id: 'code', label: 'Coding problems', href: '#code' }),
       branch({ id: 'sql', label: 'SQL problems', href: '#sql' }),
       { id: 'cards', label: 'Flashcards', href: '#cards' },
+      { id: 'playground', label: 'Playground', href: '#playground' },
     ]), ...(due > 0 ? { badge: due } : {}) },
     group('design', [
       branch({ id: 'cases', label: 'Design cases', href: '#design' }),
@@ -140,6 +141,7 @@ function nodePath(tree: readonly NavNode[], parsed: ParsedRoute): NavNode[] {
   if (parsed.route === 'unknown') return []
   if (parsed.route === 'study') return pathTo(tree, '#tracks')
   if (parsed.route === 'board') return pathTo(tree, '#board')
+  if (parsed.route === 'playground') return pathTo(tree, '#playground')
   const exact = pathTo(tree, hrefFor(parsed))
   // Deep items are missing until the nav index loads, so fall back to their section.
   return exact.length ? exact : pathTo(tree, `#${parsed.route}`)
@@ -147,7 +149,7 @@ function nodePath(tree: readonly NavNode[], parsed: ParsedRoute): NavNode[] {
 
 /** The node for the current page, used to mark it aria-current in the tree. */
 export function currentNode(tree: readonly NavNode[], parsed: ParsedRoute): NavNode | undefined {
-  if (parsed.route === 'study' || (parsed.route === 'board' && parsed.boardId)) return undefined
+  if (parsed.route === 'study' || (parsed.route === 'board' && parsed.boardId) || (parsed.route === 'playground' && parsed.snippetId)) return undefined
   const path = nodePath(tree, parsed)
   const node = path[path.length - 1]
   return node && node.href === hrefFor(parsed) ? node : undefined
@@ -162,6 +164,7 @@ export function breadcrumbsFor(tree: readonly NavNode[], parsed: ParsedRoute, ex
   const crumbs: Crumb[] = nodePath(tree, parsed).map(node => ({ label: node.label, ...(node.href ? { href: node.href } : {}) }))
   if (parsed.route === 'study') crumbs.push({ label: extra?.lesson ?? 'Lesson' })
   if (parsed.route === 'board' && parsed.boardId) crumbs.push({ label: 'Board' })
+  if (parsed.route === 'playground' && parsed.snippetId) crumbs.push({ label: 'Snippet' })
   return crumbs
 }
 

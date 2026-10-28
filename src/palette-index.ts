@@ -1,7 +1,7 @@
 import { fuzzyScore } from './fuzzy'
 import type { NavIndex } from './nav-model'
 
-export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company'
+export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'snippet'
 
 export interface PaletteEntry {
   /** Unique: used for the option's DOM id and for recents. */
@@ -19,7 +19,7 @@ export interface PaletteGroup { kind: PaletteKind | 'recent' | 'suggested'; labe
 
 export const KIND_LABELS: Record<PaletteKind, string> = {
   page: 'Pages', track: 'Tracks', lesson: 'Lessons', pattern: 'Patterns', guide: 'Field Guide', antipattern: 'Anti-patterns',
-  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies',
+  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', snippet: 'Playground snippets',
 }
 const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 
@@ -41,6 +41,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['code', 'Coding problems', '#code', 'leetcode exercises algorithms'],
   ['sql', 'SQL problems', '#sql', 'queries database postgres'],
   ['cards', 'Flashcards', '#cards', 'spaced repetition decks review'],
+  ['playground', 'Playground', '#playground', 'codepad scratchpad repl sandbox run code javascript typescript python sql snippets'],
   ['design', 'Design cases', '#design', 'system design'],
   ['board', 'Whiteboard', '#board', 'draw diagram excalidraw sketch'],
   ['company', 'Company prep', '#company', 'employers companies'],
@@ -74,6 +75,13 @@ export function buildPaletteIndex(nav: NavIndex, lessons: readonly LessonInfo[] 
       { id: `mock:${id}`, kind: 'company', title: `${name} mock loop`, href: `#mock/${id}`, detail: 'Mock interview' },
     ]),
   ]
+}
+
+const SNIPPET_LANG_LABELS: Record<string, string> = { js: 'JavaScript', ts: 'TypeScript', py: 'Python', sql: 'SQL' }
+
+/** The Playground snippets saved on this device, as palette entries. */
+export function snippetEntries(snippets: readonly { id: string; name: string; lang: string }[]): PaletteEntry[] {
+  return snippets.map(snippet => ({ id: `snippet:${snippet.id}`, kind: 'snippet', title: snippet.name, href: `#playground/${snippet.id}`, detail: `${SNIPPET_LANG_LABELS[snippet.lang] ?? snippet.lang} snippet`, keywords: 'playground' }))
 }
 
 /** An entry's score: its title counts fully, its detail and keywords at a discount. */

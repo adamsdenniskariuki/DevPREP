@@ -1,8 +1,9 @@
 import type { TypeScriptApi } from './ts-core'
 import { checkWithTypeChecks, createTsCompiler, formatDiagnostic, type TsDiagnostic } from './ts-core'
 import { runJsAsync, type RunRequest, type RunResponse, type TypeCheckOutcome } from './core'
+import { blockNetwork, runTypeScriptFree, type FreeRunRequest } from './free'
 
-export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest)
+export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest)
 
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let compiler: Promise<ReturnType<typeof createTsCompiler>> | undefined
@@ -39,6 +40,11 @@ scope.onmessage = async (event: MessageEvent<TsWorkerMessage>) => {
     return
   }
   const instance = await compiler!
+  if (message.type === 'free') {
+    blockNetwork(scope)
+    scope.postMessage({ type: 'result', result: await runTypeScriptFree(instance, message) })
+    return
+  }
   let diagnostics: TsDiagnostic[] = []
   let typeChecks: TypeCheckOutcome | undefined
   let code: string

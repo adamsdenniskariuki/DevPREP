@@ -4,19 +4,24 @@ import { caseIds } from './cases'
 import { cleanBoard } from './design-drafts'
 import { parsePractice } from './practice'
 import { problemIds } from './problems'
+import { parseSnippets, type Snippet } from './playground'
 import { MAX_BACKUP_BYTES, parseBackup, serializeBackup } from './progress'
 import type { Progress } from './progress'
 
 /** Whiteboards ride along in backups under an optional "boards" key, with their own size caps. */
 export const MAX_BOARD_BYTES = 5_000_000
 export const MAX_BOARDS_BYTES = 20_000_000
-export const MAX_FULL_BACKUP_BYTES = MAX_BACKUP_BYTES + MAX_BOARDS_BYTES + 1_000_000
+/** Playground snippets: at most 50 of 20,000 characters, so about 1 MB even with escaping; 2 MB leaves room. */
+export const MAX_SNIPPETS_BYTES = 2_000_000
+export const MAX_FULL_BACKUP_BYTES = MAX_BACKUP_BYTES + MAX_BOARDS_BYTES + MAX_SNIPPETS_BYTES + 1_000_000
 const MAX_BOARDS = 1_000
 
 export interface FullBackup {
   progress: Progress
   /** Present only when the backup carries whiteboards. They then replace the boards on this device. */
   boards?: BoardRecord[]
+  /** Present only when the backup carries Playground snippets. They then replace the snippets on this device. */
+  playground?: Snippet[]
 }
 
 const isRec = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -82,14 +87,20 @@ export function parseBoards(value: unknown): BoardRecord[] {
   })
 }
 
-/** Reads a backup file. Progress is checked by parseBackup exactly as before; boards are checked here. */
+/** Reads a backup file. Progress is checked by parseBackup exactly as before; boards and snippets are checked here. */
 export function parseFullBackup(text: string): FullBackup {
   if (encoder.encode(text).length > MAX_FULL_BACKUP_BYTES) invalid(`file is larger than ${formatBytes(MAX_FULL_BACKUP_BYTES)}.`)
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { progress: parseBackup(text) } }
-  if (!isRec(parsed) || !Object.hasOwn(parsed, 'boards')) return { progress: parseBackup(text) }
-  const { boards, ...rest } = parsed
-  return { progress: parseBackup(JSON.stringify(rest)), boards: parseBoards(boards) }
+  if (!isRec(parsed) || (!Object.hasOwn(parsed, 'boards') && !Object.hasOwn(parsed, 'playground'))) return { progress: parseBackup(text) }
+  const { boards, playground, ...rest } = parsed
+  const progress = parseBackup(JSON.stringify(rest))
+  if (Object.hasOwn(parsed, 'playground') && jsonBytes(playground) > MAX_SNIPPETS_BYTES) invalid(`Playground snippets add up to more than ${formatBytes(MAX_SNIPPETS_BYTES)}.`)
+  return {
+    progress,
+    ...Object.hasOwn(parsed, 'boards') ? { boards: parseBoards(boards) } : {},
+    ...Object.hasOwn(parsed, 'playground') ? { playground: parseSnippets(playground) } : {},
+  }
 }
 
 function forBackup(board: BoardRecord): BoardRecord {
@@ -97,16 +108,22 @@ function forBackup(board: BoardRecord): BoardRecord {
   return { id, title, kind, ...caseId ? { caseId } : {}, ...problemId ? { problemId } : {}, elements, appState, files, createdAt, updatedAt, ...fallback ? { fallback } : {}, ...practice ? { practice } : {} }
 }
 
-/** Builds backup JSON. Without boards it matches the old format exactly. Throws a clear message over the caps. */
-export function serializeFullBackup(progress: Progress, boards?: BoardRecord[]): string {
+/** Builds backup JSON. Without boards or snippets it matches the old format exactly. Throws a clear message over the caps. */
+export function serializeFullBackup(progress: Progress, boards?: BoardRecord[], snippets?: Snippet[]): string {
   const base = serializeBackup(progress)
-  if (!boards) return base
+  const playground = snippets?.length ? snippets.map(({ id, name, lang, code, stdin, createdAt, updatedAt }) => ({ id, name, lang, code, ...stdin !== undefined ? { stdin } : {}, createdAt, updatedAt })) : undefined
+  if (!boards && !playground) return base
+  if (!boards) {
+    const text = JSON.stringify({ ...JSON.parse(base), playground })
+    parseFullBackup(text)
+    return text
+  }
   const items = boards.map(forBackup)
   for (const board of items) {
     if (jsonBytes(board) > MAX_BOARD_BYTES) throw new Error(`“${board.title}” is larger than 5 MB, so it can’t go in a backup. Export it as .excalidraw, or untick Include whiteboards.`)
   }
   if (jsonBytes(items) > MAX_BOARDS_BYTES) throw new Error('Your whiteboards add up to more than 20 MB. Delete some, or untick Include whiteboards.')
-  const text = JSON.stringify({ ...JSON.parse(base), boards: items })
+  const text = JSON.stringify({ ...JSON.parse(base), boards: items, ...playground ? { playground } : {} })
   parseFullBackup(text)
   return text
 }
