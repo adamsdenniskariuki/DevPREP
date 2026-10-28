@@ -87,7 +87,7 @@ test.describe('route compatibility', () => {
 test('the Practise hub groups every practice tool by goal', async ({ page }) => {
   await open(page, '#practice')
   for (const [group, tools] of Object.entries({
-    Drills: ['Coding problems', 'SQL problems', 'Flashcards', 'Patterns'],
+    Drills: ['Coding problems', 'SQL problems', 'Flashcards', 'Patterns', 'Playground'],
     Design: ['Design cases', 'Whiteboard'],
     Interview: ['Company prep', 'Mock interviews', 'Story bank', 'Study plan'],
   })) {
@@ -304,7 +304,9 @@ test.describe('accessibility', () => {
           await page.mouse.move(0, 0)
           // Axe's skip-link heuristic treats every in-page hash link as a skip link, so route rows scrolled
           // below the fold of a fixed-position modal sheet look like "off-screen skip links". They are routes.
-          const sheetViolations = (await axe(page)).filter(violation => !(violation.id === 'skip-link' && violation.targets.every(target => /^a\[href\$="#[\w/:-]+"\]\[aria-level=/.test(target))))
+          // Axe may qualify a row's selector with its group or its other tree attributes to keep it unique.
+          const routeRow = /^(div\[aria-label="\w+"\] > )?a\[href\$="#[\w/:-]+"\]\[aria-(level|setsize|posinset)=/
+          const sheetViolations = (await axe(page)).filter(violation => !(violation.id === 'skip-link' && violation.targets.every(target => routeRow.test(target))))
           expect(sheetViolations, `sheet at ${width} ${theme}`).toEqual([])
         }
       })

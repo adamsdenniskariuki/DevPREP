@@ -58,7 +58,7 @@ describe('buildNavTree', () => {
     expect(tree.map(node => node.label)).toEqual(GROUPS.map(group => group.label))
     expect(tree.map(node => node.children!.map(child => child.label))).toEqual([
       ['Tracks', 'Patterns', 'Field Guide'],
-      ['Coding problems', 'SQL problems', 'Flashcards'],
+      ['Coding problems', 'SQL problems', 'Flashcards', 'Playground'],
       ['Design cases', 'Whiteboard'],
       ['Company prep', 'Mock interviews', 'Story bank'],
       ['Today', 'Plan', 'Progress', 'Settings', 'Site map'],
@@ -130,7 +130,7 @@ describe('groupFor', () => {
   it('puts every route in one of the five groups', () => {
     const expected: Record<string, string> = {
       tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
-      practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise',
+      practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
       design: 'design', board: 'design', company: 'interview', mock: 'interview', stories: 'interview',
       home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me',
     }
@@ -161,6 +161,8 @@ describe('breadcrumbs, current node and auto-expansion', () => {
     expect(labels(`#mock/${companyIds[0]}`)[1]).toBe('Mock interviews')
     expect(labels('#board')).toEqual(['Design', 'Whiteboard'])
     expect(labels('#board/abc')).toEqual(['Design', 'Whiteboard', 'Board'])
+    expect(labels('#playground')).toEqual(['Practise', 'Playground'])
+    expect(labels('#playground/s-abc')).toEqual(['Practise', 'Playground', 'Snippet'])
     expect(labels('#study', { lesson: 'Two sum' })).toEqual(['Learn', 'Tracks', 'Two sum'])
     expect(labels('#nope')).toEqual(['Not found'])
   })
@@ -182,6 +184,8 @@ describe('breadcrumbs, current node and auto-expansion', () => {
     expect(expandedFor(tree, parse(`#patterns/${sub.id}`))).toEqual(['learn', 'patterns', `patterns/${sub.parent}`])
     expect(currentNode(tree, parse('#review'))?.id).toBe('practise')
     expect(currentNode(tree, parse('#board/abc'))).toBeUndefined()
+    expect(currentNode(tree, parse('#playground/s-abc'))).toBeUndefined()
+    expect(currentNode(tree, parse('#playground'))?.id).toBe('playground')
     expect(currentNode(tree, parse('#study'))).toBeUndefined()
     expect(expandedFor(tree, parse('#nope'))).toEqual([])
     expect(pathTo(tree, '#missing')).toEqual([])

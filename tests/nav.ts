@@ -4,7 +4,7 @@ import type { Locator, Page } from '@playwright/test'
 /** The nav group each second-level item sits in, used to open the right sheet on small screens. */
 const GROUP_OF: Record<string, string> = {
   Learn: 'Learn', Tracks: 'Learn', Patterns: 'Learn', 'Field Guide': 'Learn',
-  Practise: 'Practise', 'Coding problems': 'Practise', 'SQL problems': 'Practise', Flashcards: 'Practise',
+  Practise: 'Practise', 'Coding problems': 'Practise', 'SQL problems': 'Practise', Flashcards: 'Practise', Playground: 'Practise',
   Design: 'Design', 'Design cases': 'Design', Whiteboard: 'Design',
   Interview: 'Interview', 'Company prep': 'Interview', 'Mock interviews': 'Interview', 'Story bank': 'Interview',
   Me: 'Me', Today: 'Me', Plan: 'Me', Progress: 'Me', Settings: 'Me', 'Site map': 'Me',

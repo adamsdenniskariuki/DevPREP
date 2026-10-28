@@ -56,6 +56,7 @@ const PracticeScreen = lazy(() => import('./screens/PracticeScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
 const MapScreen = lazy(() => import('./screens/MapScreen'))
+const PlaygroundScreen = lazy(() => import('./screens/PlaygroundScreen'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 const MAC = /Mac|iP(hone|ad)/.test(navigator.platform)
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
@@ -85,6 +86,7 @@ export default function App() {
   const [patternView, setPatternView] = useState(() => parseHash().patternView)
   const [boardId, setBoardId] = useState(() => parseHash().boardId)
   const [companyId, setCompanyId] = useState(() => parseHash().companyId)
+  const [snippetId, setSnippetId] = useState(() => parseHash().snippetId)
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
@@ -133,6 +135,7 @@ export default function App() {
       setPatternView(parsed.patternView)
       setBoardId(parsed.boardId)
       setCompanyId(parsed.companyId)
+      setSnippetId(parsed.snippetId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -140,7 +143,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -427,7 +430,8 @@ export default function App() {
             {route === 'plan' && <Suspense fallback={<p role="status">Loading study plan…</p>}><PlanScreen app={app} /></Suspense>}
             {route === 'progress' && <Suspense fallback={<p role="status">Loading progress…</p>}><ProgressScreen app={app} /></Suspense>}
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
-            {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
+            {route === 'playground' && <Suspense fallback={<p role="status">Loading the Playground…</p>}><PlaygroundScreen app={app} snippetId={snippetId} /></Suspense>}
+      {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
             <footer className="app-footer"><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></footer>

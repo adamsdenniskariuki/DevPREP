@@ -11,6 +11,7 @@ import { companyIds } from '../companies'
 import { cardIds, dueCount } from '../flashcards'
 import { patternIndex } from '../patterns'
 import { patternPageDone } from '../gamification'
+import { readSnippets } from '../playground'
 
 
 export default function PracticeScreen({ app }: { app: AppModel }) {
@@ -23,6 +24,7 @@ export default function PracticeScreen({ app }: { app: AppModel }) {
       { href: '#sql', icon: 'grid', title: 'SQL problems', text: `${sqlProblemIndex.length} interview queries on in-browser Postgres.`, stat: `${sqlProblemIndex.filter(problem => progress.sqlSolved?.[problem.id]).length} solved` },
       { href: '#cards', icon: 'repeat', title: 'Flashcards', text: `${cardIds.size} concept cards with spaced repetition.`, stat: `${dueCount(progress, today)} due` },
       { href: '#patterns', icon: 'target', title: 'Patterns', text: `${patternIndex.length} algorithm patterns with pictures, step-throughs and exercises.`, stat: `${patternIndex.filter(page => patternPageDone(progress, page.id)).length} learned` },
+      { href: '#playground', icon: 'bolt', title: 'Playground', text: 'Run JavaScript, TypeScript, Python or SQL freely, with no tests.', stat: snippetCount(readSnippets().length) },
     ] },
     { id: 'design', title: 'Design', blurb: 'Timed system design, sketched and scored.', tools: [
       { href: '#design', icon: 'layers', title: 'Design cases', text: `${caseIndex.length} timed case studies with a whiteboard and rubric.`, stat: `${caseIndex.filter(item => progress.designs?.[item.id]).length} scored` },
@@ -46,4 +48,8 @@ export default function PracticeScreen({ app }: { app: AppModel }) {
 {hub.map(group => <section className="practice-tools" key={group.id} aria-labelledby={`hub-${group.id}`}><h2 id={`hub-${group.id}`} className="section-title">{group.title}</h2><p className="muted">{group.blurb}</p>
 <div className="tool-grid">{group.tools.map(tool => <a key={tool.href} className="tool-card live" href={tool.href}><span className="tool-icon"><Icon name={tool.icon} /></span><h3>{tool.title}</h3><p>{tool.text}</p><span className="pill">{tool.stat}</span></a>)}</div></section>)}
   </>
+}
+
+function snippetCount(count: number): string {
+  return count === 1 ? '1 snippet' : `${count} snippets`
 }

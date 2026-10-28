@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { lessons } from '../curriculum'
 import { loadNavData } from '../nav-model'
-import { buildPaletteIndex, PAGES, searchPalette } from '../palette-index'
+import { buildPaletteIndex, PAGES, searchPalette, snippetEntries } from '../palette-index'
+import { snippetIndex } from '../playground'
 import type { PaletteEntry } from '../palette-index'
 import Icon from './Icon'
 import '../palette.css'
@@ -37,6 +38,7 @@ export default function CommandPalette({ close }: { close: () => void }) {
   const [query, setQuery] = useState('')
   const [active, setActive] = useState(0)
   const recent = useMemo(readRecent, [])
+  const snippets = useMemo(() => snippetEntries(snippetIndex()), [])
 
   useEffect(() => {
     let live = true
@@ -49,7 +51,7 @@ export default function CommandPalette({ close }: { close: () => void }) {
     input.current?.focus()
   }, [])
 
-  const groups = useMemo(() => searchPalette(entries ?? PAGES, query, { recent }), [entries, query, recent])
+  const groups = useMemo(() => searchPalette([...entries ?? PAGES, ...snippets], query, { recent }), [entries, snippets, query, recent])
   const flat = groups.flatMap(group => group.items)
   const current = flat.length ? Math.min(active, flat.length - 1) : -1
   const expanded = flat.length > 0

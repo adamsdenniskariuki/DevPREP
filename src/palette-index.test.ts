@@ -11,7 +11,7 @@ import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { caseIds } from './cases'
 import type { NavIndex } from './nav-model'
-import { buildPaletteIndex, KIND_LABELS, PAGES, scoreEntry, searchPalette, SUGGESTED } from './palette-index'
+import { buildPaletteIndex, KIND_LABELS, PAGES, scoreEntry, searchPalette, snippetEntries, SUGGESTED } from './palette-index'
 import { ROUTES, parseHash } from './routes'
 import type { RouteIds } from './routes'
 
@@ -47,6 +47,16 @@ describe('buildPaletteIndex', () => {
     for (const entry of entries) expect(parseHash(entry.href, ids).route, `${entry.id} ${entry.href}`).not.toBe('unknown')
     expect(new Set(entries.map(entry => entry.id)).size).toBe(entries.length)
     for (const id of SUGGESTED) expect(entries.some(entry => entry.id === id), id).toBe(true)
+  })
+
+  it('lists Playground snippets saved on this device', () => {
+    const snippets = snippetEntries([{ id: 's-abc-123', name: 'Prime sieve', lang: 'py' }, { id: 's-def-456', name: 'Joins', lang: 'sql' }])
+    expect(snippets.map(entry => [entry.id, entry.href, entry.detail])).toEqual([['snippet:s-abc-123', '#playground/s-abc-123', 'Python snippet'], ['snippet:s-def-456', '#playground/s-def-456', 'SQL snippet']])
+    for (const entry of snippets) expect(parseHash(entry.href, ids)).toEqual({ route: 'playground', snippetId: entry.href.split('/')[1] })
+    const groups = searchPalette([...entries, ...snippets], 'prime sieve')
+    expect(groups[0].label).toBe(KIND_LABELS.snippet)
+    expect(groups[0].items[0].title).toBe('Prime sieve')
+    expect(searchPalette(entries, 'playground')[0].items[0].href).toBe('#playground')
   })
 
   it('works with an index that has no lessons passed in', () => {

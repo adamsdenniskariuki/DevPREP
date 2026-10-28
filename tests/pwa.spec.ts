@@ -812,3 +812,18 @@ test('the command palette and the site map work offline from the precache', asyn
   await expect(page.getByRole('progressbar', { name: 'Coding problems progress' })).toBeVisible()
   await expect(page.getByRole('img', { name: /DevPREP at a glance/ }).first()).toBeAttached()
 })
+
+test('the Playground opens and runs JavaScript offline from the precache, keeping its snippet', async ({ page, context }) => {
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await context.setOffline(true)
+  await page.goto('/DevPREP/#playground')
+  await expect(page.getByRole('heading', { level: 1, name: 'Playground' })).toBeVisible()
+  await page.getByRole('textbox', { name: 'JavaScript code' }).fill('console.log("offline", 6 * 7)')
+  await page.getByRole('button', { name: 'Run', exact: true }).click()
+  const output = page.getByRole('status', { name: 'Output' })
+  await expect(output).toContainText('Finished')
+  await expect(output).toContainText('offline 42')
+  await page.reload()
+  await expectCode(page.getByRole('textbox', { name: 'JavaScript code' }), 'console.log("offline", 6 * 7)')
+})

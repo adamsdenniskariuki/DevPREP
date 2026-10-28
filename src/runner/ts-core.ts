@@ -88,7 +88,15 @@ export function createTsCompiler(ts: TypeScriptApi, libs: Record<string, string>
     return ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, removeComments: false }, reportDiagnostics: false }).outputText
   }
 
-  return { check, transpile }
+  /** Transpiles with a source map, so runtime errors can point at the learner's TypeScript line. */
+  function transpileMapped(code: string): { code: string; mappings: string } {
+    const output = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None, removeComments: false, sourceMap: true }, reportDiagnostics: false })
+    let mappings = ''
+    try { mappings = (JSON.parse(output.sourceMapText ?? '{}') as { mappings?: string }).mappings ?? '' } catch { /* no map */ }
+    return { code: output.outputText.replace(/\n\/\/# sourceMappingURL=.*\s*$/, '\n'), mappings }
+  }
+
+  return { check, transpile, transpileMapped }
 }
 
 export function formatDiagnostic(diagnostic: TsDiagnostic): string {
