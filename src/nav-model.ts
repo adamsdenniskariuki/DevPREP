@@ -69,7 +69,7 @@ const ROUTE_GROUP: Record<string, GroupId> = {
   practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
   company: 'interview', mock: 'interview', stories: 'interview',
-  home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me',
+  home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
 }
 
 /** The nav group a route belongs to, or undefined for an unknown page. */
@@ -117,6 +117,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
       { id: 'plan', label: 'Plan', href: '#plan' },
       { id: 'progress', label: 'Progress', href: '#progress' },
       { id: 'settings', label: 'Settings', href: '#settings' },
+      { id: 'changelog', label: 'What’s new', href: '#changelog' },
       { id: 'map', label: 'Site map', href: '#map' },
     ]),
   ]

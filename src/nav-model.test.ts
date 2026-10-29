@@ -61,7 +61,7 @@ describe('buildNavTree', () => {
       ['Coding problems', 'SQL problems', 'Flashcards', 'Playground'],
       ['Design cases', 'Whiteboard'],
       ['Company prep', 'Mock interviews', 'Story bank'],
-      ['Today', 'Plan', 'Progress', 'Settings', 'Site map'],
+      ['Today', 'Plan', 'Progress', 'Settings', 'What’s new', 'Site map'],
     ])
     expect(tree.find(node => node.id === 'practise')!.href).toBe('#practice')
   })
@@ -132,7 +132,7 @@ describe('groupFor', () => {
       tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
       practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
       design: 'design', board: 'design', company: 'interview', mock: 'interview', stories: 'interview',
-      home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me',
+      home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
     }
     for (const route of ROUTES) expect(groupFor({ route }), route).toBe(expected[route])
     expect(groupFor({ route: 'unknown' })).toBeUndefined()

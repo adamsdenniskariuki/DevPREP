@@ -12,6 +12,7 @@ import { FREE_TIMEOUT_MS, resetPlaygroundDb, runFree, runPlaygroundSql, type Fre
 import { SQL_ROW_LIMIT } from '../runner/sql-core'
 import { SAMPLE_SQL } from '../playground-sample'
 import '../playground.css'
+import { useSaveCheck } from '../relaunch-guard'
 
 const PHASE_LABEL: Record<RunPhase, string> = { 'loading-python': 'Loading Python…', 'loading-typescript': 'Loading TypeScript…', 'loading-sql': 'Starting Postgres…', running: 'Running…' }
 const DOWNLOAD_NOTE: Record<SnippetLang, string> = {
@@ -71,6 +72,10 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
     addEventListener('pagehide', save)
     return () => { removeEventListener('pagehide', save); save() }
   }, [save])
+  useSaveCheck(() => {
+    save()
+    return writeSnippets(latest.current) ? undefined : 'Playground snippets could not be saved.'
+  })
 
   function commit(next: Snippet[], immediately = false) {
     latest.current = next

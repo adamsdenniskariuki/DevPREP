@@ -150,18 +150,22 @@ test('the old free whiteboard migrates once and the original draft is kept', asy
   expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '{}').whiteboard, PROGRESS_KEY)).toBeUndefined()
 })
 
-test('a board falls back to the simple whiteboard when the drawing chunk cannot load', async ({ page }) => {
-  await page.route(/BoardCanvas-[^/]*\.js/, route => route.abort())
-  await page.goto('./#board')
-  await page.getByRole('button', { name: 'New board' }).click()
-  await expect(page.getByRole('heading', { level: 1, name: 'Untitled board' })).toBeVisible()
-  await expect(page.getByText('The drawing tool couldn’t load, so this is the simple whiteboard.')).toBeVisible()
-  await expect(page.getByText('Simple whiteboard')).toBeVisible()
-  await expect(page.getByRole('button', { name: /Export PNG/ })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Add', exact: true }).click()
-  await expect(page.locator('.board-save')).toHaveAttribute('data-save', 'saved')
-  const [board] = await stored(page) as (StoredBoard & { fallback?: { nodes: unknown[] } })[]
-  expect(board.fallback?.nodes).toHaveLength(1)
+test.describe('without the offline worker', () => {
+  // A prepared service worker would serve the cached drawing chunk, which page.route cannot intercept.
+  test.use({ serviceWorkers: 'block' })
+  test('a board falls back to the simple whiteboard when the drawing chunk cannot load', async ({ page }) => {
+    await page.route(/BoardCanvas-[^/]*\.js/, route => route.abort())
+    await page.goto('./#board')
+    await page.getByRole('button', { name: 'New board' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'Untitled board' })).toBeVisible()
+    await expect(page.getByText('The drawing tool couldn’t load, so this is the simple whiteboard.')).toBeVisible()
+    await expect(page.getByText('Simple whiteboard')).toBeVisible()
+    await expect(page.getByRole('button', { name: /Export PNG/ })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.locator('.board-save')).toHaveAttribute('data-save', 'saved')
+    const [board] = await stored(page) as (StoredBoard & { fallback?: { nodes: unknown[] } })[]
+    expect(board.fallback?.nodes).toHaveLength(1)
+  })
 })
 
 test('unknown and malformed board ids use the not-found page', async ({ page }) => {

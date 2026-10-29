@@ -10,6 +10,7 @@ import { clearDraft, readDraft, writeDraft } from '../code-drafts'
 import { isPathCore } from '../problems'
 import { loadSqlProblems, sqlProblemIndex, sqlTopicProgress, sqlTopics } from '../sql-problems'
 import type { SqlProblem, SqlProblemSummary } from '../sql-problems'
+import { useSaveCheck } from '../relaunch-guard'
 
 const DIFFICULTY: Record<SqlProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
 const PATH_LABEL = { swe: 'SE core', senior: 'SSE core' } as const
@@ -110,6 +111,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: SqlProblem }) {
   const [code, setCode] = useState(() => readDraft(draftKey(problem.id)).sql ?? problem.exercise.starter)
   const [hints, setHints] = useState(0)
   const [saveFailed, setSaveFailed] = useState(false)
+  useSaveCheck(() => saveFailed ? 'Your SQL draft could not be saved.' : undefined)
   const lesson = lessons.find(item => item.id === problem.lessonId)
   const example = problem.exercise.tests[0]
 

@@ -31,6 +31,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['settings', 'Settings', '#settings', 'preferences theme dark mode accent font editor'],
   ['backup', 'Export or import a backup', '#settings', 'backup restore export import save data'],
   ['map', 'Site map', '#map', 'sitemap overview everything all pages tree'],
+  ['changelog', 'What’s new / Changelog', '#changelog', 'changelog release notes updates version whats new relaunch'],
   ['practice', 'Practise hub', '#practice', 'practice review drills'],
   ['tracks', 'Tracks', '#tracks', 'roadmap curriculum lessons courses'],
   ['patterns', 'Patterns', '#patterns', 'algorithm patterns course'],

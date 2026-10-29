@@ -13,6 +13,7 @@ import { clock, duration } from '../practice'
 import '../diagram.css'
 import '../field-guide.css'
 import '../company.css'
+import { useBusy } from '../relaunch-guard'
 
 const REPORTED_NOTE = 'Commonly reported by candidates in public write-ups; an editorial estimate, not an official list.'
 const monthYear = (asOf: string) => new Date(`${asOf}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
@@ -133,6 +134,7 @@ function MockLoop({ app, company }: { app: AppModel; company: Company }) {
 
 function Practice({ app, company, local, save }: { app: AppModel; company: Company; local: CompanyLocal; save: (next: CompanyLocal) => void }) {
   const run = local.run?.companyId === company.id ? local.run : undefined
+  useBusy(!!run && 'A timed company practice run')
   const [now, setNow] = useState(() => Date.now())
   const [result, setResult] = useState('')
   useEffect(() => {

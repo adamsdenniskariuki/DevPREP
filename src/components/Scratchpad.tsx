@@ -5,6 +5,7 @@ import { createAutosave, createBoard, emptyScene, findBoards, saveFallback, save
 import type { BoardRecord, BoardScene, SaveStatus } from '../boards'
 import type { Board } from '../design-drafts'
 import '../board.css'
+import { useSaveCheck } from '../relaunch-guard'
 
 const STATUS_TEXT: Record<SaveStatus, string> = { saved: 'Saved on this device', pending: 'Unsaved changes…', saving: 'Saving…', error: 'Not saved' }
 
@@ -15,7 +16,8 @@ export default function Scratchpad({ app, problemId, title }: { app: AppModel; p
   const [error, setError] = useState('')
   const [status, setStatus] = useState<SaveStatus>('saved')
   const making = useRef<Promise<string> | undefined>(undefined)
-  const report = useCallback((next: SaveStatus, problem?: string) => { setStatus(next); setError(problem ?? '') }, [])
+  const failed = useRef(false)
+  const report = useCallback((next: SaveStatus, problem?: string) => { failed.current = next === 'error'; setStatus(next); setError(problem ?? '') }, [])
 
   useEffect(() => {
     let live = true
@@ -44,6 +46,10 @@ export default function Scratchpad({ app, problemId, title }: { app: AppModel; p
     return () => { window.removeEventListener('pagehide', flush); flush() }
   }, [saves])
   const onChange = useCallback((scene: BoardScene) => saves.scene.schedule(scene), [saves])
+  useSaveCheck(async () => {
+    await Promise.all([saves.scene.flush(), saves.sketch.flush()])
+    return failed.current ? 'The scratchpad could not be saved.' : undefined
+  })
 
   if (board === undefined) return error ? <p className="alert" role="alert">{error}</p> : <p role="status">Loading the scratchpad…</p>
   return <div className="scratchpad-body">

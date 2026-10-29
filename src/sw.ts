@@ -152,6 +152,7 @@ self.addEventListener('message', event => {
       const client = source && 'id' in source ? await self.clients.get(source.id) : undefined
       if (!client || !appDocument(client.url, scope)) throw new Error('This window is outside the app scope.')
       if (data.type === 'ACTIVATE_UPDATE') {
+        // The only path to skipWaiting: an explicit Relaunch now. Otherwise this worker waits for the next launch.
         if (!await cacheReady()) throw new Error('The update is not fully prepared. Keep using the current version.')
         port.postMessage({ ok: true })
         await self.skipWaiting()
@@ -162,7 +163,7 @@ self.addEventListener('message', event => {
       let ready = await cacheReady()
       const assets = 'assets' in data && Array.isArray(data.assets) && data.assets.every(item => typeof item === 'string') ? data.assets : []
       if (ready && assets.length > 0) ready = (await Promise.all(assets.map(cached))).every(response => response?.ok)
-      reply = { ok: true, ready, version: (await version).slice(0, 12) }
+      reply = { ok: true, ready, version: (await version).slice(0, 12), appVersion: __APP_VERSION__ }
     } catch (error) {
       reply = { ok: false, error: message(error) }
     }

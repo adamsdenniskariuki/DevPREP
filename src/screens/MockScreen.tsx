@@ -13,6 +13,7 @@ import { displayDate } from '../format'
 import { buildMock, mockScore, MOCK_MINUTES } from '../mocks'
 import type { Mock, MockData, MockLevel } from '../mocks'
 import CompanyMock from './CompanyMock'
+import { useBusy, useSaveCheck } from '../relaunch-guard'
 
 const DRAFT_KEY = 'devprep.mock.v1'
 const MAX_ANSWER = 8_000
@@ -61,6 +62,8 @@ function TrackMock({ app }: { app: AppModel }) {
   const [level, setLevel] = useState<MockLevel>(app.progress.selectedPath === 'senior' ? 'sse' : 'se')
   const reviewHeading = useRef<HTMLHeadingElement>(null)
   const phase = !draft ? 'pick' : draft.finishedAt === undefined ? 'answer' : 'review'
+  useSaveCheck(() => draft && !writeDraft(draft) ? 'Your mock answers could not be saved.' : undefined)
+  useBusy(phase === 'answer' && 'A timed mock interview')
   useEffect(() => { (phase === 'review' ? reviewHeading : app.heading).current?.focus() }, [app.heading, phase])
   useEffect(() => {
     let live = true

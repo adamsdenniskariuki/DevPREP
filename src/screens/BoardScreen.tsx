@@ -20,6 +20,7 @@ import { attemptText } from '../practice'
 import type { PracticeState } from '../practice'
 import { problemIndex } from '../problems'
 import '../board.css'
+import { useBusy, useSaveCheck } from '../relaunch-guard'
 
 function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob)
@@ -204,7 +205,8 @@ function LoadedBoard({ app, board, flash }: { app: AppModel; board: BoardRecord;
   const [mode, setMode] = useState<'canvas' | 'fallback'>()
   const handle = useRef<CanvasHandle | null>(null)
   const latest = useRef<BoardScene>(board)
-  const report = useCallback((next: SaveStatus, error?: string) => { setStatus(next); setSaveError(error ?? '') }, [])
+  const failed = useRef(false)
+  const report = useCallback((next: SaveStatus, error?: string) => { failed.current = next === 'error'; setStatus(next); setSaveError(error ?? '') }, [])
   const [autosave] = useState(() => createAutosave<BoardScene>(scene => saveScene(id, scene), report))
   const [fallbackSave] = useState(() => createAutosave<Board>(sketch => saveFallback(id, sketch), report))
 
@@ -215,6 +217,10 @@ function LoadedBoard({ app, board, flash }: { app: AppModel; board: BoardRecord;
   }, [autosave, fallbackSave])
 
   const onChange = useCallback((scene: BoardScene) => { latest.current = scene; autosave.schedule(scene) }, [autosave])
+  useSaveCheck(async () => {
+    await Promise.all([autosave.flush(), fallbackSave.flush()])
+    return failed.current ? 'The whiteboard could not be saved.' : undefined
+  })
   const onReady = useCallback((next: CanvasHandle) => { handle.current = next }, [])
   const practice = board.kind === 'practice' && board.practice && board.caseId ? { state: board.practice, caseId: board.caseId } : undefined
   const caseTitle = caseIndex.find(item => item.id === practice?.caseId)?.title
@@ -280,10 +286,16 @@ function Practice({ app, id, caseId, initial, mode, flushScene, onSaveStatus, ch
   const [caseError, setCaseError] = useState('')
   const [note, setNote] = useState('')
   const heading = useRef<HTMLHeadingElement>(null)
-  const [practiceSave] = useState(() => createAutosave<PracticeState>(state => savePractice(id, state), onSaveStatus, 0))
+  const practiceFailed = useRef(false)
+  const [practiceSave] = useState(() => createAutosave<PracticeState>(state => savePractice(id, state), (status, error) => { practiceFailed.current = status === 'error'; onSaveStatus(status, error) }, 0))
   const timer = usePracticeTimer(initial, state => practiceSave.schedule(state))
   const finished = timer.finished
   useEffect(() => () => { void practiceSave.flush() }, [practiceSave])
+  useSaveCheck(async () => {
+    await practiceSave.flush()
+    return practiceFailed.current ? 'The practice timer could not be saved.' : undefined
+  })
+  useBusy(timer.running && 'A timed whiteboard practice')
   useEffect(() => {
     if (!finished) return
     let live = true
