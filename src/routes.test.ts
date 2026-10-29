@@ -49,12 +49,17 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map', '#playground'])
+const ADDED = new Set(['#map', '#playground', '#changelog'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
     expect(hashes.length).toBeGreaterThan(300)
     for (const hash of hashes.filter(item => !ADDED.has(item))) expect(parseHash(hash, ids), hash).toEqual(legacyParse(hash || '#'))
+  })
+
+  it('adds the changelog as a top-level route with no sub-pages', () => {
+    expect(parseHash('#changelog', ids)).toEqual({ route: 'changelog' })
+    for (const hash of ['#changelog/1.8.0', '#changelog/x', '#Changelog']) expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })
   })
 
   it('adds the site map as a new top-level route with no sub-pages', () => {

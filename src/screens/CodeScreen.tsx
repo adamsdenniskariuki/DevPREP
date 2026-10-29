@@ -12,6 +12,7 @@ import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
 import OpenInPlayground from '../components/OpenInPlayground'
 import { patternsForProblem } from '../patterns'
+import { useSaveCheck } from '../relaunch-guard'
 
 /** The scratchpad and its drawing tool load only when the panel is first opened. */
 const Scratchpad = lazy(() => import('../components/Scratchpad').catch(() => ({ default: () => <p className="alert" role="alert">The scratchpad couldn’t load. Reconnect and try again.</p> })))
@@ -123,6 +124,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
   const [result, setResult] = useState<{ lang: CodeLanguage; report: RunReport; message?: string }>()
   const [hints, setHints] = useState(0)
   const [saveFailed, setSaveFailed] = useState(false)
+  useSaveCheck(() => saveFailed ? 'Your code draft could not be saved.' : undefined)
   const live = useRef(true)
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const lesson = lessons.find(item => item.id === problem.lessonId)

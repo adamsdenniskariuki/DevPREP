@@ -12,6 +12,7 @@ import { mockScore } from '../mocks'
 import type { MockLevel } from '../mocks'
 import type { DesignCase } from '../case-types'
 import type { Problem } from '../problem-types'
+import { useBusy, useSaveCheck } from '../relaunch-guard'
 
 export const COMPANY_DRAFT_KEY = 'devprep.company-mock.v1'
 const MAX_ANSWER = 8_000
@@ -63,6 +64,8 @@ export default function CompanyMock({ app, companyId }: { app: AppModel; company
   const roundHeading = useRef<HTMLHeadingElement>(null)
   const draft = stored?.company === companyId ? stored : undefined
   const phase = !draft ? 'intro' : draft.finishedAt === undefined ? 'answer' : 'review'
+  useSaveCheck(() => stored && !writeDraft(stored) ? 'Your mock answers could not be saved.' : undefined)
+  useBusy(phase === 'answer' && 'A timed mock interview')
   useEffect(() => {
     let live = true
     Promise.all([loadCompanies(), loadProblems(), loadCases()]).then(([companies, problems, cases]) => {

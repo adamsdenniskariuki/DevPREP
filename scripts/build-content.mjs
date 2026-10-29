@@ -238,6 +238,53 @@ export function buildNavIndex(root = 'content') {
   }
 }
 
+export const CHANGELOG_OUTPUT = 'src/generated/changelog.json'
+export const VERSION_PATTERN = /^\d+\.\d+\.\d+$/
+
+/** Numeric x.y.z comparison: negative when a is older than b. */
+export function compareVersions(a, b) {
+  const left = a.split('.').map(Number)
+  const right = b.split('.').map(Number)
+  for (let index = 0; index < 3; index++) if (left[index] !== right[index]) return left[index] - right[index]
+  return 0
+}
+
+/**
+ * content/changelog.json: newest release first. The newest version is the app version (vite.config.ts) and must
+ * match package.json. Highlight routes are checked against the router in src/changelog.test.ts.
+ */
+export function buildChangelog(root = 'content') {
+  const releases = validateChangelog(read(join(root, 'changelog.json')))
+  const pkg = read('package.json')
+  if (root === 'content' && pkg.version !== releases[0].version) throw new Error(`content/changelog.json: the newest release (${releases[0].version}) must match package.json version (${pkg.version})`)
+  return releases
+}
+
+/** Checks the changelog's shape and order, throwing a readable error; returns the releases. */
+export function validateChangelog({ releases } = {}) {
+  const fail = message => { throw new Error(`content/changelog.json: ${message}`) }
+  if (!Array.isArray(releases) || releases.length === 0) fail('needs a non-empty "releases" array')
+  releases.forEach((release, index) => {
+    const at = `release ${index + 1} (${release?.version ?? 'no version'})`
+    const keys = Object.keys(release ?? {}).sort().join(',')
+    if (keys !== 'date,highlights,notes,title,version') fail(`${at} must have exactly version, date, title, highlights and notes`)
+    if (typeof release.version !== 'string' || !VERSION_PATTERN.test(release.version)) fail(`${at} version must look like 1.2.3`)
+    if (typeof release.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(release.date) || new Date(`${release.date}T00:00:00Z`).toISOString().slice(0, 10) !== release.date) fail(`${at} date must be an ISO date (YYYY-MM-DD)`)
+    if (typeof release.title !== 'string' || !release.title.trim() || release.title.length > 80) fail(`${at} title must be 1–80 characters`)
+    if (!Array.isArray(release.highlights) || release.highlights.length < 2 || release.highlights.length > 3) fail(`${at} needs 2–3 highlights`)
+    for (const item of release.highlights) {
+      if (Object.keys(item ?? {}).sort().join(',') !== 'route,text') fail(`${at} highlights need exactly text and route`)
+      if (typeof item.text !== 'string' || !item.text.trim() || item.text.length > 200) fail(`${at} highlight text must be 1–200 characters`)
+      if (typeof item.route !== 'string' || !/^#[a-z]+(\/[a-z0-9-]+)?$/.test(item.route)) fail(`${at} highlight route must be an app hash such as #playground`)
+    }
+    if (!Array.isArray(release.notes) || release.notes.some(note => typeof note !== 'string' || !note.trim())) fail(`${at} notes must be an array of non-empty strings`)
+    const next = releases[index + 1]
+    if (next && compareVersions(release.version, next.version) <= 0) fail(`${at} must be newer than the release after it (newest first, no duplicates)`)
+    if (next && release.date < next.date) fail(`${at} is dated before the release after it`)
+  })
+  return releases
+}
+
 function writeIfChanged(path, value) {
   const text = JSON.stringify(value) + '\n'
   if (!existsSync(path) || readFileSync(path, 'utf8') !== text) {
@@ -272,4 +319,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
   writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)
   writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
+  writeIfChanged(CHANGELOG_OUTPUT, buildChangelog())
 }

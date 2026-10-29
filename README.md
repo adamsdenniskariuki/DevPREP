@@ -259,10 +259,18 @@ Preparation checks every required file's SHA-256 before caching it and never tre
 No reinstallation is needed. A successful `main` Pages deployment publishes a new worker and versioned assets; merely merging a PR is not sufficient if its build/deployment fails.
 
 - Online launch checks for updates. Reconnection checks again; returning to a visible app checks with a one-minute throttle; a visible open app also checks about every five minutes.
-- A new version's files download and verify automatically. Existing windows keep running without an unsolicited reload.
-- **Update ready → Update & reload** is the user-controlled restart. The current notebook is saved/rechecked before activation and again before reload. Storage/conflict/unsaved-preference warnings block this action; resolve them or export work before any manual restart.
-- If another window activates an update, this window offers a restart rather than automatically reloading. When all old windows close, the browser can naturally activate the prepared version for the next launch.
+- A new version's files download and verify automatically, then **apply the next time you open DevPREP** (once every DevPREP window has closed). Open windows are never reloaded under you; reloading one window while another is still open keeps the running version.
+- A quiet, dismissible **Update downloaded … It applies next time you open DevPREP** notice appears once per downloaded build (a dismissal is remembered across reloads), and the App & offline summary shows a dot with **Update downloaded**.
+- **Relaunch now** applies it straight away. It is in the notice and always available in **App & offline** (reloading the current version when no update is waiting). Before relaunching it saves and rechecks every open editor (playground, scratchpad, whiteboards, code and SQL drafts, design and mock answers); a failed save, a storage/conflict/unsaved-preference warning, or recovery mode blocks it with a message. A timed practice, mock or whiteboard run asks for confirmation first. The relaunch returns to the same page (the URL hash is kept).
+- **Several windows:** the window that relaunches activates the waiting worker and tells the others over a `BroadcastChannel` (they also see the worker change). The other windows are **not** reloaded: they keep working on the old version (its cached assets are retained) and show **DevPREP updated in another window. Relaunch to finish updating.** with their own Relaunch now, which runs the same safety checks.
+- **What's new:** after an update applies, Home shows a dismissible *What's new in DevPREP x.y.z* card once per version, summarising the releases since the version this browser last ran (`devprep.last-seen-version.v1`). A first install never shows it. The full history is at **Me → What's new** (`#changelog`, searchable in Ctrl+K), linked from Settings and the App & offline panel.
 - Browsers control service-worker scheduling. A closed or offline app cannot be promised background update delivery. A failed download leaves the working version available.
+
+### Versions and the changelog
+
+`content/changelog.json` is the source of truth: releases newest first, each with a semver `version`, `date`, `title`, 1–4 `highlights` (`text` plus an in-app `#route`) and optional `notes`. `npm run content` validates it, requires `package.json`'s `version` to equal the newest release, and writes `src/generated/changelog.json` (lazy-loaded in its own chunk). The newest version is baked into the build as `__APP_VERSION__` (`DEVPREP_VERSION` overrides it, used by the PWA tests) and reported by the service worker; the hashed **Build** id in App & offline still identifies the exact deployment.
+
+To ship a user-visible change, add a release (or extend the newest unreleased one) and bump `package.json` to match. The **Changelog** workflow (`.github/workflows/changelog.yml`, `scripts/check-changelog.mjs`) fails a pull request that changes `src/` or `content/` (excluding tests and `src/generated/`) without touching `content/changelog.json`. For internal-only changes, put `[skip changelog]` in the PR title or add the `skip-changelog` label; editing either reruns the check.
 
 Each worker serves its version's cached HTML, preventing an old shell from unexpectedly referencing new chunks. Earlier verified build caches are deliberately retained so still-open windows and in-flight old documents can request their original hashed assets even after activation. This conservative policy uses additional storage across releases; browser eviction/quota still applies. The app does not globally clear caches or study storage. Export backups before manually clearing site data, which can remove both offline files and progress.
 
@@ -399,7 +407,7 @@ Use the bare target, with no `https://` or `/DevPREP/`. Check it with `Resolve-D
 | `src/accent-preference.ts`, `src/accent-preference.test.ts`, `tests/accents.spec.ts` | Separate preference contract, startup/error checks, real palette contrast and browser coverage |
 | `tests/paths.spec.ts` | Path recommendations, switching, global reviews, shared progress, legacy backups, keyboard and mobile flows |
 | `src/sw.ts`, `src/pwa-cache.ts` | Integrity-checked, mount-scoped offline caches and safe version routing |
-| `src/usePwa.ts`, `src/components/PwaPanel.tsx`, `src/pwa-client.ts` | Install guidance, actual readiness, update discovery and guarded user restart |
+| `src/usePwa.ts`, `src/components/PwaPanel.tsx`, `src/pwa-client.ts` | Install guidance, actual readiness, next-launch updates and guarded Relaunch now (`src/relaunch-guard.ts` save checks, `BroadcastChannel` for other windows) |
 | `public/icons/`, `scripts/generate-pwa-icons.mjs` | Original install icons and reproducible PNG generation |
 | `playwright.pwa.config.ts`, `tests/pwa*` | Dedicated production offline/failure/two-release lifecycle tests |
 | `src/curriculum.test.ts`, `tests/expanded.spec.ts` | Content graph/integrity, published contract preservation, legacy resume, staged exercises, and every-lesson viewport checks |

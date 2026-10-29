@@ -75,7 +75,11 @@ async function waitForUpdate(page: Page) {
   const details = await openPanel(page)
   await details.getByRole('button', { name: 'Check for updates', exact: true }).click()
   await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true)
-  await expect(details.locator('summary')).toContainText('Update ready')
+  await expect(details.locator('summary')).toContainText('Update downloaded')
+}
+
+function whatsNew(page: Page) {
+  return page.getByRole('region', { name: /What’s new in DevPREP/ })
 }
 
 async function inventory(release: 'v1' | 'v2') {
@@ -363,12 +367,17 @@ for (const mount of mounts) {
       expect(await page.evaluate(() => Reflect.get(window, 'pwaDocumentMarker'))).toBe('original')
       await expect(page.getByLabel('Your approach & answer')).toHaveValue(draft)
       expect((await request.get(oldEntry)).status()).toBe(404)
-      await (await openPanel(page)).getByRole('button', { name: 'Update & reload', exact: true }).click()
+      // Downloaded, not applied: the open window keeps running the old version until Relaunch now.
+      await expect(page.getByRole('status').filter({ hasText: 'Update downloaded' })).toContainText('It applies next time you open DevPREP')
+      await (await openPanel(page)).getByRole('button', { name: 'Relaunch now', exact: true }).click()
       await expect.poll(() => build(page)).toBe(secondRelease)
+      await expect(page).toHaveURL(new RegExp(`${mount.replaceAll('/', '\\/')}#study$`))
       await expect(page.getByLabel('Your approach & answer')).toHaveValue(draft)
+      await expect(whatsNew(page)).toBeVisible()
       expect(await build(oldTab)).toBe(firstBuild)
       expect(await oldTab.evaluate(() => Reflect.get(window, 'pwaDocumentMarker'))).toBe('old-tab')
-      await expect(panel(oldTab).locator('summary')).toContainText('Update ready')
+      await expect(panel(oldTab).locator('summary')).toContainText('Relaunch to finish updating')
+      await expect(oldTab.getByRole('status').filter({ hasText: 'DevPREP updated in another window' })).toBeVisible()
       const oldResponse = await oldTab.evaluate(async url => {
         const response = await fetch(url, { cache: 'no-store' })
         return { status: response.status, body: await response.text() }
@@ -391,7 +400,38 @@ for (const mount of mounts) {
       await ready(nextLaunch)
       expect(await build(nextLaunch)).toBe(secondRelease)
       await expect(nextLaunch.getByLabel('Your approach & answer')).toHaveValue(draft)
+      await expect(whatsNew(nextLaunch), 'What’s new appears once per version').toHaveCount(0)
       for (const name of oldNames) expect(await nextLaunch.evaluate(name => caches.has(name), name)).toBe(true)
+    })
+
+    test('an open window keeps its version until relaunch; other windows are told, not reloaded, and relaunch to the same route', async ({ page, context, request }) => {
+      const draft = await seedDraft(page)
+      await page.goto(`${mount}#progress`)
+      await ready(page)
+      await expect(whatsNew(page), 'no What’s new on a first install').toHaveCount(0)
+      const firstBuild = await build(page)
+      const other = await context.newPage()
+      await other.goto(`${mount}#study`)
+      await ready(other)
+      await other.evaluate(() => { Object.assign(window, { pwaDocumentMarker: 'other' }) })
+      await control(request, 'release', { mount, release: 'v2' })
+      await waitForUpdate(page)
+      await page.reload()
+      await ready(page)
+      expect(await build(page), 'reloading while another window is open keeps the running version').toBe(firstBuild)
+      await page.getByRole('status').filter({ hasText: 'Update downloaded' }).getByRole('button', { name: 'Relaunch now' }).click()
+      await expect.poll(() => build(page)).toBe(secondRelease)
+      await expect(page).toHaveURL(/#progress$/)
+      const notice = other.getByRole('status').filter({ hasText: 'DevPREP updated in another window' })
+      await expect(notice).toBeVisible()
+      expect(await other.evaluate(() => Reflect.get(window, 'pwaDocumentMarker'))).toBe('other')
+      expect(await build(other)).toBe(firstBuild)
+      await expect(other.getByRole('alert'), 'relaunching one window must not put the other in conflict').toHaveCount(0)
+      await notice.getByRole('button', { name: 'Relaunch now' }).click()
+      await expect.poll(() => build(other)).toBe(secondRelease)
+      await expect(other).toHaveURL(/#study$/)
+      await expect(other.getByLabel('Your approach & answer')).toHaveValue(draft)
+      await expect(whatsNew(other), 'What’s new is shown once per version across windows').toHaveCount(0)
     })
 
     for (const fault of ['network', 'tamper'] as const) {
@@ -430,13 +470,14 @@ for (const mount of mounts) {
         Object.assign(window, { pwaDocumentMarker: 'must-not-reload' })
         Storage.prototype.setItem = () => { throw new DOMException('PWA test storage quota', 'QuotaExceededError') }
       })
-      await (await openPanel(page)).getByRole('button', { name: 'Update & reload', exact: true }).click()
+      await (await openPanel(page)).getByRole('button', { name: 'Relaunch now', exact: true }).click()
       await expect(page.getByRole('alert').filter({ hasText: /save|storage|memory|quota/i }).first()).toBeVisible()
       expect(await page.evaluate(() => Reflect.get(window, 'pwaDocumentMarker'))).toBe('must-not-reload')
       expect(await build(page)).toBe(firstBuild)
       await expect(page.getByLabel('Your approach & answer')).toHaveValue(draft)
       await page.getByLabel('Your approach & answer').fill('Unsaved in-memory edit must not be reloaded')
-      await expect((await openPanel(page)).getByRole('button', { name: 'Update & reload', exact: true })).toBeDisabled()
+      await expect((await openPanel(page)).getByRole('button', { name: 'Relaunch now', exact: true })).toBeDisabled()
+      await expect(page.getByRole('status').filter({ hasText: 'Update downloaded' }).getByRole('button', { name: 'Relaunch now' })).toBeDisabled()
       await expect(page.getByLabel('Your approach & answer')).toHaveValue('Unsaved in-memory edit must not be reloaded')
       expect(await page.evaluate(key => JSON.parse(localStorage.getItem(key)!).session.draft, STORAGE_KEY)).toBe(draft)
     })
@@ -451,7 +492,7 @@ for (const mount of mounts) {
       const discovered = context.waitForEvent('serviceworker')
       await context.setOffline(false)
       await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true)
-      await expect(panel(page).locator('summary')).toContainText('Update ready')
+      await expect(panel(page).locator('summary')).toContainText('Update downloaded')
       expect(await build(page)).toBe(firstBuild)
       expect(await page.evaluate(() => Reflect.get(window, 'pwaDocumentMarker'))).toBe('original')
       const nextWorker = await discovered
@@ -465,6 +506,7 @@ for (const mount of mounts) {
       await nextLaunch.goto(mount)
       await ready(nextLaunch)
       expect(await build(nextLaunch)).toBe(secondRelease)
+      await expect(whatsNew(nextLaunch)).toBeVisible()
     })
 
     test('missing cached files withdraw readiness and PREPARE_OFFLINE repairs the complete cache', async ({ page }) => {
@@ -546,7 +588,8 @@ for (const blocker of ['recovery', 'conflict', 'accent'] as const) {
       await page.reload()
       await expect(page.getByRole('heading', { name: 'Let’s protect your progress.' })).toBeVisible()
       // Recovery hides the ordinary app controls rather than offering any reload/update action.
-      await expect(page.getByRole('button', { name: 'Update & reload', exact: true })).toHaveCount(0)
+      await expect((await openPanel(page)).locator('summary')).toContainText('Update downloaded')
+      await expect(page.getByRole('button', { name: /Relaunch|Update/ })).toHaveCount(0)
       expect(await page.locator('script[src]').first().getAttribute('src')).toBe(firstEntry)
       expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true)
       return
@@ -568,8 +611,10 @@ for (const blocker of ['recovery', 'conflict', 'accent'] as const) {
       await expect(page.getByRole('alert').filter({ hasText: 'Accent preference needs attention.' })).toBeVisible()
     }
     const details = await openPanel(page)
-    await expect(details.locator('summary')).toContainText('Update ready')
-    await expect(details.getByRole('button', { name: 'Update & reload', exact: true })).toBeDisabled()
+    await expect(details.locator('summary')).toContainText('Update downloaded')
+    await expect(details.getByRole('button', { name: 'Relaunch now', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Relaunch now', exact: true })).toHaveCount(2)
+    for (const button of await page.getByRole('button', { name: 'Relaunch now', exact: true }).all()) await expect(button).toBeDisabled()
     expect(await build(page)).toBe(firstBuild)
     expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true)
   })

@@ -31,7 +31,8 @@ export default async function setup() {
     'build', '--outDir', 'dist-pwa-tests/v2',
   ], {
     cwd: process.cwd(),
-    env: { ...process.env, DEVPREP_RELEASE: 'pwa-test-v2' },
+    // A newer app version too, so the What's new card appears after v2 activates.
+    env: { ...process.env, DEVPREP_RELEASE: 'pwa-test-v2', DEVPREP_VERSION: '99.0.0' },
     stdio: 'inherit',
     timeout: 180_000,
   })

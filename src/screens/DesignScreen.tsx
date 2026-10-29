@@ -16,6 +16,7 @@ import type { BoardRecord } from '../boards'
 import { displayDate } from '../format'
 import { attemptText, newPractice, PRACTICE_PRESETS } from '../practice'
 import type { PracticeMinutes } from '../practice'
+import { useBusy, useSaveCheck } from '../relaunch-guard'
 
 const LEVELS = [{ id: 'se', label: 'SE core' }, { id: 'sse', label: 'SSE depth' }] as const
 const MARKS: { value: RubricMark; label: string }[] = [{ value: 0, label: 'Missed' }, { value: 1, label: 'Partly' }, { value: 2, label: 'Covered' }]
@@ -110,6 +111,8 @@ function CaseWorkspace({ app, item }: { app: AppModel; item: DesignCase }) {
   const [saveFailed, setSaveFailed] = useState(false)
   const [review, setReview] = useState(false)
   const timer = useTimer(item.id, item.minutes)
+  useSaveCheck(() => saveFailed ? 'Your design notes could not be saved.' : undefined)
+  useBusy(timer.running && 'A timed design case')
   const reviewHeading = useRef<HTMLHeadingElement>(null)
   const related = item.lessons.map(id => lessons.find(lesson => lesson.id === id)).filter(lesson => lesson !== undefined)
 

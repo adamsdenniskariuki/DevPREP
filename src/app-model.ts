@@ -7,7 +7,7 @@ import type { Activity, CompanyMockResult, CompanyRun, MockResult, Mode, Profile
 import type { Grade } from './flashcards'
 import type { PatternLang } from './pattern-types'
 
-export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql' | 'patterns' | 'company' | 'map' | 'playground'
+export type Route = 'home' | 'tracks' | 'practice' | 'progress' | 'settings' | 'study' | 'code' | 'design' | 'board' | 'cards' | 'mock' | 'stories' | 'plan' | 'guide' | 'antipatterns' | 'sql' | 'patterns' | 'company' | 'map' | 'playground' | 'changelog'
 
 /** Derived state and actions shared by the routed screens. */
 export interface AppModel {

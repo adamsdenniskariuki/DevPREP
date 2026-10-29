@@ -4,6 +4,8 @@ import type { InstallPromptEvent, OfflineState } from './pwa-types'
 
 const CHECK_INTERVAL = 5 * 60_000
 const RESUME_THROTTLE = 60_000
+/** Tells other open windows that this one relaunched into a new version. */
+export const UPDATE_CHANNEL = 'devprep-updates'
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'The browser could not prepare the app.'
@@ -16,6 +18,10 @@ export function usePwa(beforeReload: () => boolean) {
   const [version, setVersion] = useState('')
   const [updateReady, setUpdateReady] = useState(false)
   const [updating, setUpdating] = useState(false)
+  /** Another window applied the update; this one keeps running the old version until it is relaunched. */
+  const [updatedElsewhere, setUpdatedElsewhere] = useState(false)
+  const [waitingVersion, setWaitingVersion] = useState('')
+  const [waitingBuild, setWaitingBuild] = useState('')
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null)
   const [installMessage, setInstallMessage] = useState('')
   const [standalone, setStandalone] = useState(() => matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && navigator.standalone === true))
@@ -28,6 +34,9 @@ export function usePwa(beforeReload: () => boolean) {
   const canReload = useRef(beforeReload)
   const check = useRef<(force?: boolean) => Promise<void>>(async () => {})
   const prepare = useRef<() => Promise<void>>(async () => {})
+  const channel = useRef<BroadcastChannel | null>(null)
+  const waitingVersionRef = useRef(waitingVersion)
+  waitingVersionRef.current = waitingVersion
   canReload.current = beforeReload
 
   useEffect(() => {
@@ -61,12 +70,26 @@ export function usePwa(beforeReload: () => boolean) {
       }
     }
 
+    const describeWaiting = async () => {
+      const worker = registration.current?.waiting
+      if (!worker || !registration.current?.active) return
+      try {
+        const reply = await workerRequest(worker, 'PWA_STATUS')
+        if (disposed || registration.current?.waiting !== worker) return
+        setWaitingVersion(reply.appVersion ?? '')
+        setWaitingBuild(reply.version ?? '')
+      } catch { /* The version label is optional; Relaunch now still works. */ }
+    }
+
     const watch = (worker: ServiceWorker | null) => {
       if (!worker || watched.has(worker)) return
       watched.add(worker)
       const changed = () => {
         if (disposed) return
-        if (worker.state === 'installed' && registration.current?.waiting && hadController) setUpdateReady(true)
+        if (worker.state === 'installed' && registration.current?.waiting && hadController) {
+          setUpdateReady(true)
+          void describeWaiting()
+        }
         if (worker.state === 'activated') void status()
         if (worker.state === 'redundant') {
           if (!registration.current?.active) setOffline('error')
@@ -87,6 +110,7 @@ export function usePwa(beforeReload: () => boolean) {
       watch(reg.installing)
       if (reg.active) void status()
       else setOffline('preparing')
+      if (reg.waiting && reg.active) void describeWaiting()
     }
 
     const start = async () => {
@@ -111,6 +135,7 @@ export function usePwa(beforeReload: () => boolean) {
         else await registration.current.update()
         if (!disposed) {
           setUpdateReady((!!registration.current?.waiting && !!registration.current?.active) || reloadPending.current)
+          void describeWaiting()
           await status()
         }
       } catch (error) {
@@ -155,6 +180,7 @@ export function usePwa(beforeReload: () => boolean) {
         accepting.current = false
         setUpdating(false)
         if (canReload.current()) {
+          try { channel.current?.postMessage({ type: 'relaunched', version: waitingVersionRef.current }) } catch { /* Other windows still see controllerchange. */ }
           location.reload()
           return
         }
@@ -162,8 +188,10 @@ export function usePwa(beforeReload: () => boolean) {
         reloadPending.current = true
         setUpdateReady(true)
       } else if (hadController) {
+        // Another window chose Relaunch now. Never reload this one under the user; offer its own Relaunch now instead.
         reloadPending.current = true
         setUpdateReady(true)
+        setUpdatedElsewhere(true)
       }
       hadController = true
       void status()
@@ -195,6 +223,17 @@ export function usePwa(beforeReload: () => boolean) {
     window.addEventListener('online', network)
     window.addEventListener('offline', network)
     document.addEventListener('visibilitychange', visible)
+    if ('BroadcastChannel' in window) {
+      channel.current = new BroadcastChannel(UPDATE_CHANNEL)
+      channel.current.onmessage = (event: MessageEvent) => {
+        const data: unknown = event.data
+        if (disposed || !data || typeof data !== 'object' || !('type' in data) || data.type !== 'relaunched') return
+        reloadPending.current = true
+        setUpdateReady(true)
+        setUpdatedElsewhere(true)
+        if ('version' in data && typeof data.version === 'string' && data.version) setWaitingVersion(data.version)
+      }
+    }
     let timer: number | undefined
     if (!supported) {
       setOffline('unavailable')
@@ -233,6 +272,8 @@ export function usePwa(beforeReload: () => boolean) {
       window.removeEventListener('online', network)
       window.removeEventListener('offline', network)
       document.removeEventListener('visibilitychange', visible)
+      channel.current?.close()
+      channel.current = null
     }
   }, [])
 
@@ -248,14 +289,31 @@ export function usePwa(beforeReload: () => boolean) {
     }
   }
 
-  async function update() {
+  /**
+   * Relaunch now: saves and rechecks open work, then applies a downloaded update (or simply reloads when another
+   * window already applied it). The address, including the hash route, is kept, so the user returns to the same page.
+   */
+  async function relaunch() {
+    if (updating) return
+    setUpdating(true)
+    let checked
+    try { checked = await (await import('./relaunch-guard')).checkBeforeRelaunch() } catch (error) { checked = { blocked: [message(error)], busy: [] } }
+    if (checked.blocked.length) {
+      setUpdating(false)
+      setWarning(`Relaunch paused: ${checked.blocked.join(' ')} Your work is kept; fix this or export it, then try again.`)
+      return
+    }
+    if (checked.busy.length && !window.confirm(`${checked.busy.join(', ')} in progress. Relaunching ends it now. Relaunch anyway?`)) {
+      setUpdating(false)
+      return
+    }
     if (!canReload.current()) {
-      setWarning('Reload is blocked until storage warnings are resolved. Export your work before any manual restart.')
+      setUpdating(false)
+      setWarning('Relaunch is blocked until storage warnings are resolved. Export your work before any manual restart.')
       return
     }
     const waiting = registration.current?.waiting
     if (!waiting) { location.reload(); return }
-    setUpdating(true)
     accepting.current = true
     activationTimer.current = window.setTimeout(() => {
       accepting.current = false
@@ -273,8 +331,8 @@ export function usePwa(beforeReload: () => boolean) {
   }
 
   return {
-    offline, online, warning, version, updateReady, updating, standalone, installed,
-    canInstall: !!installPrompt && !standalone && !installed, installMessage, install, update,
+    offline, online, warning, version, updateReady, updating, updatedElsewhere, waitingVersion, waitingBuild, standalone, installed,
+    canInstall: !!installPrompt && !standalone && !installed, installMessage, install, relaunch,
     prepare: () => prepare.current(), check: () => check.current(true),
   }
 }

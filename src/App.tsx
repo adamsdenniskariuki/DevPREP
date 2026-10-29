@@ -22,10 +22,10 @@ import type { PatternLang } from './pattern-types'
 import type { CodeLanguage } from './problem-types'
 import { TOUR_KEY } from './appearance'
 import Icon from './components/Icon'
-import PwaPanel from './components/PwaPanel'
 import { useAccent } from './useAccent'
 import { useAppearance } from './useAppearance'
 import { usePwa } from './usePwa'
+import { decideWhatsNew } from './whats-new'
 import HomeScreen from './screens/HomeScreen'
 import TracksScreen from './screens/TracksScreen'
 import Study from './screens/Study'
@@ -56,6 +56,10 @@ const PracticeScreen = lazy(() => import('./screens/PracticeScreen'))
 const BoardScreen = lazy(() => import('./screens/BoardScreen'))
 const SettingsScreen = lazy(() => import('./screens/SettingsScreen'))
 const MapScreen = lazy(() => import('./screens/MapScreen'))
+const ChangelogScreen = lazy(() => import('./screens/ChangelogScreen'))
+const WhatsNewCard = lazy(() => import('./components/WhatsNewCard'))
+const UpdateNotice = lazy(() => import('./components/UpdateNotice'))
+const PwaPanel = lazy(() => import('./components/PwaPanel'))
 const PlaygroundScreen = lazy(() => import('./screens/PlaygroundScreen'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 const MAC = /Mac|iP(hone|ad)/.test(navigator.platform)
@@ -90,6 +94,13 @@ export default function App() {
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
+  const [whatsNew, setWhatsNew] = useState(() => {
+    let storage: Storage | undefined
+    try { storage = localStorage } catch { storage = undefined }
+    const decision = decideWhatsNew(__APP_VERSION__, storage)
+    return decision.show ? { since: decision.since, hash: window.location.hash } : null
+  })
+  useEffect(() => { if (whatsNew && whatsNew.hash !== hash) setWhatsNew(null) }, [whatsNew, hash])
   const [backupError, setBackupError] = useState('')
   const [pendingImport, setPendingImport] = useState<FullBackup | null>(null)
   const [clock, setClock] = useState(() => new Date())
@@ -390,7 +401,6 @@ export default function App() {
         <div className="topbar-right">
           <button type="button" className="search-button" aria-keyshortcuts={MAC ? 'Meta+K' : 'Control+K'} onClick={() => setPalette(true)}><Icon name="search" size={18} /><span className="search-text">Search</span><kbd aria-hidden="true">{MAC ? '⌘K' : 'Ctrl K'}</kbd></button>
           <a className="game-chip" href="#progress"><span className={game.streak.activeToday ? 'chip-part lit' : 'chip-part'}><Icon name="flame" size={16} />{game.streak.current}<span className="sr-only"> day streak, </span></span><span className="chip-part"><Icon name="bolt" size={16} />{game.xp}<span className="sr-only"> XP</span></span></a>
-          {pwa.updateReady && <a className="update-chip" href="#settings">Update ready</a>}
           <span className="local-label">{store.unsaved ? 'Not saved' : store.recovery || store.conflict ? 'Storage needs attention' : 'Saved'}</span>
           <button className="theme-button" aria-label="Toggle color theme" onClick={() => {
             const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
@@ -411,8 +421,10 @@ export default function App() {
         {!store.error && accent.error && <div className="alert" role="alert">{accentProblem}</div>}
         {notice && <div className="notice" role="status">{notice}<button className="text-button" aria-label="Dismiss notification" onClick={() => setNotice('')}>Dismiss</button></div>}
         {backupError && <div className="alert" role="alert">{backupError}</div>}
+        {pwa.updateReady && !store.recovery && <Suspense fallback={null}><UpdateNotice pwa={pwa} reloadBlocked={reloadBlocked} /></Suspense>}
+        {whatsNew && !store.recovery && <Suspense fallback={null}><WhatsNewCard since={whatsNew.since} dismiss={() => setWhatsNew(null)} /></Suspense>}
 
-        {store.recovery ? <Suspense fallback={null}><Recovery heading={heading} today={today} controls={backupControls} replace={store.replace} fail={backupFailed}><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></Recovery></Suspense>
+        {store.recovery ? <Suspense fallback={null}><Recovery heading={heading} today={today} controls={backupControls} replace={store.replace} fail={backupFailed}><Suspense fallback={null}><PwaPanel pwa={pwa} reloadBlocked recovery /></Suspense></Recovery></Suspense>
           : <>
             {route === 'home' && <HomeScreen app={app} />}
             {route === 'tracks' && <TracksScreen app={app} />}
@@ -432,9 +444,10 @@ export default function App() {
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'playground' && <Suspense fallback={<p role="status">Loading the Playground…</p>}><PlaygroundScreen app={app} snippetId={snippetId} /></Suspense>}
       {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
+            {route === 'changelog' && <Suspense fallback={<p role="status">Loading the changelog…</p>}><ChangelogScreen app={app} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}
             {route === 'unknown' && <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>This page isn’t on the roadmap.</h1><button onClick={() => navigate('home')}>Back to Home</button></section>}
-            <footer className="app-footer"><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></footer>
+            <footer className="app-footer"><Suspense fallback={null}><PwaPanel pwa={pwa} reloadBlocked={reloadBlocked} /></Suspense></footer>
           </>}
       </main>
     </div>

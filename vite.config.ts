@@ -15,6 +15,12 @@ import { readdirSync, readFileSync } from 'node:fs'
 
 let outputDirectory = resolve('dist')
 
+// The app version is the newest entry in content/changelog.json (validated against package.json by npm run content).
+// DEVPREP_VERSION overrides it, e.g. for the PWA tests' second build; the date is that release's, so builds stay reproducible.
+const releases: { version: string; date: string }[] = JSON.parse(readFileSync(resolve('content/changelog.json'), 'utf8')).releases
+const APP_VERSION = process.env.DEVPREP_VERSION ?? releases[0].version
+const APP_DATE = releases.find(release => release.version === APP_VERSION)?.date ?? new Date().toISOString().slice(0, 10)
+
 // Pyodide runtime files are served from pyodide/<version>/ (fetched lazily by the Python worker
 // and cached at runtime by the service worker, not precached).
 const PYODIDE_FILES = ['pyodide.mjs', 'pyodide.asm.mjs', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json']
@@ -161,6 +167,8 @@ export default defineConfig({
   base: './',
   define: {
     __APP_RELEASE__: JSON.stringify(process.env.DEVPREP_RELEASE ?? process.env.GITHUB_SHA?.slice(0, 12) ?? 'local'),
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+    __APP_DATE__: JSON.stringify(APP_DATE),
   },
   plugins: [
     react(),
@@ -217,6 +225,7 @@ export default defineConfig({
           const path = id.replaceAll('\\', '/')
           if (path.endsWith('/src/generated/problems.json')) return 'problems'
           if (path.endsWith('/src/generated/nav-index.json')) return 'nav-index'
+          if (path.endsWith('/src/generated/changelog.json')) return 'changelog'
           if ((path.includes('/content/') || path.includes('/src/generated/')) && path.endsWith('.json')) return 'curriculum'
         },
       },

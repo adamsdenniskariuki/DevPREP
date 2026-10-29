@@ -67,6 +67,11 @@ export default function SettingsScreen({ app, appearance, setAppearance, appeara
   {backupControls}
 </section>
 
+<section className="card settings-section" aria-labelledby="version-settings-title"><h2 id="version-settings-title">Version and updates</h2>
+  <p>Version {__APP_VERSION__} · {__APP_DATE__}. <a href="#changelog">See what’s new</a>.</p>
+  <p className="helper">Updates download quietly and apply the next time you open DevPREP. To apply one now, use Relaunch now in “App &amp; offline” at the bottom of this page; it saves your work first.</p>
+</section>
+
 <section className="card settings-section" aria-labelledby="tour-settings-title"><h2 id="tour-settings-title">Welcome tour</h2><p className="helper">See the quick introduction again.</p><button onClick={replayTour}>Replay welcome tour</button></section>
   </>
 }
