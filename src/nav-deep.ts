@@ -2,6 +2,7 @@ import { patternPageDone } from './gamification'
 import { TOPIC_LABELS } from './guide-types'
 import type { GuideTopic } from './guide-types'
 import type { DeepSections, NavIndex, NavNode, NavProgress } from './nav-model'
+import { readPlans, type PlansState } from './study-plans'
 
 /* Loaded with the nav index so the deep levels of the tree stay out of the main chunk. */
 
@@ -21,7 +22,7 @@ const leaf = (route: string, done: (id: string) => boolean) => ([id, title]: rea
   ({ id: `${route}/${id}`, label: title, href: `#${route}/${id}`, done: done(id) })
 
 /** The children and counts of every section whose items come from the nav index, keyed by section id. */
-export function deepSections(progress: NavProgress, nav: NavIndex): DeepSections {
+export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans()): DeepSections {
   const tracks = nav.tracks.map(([id, title, lessonIds]): NavNode => {
     const done = lessonIds.filter(lesson => progress.records[lesson]).length
     return { id: `tracks/${id}`, label: title, href: `#tracks/${id}`, count: { done, total: lessonIds.length }, done: lessonIds.length > 0 && done === lessonIds.length }
@@ -49,6 +50,15 @@ export function deepSections(progress: NavProgress, nav: NavIndex): DeepSections
   const companies = nav.companies.map(leaf('company', id => !!progress.companies?.[id]?.length))
   const mocks = nav.companies.map(([id, name]): NavNode => ({ id: `mock/${id}`, label: `${name} mock loop`, href: `#mock/${id}`, done: !!progress.companyMocks?.[id]?.length }))
 
+  // Study plan progress lives in its own storage key. Count the items of the track each learner follows.
+  const plans = (nav.plans ?? []).map(([id, title, planTracks, weeks]): NavNode => {
+    const entry = planState[id]
+    const track = planTracks.some(([trackId]) => trackId === entry?.track) ? entry!.track : planTracks[0]?.[0] ?? ''
+    const items = weeks.filter(([, , weekTrack]) => !weekTrack || weekTrack === track).flatMap(([, , , ids]) => ids)
+    const done = items.filter(item => entry?.done[item]).length
+    return { id: `plans/${id}`, label: title, href: `#plans/${id}`, count: { done, total: items.length }, done: items.length > 0 && done === items.length }
+  })
+
   return {
     tracks: { children: tracks, count: { done: lessons.filter(lesson => progress.records[lesson]).length, total: lessons.length } },
     patterns: { children: patterns, count: { done: nav.patterns.filter(([id]) => patternDone(id)).length, total: nav.patterns.length } },
@@ -58,5 +68,6 @@ export function deepSections(progress: NavProgress, nav: NavIndex): DeepSections
     cases: { children: cases, count: tally(cases) },
     company: { children: companies, count: tally(companies) },
     mock: { children: mocks },
+    plans: { children: plans, count: plans.reduce((sum, plan) => ({ done: sum.done + plan.count!.done, total: sum.total + plan.count!.total }), { done: 0, total: 0 }) },
   }
 }

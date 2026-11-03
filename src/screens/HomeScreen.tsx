@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { lessons, tracks } from '../curriculum'
 import Icon from '../components/Icon'
 import WelcomeTour from '../components/WelcomeTour'
@@ -6,6 +7,12 @@ import type { AppModel } from '../app-model'
 import { dueCount } from '../flashcards'
 import { planStudy } from '../planner'
 import { PlanItemAction, usePlanCompany } from '../components/PlanItem'
+
+const PlanTodayCard = lazy(() => import('../components/PlanTodayCard'))
+/** Kept inline so study plan code only loads once a plan has a start date. Same key as PLANS_KEY in study-plans.ts. */
+function planStarted() {
+  try { return window.localStorage.getItem('devprep.plans.v1')?.includes('"start"') ?? false } catch { return false }
+}
 
 function countdown(days: number | undefined) {
   if (days === undefined) return 'Let’s get interview-ready.'
@@ -47,6 +54,7 @@ export default function HomeScreen({ app }: { app: AppModel }) {
       {extras.length > 0 && <ul className="plan-extras" aria-label="Also on today's plan">{extras.map((item, index) => <li key={index}><PlanItemAction app={app} item={item} /></li>)}</ul>}
       <a className="text-button" href="#plan">Full study plan <Icon name="arrow" size={16} /></a>
     </section>
+    {planStarted() && <Suspense fallback={null}><PlanTodayCard today={app.today} /></Suspense>}
   </div>
   <div className="today-secondary">
     <section className="card progress-card"><div className="section-heading"><h2>Momentum</h2><Icon name="chart" /></div><div className="big-number">{selectedStatus?.completed ?? completed}<span> / {selectedStatus?.total ?? lessons.length}</span></div><p>{selectedPath ? `${selectedPath.shortTitle} path lessons` : 'lessons explored'}</p><progress value={selectedStatus?.completed ?? completed} max={selectedStatus?.total ?? lessons.length} aria-label={selectedPath ? 'Selected path progress' : 'Overall progress'} /><div className="progress-caption"><span>{selectedPath ? `${completed} / ${lessons.length} overall` : 'All tracks'}</span><strong>{selectedStatus?.percent ?? percent}%</strong></div>

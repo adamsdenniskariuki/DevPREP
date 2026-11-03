@@ -32,6 +32,8 @@ export interface NavIndex {
   decks: [track: string, title: string, cards: number][]
   /** Anti-pattern titles with the guide they appear in, for the command palette. */
   antipatterns: [guide: string, title: string][]
+  /** Study plans with their tracks and weeks. A week's track is '' when every track shares it. */
+  plans: [id: string, title: string, tracks: [id: string, title: string][], weeks: [n: number, title: string, track: string, items: string[]][]][]
 }
 
 export type NavProgress = Pick<Progress, 'records' | 'solved' | 'sqlSolved' | 'designs' | 'guides' | 'patterns' | 'companies' | 'companyMocks'>
@@ -69,7 +71,7 @@ const ROUTE_GROUP: Record<string, GroupId> = {
   practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
   company: 'interview', mock: 'interview', stories: 'interview',
-  home: 'me', plan: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
+  home: 'me', plan: 'me', plans: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
 }
 
 /** The nav group a route belongs to, or undefined for an unknown page. */
@@ -115,6 +117,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
     group('me', [
       { id: 'home', label: 'Today', href: '#home' },
       { id: 'plan', label: 'Plan', href: '#plan' },
+      branch({ id: 'plans', label: 'Study plans', href: '#plans' }),
       { id: 'progress', label: 'Progress', href: '#progress' },
       { id: 'settings', label: 'Settings', href: '#settings' },
       { id: 'changelog', label: 'What’s new', href: '#changelog' },

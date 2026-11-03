@@ -1,0 +1,89 @@
+{
+  "id": "support-agent",
+  "title": "Support agent with tools and handoff",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "An LLM agent that calls tools safely and hands off to people.",
+  "prompt": "Design a customer support assistant that can look up orders, issue small refunds and change delivery addresses by calling internal APIs, and that hands the conversation to a human agent when it is unsure, the customer asks, or the action is risky.",
+  "lessons": [
+    "design-api-data-model",
+    "design-consistency",
+    "design-queues-events",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: chat with customers, call tools (get order, refund up to a limit, update address), escalate to a human with a summary, let humans take over mid-conversation.",
+      "Non-functional: no action without the customer’s identity verified, no refund above policy, every tool call audited, replies within a few seconds, graceful behaviour when a tool or the model is down."
+    ],
+    "estimation": [
+      "200k conversations a day × ~8 turns ≈ 1.6M model calls a day ≈ 20 per second on average.",
+      "Each turn may call 0–3 tools, so internal APIs see a similar rate; most are reads.",
+      "If 15% escalate, humans handle 30k conversations a day, so deflection rate drives staffing cost."
+    ],
+    "api": [
+      "POST /conversations/{id}/messages {text} → streamed reply or a handoff event.",
+      "Tool contracts with JSON schemas: getOrder(orderId), refund(orderId, amount, reason, idempotencyKey), updateAddress(orderId, address).",
+      "Agent desk: GET /queue, POST /conversations/{id}/claim, POST /conversations/{id}/release."
+    ],
+    "data": [
+      "conversations(id, customer_id, state: bot|waiting|human|closed, assigned_agent, summary).",
+      "messages(conversation_id, seq, role, content, tool_call, tool_result).",
+      "audit(tool_call_id, conversation_id, tool, arguments, result, decided_by, at), append-only."
+    ],
+    "design": [
+      "An orchestrator runs the loop: build the prompt (policy, tools, history, customer context), call the model, validate any tool call against its schema and policy, execute it, append the result, repeat up to a step limit.",
+      "A policy layer outside the model enforces permissions: the customer can only touch their own orders, refunds above a limit or outside policy require human approval.",
+      "Handoff: on low confidence, repeated failure, a request for a person or a risky action, the conversation moves to a queue with a generated summary; the bot stops replying while a human owns it."
+    ],
+    "deepDives": [
+      "Safe tool calls: the model proposes, code decides. Validate arguments, check authorisation with the verified customer id (never one the model typed), and use idempotency keys so a retried refund is not paid twice.",
+      "Evaluation: replay a suite of scripted conversations, checking task success, policy violations and unnecessary escalations. Use an LLM judge for tone only after checking it agrees with human ratings.",
+      "Guardrails: classify input for abuse and injection, filter output for personal data and promises the policy does not allow.",
+      "Observability: trace each turn with prompt version, model, tools called, latency and cost so regressions can be found."
+    ],
+    "bottlenecks": [
+      "Model outages or rate limits: fall back to a smaller model for simple intents, or straight to the human queue.",
+      "Slow internal APIs: set timeouts per tool and tell the customer when a lookup failed rather than guessing.",
+      "Human queue spikes: show wait times and offer callbacks."
+    ],
+    "tradeoffs": [
+      "More autonomy deflects more tickets but raises the cost of mistakes; start with read-only tools and low limits, then widen with evidence.",
+      "One general agent is simpler; a router to smaller specialised flows is cheaper, faster and easier to test.",
+      "Long histories improve context but cost more; summarise older turns."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      { "id": "customer", "kind": "client", "label": "Customer", "col": 0, "row": 1 },
+      { "id": "chat", "kind": "service", "label": "Chat gateway", "col": 1, "row": 1 },
+      { "id": "orch", "kind": "service", "label": "Orchestrator", "col": 2, "row": 1 },
+      { "id": "llm", "kind": "external", "label": "LLM", "col": 2, "row": 0 },
+      { "id": "policy", "kind": "service", "label": "Policy + tools", "col": 3, "row": 1 },
+      { "id": "apis", "kind": "external", "label": "Order APIs", "col": 4, "row": 1 },
+      { "id": "handoff", "kind": "queue", "label": "Handoff queue", "col": 2, "row": 2 },
+      { "id": "desk", "kind": "client", "label": "Agent desk", "col": 3, "row": 2 },
+      { "id": "audit", "kind": "db", "label": "Audit log", "col": 4, "row": 2 }
+    ],
+    "edges": [
+      { "from": "customer", "to": "chat" },
+      { "from": "chat", "to": "orch" },
+      { "from": "orch", "to": "llm" },
+      { "from": "orch", "to": "policy", "label": "tool call" },
+      { "from": "policy", "to": "apis" },
+      { "from": "policy", "to": "audit" },
+      { "from": "orch", "to": "handoff", "label": "escalate" },
+      { "from": "handoff", "to": "desk" }
+    ]
+  },
+  "rubric": [
+    { "text": "Defined which actions the agent may take and their limits." },
+    { "text": "Described the agent loop with a step limit." },
+    { "text": "Validated and authorised tool calls in code, outside the model." },
+    { "text": "Designed handoff triggers and the human takeover state." },
+    { "text": "Audited every tool call." },
+    { "text": "Made side-effecting tools idempotent." },
+    { "text": "Proposed scenario-based evaluation with policy-violation checks.", "sse": true },
+    { "text": "Planned fallbacks for model and tool failures.", "sse": true }
+  ]
+}
