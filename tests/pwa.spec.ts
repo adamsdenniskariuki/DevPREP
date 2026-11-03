@@ -282,6 +282,19 @@ for (const mount of mounts) {
       expect(precached).toBe(true)
     })
 
+    test('after one online visit a study plan opens and saves progress offline', async ({ page, context }) => {
+      await page.goto(mount)
+      await ready(page)
+      await context.setOffline(true)
+      await page.close()
+      const offline = await context.newPage()
+      await offline.goto(`${mount}#plans/applied-ai-ml-10wk`)
+      await expect(offline.getByRole('heading', { level: 1, name: '10-week Applied AI / ML engineer plan' })).toBeVisible()
+      await offline.getByRole('button', { name: 'Start today' }).click()
+      await offline.locator('#item-w1-d1-1').check()
+      await expect.poll(() => offline.evaluate(() => JSON.parse(localStorage.getItem('devprep.plans.v1') ?? '{}')['applied-ai-ml-10wk']?.done?.['w1-d1-1'])).toBeTruthy()
+    })
+
     test('after one online visit a timed practice board opens, draws and reviews offline', async ({ page, context }) => {
       await page.goto(mount)
       await ready(page)

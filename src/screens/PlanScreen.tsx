@@ -19,7 +19,7 @@ export default function PlanScreen({ app }: { app: AppModel }) {
   const plan = planStudy(progress, today, company)
   const lessonCount = plan.days.flatMap(day => day.items).filter(item => item.kind === 'lesson').length
   return <>
-    <div className="page-heading"><div><div className="eyebrow">STUDY PLAN</div><h1 ref={heading} tabIndex={-1}>{plan.dated ? `Plan to ${displayDate(plan.end)}` : 'Your next 7 days'}</h1><p>{lessonCount} lessons scheduled{plan.unscheduled ? `, ${plan.unscheduled} more after this` : ''}. It updates as you study.</p></div></div>
+    <div className="page-heading"><div><div className="eyebrow">STUDY PLAN</div><h1 ref={heading} tabIndex={-1}>{plan.dated ? `Plan to ${displayDate(plan.end)}` : 'Your next 7 days'}</h1><p>{lessonCount} lessons scheduled{plan.unscheduled ? `, ${plan.unscheduled} more after this` : ''}. It updates as you study.</p><p className="helper">Want a fixed week-by-week schedule instead? <a href="#plans">Follow a structured study plan</a></p></div></div>
     <section className="card plan-settings">
       <label className="field" htmlFor="plan-date">Interview date
         <span className="inline-field"><input id="plan-date" type="date" min={today} value={progress.profile?.interviewDate ?? ''} onChange={event => changeProfile({ interviewDate: event.target.value || undefined })} />

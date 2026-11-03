@@ -49,7 +49,7 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map', '#playground', '#changelog'])
+const ADDED = new Set(['#map', '#playground', '#changelog', '#plans'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {

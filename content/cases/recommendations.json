@@ -1,0 +1,91 @@
+{
+  "id": "recommendations",
+  "title": "Recommendation and ranking system",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Candidate generation, ranking, features and online experiments.",
+  "prompt": "Design the “recommended for you” feed for a large catalogue (articles, products or videos): pick a few dozen items per user from millions, update with fresh behaviour, and prove with experiments that changes help.",
+  "lessons": [
+    "design-requirements-capacity",
+    "design-cache-data-flow",
+    "design-queues-events",
+    "design-databases-indexes"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: return a ranked list of items for a user and context, react to recent clicks within minutes, filter items already seen or unavailable, support A/B tests.",
+      "Non-functional: p99 under ~200 ms, millions of users and items, a fallback for brand-new users and items, and an agreed business metric (for example long-term engagement, not just clicks)."
+    ],
+    "estimation": [
+      "10M daily users × 5 feed loads = 50M requests a day ≈ 600 per second, ~3k at peak.",
+      "Ranking 500 candidates per request at 3k QPS is 1.5M model scores per second, so the ranker must be cheap or batched.",
+      "Interaction events: ~1B a day at ~100 bytes ≈ 100 GB a day of logs for training."
+    ],
+    "api": [
+      "GET /feed?user={id}&context={surface}&cursor= → [{itemId, score, reason}].",
+      "POST /events {userId, itemId, type: impression|click|dwell|hide, at} into a stream.",
+      "Internal: candidates(user, n) per source; features(user, items); score(features)."
+    ],
+    "data": [
+      "Item catalogue with metadata and availability; item embeddings in an approximate nearest-neighbour index.",
+      "Feature store: batch features (user history aggregates) and streaming features (last N clicks), served from a low-latency key-value store and logged at serving time.",
+      "Training data: impressions joined to later outcomes, keyed by the features that were actually served."
+    ],
+    "design": [
+      "Stage 1, candidate generation: several cheap sources (two-tower embeddings with ANN search, co-visitation, trending, follows) return a few hundred items.",
+      "Stage 2, ranking: a model such as gradient-boosted trees or a small network scores each candidate on user, item and context features to predict engagement.",
+      "Stage 3, re-ranking: apply business rules, remove seen items, diversify and blend in exploration slots, then cache the page.",
+      "Offline: daily training on logged data, evaluation on a later time window, then shadow and A/B tests before full rollout."
+    ],
+    "deepDives": [
+      "Metrics: offline NDCG and recall@k guide model choice, but only an online A/B test on the agreed metric decides. Watch guardrail metrics such as hides and latency.",
+      "Training-serving skew: log features at serving time and train on those, rather than recomputing them later; leakage from future events inflates offline scores.",
+      "Cold start: content features and popularity for new items, onboarding choices and context for new users, plus exploration so new items collect data.",
+      "Feedback loops: the model only learns from what it showed. Exploration and position-bias correction keep it from narrowing."
+    ],
+    "bottlenecks": [
+      "Ranking cost at peak: cap candidates, batch scoring, and precompute for inactive users.",
+      "Feature lookups: fetch all features for a request in one batched call from a co-located store.",
+      "Embedding refresh: rebuild the ANN index on a schedule and swap it atomically."
+    ],
+    "tradeoffs": [
+      "Precomputed feeds are cheap and fast but stale; online ranking is fresh but costs compute per request. Many systems mix both.",
+      "Optimising clicks is easy to measure but rewards clickbait; dwell time or retention is better aligned but slower to observe.",
+      "A bigger ranking model may lift offline metrics yet lose online if it adds latency."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      { "id": "app", "kind": "client", "label": "App", "col": 0, "row": 1 },
+      { "id": "feed", "kind": "service", "label": "Feed service", "col": 1, "row": 1 },
+      { "id": "cands", "kind": "service", "label": "Candidates", "col": 2, "row": 0 },
+      { "id": "ann", "kind": "db", "label": "ANN index", "col": 3, "row": 0 },
+      { "id": "rank", "kind": "service", "label": "Ranker", "col": 2, "row": 1 },
+      { "id": "fs", "kind": "cache", "label": "Feature store", "col": 3, "row": 1 },
+      { "id": "events", "kind": "queue", "label": "Event stream", "col": 1, "row": 2 },
+      { "id": "lake", "kind": "storage", "label": "Training logs", "col": 2, "row": 2 },
+      { "id": "train", "kind": "worker", "label": "Training jobs", "col": 3, "row": 2 }
+    ],
+    "edges": [
+      { "from": "app", "to": "feed" },
+      { "from": "feed", "to": "cands" },
+      { "from": "cands", "to": "ann" },
+      { "from": "feed", "to": "rank" },
+      { "from": "rank", "to": "fs" },
+      { "from": "app", "to": "events", "label": "clicks" },
+      { "from": "events", "to": "lake" },
+      { "from": "lake", "to": "train" },
+      { "from": "train", "to": "fs", "label": "features" }
+    ]
+  },
+  "rubric": [
+    { "text": "Agreed the objective and online success metric." },
+    { "text": "Split serving into candidate generation, ranking and re-ranking." },
+    { "text": "Described features from batch and streaming sources." },
+    { "text": "Kept latency in budget with caching and batched scoring." },
+    { "text": "Handled cold start for new users and items." },
+    { "text": "Validated with offline metrics then an online A/B test." },
+    { "text": "Prevented training-serving skew and leakage by logging served features.", "sse": true },
+    { "text": "Addressed feedback loops with exploration and position-bias correction.", "sse": true }
+  ]
+}

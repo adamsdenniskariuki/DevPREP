@@ -235,7 +235,102 @@ export function buildNavIndex(root = 'content') {
     companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
     antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
+    plans: buildPlans(root).plans.map(plan => [plan.id, plan.title, plan.tracks.map(track => [track.id, track.title]), plan.weeks.map(week => [week.n, week.title, week.track ?? '', week.days.flatMap(day => day.items.map(item => item.id))])]),
   }
+}
+
+export const PLANS_OUTPUT = 'src/generated/plans.json'
+export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
+/** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
+export const PLAN_LANGUAGES = ['python']
+/** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
+export const PLAN_PAGES = ['#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan']
+
+/**
+ * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
+ * Only the id list is eager (for routing); plans load lazily.
+ */
+export function buildPlans(root = 'content') {
+  const dir = join(root, 'plans')
+  if (!existsSync(join(dir, 'index.json'))) return { plans: [], ids: [] }
+  const { plans: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const targets = {
+    code: new Set(buildProblems(root).index.map(item => item.id)),
+    sql: new Set(buildSqlProblems(root).index.map(item => item.id)),
+    design: new Set(buildCases(root).index.map(item => item.id)),
+    guide: new Set(existsSync(join(root, 'field-guide', 'index.json')) ? buildGuides(root).index.map(item => item.id) : []),
+    patterns: new Set([...buildPatterns(root).index.map(item => item.id), 'pick', 'cheatsheet']),
+    tracks: new Set(TRACK_ORDER),
+    company: new Set(buildCompanies(root).ids),
+    mock: new Set(buildCompanies(root).ids),
+  }
+  const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
+  const plans = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/plans/index.json lists ${id} but the file is missing`)
+    return validatePlan(read(join(dir, `${id}.json`)), id, { targets, lessons })
+  })
+  if (files.size) throw new Error(`content/plans has plans not listed in index.json: ${[...files].join(', ')}`)
+  return { plans, ids: plans.map(plan => plan.id) }
+}
+
+const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/
+const text = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max
+
+/** Checks a plan's shape and links, throwing a readable error; returns the plan. */
+export function validatePlan(plan, file, { targets, lessons }) {
+  const fail = message => { throw new Error(`content/plans/${file}.json: ${message}`) }
+  const keys = Object.keys(plan ?? {}).sort().join(',')
+  if (keys !== 'hoursPerWeek,id,languages,phases,rhythm,rules,summary,title,tracks,weeks') fail('must have exactly id, title, summary, hoursPerWeek, languages, rhythm, rules, tracks, phases and weeks')
+  if (plan.id !== file || !KEBAB.test(plan.id)) fail('id must be kebab-case and match the file name')
+  if (!text(plan.title, 80) || !text(plan.summary, 300) || !text(plan.hoursPerWeek, 20)) fail('title (≤80), summary (≤300) and hoursPerWeek are required')
+  if (!Array.isArray(plan.languages) || !plan.languages.length || plan.languages.some(lang => !PLAN_LANGUAGES.includes(lang))) fail(`languages must be a non-empty list of ${PLAN_LANGUAGES.join(', ')}`)
+  if (!Array.isArray(plan.rhythm) || plan.rhythm.some(row => !text(row?.when, 30) || !text(row?.time, 20) || !text(row?.text, 300))) fail('rhythm rows need when, time and text')
+  if (!Array.isArray(plan.rules) || plan.rules.some(rule => !text(rule, 200))) fail('rules must be short strings')
+  if (!Array.isArray(plan.tracks) || plan.tracks.some(track => !KEBAB.test(track?.id ?? '') || !text(track.title, 40) || !text(track.summary, 200))) fail('tracks need id, title and summary')
+  const trackIds = plan.tracks.map(track => track.id)
+  if (new Set(trackIds).size !== trackIds.length) fail('track ids must be unique')
+  if (!Array.isArray(plan.weeks) || !plan.weeks.length) fail('needs weeks')
+  const length = Math.max(...plan.weeks.map(week => week.n))
+  let next = 1
+  for (const phase of plan.phases ?? []) {
+    if (!KEBAB.test(phase?.id ?? '') || !text(phase.title, 60) || !text(phase.check, 300)) fail('phases need id, title and check')
+    if (!Array.isArray(phase.weeks) || phase.weeks[0] !== next || !(phase.weeks[1] >= phase.weeks[0])) fail(`phase ${phase.id} must start at week ${next}`)
+    next = phase.weeks[1] + 1
+  }
+  if (!plan.phases?.length || next !== length + 1) fail(`phases must cover weeks 1–${length} in order`)
+  const itemIds = new Set()
+  for (let n = 1; n <= length; n++) {
+    const variants = plan.weeks.filter(week => week.n === n)
+    const tracked = variants.filter(week => week.track)
+    if (!(variants.length === 1 && !tracked.length) && !(tracked.length === variants.length && [...trackIds].sort().join() === tracked.map(week => week.track).sort().join())) fail(`week ${n} needs one shared entry or exactly one entry per track`)
+  }
+  for (const week of plan.weeks) {
+    const at = `week ${week.n}${week.track ? ` (${week.track})` : ''}`
+    const phase = plan.phases.find(item => item.id === week.phase)
+    if (!phase || week.n < phase.weeks[0] || week.n > phase.weeks[1]) fail(`${at} is not inside its phase`)
+    if (!text(week.title, 80) || !text(week.focus, 300)) fail(`${at} needs a title and focus`)
+    if (!Array.isArray(week.days) || week.days.length !== 7) fail(`${at} needs exactly 7 days`)
+    week.days.forEach((day, d) => {
+      if (!text(day?.title, 60) || !Array.isArray(day.items) || !day.items.length || day.items.length > 6) fail(`${at} day ${d + 1} needs a title and 1–6 items`)
+      for (const item of day.items) {
+        const where = `${at} day ${d + 1} item ${item?.id}`
+        if (!KEBAB.test(item?.id ?? '') || itemIds.has(item.id)) fail(`${where}: item ids must be unique kebab-case`)
+        itemIds.add(item.id)
+        if (Object.keys(item).some(key => !['id', 'text', 'minutes', 'href', 'lesson'].includes(key))) fail(`${where}: unknown key`)
+        if (!text(item.text, 300) || /\{(?!lang\})/.test(item.text)) fail(`${where}: text must be 1–300 characters and only use the {lang} placeholder`)
+        if (!Number.isInteger(item.minutes) || item.minutes < 5 || item.minutes > 120) fail(`${where}: minutes must be 5–120`)
+        if (item.href && item.lesson) fail(`${where}: use href or lesson, not both`)
+        if (item.lesson !== undefined && !lessons.has(item.lesson)) fail(`${where}: unknown lesson ${item.lesson}`)
+        if (item.href !== undefined) {
+          const [route, sub, ...rest] = String(item.href).replace(/^#/, '').split('/')
+          const ok = item.href.startsWith('#') && !rest.length && (sub === undefined ? PLAN_PAGES.includes(item.href) : !!targets[route]?.has(sub))
+          if (!ok) fail(`${where}: link ${item.href} does not resolve`)
+        }
+      }
+    })
+  }
+  return plan
 }
 
 export const CHANGELOG_OUTPUT = 'src/generated/changelog.json'
@@ -318,6 +413,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const cards = buildFlashcards()
   writeIfChanged(FLASHCARDS_OUTPUT, cards.decks)
   writeIfChanged(FLASHCARD_INDEX_OUTPUT, cards.index)
+  const planSet = buildPlans()
+  writeIfChanged(PLANS_OUTPUT, planSet.plans)
+  writeIfChanged(PLAN_IDS_OUTPUT, planSet.ids)
   writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
   writeIfChanged(CHANGELOG_OUTPUT, buildChangelog())
 }

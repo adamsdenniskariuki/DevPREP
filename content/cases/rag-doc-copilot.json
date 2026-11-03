@@ -1,0 +1,90 @@
+{
+  "id": "rag-doc-copilot",
+  "title": "Document Q&A copilot (RAG)",
+  "level": "sse",
+  "minutes": 45,
+  "summary": "Grounded answers over private documents, with permissions and citations.",
+  "prompt": "Design an assistant that answers employees’ questions about their organisation’s documents (wikis, PDFs, tickets, policies). Answers must cite their sources, respect each user’s document permissions and stay fresh as documents change.",
+  "lessons": [
+    "design-requirements-capacity",
+    "design-queues-events",
+    "design-cache-data-flow",
+    "design-reliability-observability"
+  ],
+  "steps": {
+    "requirements": [
+      "Functional: ask a question in natural language, get an answer with citations to the passages used, follow up in the same conversation, give thumbs up or down.",
+      "Non-functional: never reveal a document the user cannot open, first token within about 2 s, new or edited documents searchable within minutes, cost per answer kept predictable."
+    ],
+    "estimation": [
+      "50k users × 10 questions a day = 500k questions a day ≈ 6 per second on average, perhaps 30 at the peak hour.",
+      "20M documents → about 200M chunks of ~500 tokens. A 1,024-dimension float32 embedding is 4 KB, so ~800 GB of vectors before compression; quantisation cuts this 4–8×.",
+      "Each answer reads ~8 chunks (~4k tokens) plus history, so prompt tokens dominate model cost."
+    ],
+    "api": [
+      "POST /conversations/{id}/messages {text} → a streamed answer with citations [{docId, chunkId, title, url}].",
+      "POST /messages/{id}/feedback {rating, comment}.",
+      "Connectors push change events: upsert(docId, acl, content) and delete(docId)."
+    ],
+    "data": [
+      "documents(doc_id, source, acl_groups, version, updated_at) in a relational store.",
+      "chunks(chunk_id, doc_id, text, acl_groups, embedding) in a search index that supports both vectors and keywords, with ACL groups as a filter field.",
+      "conversations and messages, including the retrieved chunk ids, model version and prompt version, for debugging and evaluation."
+    ],
+    "design": [
+      "Ingestion: connectors emit change events to a queue; workers extract text, split it into overlapping chunks along headings, embed each chunk and upsert it with its ACL groups.",
+      "Query path: rewrite the question using the conversation, run hybrid retrieval (vector plus keyword) filtered by the user’s groups, rerank the top ~50 with a cross-encoder and keep the best ~8.",
+      "Generation: a prompt holds instructions, the selected chunks with ids and the question; the model must answer only from them, cite chunk ids, and say it does not know when they do not cover the question.",
+      "A post-check confirms every cited id was in the context before the answer is shown."
+    ],
+    "deepDives": [
+      "Permissions: filter at retrieval time by the user’s current groups, not after generation. Text the model never sees cannot leak. Re-index chunks when a document’s ACL changes.",
+      "Chunking: too small loses context and too large dilutes relevance. Keep section titles with each chunk and store neighbours so a hit can be widened.",
+      "Evaluation: keep a labelled set of questions with known source passages. Track retrieval recall@k and answer faithfulness offline, and use thumbs and click-through on citations online.",
+      "Prompt injection: retrieved documents are untrusted input. Keep instructions separate, never let document text trigger tools, and strip hidden markup."
+    ],
+    "bottlenecks": [
+      "Embedding backfills after a model change: run them as a separate batch pipeline and switch traffic with an index alias once done.",
+      "Model latency and rate limits: stream tokens, cache answers to frequent questions per permission set, and fall back to a smaller model under load.",
+      "Popular documents changing often: debounce re-embedding of rapid edits."
+    ],
+    "tradeoffs": [
+      "Retrieval-augmented generation keeps knowledge fresh and citable. Fine-tuning changes style and format but is a poor way to add facts that change.",
+      "More chunks in the prompt can improve recall but raise cost and latency and can bury the relevant passage; reranking helps keep the prompt small.",
+      "Pre-computed answer caches are fast but must be keyed by permission set and invalidated on document change."
+    ]
+  },
+  "diagram": {
+    "nodes": [
+      { "id": "user", "kind": "client", "label": "User", "col": 0, "row": 1 },
+      { "id": "api", "kind": "service", "label": "Chat API", "col": 1, "row": 1 },
+      { "id": "retrieve", "kind": "service", "label": "Retriever", "col": 2, "row": 1 },
+      { "id": "index", "kind": "db", "label": "Hybrid index", "col": 3, "row": 1 },
+      { "id": "llm", "kind": "external", "label": "LLM", "col": 2, "row": 2 },
+      { "id": "sources", "kind": "external", "label": "Doc sources", "col": 5, "row": 0 },
+      { "id": "q", "kind": "queue", "label": "Change events", "col": 4, "row": 0 },
+      { "id": "ingest", "kind": "worker", "label": "Chunk + embed", "col": 3, "row": 0 },
+      { "id": "logs", "kind": "storage", "label": "Traces & evals", "col": 1, "row": 2 }
+    ],
+    "edges": [
+      { "from": "user", "to": "api" },
+      { "from": "api", "to": "retrieve" },
+      { "from": "retrieve", "to": "index", "label": "ACL filter" },
+      { "from": "api", "to": "llm", "label": "grounded prompt" },
+      { "from": "sources", "to": "q" },
+      { "from": "q", "to": "ingest" },
+      { "from": "ingest", "to": "index" },
+      { "from": "api", "to": "logs" }
+    ]
+  },
+  "rubric": [
+    { "text": "Stated the permission, freshness and latency requirements." },
+    { "text": "Built an ingestion pipeline: chunking, embedding and incremental updates." },
+    { "text": "Used hybrid retrieval with reranking before generation." },
+    { "text": "Grounded the prompt in retrieved passages and required citations." },
+    { "text": "Enforced document permissions at retrieval time." },
+    { "text": "Proposed offline and online evaluation of retrieval and answers." },
+    { "text": "Treated retrieved text as untrusted and defended against prompt injection.", "sse": true },
+    { "text": "Planned re-embedding and model changes without downtime.", "sse": true }
+  ]
+}

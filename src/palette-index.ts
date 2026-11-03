@@ -1,7 +1,7 @@
 import { fuzzyScore } from './fuzzy'
 import type { NavIndex } from './nav-model'
 
-export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'snippet'
+export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'plan' | 'snippet'
 
 export interface PaletteEntry {
   /** Unique: used for the option's DOM id and for recents. */
@@ -19,7 +19,7 @@ export interface PaletteGroup { kind: PaletteKind | 'recent' | 'suggested'; labe
 
 export const KIND_LABELS: Record<PaletteKind, string> = {
   page: 'Pages', track: 'Tracks', lesson: 'Lessons', pattern: 'Patterns', guide: 'Field Guide', antipattern: 'Anti-patterns',
-  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', snippet: 'Playground snippets',
+  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', plan: 'Study plans', snippet: 'Playground snippets',
 }
 const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 
@@ -27,6 +27,7 @@ const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 export const PAGES: readonly PaletteEntry[] = [
   ['home', 'Today', '#home', 'home dashboard daily start'],
   ['plan', 'Plan', '#plan', 'study plan schedule interview date'],
+  ['plans', 'Study plans', '#plans', 'structured study plan weeks roadmap 10-week schedule ai ml'],
   ['progress', 'Progress', '#progress', 'stats xp streak badges'],
   ['settings', 'Settings', '#settings', 'preferences theme dark mode accent font editor'],
   ['backup', 'Export or import a backup', '#settings', 'backup restore export import save data'],
@@ -75,6 +76,13 @@ export function buildPaletteIndex(nav: NavIndex, lessons: readonly LessonInfo[] 
       { id: `company:${id}`, kind: 'company', title: name, href: `#company/${id}`, detail: 'Company prep' },
       { id: `mock:${id}`, kind: 'company', title: `${name} mock loop`, href: `#mock/${id}`, detail: 'Mock interview' },
     ]),
+    ...(nav.plans ?? []).flatMap(([id, title, tracks, weeks]): PaletteEntry[] => {
+      const trackTitle = new Map(tracks)
+      return [
+        { id: `plan:${id}`, kind: 'plan', title, href: `#plans/${id}`, detail: `Study plan · ${new Set(weeks.map(([n]) => n)).size} weeks`, keywords: 'study plan schedule' },
+        ...weeks.map(([n, week, track]): PaletteEntry => ({ id: `plan:${id}:w${n}${track ? `:${track}` : ''}`, kind: 'plan', title: `Week ${n}: ${week}`, href: `#plans/${id}`, detail: [title, trackTitle.get(track)].filter(Boolean).join(' · ') })),
+      ]
+    }),
   ]
 }
 

@@ -1,7 +1,7 @@
 import type { Track } from './curriculum'
 import type { Route } from './app-model'
 
-export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog']
+export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans']
 /** Hashes from earlier releases keep working as bookmarks. */
 export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
@@ -20,6 +20,7 @@ export interface ParsedRoute {
   boardId?: string
   companyId?: string
   snippetId?: string
+  planId?: string
 }
 
 /** The ids each sub-route accepts. Passed in so this module stays free of content imports. */
@@ -31,6 +32,8 @@ export interface RouteIds {
   guides: ReadonlySet<string>
   patterns: ReadonlySet<string>
   companies: readonly string[]
+  /** Study plan ids. Without them any well-formed id parses, and the screen reports an unknown plan. */
+  plans?: ReadonlySet<string>
 }
 
 /** Parses a location hash (with or without the leading '#') into a route and its sub-id. */
@@ -45,6 +48,7 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   if (route === 'company' || route === 'mock') return ids.companies.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
   if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'playground') return BOARD_ID.test(sub) ? { route, snippetId: sub } : { route: 'unknown' }
+  if (route === 'plans') return (ids.plans ? ids.plans.has(sub) : BOARD_ID.test(sub)) ? { route, planId: sub } : { route: 'unknown' }
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = ids.tracks.find(item => item === sub) as Track | undefined
@@ -54,6 +58,6 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
 /** The canonical hash for a parsed route: aliases resolve to their target, sub-ids are kept. */
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
-  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.guideId ?? parsed.patternView
+  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView
   return `#${parsed.route}${sub ? `/${sub}` : ''}`
 }
