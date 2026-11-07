@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
 import Editor from '../components/Editor'
@@ -11,8 +11,11 @@ import RunResults from '../components/RunResults'
 import { runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
 import OpenInPlayground from '../components/OpenInPlayground'
-import { patternsForProblem } from '../patterns'
+import { loadPatterns, patternsForProblem, type PatternPage, type PatternSummary } from '../patterns'
 import { useSaveCheck } from '../relaunch-guard'
+
+/** The pattern picture and its renderer load only once a hint has been revealed. */
+const DiagramFigure = lazy(() => import('../components/Diagram'))
 
 /** The scratchpad and its drawing tool load only when the panel is first opened. */
 const Scratchpad = lazy(() => import('../components/Scratchpad').catch(() => ({ default: () => <p className="alert" role="alert">The scratchpad couldn’t load. Reconnect and try again.</p> })))
@@ -106,15 +109,34 @@ function ProblemPage({ app, summary }: { app: AppModel; summary: ProblemSummary 
     loadProblems().then(all => { if (live) setProblem(all.get(summary.id)) }, () => { if (live) setError('This problem could not be loaded. Reconnect and try again.') })
     return () => { live = false }
   }, [summary.id])
+  const patterns = useMemo(() => patternsForProblem(summary), [summary])
   return <>
     <a className="back-link" href="#code"><Icon name="back" size={16} /> All problems</a>
     <div className="page-heading"><div><div className="eyebrow">{summary.pattern.toUpperCase()} · {DIFFICULTY[summary.difficulty].toUpperCase()}{summary.level === 'sse' ? ' · SSE' : ''}</div><h1 ref={app.heading} tabIndex={-1}>{summary.title}</h1></div><SolvedMarks solved={app.progress.solved?.[summary.id]} /></div>
-    {patternsForProblem(summary).map(page => <a key={page.id} className="text-button pattern-link" href={`#patterns/${page.id}`}><Icon name="target" size={16} />Learn the pattern: {page.title}</a>)}
-    {error ? <div className="alert" role="alert">{error}</div> : problem ? <><Workspace app={app} problem={problem} /><ScratchpadPanel app={app} summary={summary} /></> : <p role="status">Loading problem…</p>}
+    {patterns.map(page => <a key={page.id} className="text-button pattern-link" href={`#patterns/${page.id}`}><Icon name="target" size={16} />Learn the pattern: {page.title}</a>)}
+    {error ? <div className="alert" role="alert">{error}</div> : problem ? <><Workspace app={app} problem={problem} patterns={patterns} /><ScratchpadPanel app={app} summary={summary} /></> : <p role="status">Loading problem…</p>}
   </>
 }
 
-function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
+/**
+ * The picture from the most specific linked pattern page (sub-pattern first, then listed, then category).
+ * One picture keeps the hint focused; the other pages stay one tap away via "Learn the pattern".
+ */
+function PatternPicture({ patterns }: { patterns: PatternSummary[] }) {
+  const [page, setPage] = useState<PatternPage | null>()
+  useEffect(() => {
+    let live = true
+    loadPatterns().then(all => { if (live) setPage(patterns.map(item => all.get(item.id)).find(item => item?.picture) ?? null) }, () => { if (live) setPage(null) })
+    return () => { live = false }
+  }, [patterns])
+  if (!page) return null
+  return <section className="code-pattern-picture" aria-labelledby="pattern-picture-title">
+    <h3 id="pattern-picture-title">From the <a href={`#patterns/${page.id}`}>{page.title}</a> pattern</h3>
+    <Suspense fallback={<p role="status">Loading the picture…</p>}><DiagramFigure diagram={page.picture} number={1} /></Suspense>
+  </section>
+}
+
+function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem; patterns: PatternSummary[] }) {
   const [lang, setLang] = useState<CodeLanguage>(() => readDraft(problem.id).lang ?? 'js')
   const [code, setCode] = useState<Record<CodeLanguage, string>>(() => {
     const draft = readDraft(problem.id)
@@ -174,6 +196,7 @@ function Workspace({ app, problem }: { app: AppModel; problem: Problem }) {
         <h3 id="hints-title">Hints</h3>
         {hints > 0 && <ol>{problem.hints.slice(0, hints).map(hint => <li key={hint}>{hint}</li>)}</ol>}
         {hints < problem.hints.length && <button onClick={() => setHints(hints + 1)}>Show hint {hints + 1} of {problem.hints.length}</button>}
+        {hints > 0 && patterns.length > 0 && <PatternPicture patterns={patterns} />}
       </section>
       <details className="code-solution">
         <summary>Solution and complexity</summary>

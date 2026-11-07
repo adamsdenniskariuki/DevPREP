@@ -159,6 +159,22 @@ test('a problem links to the pattern that teaches it', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: hashing.title })).toBeFocused()
 })
 
+test('a problem shows its pattern picture only after the first hint', async ({ page }) => {
+  await page.goto(`./#code/${hashing.problems[0].id}`)
+  await expect(page.getByRole('textbox', { name: 'JavaScript code' })).toBeVisible()
+  const picture = page.locator('.code-pattern-picture')
+  await expect(picture).toHaveCount(0)
+  await expect(page.getByRole('figure', { name: `Figure 1: ${hashing.picture.title}` })).toHaveCount(0)
+
+  await page.getByRole('button', { name: /^Show hint 1 of/ }).click()
+  await expect(picture.getByRole('heading', { level: 3 })).toHaveText(`From the ${hashing.title} pattern`)
+  await expect(picture.getByRole('figure', { name: `Figure 1: ${hashing.picture.title}` })).toBeVisible()
+  await expect(picture.locator('figcaption')).toHaveText(hashing.picture.caption)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await picture.getByRole('link', { name: hashing.title }).click()
+  await expect(page.getByRole('heading', { level: 1, name: hashing.title })).toBeFocused()
+})
+
 test('unknown pattern ids are not found', async ({ page }) => {
   await page.goto('./#patterns/not-a-pattern')
   await expect(page.getByRole('heading', { level: 1, name: 'This page isn’t on the roadmap.' })).toBeVisible()
