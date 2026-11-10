@@ -5,10 +5,14 @@ export const CODE_DRAFTS_KEY = 'devprep.code.v1'
 export const MAX_CODE_LENGTH = 20_000
 const MAX_PROBLEMS = 200
 
+/** Languages a problem draft can be written in: the problem languages plus TypeScript. */
+export type DraftLanguage = CodeLanguage | 'ts'
+
 export interface CodeDraft {
-  lang?: CodeLanguage
+  lang?: DraftLanguage
   js?: string
   py?: string
+  ts?: string
   /** SQL interview problems, stored under `sql:<id>`. */
   sql?: string
 }
@@ -27,8 +31,8 @@ export function readDraft(problemId: string): CodeDraft {
   const draft = readAll()[problemId]
   if (!draft || typeof draft !== 'object') return {}
   const clean: CodeDraft = {}
-  if (draft.lang === 'js' || draft.lang === 'py') clean.lang = draft.lang
-  for (const lang of ['js', 'py', 'sql'] as const) if (typeof draft[lang] === 'string') clean[lang] = draft[lang]!.slice(0, MAX_CODE_LENGTH)
+  if (draft.lang === 'js' || draft.lang === 'py' || draft.lang === 'ts') clean.lang = draft.lang
+  for (const lang of ['js', 'py', 'ts', 'sql'] as const) if (typeof draft[lang] === 'string') clean[lang] = draft[lang]!.slice(0, MAX_CODE_LENGTH)
   return clean
 }
 
@@ -48,7 +52,7 @@ export function writeDraft(problemId: string, patch: CodeDraft): boolean {
   }
 }
 
-export function clearDraft(problemId: string, lang: CodeLanguage | 'sql'): boolean {
+export function clearDraft(problemId: string, lang: DraftLanguage | 'sql'): boolean {
   try {
     const all = readAll()
     if (all[problemId]) delete all[problemId][lang]

@@ -57,6 +57,17 @@ describe('route compatibility', () => {
     for (const hash of hashes.filter(item => !ADDED.has(item))) expect(parseHash(hash, ids), hash).toEqual(legacyParse(hash || '#'))
   })
 
+  it('accepts an optional language on a problem link and nowhere else', () => {
+    for (const lang of ['js', 'py', 'ts'] as const) {
+      expect(parseHash(`#code/count-pair-sums/${lang}`, ids)).toEqual({ route: 'code', problemId: 'count-pair-sums', codeLang: lang })
+    }
+    expect(parseHash('#code/count-pair-sums', ids).codeLang).toBeUndefined()
+    expect(hrefFor(parseHash('#code/count-pair-sums/ts', ids))).toBe('#code/count-pair-sums')
+    for (const hash of ['#code/count-pair-sums/rust', '#code/count-pair-sums/TS', '#code/count-pair-sums/ts/x', '#code/nope/ts', '#code//ts', '#sql/x/ts', '#tracks/python/ts']) {
+      expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })
+    }
+  })
+
   it('adds the changelog as a top-level route with no sub-pages', () => {
     expect(parseHash('#changelog', ids)).toEqual({ route: 'changelog' })
     for (const hash of ['#changelog/1.8.0', '#changelog/x', '#Changelog']) expect(parseHash(hash, ids), hash).toEqual({ route: 'unknown' })

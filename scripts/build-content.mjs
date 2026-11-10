@@ -242,7 +242,7 @@ export function buildNavIndex(root = 'content') {
 export const PLANS_OUTPUT = 'src/generated/plans.json'
 export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
-export const PLAN_LANGUAGES = ['python']
+export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
 export const PLAN_PAGES = ['#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan']
 
@@ -276,17 +276,24 @@ export function buildPlans(root = 'content') {
 
 const KEBAB = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const text = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max
+/** True when `value` has exactly one entry per plan language and each entry passes `check`. */
+const perLanguage = (value, languages, check) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && Object.keys(value).sort().join() === [...languages].sort().join() && languages.every(lang => check(value[lang]))
 
 /** Checks a plan's shape and links, throwing a readable error; returns the plan. */
 export function validatePlan(plan, file, { targets, lessons }) {
   const fail = message => { throw new Error(`content/plans/${file}.json: ${message}`) }
   const keys = Object.keys(plan ?? {}).sort().join(',')
-  if (keys !== 'hoursPerWeek,id,languages,phases,rhythm,rules,summary,title,tracks,weeks') fail('must have exactly id, title, summary, hoursPerWeek, languages, rhythm, rules, tracks, phases and weeks')
+  if (keys !== 'hoursPerWeek,id,languages,phases,refresher,rhythm,rules,summary,tips,title,tracks,weeks') fail('must have exactly id, title, summary, hoursPerWeek, languages, rhythm, rules, tips, refresher, tracks, phases and weeks')
   if (plan.id !== file || !KEBAB.test(plan.id)) fail('id must be kebab-case and match the file name')
   if (!text(plan.title, 80) || !text(plan.summary, 300) || !text(plan.hoursPerWeek, 20)) fail('title (≤80), summary (≤300) and hoursPerWeek are required')
   if (!Array.isArray(plan.languages) || !plan.languages.length || plan.languages.some(lang => !PLAN_LANGUAGES.includes(lang))) fail(`languages must be a non-empty list of ${PLAN_LANGUAGES.join(', ')}`)
   if (!Array.isArray(plan.rhythm) || plan.rhythm.some(row => !text(row?.when, 30) || !text(row?.time, 20) || !text(row?.text, 300))) fail('rhythm rows need when, time and text')
   if (!Array.isArray(plan.rules) || plan.rules.some(rule => !text(rule, 200))) fail('rules must be short strings')
+  const languages = plan.languages
+  if (new Set(languages).size !== languages.length) fail('languages must not repeat')
+  if (!perLanguage(plan.tips, languages, tips => Array.isArray(tips) && tips.length > 0 && tips.length <= 8 && tips.every(tip => text(tip, 200)))) fail(`tips need 1–8 short strings for each of ${languages.join(', ')}`)
+  if (!perLanguage(plan.refresher, languages, href => /^#tracks\/[a-z0-9-]+$/.test(href ?? '') && targets.tracks.has(href.slice(8)))) fail(`refresher needs a #tracks/<id> link for each of ${languages.join(', ')}`)
   if (!Array.isArray(plan.tracks) || plan.tracks.some(track => !KEBAB.test(track?.id ?? '') || !text(track.title, 40) || !text(track.summary, 200))) fail('tracks need id, title and summary')
   const trackIds = plan.tracks.map(track => track.id)
   if (new Set(trackIds).size !== trackIds.length) fail('track ids must be unique')
@@ -310,6 +317,7 @@ export function validatePlan(plan, file, { targets, lessons }) {
     const phase = plan.phases.find(item => item.id === week.phase)
     if (!phase || week.n < phase.weeks[0] || week.n > phase.weeks[1]) fail(`${at} is not inside its phase`)
     if (!text(week.title, 80) || !text(week.focus, 300)) fail(`${at} needs a title and focus`)
+    if (week.tip !== undefined && !perLanguage(week.tip, languages, tip => text(tip, 300))) fail(`${at}: tip needs 1–300 characters for each of ${languages.join(', ')}`)
     if (!Array.isArray(week.days) || week.days.length !== 7) fail(`${at} needs exactly 7 days`)
     week.days.forEach((day, d) => {
       if (!text(day?.title, 60) || !Array.isArray(day.items) || !day.items.length || day.items.length > 6) fail(`${at} day ${d + 1} needs a title and 1–6 items`)
@@ -318,7 +326,8 @@ export function validatePlan(plan, file, { targets, lessons }) {
         if (!KEBAB.test(item?.id ?? '') || itemIds.has(item.id)) fail(`${where}: item ids must be unique kebab-case`)
         itemIds.add(item.id)
         if (Object.keys(item).some(key => !['id', 'text', 'minutes', 'href', 'lesson'].includes(key))) fail(`${where}: unknown key`)
-        if (!text(item.text, 300) || /\{(?!lang\})/.test(item.text)) fail(`${where}: text must be 1–300 characters and only use the {lang} placeholder`)
+        const itemText = value => text(value, 300) && !/\{(?!lang\})/.test(value)
+        if (typeof item.text === 'string' ? !itemText(item.text) : !perLanguage(item.text, languages, itemText)) fail(`${where}: text must be 1–300 characters (or one such text per language: ${languages.join(', ')}) and only use the {lang} placeholder`)
         if (!Number.isInteger(item.minutes) || item.minutes < 5 || item.minutes > 120) fail(`${where}: minutes must be 5–120`)
         if (item.href && item.lesson) fail(`${where}: use href or lesson, not both`)
         if (item.lesson !== undefined && !lessons.has(item.lesson)) fail(`${where}: unknown lesson ${item.lesson}`)

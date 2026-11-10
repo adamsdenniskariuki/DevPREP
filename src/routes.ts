@@ -8,11 +8,15 @@ export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap
 export const PATTERN_VIEWS: ReadonlySet<string> = new Set(['pick', 'cheatsheet'])
 /** Same as BOARD_ID in boards.ts, repeated so board storage stays out of the main bundle. */
 export const BOARD_ID = /^[a-z0-9-]{1,64}$/
+/** Optional language suffix on a code problem link (#code/<id>/<lang>), used by study plans. */
+const CODE_LANGS = ['js', 'py', 'ts']
 
 export interface ParsedRoute {
   route: Route | 'unknown'
   track?: Track
   problemId?: string
+  /** Opens the problem in this language; the canonical href leaves it out. */
+  codeLang?: 'js' | 'py' | 'ts'
   caseId?: string
   guideId?: string
   sqlId?: string
@@ -40,9 +44,9 @@ export interface RouteIds {
 export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   const [head, sub, ...rest] = hash.replace(/^#/, '').split('/')
   const route = ALIASES[head || 'home'] ?? (ROUTES as string[]).find(item => item === (head || 'home')) as Route | undefined
-  if (!route || rest.length) return { route: 'unknown' }
+  if (!route || rest.length > (route === 'code' ? 1 : 0)) return { route: 'unknown' }
   if (sub === undefined) return { route }
-  if (route === 'code') return ids.problems.has(sub) ? { route, problemId: sub } : { route: 'unknown' }
+  if (route === 'code') return ids.problems.has(sub) && (!rest.length || CODE_LANGS.includes(rest[0])) ? { route, problemId: sub, codeLang: rest[0] as ParsedRoute['codeLang'] } : { route: 'unknown' }
   if (route === 'sql') return ids.sql.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
   if (route === 'design') return ids.cases.has(sub) ? { route, caseId: sub } : { route: 'unknown' }
   if (route === 'company' || route === 'mock') return ids.companies.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }

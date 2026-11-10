@@ -3,7 +3,7 @@ import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
 import Editor from '../components/Editor'
 import { lessons } from '../curriculum'
-import { clearDraft, readDraft, writeDraft } from '../code-drafts'
+import { clearDraft, readDraft, writeDraft, type DraftLanguage } from '../code-drafts'
 import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from '../problems'
 import type { CodeLanguage, Problem, ProblemSummary } from '../problem-types'
 import { formatArgs, formatValue } from '../runner/core'
@@ -13,6 +13,7 @@ import TextBlocks from '../components/TextBlocks'
 import OpenInPlayground from '../components/OpenInPlayground'
 import { loadPatterns, patternsForProblem, type PatternPage, type PatternSummary } from '../patterns'
 import { useSaveCheck } from '../relaunch-guard'
+import { tsSolution, tsStarter } from '../ts-starter'
 
 /** The pattern picture and its renderer load only once a hint has been revealed. */
 const DiagramFigure = lazy(() => import('../components/Diagram'))
@@ -20,19 +21,22 @@ const DiagramFigure = lazy(() => import('../components/Diagram'))
 /** The scratchpad and its drawing tool load only when the panel is first opened. */
 const Scratchpad = lazy(() => import('../components/Scratchpad').catch(() => ({ default: () => <p className="alert" role="alert">The scratchpad couldn’t load. Reconnect and try again.</p> })))
 
-const LANGS: { id: CodeLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'py', label: 'Python' }]
+const LANGS: { id: DraftLanguage; label: string }[] = [{ id: 'js', label: 'JavaScript' }, { id: 'ts', label: 'TypeScript' }, { id: 'py', label: 'Python' }]
+/** TypeScript runs the JavaScript tests and counts as a JavaScript solve; only the editor and type-checking differ. */
+const base = (lang: DraftLanguage): CodeLanguage => lang === 'ts' ? 'js' : lang
 const DIFFICULTY: Record<ProblemSummary['difficulty'], string> = { 'warm-up': 'Easy', core: 'Medium', stretch: 'Hard' }
 
 function SolvedMarks({ solved }: { solved: Partial<Record<CodeLanguage, string>> | undefined }) {
   if (!solved) return null
-  return <span className="solved-marks">{LANGS.filter(lang => solved[lang.id]).map(lang => <span key={lang.id} className="pill solved"><Icon name="check" size={14} />{lang.id === 'js' ? 'JS' : 'Python'}</span>)}</span>
+  return <span className="solved-marks">{(['js', 'py'] as const).filter(lang => solved[lang]).map(lang => <span key={lang} className="pill solved"><Icon name="check" size={14} />{lang === 'js' ? 'JS' : 'Python'}</span>)}</span>
 }
 
-export default function CodeScreen({ app, problemId }: { app: AppModel; problemId?: string }) {
+/** `lang` comes from a #code/<id>/<lang> link and wins over the draft's last language. */
+export default function CodeScreen({ app, problemId, lang }: { app: AppModel; problemId?: string; lang?: DraftLanguage }) {
   const summary = problemIndex.find(problem => problem.id === problemId)
   // This screen is lazy, so it may mount after App's route-change focus has already run.
   useEffect(() => { app.heading.current?.focus() }, [app.heading, summary?.id])
-  return summary ? <ProblemPage key={summary.id} app={app} summary={summary} /> : <ProblemList app={app} />
+  return summary ? <ProblemPage key={summary.id} app={app} summary={summary} lang={lang} /> : <ProblemList app={app} />
 }
 
 const PATH_LABEL = { swe: 'SE core', senior: 'SSE core' } as const
@@ -51,7 +55,7 @@ function ProblemList({ app }: { app: AppModel }) {
   const solvedCount = problemIndex.filter(problem => progress.solved?.[problem.id]).length
   const totals = new Map(patternProgress(progress).map(row => [row.pattern, row]))
   return <>
-    <div className="page-heading"><div><div className="eyebrow">PRACTICE · CODE</div><h1 ref={heading} tabIndex={-1}>Code runner</h1><p>Original problems in JavaScript or Python. Tests run on your device.</p></div><span className="pill">{solvedCount} of {problemIndex.length} solved</span></div>
+    <div className="page-heading"><div><div className="eyebrow">PRACTICE · CODE</div><h1 ref={heading} tabIndex={-1}>Code runner</h1><p>Original problems in JavaScript, TypeScript or Python. Tests run on your device.</p></div><span className="pill">{solvedCount} of {problemIndex.length} solved</span></div>
     <div className="code-filters">
       <div className="field">
         <label htmlFor="code-pattern">Pattern</label>
@@ -101,7 +105,7 @@ function ProblemList({ app }: { app: AppModel }) {
   </>
 }
 
-function ProblemPage({ app, summary }: { app: AppModel; summary: ProblemSummary }) {
+function ProblemPage({ app, summary, lang }: { app: AppModel; summary: ProblemSummary; lang?: DraftLanguage }) {
   const [problem, setProblem] = useState<Problem>()
   const [error, setError] = useState('')
   useEffect(() => {
@@ -114,7 +118,7 @@ function ProblemPage({ app, summary }: { app: AppModel; summary: ProblemSummary 
     <a className="back-link" href="#code"><Icon name="back" size={16} /> All problems</a>
     <div className="page-heading"><div><div className="eyebrow">{summary.pattern.toUpperCase()} · {DIFFICULTY[summary.difficulty].toUpperCase()}{summary.level === 'sse' ? ' · SSE' : ''}</div><h1 ref={app.heading} tabIndex={-1}>{summary.title}</h1></div><SolvedMarks solved={app.progress.solved?.[summary.id]} /></div>
     {patterns.map(page => <a key={page.id} className="text-button pattern-link" href={`#patterns/${page.id}`}><Icon name="target" size={16} />Learn the pattern: {page.title}</a>)}
-    {error ? <div className="alert" role="alert">{error}</div> : problem ? <><Workspace app={app} problem={problem} patterns={patterns} /><ScratchpadPanel app={app} summary={summary} /></> : <p role="status">Loading problem…</p>}
+    {error ? <div className="alert" role="alert">{error}</div> : problem ? <><Workspace key={lang} app={app} problem={problem} patterns={patterns} linkLang={lang} /><ScratchpadPanel app={app} summary={summary} /></> : <p role="status">Loading problem…</p>}
   </>
 }
 
@@ -136,24 +140,28 @@ function PatternPicture({ patterns }: { patterns: PatternSummary[] }) {
   </section>
 }
 
-function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem; patterns: PatternSummary[] }) {
-  const [lang, setLang] = useState<CodeLanguage>(() => readDraft(problem.id).lang ?? 'js')
-  const [code, setCode] = useState<Record<CodeLanguage, string>>(() => {
+function Workspace({ app, problem, patterns, linkLang }: { app: AppModel; problem: Problem; patterns: PatternSummary[]; linkLang?: DraftLanguage }) {
+  const [starter] = useState<Record<DraftLanguage, string>>(() => ({ ...problem.starter, ts: tsStarter(problem) }))
+  const [lang, setLang] = useState<DraftLanguage>(() => linkLang ?? readDraft(problem.id).lang ?? 'js')
+  const [code, setCode] = useState<Record<DraftLanguage, string>>(() => {
     const draft = readDraft(problem.id)
-    return { js: draft.js ?? problem.starter.js, py: draft.py ?? problem.starter.py }
+    return { js: draft.js ?? starter.js, py: draft.py ?? starter.py, ts: draft.ts ?? starter.ts }
   })
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
-  const [result, setResult] = useState<{ lang: CodeLanguage; report: RunReport; message?: string }>()
+  const [result, setResult] = useState<{ lang: DraftLanguage; report: RunReport; message?: string }>()
   const [hints, setHints] = useState(0)
   const [saveFailed, setSaveFailed] = useState(false)
   useSaveCheck(() => saveFailed ? 'Your code draft could not be saved.' : undefined)
   const live = useRef(true)
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const lesson = lessons.find(item => item.id === problem.lessonId)
-  const fn = problem.function[lang]
+  const fn = problem.function[base(lang)]
+  const solution = lang === 'ts' ? tsSolution(problem) : problem.solution[lang]
 
-  function chooseLang(next: CodeLanguage) {
+  function chooseLang(next: DraftLanguage) {
     setLang(next)
+    // A plan link chose the language once; drop it from the address so a reload keeps this choice.
+    if (linkLang && window.location.hash !== `#code/${problem.id}`) window.history.replaceState(null, '', `#code/${problem.id}`)
     setSaveFailed(!writeDraft(problem.id, { lang: next }))
   }
 
@@ -163,20 +171,20 @@ function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem
   }
 
   function reset() {
-    if (code[lang] !== problem.starter[lang] && !window.confirm('Replace your code with the starter? Your current code will be lost.')) return
-    setCode(current => ({ ...current, [lang]: problem.starter[lang] }))
+    if (code[lang] !== starter[lang] && !window.confirm('Replace your code with the starter? Your current code will be lost.')) return
+    setCode(current => ({ ...current, [lang]: starter[lang] }))
     setSaveFailed(!clearDraft(problem.id, lang))
   }
 
   async function run() {
     const runLang = lang
     setResult(undefined)
-    const report = await runCode(runLang, { code: code[runLang], name: problem.function[runLang], cases: [...problem.tests, ...problem.hiddenTests] }, setPhase)
+    const report = await runCode(runLang, { code: code[runLang], name: problem.function[base(runLang)], cases: [...problem.tests, ...problem.hiddenTests] }, setPhase)
     if (!live.current) return
     setPhase('idle')
     let message: string | undefined
     if (report.kind === 'done' && report.outcomes.every(outcome => outcome.pass)) {
-      const gained = app.solveProblem(problem.id, runLang)
+      const gained = app.solveProblem(problem.id, base(runLang))
       message = `All ${report.outcomes.length} tests passed${gained ? ` · +${gained} XP` : ''}.`
     }
     setResult({ lang: runLang, report, message })
@@ -189,7 +197,7 @@ function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem
       <TextBlocks text={problem.prompt} />
       <h3>Examples</h3>
       <ul className="example-list">
-        {problem.tests.map((test, index) => <li key={index}><code>{fn}({formatArgs(test.args, lang)})</code> <span aria-hidden="true">→</span><span className="sr-only">returns</span> <code>{formatValue(test.expected, lang)}</code></li>)}
+        {problem.tests.map((test, index) => <li key={index}><code>{fn}({formatArgs(test.args, base(lang))})</code> <span aria-hidden="true">→</span><span className="sr-only">returns</span> <code>{formatValue(test.expected, base(lang))}</code></li>)}
       </ul>
       {lesson && <p className="helper">Related lesson: <button className="text-button" onClick={() => app.start(lesson, app.progress.records[lesson.id] ? 'review' : 'learn')}>{lesson.title}</button></p>}
       <section className="code-hints" aria-labelledby="hints-title">
@@ -201,7 +209,8 @@ function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem
       <details className="code-solution">
         <summary>Solution and complexity</summary>
         <p>{problem.solution.explanation}</p>
-        <pre><code>{problem.solution[lang]}</code></pre>
+        {lang === 'ts' && <p className="helper">{solution ? 'The JavaScript solution with a typed signature.' : 'The JavaScript solution. Add types to use it as TypeScript.'}</p>}
+        <pre><code>{solution ?? problem.solution.js}</code></pre>
         <dl className="complexity">
           <div><dt>Time</dt><dd>{problem.complexity.time}</dd></div>
           <div><dt>Space</dt><dd>{problem.complexity.space}</dd></div>
@@ -220,15 +229,15 @@ function Workspace({ app, problem, patterns }: { app: AppModel; problem: Problem
         </div>
         <button className="text-button" onClick={reset} disabled={busy}>Reset to starter</button>
       </div>
-      <label htmlFor="code-editor" className="sr-only">{lang === 'js' ? 'JavaScript' : 'Python'} code</label>
+      <label htmlFor="code-editor" className="sr-only">{LANGS.find(item => item.id === lang)?.label} code</label>
       <Editor id="code-editor" lang={lang} value={code[lang]} onChange={edit} describedBy="editor-help" />
-      <p id="editor-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : ''}{saveFailed ? ' Drafts can’t be saved in this browser.' : ''}</p>
+      <p id="editor-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : lang === 'ts' ? ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline. Type errors are listed but don’t fail tests.' : ''}{saveFailed ? ' Drafts can’t be saved in this browser.' : ''}</p>
       <div className="button-row">
-        <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
+        <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'loading-typescript' ? 'Loading TypeScript…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
         <OpenInPlayground lang={lang} name={problem.title} code={code[lang]} />
       </div>
       <div className="run-results" role="status" aria-live="polite">
-        {result && <RunResults tests={problem.tests} fn={problem.function[result.lang]} lang={result.lang} report={result.report} message={result.message} />}
+        {result && <RunResults tests={problem.tests} fn={problem.function[base(result.lang)]} lang={base(result.lang)} typescript={result.lang === 'ts'} report={result.report} message={result.message} />}
       </div>
     </section>
   </div>
