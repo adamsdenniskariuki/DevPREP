@@ -1,0 +1,71 @@
+{
+  "id": "monte-carlo-dice",
+  "title": "Simulation with a seeded random generator",
+  "topic": "probability",
+  "minutes": 30,
+  "summary": "Estimate a probability by simulation, reproducibly, and see how accuracy grows with samples.",
+  "intro": [
+    "When an exact answer is awkward, **simulate**: draw many random outcomes and count how often the event happens. The fraction estimates the probability, with a standard error of about √(p(1 − p) / n).",
+    "Always **seed** the generator so results are reproducible: `rng = np.random.default_rng(seed)`. Pass the generator around rather than relying on global random state.",
+    "Vectorise the draws: `rng.integers(1, 7, size=(n, 2))` rolls n pairs of dice at once (the upper bound is exclusive). Summing along `axis=1` gives n totals."
+  ],
+  "formula": "p̂ = (number of hits) / n     standard error ≈ √(p̂ (1 − p̂) / n)",
+  "prompt": "Write `prob_sum_at_least(target, n, seed)` that rolls two fair six-sided dice n times using `np.random.default_rng(seed)` and returns the fraction of rolls whose total is at least `target`. Tests allow ±0.01 against the exact probability.",
+  "function": "prob_sum_at_least",
+  "starter": "import numpy as np\n\ndef prob_sum_at_least(target, n, seed):\n    rng = np.random.default_rng(seed)\n    # Roll n pairs of dice and return the share with total >= target.\n    return 0.0\n",
+  "solution": "import numpy as np\n\ndef prob_sum_at_least(target, n, seed):\n    rng = np.random.default_rng(seed)\n    rolls = rng.integers(1, 7, size=(n, 2))\n    totals = rolls.sum(axis=1)\n    return float((totals >= target).mean())\n",
+  "tolerance": {
+    "rel": 0,
+    "abs": 0.01
+  },
+  "tests": [
+    {
+      "args": [
+        10,
+        200000,
+        7
+      ],
+      "expected": 0.166666666667
+    },
+    {
+      "args": [
+        7,
+        200000,
+        11
+      ],
+      "expected": 0.583333333333
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        2,
+        50000,
+        3
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        13,
+        50000,
+        5
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        12,
+        200000,
+        42
+      ],
+      "expected": 0.0277777777778
+    }
+  ],
+  "hints": [
+    "`rng.integers(1, 7, size=(n, 2))` gives n rows of two dice.",
+    "Compare the totals with `target` to get booleans; their mean is the fraction.",
+    "Exact check: 6 of the 36 outcomes total 10 or more."
+  ],
+  "explanation": "Of the 36 equally likely pairs, 6 total at least 10, so the exact answer is 1/6. With 200,000 rolls the standard error is about 0.0008, so a ±0.01 band is very safe. The mean of a boolean array is the fraction of True values."
+}

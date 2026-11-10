@@ -1,0 +1,95 @@
+{
+  "id": "bootstrap-standard-error",
+  "title": "The bootstrap: uncertainty by resampling",
+  "topic": "statistics",
+  "minutes": 35,
+  "summary": "Estimate a standard error with no formula, by resampling your own data with replacement.",
+  "intro": [
+    "Formulas for standard errors exist only for simple statistics. The **bootstrap** works for almost anything: treat the sample as the population, draw many new samples of the same size **with replacement**, recompute the statistic on each, and measure how much it varies.",
+    "With NumPy, `rng.integers(0, n, size=(B, n))` draws B rows of n indexes at once. `x[idx].mean(axis=1)` then gives B resampled means, and their standard deviation is the bootstrap standard error.",
+    "For the mean, the answer should land close to the plug-in formula s / √n (with `ddof=0`). The same code, with the median or an AUC in place of the mean, gives error bars for metrics that have no tidy formula."
+  ],
+  "formula": "SE_boot = std( θ(x*₁), …, θ(x*_B) )     x*_b = n draws from x with replacement",
+  "prompt": "Write `bootstrap_se(x, n_boot, seed)` that returns the bootstrap standard error of the mean, using `np.random.default_rng(seed)` and `n_boot` resamples. Tests allow 5% relative error against the plug-in formula.",
+  "function": "bootstrap_se",
+  "starter": "import numpy as np\n\ndef bootstrap_se(x, n_boot, seed):\n    x = np.asarray(x, dtype=float)\n    rng = np.random.default_rng(seed)\n    # Resample with replacement n_boot times and take the std of the means.\n    return float(x.std())\n",
+  "solution": "import numpy as np\n\ndef bootstrap_se(x, n_boot, seed):\n    x = np.asarray(x, dtype=float)\n    rng = np.random.default_rng(seed)\n    idx = rng.integers(0, len(x), size=(n_boot, len(x)))\n    means = x[idx].mean(axis=1)\n    return float(means.std())\n",
+  "tolerance": {
+    "rel": 0.05,
+    "abs": 1e-9
+  },
+  "tests": [
+    {
+      "args": [
+        [
+          2,
+          4,
+          4,
+          4,
+          5,
+          5,
+          7,
+          9
+        ],
+        20000,
+        1
+      ],
+      "expected": 0.707106781187
+    },
+    {
+      "args": [
+        [
+          0,
+          10
+        ],
+        20000,
+        2
+      ],
+      "expected": 3.53553390593
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          3.1,
+          4.7,
+          2.2,
+          5.9,
+          4.4,
+          3.8,
+          6.1,
+          2.9,
+          5.2,
+          4,
+          3.3,
+          4.9
+        ],
+        20000,
+        3
+      ],
+      "expected": 0.335298029399
+    },
+    {
+      "args": [
+        [
+          4,
+          4,
+          4
+        ],
+        2000,
+        4
+      ],
+      "expected": 0
+    }
+  ],
+  "hints": [
+    "`rng.integers(0, n, size=(n_boot, n))` gives one row of indexes per resample.",
+    "`x[idx]` has shape (n_boot, n); average along `axis=1`.",
+    "The spread of those means is the answer."
+  ],
+  "explanation": "For the eight-value sample the plug-in standard error is 2 / √8 ≈ 0.707, and 20,000 resamples land within about 1% of it. A constant sample has no spread, so every resampled mean is equal and the standard error is 0. Seeding makes the result repeatable.",
+  "lessons": [
+    "ml-evaluation-leakage"
+  ]
+}

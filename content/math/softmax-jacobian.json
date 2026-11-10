@@ -1,0 +1,141 @@
+{
+  "id": "softmax-jacobian",
+  "title": "Softmax and its Jacobian",
+  "topic": "calculus",
+  "minutes": 40,
+  "summary": "Compute softmax stably, then the matrix of derivatives that flows through it in backprop.",
+  "intro": [
+    "**Softmax** turns scores z into probabilities: sᵢ = e^{zᵢ} / Σⱼ e^{zⱼ}. Subtracting max(z) first leaves the answer unchanged but stops e^{1000} overflowing to infinity.",
+    "Each output depends on every input, so the derivative is a matrix, the **Jacobian** J with Jᵢⱼ = ∂sᵢ/∂zⱼ. Working it out gives sᵢ(1 − sᵢ) on the diagonal and −sᵢsⱼ elsewhere: J = diag(s) − s sᵀ.",
+    "Every row of J adds up to 0 because the probabilities always add up to 1. Attention layers apply softmax to every row of scores, so this Jacobian sits in the backward pass of every transformer."
+  ],
+  "formula": "sᵢ = e^{zᵢ − max z} / Σⱼ e^{zⱼ − max z}     J = diag(s) − s sᵀ",
+  "prompt": "Write `softmax_jacobian(z)` that returns the Jacobian matrix of softmax at z as a nested list. Compute softmax stably.",
+  "function": "softmax_jacobian",
+  "starter": "import numpy as np\n\ndef softmax_jacobian(z):\n    z = np.asarray(z, dtype=float)\n    s = np.exp(z) / np.exp(z).sum()\n    # Return diag(s) - outer(s, s).\n    return np.diag(s)\n",
+  "solution": "import numpy as np\n\ndef softmax_jacobian(z):\n    z = np.asarray(z, dtype=float)\n    e = np.exp(z - z.max())\n    s = e / e.sum()\n    return np.diag(s) - np.outer(s, s)\n",
+  "tests": [
+    {
+      "args": [
+        [
+          0,
+          0
+        ]
+      ],
+      "expected": [
+        [
+          0.25,
+          -0.25
+        ],
+        [
+          -0.25,
+          0.25
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          3
+        ]
+      ],
+      "expected": [
+        [
+          0.081925069065,
+          -0.0220330445202,
+          -0.0598920245448
+        ],
+        [
+          -0.0220330445202,
+          0.18483644651,
+          -0.16280340199
+        ],
+        [
+          -0.0598920245448,
+          -0.16280340199,
+          0.222695426535
+        ]
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1000,
+          1001
+        ]
+      ],
+      "expected": [
+        [
+          0.196611933241,
+          -0.196611933241
+        ],
+        [
+          -0.196611933241,
+          0.196611933241
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          5
+        ]
+      ],
+      "expected": [
+        [
+          0
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          -2,
+          0,
+          2,
+          4
+        ]
+      ],
+      "expected": [
+        [
+          0.00213941200992,
+          -0.000033965818478,
+          -0.00025097533818,
+          -0.00185447085326
+        ],
+        [
+          -0.000033965818478,
+          0.0155912258403,
+          -0.00185447085326,
+          -0.0137027891686
+        ],
+        [
+          -0.00025097533818,
+          -0.00185447085326,
+          0.10335612407,
+          -0.101250677879
+        ],
+        [
+          -0.00185447085326,
+          -0.0137027891686,
+          -0.101250677879,
+          0.1168079379
+        ]
+      ]
+    }
+  ],
+  "hints": [
+    "Subtract `z.max()` before `np.exp`.",
+    "`np.outer(s, s)` is the matrix s sᵀ.",
+    "Check that every row adds up to zero."
+  ],
+  "explanation": "With equal scores both probabilities are 0.5, so the diagonal is 0.5 × 0.5 = 0.25 and the off-diagonal is −0.25. For [1000, 1001] the naive version computes e^{1000}, which overflows; shifting by the max gives the same result as for [0, 1]. A single class has nothing to trade off with, so its Jacobian is 0.",
+  "lessons": [
+    "ai-transformers-attention",
+    "ml-neural-networks"
+  ]
+}

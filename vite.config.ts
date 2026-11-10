@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Plugin } from 'vite'
-import { PYODIDE_VERSION } from './src/runner/pyodide-version'
+import { NUMPY_WHEEL, PYODIDE_VERSION } from './src/runner/pyodide-version'
 import { TYPESCRIPT_VERSION } from './src/runner/ts-version'
 import { PGLITE_VERSION } from './src/runner/pglite-version'
 import { EXCALIDRAW_VERSION } from './src/excalidraw-version'
@@ -22,9 +22,11 @@ const APP_VERSION = process.env.DEVPREP_VERSION ?? releases[0].version
 const APP_DATE = releases.find(release => release.version === APP_VERSION)?.date ?? new Date().toISOString().slice(0, 10)
 
 // Pyodide runtime files are served from pyodide/<version>/ (fetched lazily by the Python worker
-// and cached at runtime by the service worker, not precached).
-const PYODIDE_FILES = ['pyodide.mjs', 'pyodide.asm.mjs', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json']
-const PYODIDE_TYPES: Record<string, string> = { mjs: 'text/javascript', wasm: 'application/wasm', zip: 'application/zip', json: 'application/json' }
+// and cached at runtime by the service worker, not precached). The NumPy wheel is vendored (vendor/README.md)
+// because the npm package has no wheels; it sits beside the runtime so loadPackage finds it via the lock file.
+const PYODIDE_FILES = ['pyodide.mjs', 'pyodide.asm.mjs', 'pyodide.asm.wasm', 'python_stdlib.zip', 'pyodide-lock.json', NUMPY_WHEEL]
+const PYODIDE_TYPES: Record<string, string> = { mjs: 'text/javascript', wasm: 'application/wasm', zip: 'application/zip', json: 'application/json', whl: 'application/zip' }
+const pyodideSource = (name: string) => name === NUMPY_WHEEL ? resolve('vendor/pyodide', name) : resolve('node_modules/pyodide', name)
 function pyodideAssets(): Plugin {
   const prefix = `pyodide/${PYODIDE_VERSION}/`
   return {
@@ -36,12 +38,12 @@ function pyodideAssets(): Plugin {
         const name = at >= 0 ? path.slice(at + prefix.length + 1) : ''
         if (!PYODIDE_FILES.includes(name)) return next()
         response.setHeader('Content-Type', PYODIDE_TYPES[name.split('.').pop()!])
-        createReadStream(resolve('node_modules/pyodide', name)).pipe(response)
+        createReadStream(pyodideSource(name)).pipe(response)
       })
     },
     async generateBundle() {
       for (const name of PYODIDE_FILES) {
-        this.emitFile({ type: 'asset', fileName: `${prefix}${name}`, source: await readFile(resolve('node_modules/pyodide', name)) })
+        this.emitFile({ type: 'asset', fileName: `${prefix}${name}`, source: await readFile(pyodideSource(name)) })
       }
     },
   }

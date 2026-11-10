@@ -1,0 +1,175 @@
+{
+  "id": "pca-explained-variance",
+  "title": "PCA with the SVD: how much does each direction explain?",
+  "topic": "linear-algebra",
+  "minutes": 40,
+  "summary": "Centre the data, take the SVD, and report the share of variance the top components keep.",
+  "intro": [
+    "**Principal component analysis** finds the orthogonal directions along which the data varies most. They are the eigenvectors of the covariance matrix, and the **singular value decomposition** X = U S Vᵀ of the centred data gives them directly as the rows of Vᵀ.",
+    "Each singular value sᵢ measures spread along its direction: the variance there is sᵢ² / (n − 1). The share of total variance a component explains is sᵢ² / Σ sⱼ², so the n − 1 cancels.",
+    "You must centre first. Without centring, the first component mostly points at the mean, not along the spread. Explained-variance ratios are sign-free, which makes them a robust thing to check; the components themselves are only defined up to sign."
+  ],
+  "formula": "Xc = X − mean(X)     Xc = U S Vᵀ     ratioᵢ = sᵢ² / Σⱼ sⱼ²",
+  "prompt": "Write `explained_variance_ratio(X, k)` that returns the explained-variance ratios of the top k principal components of X (rows are examples), largest first.",
+  "function": "explained_variance_ratio",
+  "starter": "import numpy as np\n\ndef explained_variance_ratio(X, k):\n    X = np.asarray(X, dtype=float)\n    # Centre the columns, take the singular values, and return the top k shares.\n    s = np.linalg.svd(X, compute_uv=False)\n    return (s / s.sum())[:k]\n",
+  "solution": "import numpy as np\n\ndef explained_variance_ratio(X, k):\n    X = np.asarray(X, dtype=float)\n    Xc = X - X.mean(axis=0)\n    s = np.linalg.svd(Xc, compute_uv=False)\n    var = s ** 2\n    return (var / var.sum())[:k]\n",
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            2,
+            0
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            -2,
+            0
+          ],
+          [
+            0,
+            -1
+          ]
+        ],
+        2
+      ],
+      "expected": [
+        0.8,
+        0.2
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            1
+          ],
+          [
+            2,
+            2
+          ],
+          [
+            3,
+            3
+          ]
+        ],
+        1
+      ],
+      "expected": [
+        1
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            4.1
+          ],
+          [
+            3,
+            6.2
+          ],
+          [
+            4,
+            7.9
+          ],
+          [
+            5,
+            9.9
+          ]
+        ],
+        2
+      ],
+      "expected": [
+        0.999778594038,
+        0.000221405961944
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            2,
+            0,
+            1
+          ],
+          [
+            0,
+            3,
+            1
+          ],
+          [
+            1,
+            1,
+            0
+          ],
+          [
+            4,
+            2,
+            2
+          ],
+          [
+            3,
+            5,
+            1
+          ]
+        ],
+        3
+      ],
+      "expected": [
+        0.590401557462,
+        0.372565185248,
+        0.0370332572895
+      ]
+    }
+  ],
+  "hints": [
+    "Centre with `X - X.mean(axis=0)` before the SVD.",
+    "`np.linalg.svd(Xc, compute_uv=False)` returns the singular values, largest first.",
+    "Square them before taking shares."
+  ],
+  "explanation": "In the first test the points spread ±2 along x and ±1 along y, so the variances are in the ratio 4 : 1, giving 0.8 and 0.2. Points on the line y = x have all their variance along one direction. Using s instead of s², or skipping the centring, gives plausible-looking but wrong shares.",
+  "lessons": [
+    "ml-clustering"
+  ],
+  "diagram": {
+    "type": "bars",
+    "id": "pca-scree",
+    "title": "A scree plot: variance by component",
+    "alt": "Bar chart of the share of variance explained by four principal components of an example dataset: 62, 24, 10 and 4 percent. The first two together explain 86 percent.",
+    "caption": "An illustrative scree plot. Keep components until the bars flatten; here two components keep 86% of the variance.",
+    "unit": "% of variance",
+    "bars": [
+      {
+        "label": "PC1",
+        "value": 62,
+        "highlight": true
+      },
+      {
+        "label": "PC2",
+        "value": 24,
+        "highlight": true
+      },
+      {
+        "label": "PC3",
+        "value": 10
+      },
+      {
+        "label": "PC4",
+        "value": 4
+      }
+    ]
+  }
+}

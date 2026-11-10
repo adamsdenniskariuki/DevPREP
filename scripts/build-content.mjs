@@ -244,7 +244,7 @@ export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
 export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
-export const PLAN_PAGES = ['#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan']
+export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan']
 
 /**
  * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
@@ -264,13 +264,21 @@ export function buildPlans(root = 'content') {
     tracks: new Set(TRACK_ORDER),
     company: new Set(buildCompanies(root).ids),
     mock: new Set(buildCompanies(root).ids),
+    plans: new Set(order),
   }
   const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
+  const labs = { [MATH_LAB_PLAN]: new Set(buildMathLabs(root).map(lab => lab.id)) }
   const plans = order.map(id => {
     if (!files.delete(`${id}.json`)) throw new Error(`content/plans/index.json lists ${id} but the file is missing`)
-    return validatePlan(read(join(dir, `${id}.json`)), id, { targets, lessons })
+    return validatePlan(read(join(dir, `${id}.json`)), id, { targets, lessons, labs })
   })
   if (files.size) throw new Error(`content/plans has plans not listed in index.json: ${[...files].join(', ')}`)
+  for (const [planId, ids] of Object.entries(labs)) {
+    const plan = plans.find(item => item.id === planId)
+    const linked = new Set(plan ? plan.weeks.flatMap(week => week.days.flatMap(day => day.items.map(item => item.href))) : [])
+    const orphans = [...ids].filter(id => !linked.has(`#plans/${planId}/${id}`))
+    if (orphans.length) throw new Error(`content/math: labs not linked from the ${planId} plan: ${orphans.join(', ')}`)
+  }
   return { plans, ids: plans.map(plan => plan.id) }
 }
 
@@ -281,7 +289,7 @@ const perLanguage = (value, languages, check) => value !== null && typeof value 
   && Object.keys(value).sort().join() === [...languages].sort().join() && languages.every(lang => check(value[lang]))
 
 /** Checks a plan's shape and links, throwing a readable error; returns the plan. */
-export function validatePlan(plan, file, { targets, lessons }) {
+export function validatePlan(plan, file, { targets, lessons, labs = {} }) {
   const fail = message => { throw new Error(`content/plans/${file}.json: ${message}`) }
   const keys = Object.keys(plan ?? {}).sort().join(',')
   if (keys !== 'hoursPerWeek,id,languages,phases,refresher,rhythm,rules,summary,tips,title,tracks,weeks') fail('must have exactly id, title, summary, hoursPerWeek, languages, rhythm, rules, tips, refresher, tracks, phases and weeks')
@@ -333,13 +341,59 @@ export function validatePlan(plan, file, { targets, lessons }) {
         if (item.lesson !== undefined && !lessons.has(item.lesson)) fail(`${where}: unknown lesson ${item.lesson}`)
         if (item.href !== undefined) {
           const [route, sub, ...rest] = String(item.href).replace(/^#/, '').split('/')
-          const ok = item.href.startsWith('#') && !rest.length && (sub === undefined ? PLAN_PAGES.includes(item.href) : !!targets[route]?.has(sub))
+          const lab = route === 'plans' && rest.length === 1 && !!labs[sub]?.has(rest[0])
+          const ok = item.href.startsWith('#') && (lab || (!rest.length && (sub === undefined ? PLAN_PAGES.includes(item.href) : !!targets[route]?.has(sub))))
           if (!ok) fail(`${where}: link ${item.href} does not resolve`)
         }
       }
     })
   }
   return plan
+}
+
+export const MATH_LABS_OUTPUT = 'src/generated/math-labs.json'
+/** The study plan whose days link to the math labs (#plans/<plan>/<lab>). Same as MATH_PLAN_ID in src/math-labs.ts. */
+export const MATH_LAB_PLAN = 'math-for-ml-6wk'
+export const MATH_TOPICS = ['linear-algebra', 'probability', 'statistics', 'calculus', 'optimisation']
+const MATH_LAB_KEYS = ['id', 'title', 'topic', 'minutes', 'summary', 'intro', 'prompt', 'function', 'starter', 'solution', 'tests', 'hiddenTests', 'hints', 'explanation']
+const MATH_LAB_OPTIONAL = ['formula', 'tolerance', 'lessons', 'diagram']
+
+/**
+ * Runnable Python + NumPy labs for the math plan, in plan order. They load lazily with the lab view.
+ * Shape and links are checked here; diagrams and every solution/starter are checked in src/math-labs.test.ts.
+ */
+export function buildMathLabs(root = 'content') {
+  const dir = join(root, 'math')
+  if (!existsSync(join(dir, 'index.json'))) return []
+  const { labs: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
+  const labs = order.map(id => {
+    if (!files.delete(`${id}.json`)) throw new Error(`content/math/index.json lists ${id} but the file is missing`)
+    const lab = read(join(dir, `${id}.json`))
+    const fail = message => { throw new Error(`content/math/${id}.json: ${message}`) }
+    const keys = Object.keys(lab ?? {})
+    const missing = MATH_LAB_KEYS.filter(key => !keys.includes(key))
+    const unknown = keys.filter(key => !MATH_LAB_KEYS.includes(key) && !MATH_LAB_OPTIONAL.includes(key))
+    if (missing.length || unknown.length) fail(`missing ${missing.join(', ') || 'nothing'}; unknown ${unknown.join(', ') || 'nothing'}`)
+    if (lab.id !== id || !KEBAB.test(id)) fail('id must be kebab-case and match the file name')
+    if (!text(lab.title, 80) || !text(lab.summary, 200) || !text(lab.prompt, 1200) || !text(lab.explanation, 1200)) fail('title (≤80), summary (≤200), prompt and explanation (≤1200) are required')
+    if (!MATH_TOPICS.includes(lab.topic)) fail(`topic must be one of ${MATH_TOPICS.join(', ')}`)
+    if (!Number.isInteger(lab.minutes) || lab.minutes < 10 || lab.minutes > 90) fail('minutes must be 10–90')
+    if (!Array.isArray(lab.intro) || !lab.intro.length || lab.intro.length > 5 || lab.intro.some(para => !text(para, 700))) fail('intro needs 1–5 paragraphs of at most 700 characters')
+    if (lab.formula !== undefined && !text(lab.formula, 300)) fail('formula must be 1–300 characters')
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(lab.function ?? '')) fail('function must be a Python identifier')
+    if (!text(lab.starter, 4000) || !text(lab.solution, 4000) || !lab.starter.includes(`def ${lab.function}(`) || !lab.solution.includes(`def ${lab.function}(`)) fail(`starter and solution must define ${lab.function}`)
+    for (const [name, min] of [['tests', 2], ['hiddenTests', 1]]) {
+      if (!Array.isArray(lab[name]) || lab[name].length < min || lab[name].some(test => Object.keys(test ?? {}).sort().join() !== 'args,expected' || !Array.isArray(test.args))) fail(`${name} needs at least ${min} { args, expected } cases`)
+    }
+    if (!Array.isArray(lab.hints) || !lab.hints.length || lab.hints.length > 4 || lab.hints.some(hint => !text(hint, 300))) fail('hints needs 1–4 short strings')
+    if (lab.tolerance !== undefined && (Object.keys(lab.tolerance).some(key => key !== 'rel' && key !== 'abs') || Object.values(lab.tolerance).some(value => typeof value !== 'number' || !(value >= 0) || value > 0.1))) fail('tolerance may only set rel and abs, each 0–0.1')
+    if (lab.lessons !== undefined && (!Array.isArray(lab.lessons) || lab.lessons.some(lesson => !lessons.has(lesson)))) fail('lessons must be existing lesson ids')
+    return lab
+  })
+  if (files.size) throw new Error(`content/math has labs not listed in index.json: ${[...files].join(', ')}`)
+  return labs
 }
 
 export const CHANGELOG_OUTPUT = 'src/generated/changelog.json'
@@ -425,6 +479,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const planSet = buildPlans()
   writeIfChanged(PLANS_OUTPUT, planSet.plans)
   writeIfChanged(PLAN_IDS_OUTPUT, planSet.ids)
+  writeIfChanged(MATH_LABS_OUTPUT, buildMathLabs())
   writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
   writeIfChanged(CHANGELOG_OUTPUT, buildChangelog())
 }

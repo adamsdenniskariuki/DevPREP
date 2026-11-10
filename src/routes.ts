@@ -25,6 +25,8 @@ export interface ParsedRoute {
   companyId?: string
   snippetId?: string
   planId?: string
+  /** A math lab inside a study plan (#plans/<plan>/<lab>). The screen reports an unknown lab. */
+  labId?: string
 }
 
 /** The ids each sub-route accepts. Passed in so this module stays free of content imports. */
@@ -44,7 +46,7 @@ export interface RouteIds {
 export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   const [head, sub, ...rest] = hash.replace(/^#/, '').split('/')
   const route = ALIASES[head || 'home'] ?? (ROUTES as string[]).find(item => item === (head || 'home')) as Route | undefined
-  if (!route || rest.length > (route === 'code' ? 1 : 0)) return { route: 'unknown' }
+  if (!route || rest.length > (route === 'code' || route === 'plans' ? 1 : 0)) return { route: 'unknown' }
   if (sub === undefined) return { route }
   if (route === 'code') return ids.problems.has(sub) && (!rest.length || CODE_LANGS.includes(rest[0])) ? { route, problemId: sub, codeLang: rest[0] as ParsedRoute['codeLang'] } : { route: 'unknown' }
   if (route === 'sql') return ids.sql.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
@@ -52,7 +54,7 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   if (route === 'company' || route === 'mock') return ids.companies.includes(sub) ? { route, companyId: sub } : { route: 'unknown' }
   if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'playground') return BOARD_ID.test(sub) ? { route, snippetId: sub } : { route: 'unknown' }
-  if (route === 'plans') return (ids.plans ? ids.plans.has(sub) : BOARD_ID.test(sub)) ? { route, planId: sub } : { route: 'unknown' }
+  if (route === 'plans') return (ids.plans ? ids.plans.has(sub) : BOARD_ID.test(sub)) && (!rest.length || BOARD_ID.test(rest[0])) ? { route, planId: sub, ...rest.length ? { labId: rest[0] } : {} } : { route: 'unknown' }
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = ids.tracks.find(item => item === sub) as Track | undefined
@@ -63,5 +65,5 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
   const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView
-  return `#${parsed.route}${sub ? `/${sub}` : ''}`
+  return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}`
 }

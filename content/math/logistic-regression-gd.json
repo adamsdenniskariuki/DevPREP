@@ -1,0 +1,142 @@
+{
+  "id": "logistic-regression-gd",
+  "title": "Logistic regression by gradient descent",
+  "topic": "optimisation",
+  "minutes": 45,
+  "summary": "Train a classifier from scratch: sigmoid, log loss and its remarkably simple gradient.",
+  "intro": [
+    "**Logistic regression** predicts a probability p = σ(Xw + b), where the sigmoid σ(t) = 1 / (1 + e^{−t}) squashes any score into (0, 1). It is trained by minimising the average **log loss** (cross-entropy).",
+    "The gradient of the log loss works out to be very simple: ∇w = Xᵀ(p − y) / n and ∂b = mean(p − y). The prediction error plays the same role as the residual in linear regression.",
+    "Starting from zeros, each step moves the weights against the gradient. On perfectly separable data the weights keep growing forever; regularisation or early stopping keeps them finite."
+  ],
+  "formula": "p = σ(X w + b)     ∇w = Xᵀ (p − y) / n     ∂b = mean(p − y)",
+  "prompt": "Write `train_logistic(X, y, lr, steps)` that starts with zero weights and bias, runs `steps` full-batch gradient descent updates on the mean log loss, and returns `[*w, b]` as one flat list.",
+  "function": "train_logistic",
+  "starter": "import numpy as np\n\ndef train_logistic(X, y, lr, steps):\n    X, y = np.asarray(X, float), np.asarray(y, float)\n    w = np.zeros(X.shape[1])\n    b = 0.0\n    # Each step: p = sigmoid(X w + b), then move w and b against the gradient.\n    return [*w, b]\n",
+  "solution": "import numpy as np\n\ndef train_logistic(X, y, lr, steps):\n    X, y = np.asarray(X, float), np.asarray(y, float)\n    w = np.zeros(X.shape[1])\n    b = 0.0\n    for _ in range(steps):\n        p = 1 / (1 + np.exp(-(X @ w + b)))\n        err = p - y\n        w = w - lr * X.T @ err / len(y)\n        b = b - lr * err.mean()\n    return [*w, float(b)]\n",
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            1
+          ],
+          [
+            -1
+          ]
+        ],
+        [
+          1,
+          0
+        ],
+        1,
+        1
+      ],
+      "expected": [
+        0.5,
+        0
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            0.5,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            -1,
+            -0.5
+          ],
+          [
+            -2,
+            -1
+          ]
+        ],
+        [
+          1,
+          1,
+          0,
+          0
+        ],
+        0.5,
+        100
+      ],
+      "expected": [
+        2.32206017476,
+        2.32206017476,
+        -7.14353706396e-17
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ],
+          [
+            4
+          ]
+        ],
+        [
+          0,
+          0,
+          1,
+          1
+        ],
+        0.1,
+        500
+      ],
+      "expected": [
+        1.7117973714,
+        -3.94802456133
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        [
+          1,
+          1
+        ],
+        1,
+        1
+      ],
+      "expected": [
+        0.25,
+        0.25,
+        0.5
+      ]
+    }
+  ],
+  "hints": [
+    "The sigmoid is `1 / (1 + np.exp(-t))`.",
+    "The error `p - y` drives both gradients.",
+    "Divide the weight gradient by n and use the mean for the bias."
+  ],
+  "explanation": "In the first test, p starts at 0.5 for both points, so the errors are −0.5 and 0.5. The weight gradient is (1 × −0.5 + −1 × 0.5) / 2 = −0.5 and the bias gradient is 0, so one step of size 1 gives w = 0.5, b = 0. The same update, run longer, separates the classes.",
+  "lessons": [
+    "ml-regression-classification"
+  ]
+}

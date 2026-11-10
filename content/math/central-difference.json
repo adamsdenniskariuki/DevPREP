@@ -1,0 +1,79 @@
+{
+  "id": "central-difference",
+  "title": "Numerical derivatives",
+  "topic": "calculus",
+  "minutes": 30,
+  "summary": "Approximate a derivative from function values, and see why the centred version is so much better.",
+  "intro": [
+    "The **derivative** f′(x) is the slope of f at x: how fast the output changes per unit change of input. Gradient descent uses derivatives to decide which way to move every weight.",
+    "You can approximate it from two function values. The forward difference (f(x + h) − f(x)) / h has error proportional to h. The **central difference** (f(x + h) − f(x − h)) / 2h cancels the first error term, so its error shrinks like h².",
+    "Too small an h loses accuracy to rounding, so values around 1e-4 to 1e-6 work well in double precision. Comparing an analytic gradient with a central difference, a **gradient check**, is the standard way to catch backprop bugs."
+  ],
+  "formula": "f′(x) ≈ (f(x + h) − f(x − h)) / (2h)     error ∝ h²",
+  "prompt": "Write `central_difference(coeffs, x, h)` that returns the central-difference estimate of the derivative of the polynomial with coefficients `coeffs` (highest power first, as used by `np.polyval`) at x.",
+  "function": "central_difference",
+  "starter": "import numpy as np\n\ndef central_difference(coeffs, x, h):\n    f = lambda t: np.polyval(coeffs, t)\n    # A forward difference is less accurate; centre it.\n    return (f(x + h) - f(x)) / h\n",
+  "solution": "import numpy as np\n\ndef central_difference(coeffs, x, h):\n    f = lambda t: np.polyval(coeffs, t)\n    return float((f(x + h) - f(x - h)) / (2 * h))\n",
+  "tests": [
+    {
+      "args": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        2,
+        0.001
+      ],
+      "expected": 12
+    },
+    {
+      "args": [
+        [
+          3,
+          -2,
+          1
+        ],
+        1,
+        0.01
+      ],
+      "expected": 4
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1,
+          0,
+          -1,
+          0,
+          0
+        ],
+        1.5,
+        0.0001
+      ],
+      "expected": 10.5
+    },
+    {
+      "args": [
+        [
+          5
+        ],
+        3,
+        0.1
+      ],
+      "expected": 0
+    }
+  ],
+  "hints": [
+    "`np.polyval([1, 0, 0, 0], 2)` evaluates x³ at 2.",
+    "Evaluate at x + h and x − h.",
+    "Divide by 2h, not h."
+  ],
+  "explanation": "For x³ at 2 the true slope is 3 × 2² = 12. The central difference with h = 0.001 is 12.000001: an error of h². The forward difference gives about 12.006, an error of order h. For any quadratic the central difference is exact, apart from rounding.",
+  "lessons": [
+    "ml-optimization-regularization"
+  ]
+}

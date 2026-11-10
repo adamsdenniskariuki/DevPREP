@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Page } from '@playwright/test'
+import { expectCode } from './editor-helpers'
 import { expectCurrent, navTo } from './nav'
 
 const ID = 'applied-ai-ml-10wk'
@@ -204,6 +206,7 @@ for (const width of [360, 768, 1440]) {
 }
 
 const FDE = 'forward-deployed-engineer-8wk'
+const MATH_TITLE = '6-week Math for AI and ML plan'
 const FDE_TITLE = '8-week Forward Deployed Engineer plan'
 const storedFde = (page: Page) => page.evaluate(([key, id]) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], [KEY, FDE])
 
@@ -216,7 +219,7 @@ async function startFde(page: Page) {
 
 test('the Forward Deployed Engineer plan opens from the list, ticks persist and its track swaps weeks 6–7', async ({ page }) => {
   await page.goto('./#plans')
-  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE])
+  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE, MATH_TITLE])
   await page.getByRole('link', { name: FDE_TITLE }).click()
   await expect(page).toHaveURL(new RegExp(`#plans/${FDE}$`))
   await expect(h1(page)).toBeFocused()
@@ -343,5 +346,96 @@ test('the Forward Deployed Engineer plan is accessible and fits at every width i
       expect(await axe(page), `home at ${width} ${theme}`).toEqual([])
       expect(await fits(page), `home fits at ${width} ${theme}`).toBe(true)
     }
+  }
+})
+
+const MATH = 'math-for-ml-6wk'
+const readLab = (id: string) => JSON.parse(readFileSync(`content/math/${id}.json`, 'utf8')) as { title: string; solution: string; starter: string; tests: unknown[]; hiddenTests: unknown[] }
+
+test('the math plan has no language or track pickers, and passing a lab ticks its task for good', async ({ page }) => {
+  test.setTimeout(240_000)
+  const lab = readLab('vector-norms')
+  await page.goto('./#plans')
+  await page.getByRole('link', { name: MATH_TITLE }).click()
+  await expect(page).toHaveURL(new RegExp(`#plans/${MATH}$`))
+  await expect(h1(page)).toHaveText(MATH_TITLE)
+  await expect(page.getByRole('heading', { level: 2, name: /^Phase \d:/ })).toHaveCount(3)
+  await expect(page.locator('.plans-phase details')).toHaveCount(6)
+  await expect(page.getByLabel('Interview language')).toHaveCount(0)
+  await expect(page.getByRole('group', { name: /^Track/ })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Start today' }).click()
+  await page.locator('main').locator(`a[href="#plans/${MATH}/vector-norms"]`).first().click()
+  await expect(page).toHaveURL(new RegExp(`#plans/${MATH}/vector-norms$`))
+  await expect(h1(page)).toHaveText(lab.title)
+  await expect(h1(page)).toBeFocused()
+  const editor = page.getByRole('textbox', { name: /Your code/ })
+  await expectCode(editor, lab.starter)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-results')).toContainText(/passed|failed|Error/, { timeout: 180_000 })
+  await expect(page.locator('.run-results')).not.toContainText('All ')
+  await editor.fill(lab.solution)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-results')).toContainText(`All ${lab.tests.length + lab.hiddenTests.length} tests passed. The plan task is ticked.`, { timeout: 60_000 })
+  await expect(page.getByText(/· Done$/)).toBeVisible()
+  await page.getByRole('link', { name: /^Next lab: / }).click()
+  await expect(h1(page)).toHaveText(readLab('cosine-similarity').title)
+  await page.getByRole('link', { name: `Back to ${MATH_TITLE}` }).click()
+  await expect(h1(page)).toHaveText(MATH_TITLE)
+  await expect(page.locator('#item-w1-d1-1')).toBeChecked()
+  await page.reload()
+  await expect(page.locator('#item-w1-d1-1')).toBeChecked()
+  expect(await page.evaluate(([key, id]) => Object.keys(JSON.parse(localStorage.getItem(key) ?? '{}')[id]?.done ?? {}), [KEY, MATH])).toEqual(['w1-d1-1'])
+})
+
+test('an unknown math lab says so and links back to the plan', async ({ page }) => {
+  await page.goto(`./#plans/${MATH}/no-such-lab`)
+  await expect(h1(page)).toHaveText('Lab not found')
+  await page.getByRole('link', { name: `Back to ${MATH_TITLE}` }).click()
+  await expect(h1(page)).toHaveText(MATH_TITLE)
+})
+
+test('the palette, site map and nav reach the math plan', async ({ page }) => {
+  await page.goto('./#map')
+  await expect(h1(page)).toBeVisible()
+  await expect(page.getByRole('main').locator(`a[href="#plans/${MATH}"]`).first()).toBeAttached()
+  await page.keyboard.press(`${MOD}+k`)
+  const dialog = page.getByRole('dialog', { name: 'Search DevPREP' })
+  await dialog.getByRole('combobox').fill('math for ai ml plan')
+  await expect(dialog.getByRole('option').first()).toContainText(MATH_TITLE)
+  await page.keyboard.press('Enter')
+  await expect(h1(page)).toHaveText(MATH_TITLE)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('./#home')
+  await expect(h1(page)).toBeVisible()
+  await navTo(page, 'Study plans')
+  await page.getByRole('link', { name: MATH_TITLE }).click()
+  await expect(h1(page)).toHaveText(MATH_TITLE)
+})
+
+test('the math plan and its labs are accessible and fit at every width in both themes', async ({ page }) => {
+  test.setTimeout(240_000)
+  for (const width of [360, 768, 1440]) {
+    for (const theme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: 'reduce' })
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto(`./#plans/${MATH}`)
+      await expect(h1(page)).toHaveText(MATH_TITLE)
+      await page.locator('.plans-phase details').first().locator('summary').click()
+      expect(await axe(page), `plan at ${width} ${theme}`).toEqual([])
+      expect(await fits(page), `plan fits at ${width} ${theme}`).toBe(true)
+      await page.goto(`./#plans/${MATH}/pca-explained-variance`)
+      await expect(h1(page)).toHaveText(readLab('pca-explained-variance').title)
+      await page.locator('details.math-hints summary').first().click()
+      await expect(page.locator('figure').first()).toBeVisible()
+      expect(await axe(page), `lab at ${width} ${theme}`).toEqual([])
+      expect(await fits(page), `lab fits at ${width} ${theme}`).toBe(true)
+    }
+  }
+  await page.setViewportSize({ width: 360, height: 900 })
+  for (const id of JSON.parse(readFileSync('content/math/index.json', 'utf8')).labs as string[]) {
+    await page.goto(`./#plans/${MATH}/${id}`)
+    await expect(h1(page)).toHaveText(readLab(id).title)
+    expect(await axe(page), id).toEqual([])
+    expect(await fits(page), `${id} fits at 360`).toBe(true)
   }
 })

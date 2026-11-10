@@ -1,0 +1,139 @@
+{
+  "id": "ridge-regression",
+  "title": "Ridge regression in closed form",
+  "topic": "optimisation",
+  "minutes": 35,
+  "summary": "Add an L2 penalty to least squares and solve it directly, shrinking weights and fixing singular systems.",
+  "intro": [
+    "**Ridge regression** minimises ‖Xw − y‖² + λ‖w‖². The penalty λ‖w‖² discourages large weights, trading a little bias for much less variance.",
+    "Setting the gradient to zero gives (XᵀX + λI)w = Xᵀy. Adding λ to the diagonal makes the matrix invertible even when features are perfectly correlated, the singular case from week 2.",
+    "Larger λ shrinks weights towards zero, and λ = 0 gives ordinary least squares. Penalties depend on scale, so standardise features first. In practice λ is chosen by validation, never on the test set."
+  ],
+  "formula": "minimise ‖X w − y‖² + λ ‖w‖²   ⇒   (XᵀX + λ I) w = Xᵀ y",
+  "prompt": "Write `ridge(X, y, lam)` that returns the ridge-regression weights (no intercept) by solving the regularised normal equations.",
+  "function": "ridge",
+  "starter": "import numpy as np\n\ndef ridge(X, y, lam):\n    X, y = np.asarray(X, float), np.asarray(y, float)\n    # Add lam to the diagonal of X^T X before solving.\n    return np.linalg.lstsq(X, y, rcond=None)[0]\n",
+  "solution": "import numpy as np\n\ndef ridge(X, y, lam):\n    X, y = np.asarray(X, float), np.asarray(y, float)\n    d = X.shape[1]\n    return np.linalg.solve(X.T @ X + lam * np.eye(d), X.T @ y)\n",
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        [
+          2,
+          4
+        ],
+        1
+      ],
+      "expected": [
+        1,
+        2
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1
+          ],
+          [
+            2
+          ],
+          [
+            3
+          ]
+        ],
+        [
+          2,
+          4,
+          6
+        ],
+        0
+      ],
+      "expected": [
+        2
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        [
+          3,
+          3,
+          3
+        ],
+        1
+      ],
+      "expected": [
+        1.28571428571,
+        1.28571428571
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            3
+          ]
+        ],
+        [
+          5,
+          4,
+          11,
+          10
+        ],
+        0.5
+      ],
+      "expected": [
+        1.08717948718,
+        1.88717948718
+      ]
+    }
+  ],
+  "hints": [
+    "Build `X.T @ X + lam * np.eye(d)` where d is the number of features.",
+    "Solve it against `X.T @ y` with `np.linalg.solve`.",
+    "With λ = 0 you should get plain least squares."
+  ],
+  "explanation": "With X = I, each weight is yᵢ / (1 + λ), so λ = 1 halves them to [1, 2]. In the hidden case both columns are identical, so least squares has no single answer, but ridge splits the weight evenly: (XᵀX + I)w = Xᵀy gives w = 9/7 for each.",
+  "lessons": [
+    "ml-optimization-regularization",
+    "ml-bias-variance"
+  ]
+}

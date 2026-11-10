@@ -1,14 +1,17 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { AppModel } from '../app-model'
 import { lessons } from '../curriculum'
 import { displayDate } from '../format'
 import {
   forLanguage, isDay, itemText, languageLabel, loadPlans, MAX_ERRORS, MAX_FIELD, MAX_NOTES, MAX_SCORES, newEntryId, PLAN_LANGUAGES, PLANS_KEY, phaseOf, planCount, planHref, positionFor, progressFor,
   readPlans, removeEntry, SCORE_AREAS, SCORE_KIND_LABELS, scoreAverage, setCheck, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
-  type CheckResult, type ErrorEntry, type PlanItem, type PlanLanguage, type PlanProgress, type PlanWeek, type PlansState, type ScoreKind, type Scorecard, type StudyPlan,
+  type CheckResult, type ErrorEntry, type PlanItem, type PlanLanguage, type PlanTrack, type PlanProgress, type PlanWeek, type PlansState, type ScoreKind, type Scorecard, type StudyPlan,
 } from '../study-plans'
 import '../plans.css'
 import { planSnippet } from '../plan-playground'
+import { loadMathLabs, MATH_PLAN_ID, type MathLab } from '../math-labs'
+
+const MathLabView = lazy(() => import('../components/MathLab'))
 
 /** Plan progress from this device, kept in step with other tabs. */
 function usePlanState() {
@@ -186,9 +189,12 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
   const total = weekCount(plan)
   const position = entry.start ? positionFor(entry.start, today, total) : undefined
   const counts = planCount(plan, entry)
-  const track = plan.tracks.find(item => item.id === entry.track) ?? plan.tracks[0]
+  const track = plan.tracks.find(item => item.id === entry.track) ?? plan.tracks[0] as PlanTrack | undefined
+  const languages = PLAN_LANGUAGES.filter(item => plan.languages.includes(item.id))
+  // A plan offered in one language always uses it, whatever the saved choice says.
+  const lang: PlanLanguage = languages.find(item => item.id === entry.lang)?.id ?? languages[0]?.id ?? PLAN_LANGUAGES[0].id
   const toggle = (id: string) => save(current => toggleItem(current, id, today))
-  const shared = { entry, lang: entry.lang, onToggle: toggle, app }
+  const shared = { entry, lang, onToggle: toggle, app }
   const currentWeek = position?.status === 'active' ? position.week : undefined
   const todayWeek = currentWeek ? weeks.find(week => week.n === currentWeek) : undefined
   const todayDay = todayWeek && position?.status === 'active' ? todayWeek.days[position.day - 1] : undefined
@@ -202,19 +208,19 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
         <label className="plans-field" htmlFor="plans-start">Start date
           <span className="plans-inline"><input id="plans-start" type="date" value={entry.start ?? ''} onChange={event => { const value = event.target.value; if (!value || isDay(value)) save(current => { const next = { ...current }; if (value) next.start = value; else delete next.start; return next }) }} />
             {!entry.start && <button type="button" className="primary" onClick={() => save(current => ({ ...current, start: today }))}>Start today</button>}</span></label>
-        <label className="plans-field" htmlFor="plans-lang">Interview language
-          <select id="plans-lang" value={entry.lang ?? PLAN_LANGUAGES[0].id} onChange={event => save(current => ({ ...current, lang: event.target.value as PlanLanguage }))}>
-            {PLAN_LANGUAGES.map(lang => <option key={lang.id} value={lang.id}>{lang.label}</option>)}
-          </select></label>
+        {languages.length > 1 && <label className="plans-field" htmlFor="plans-lang">Interview language
+          <select id="plans-lang" value={lang} onChange={event => save(current => ({ ...current, lang: event.target.value as PlanLanguage }))}>
+            {languages.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select></label>}
       </div>
-      <fieldset className="plans-radios plans-tracks">
+      {track && <fieldset className="plans-radios plans-tracks">
         <legend>Track for {switchRange}</legend>
         {plan.tracks.map(item => <label key={item.id} className="plans-track">
           <input type="radio" name="plans-track" value={item.id} checked={track.id === item.id} onChange={() => save(current => ({ ...current, track: item.id }))} />
           <span><strong>{item.title}</strong><span className="muted"> {item.summary}</span></span>
         </label>)}
-      </fieldset>
-      <p className="plans-count"><span>{counts.done} of {counts.total} tasks done</span><span className="muted">{track.title} track</span></p>
+      </fieldset>}
+      <p className="plans-count"><span>{counts.done} of {counts.total} tasks done</span>{track && <span className="muted">{track.title} track</span>}</p>
       <progress max={counts.total} value={counts.done} aria-label={`${plan.title} progress`} />
     </section>
 
@@ -235,9 +241,9 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
       <ul className="plans-rhythm">{plan.rhythm.map(item => <li key={item.when}><strong>{item.when}</strong> <span className="pill">{item.time}</span> {item.text}</li>)}</ul>
       <h3>Rules</h3>
       <ul>{plan.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>
-      <h3 id="plans-idioms">{languageLabel(entry.lang)} idioms</h3>
-      <ul aria-labelledby="plans-idioms">{(forLanguage(plan.tips, entry.lang) ?? []).map(tip => <li key={tip}>{tip}</li>)}</ul>
-      {forLanguage(plan.refresher, entry.lang) && <p><a href={forLanguage(plan.refresher, entry.lang)}>Brush up on {languageLabel(entry.lang)} in its track</a></p>}
+      <h3 id="plans-idioms">{languageLabel(lang)} idioms</h3>
+      <ul aria-labelledby="plans-idioms">{(forLanguage(plan.tips, lang) ?? []).map(tip => <li key={tip}>{tip}</li>)}</ul>
+      {forLanguage(plan.refresher, lang) && <p><a href={forLanguage(plan.refresher, lang)}>Brush up on {languageLabel(lang)} in its track</a></p>}
     </section>
 
     {plan.phases.map((phase, index) => {
@@ -253,9 +259,9 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
           const items = weekItems(week)
           const done = items.filter(item => entry.done[item.id]).length
           return <details key={`${week.n}-${week.track ?? ''}`} className="card plans-week" open={week.n === (currentWeek ?? 1)}>
-            <summary><span className="plans-week-title">Week {week.n}: {week.title}</span><span className="muted">{done}/{items.length}{week.track ? ` · ${track.title}` : ''}{week.n === currentWeek ? ' · This week' : ''}</span></summary>
+            <summary><span className="plans-week-title">Week {week.n}: {week.title}</span><span className="muted">{done}/{items.length}{week.track && track ? ` · ${track.title}` : ''}{week.n === currentWeek ? ' · This week' : ''}</span></summary>
             <p>{week.focus}</p>
-            {forLanguage(week.tip, entry.lang) && <p className="plans-tip"><strong>{languageLabel(entry.lang)} tip:</strong> {forLanguage(week.tip, entry.lang)}</p>}
+            {forLanguage(week.tip, lang) && <p className="plans-tip"><strong>{languageLabel(lang)} tip:</strong> {forLanguage(week.tip, lang)}</p>}
             <WeekDays week={week} {...shared} />
           </details>
         })}
@@ -273,9 +279,17 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
 }
 
 /** Study plans: the list at #plans and one plan at #plans/<id>. Plan content loads lazily; progress stays on this device. */
-export default function PlansScreen({ app, planId }: { app: AppModel; planId?: string }) {
+export default function PlansScreen({ app, planId, labId }: { app: AppModel; planId?: string; labId?: string }) {
   const [plans, setPlans] = useState<StudyPlan[]>()
   const [failed, setFailed] = useState(false)
+  const [labs, setLabs] = useState<MathLab[]>()
+  const wantsLabs = !!labId && planId === MATH_PLAN_ID
+  useEffect(() => {
+    if (!wantsLabs || labs) return
+    let live = true
+    loadMathLabs().then(list => { if (live) setLabs(list) }, () => { if (live) setFailed(true) })
+    return () => { live = false }
+  }, [wantsLabs, labs])
   const { state, update, error } = usePlanState()
   useEffect(() => {
     let live = true
@@ -283,10 +297,11 @@ export default function PlansScreen({ app, planId }: { app: AppModel; planId?: s
     return () => { live = false }
   }, [])
   // Lazy screen: focus our own heading once the content is in.
-  useEffect(() => { if (plans) app.heading.current?.focus() }, [app.heading, plans, planId])
+  const ready = !!plans && (!wantsLabs || !!labs)
+  useEffect(() => { if (ready) app.heading.current?.focus() }, [app.heading, ready, planId, labId])
 
   if (failed) return <p className="alert" role="alert">Study plans could not load. Check your connection and reload.</p>
-  if (!plans) return <p role="status">Loading study plans…</p>
+  if (!plans || !ready) return <p role="status">{plans ? 'Loading the lab…' : 'Loading study plans…'}</p>
   const plan = planId ? plans.find(item => item.id === planId) : undefined
   const alert = error && <p className="alert" role="alert">{error}</p>
 
@@ -302,7 +317,7 @@ export default function PlansScreen({ app, planId }: { app: AppModel; planId?: s
         return <li key={item.id} className="card plans-card">
           <h2><a href={`#plans/${item.id}`}>{item.title}</a></h2>
           <p>{item.summary}</p>
-          <p className="muted">{weekCount(item)} weeks · about {item.hoursPerWeek} hours a week · {item.tracks.map(trackItem => trackItem.title).join(' or ')} track</p>
+          <p className="muted">{weekCount(item)} weeks · about {item.hoursPerWeek} hours a week{item.tracks.length ? ` · ${item.tracks.map(trackItem => trackItem.title).join(' or ')} track` : ''}{item.languages.length === 1 ? ` · ${languageLabel(item.languages[0])}` : ''}</p>
           {entry?.start && <><p className="plans-count"><span>{counts.done} of {counts.total} tasks done</span><span className="muted">Started {displayDate(entry.start)}</span></p><progress max={counts.total} value={counts.done} aria-label={`${item.title} progress`} /></>}
         </li>
       })}</ul>
@@ -315,6 +330,11 @@ export default function PlansScreen({ app, planId }: { app: AppModel; planId?: s
 
   const entry = progressFor(state, plan.id)
   const save = (change: (entry: PlanProgress) => PlanProgress) => update(current => withPlan(current, plan.id, change))
+  if (labId) {
+    const lab = labs?.find(item => item.id === labId)
+    if (!lab || !labs) return <><div className="page-heading"><div><div className="eyebrow">MATH LAB</div><h1 ref={app.heading} tabIndex={-1}>Lab not found</h1></div></div><p>That lab does not exist. <a href={`#plans/${plan.id}`}>Back to {plan.title}</a></p></>
+    return <>{alert}<Suspense fallback={<p role="status">Loading the lab…</p>}><MathLabView key={lab.id} app={app} plan={plan} lab={lab} labs={labs} entry={entry} save={save} /></Suspense></>
+  }
   return <>
     <div className="page-heading"><div><div className="eyebrow">STUDY PLAN</div><h1 ref={app.heading} tabIndex={-1}>{plan.title}</h1>
       <p className="helper">{plan.summary}</p>

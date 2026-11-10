@@ -1,0 +1,113 @@
+{
+  "id": "cosine-similarity",
+  "title": "Cosine similarity for embeddings",
+  "topic": "linear-algebra",
+  "minutes": 35,
+  "summary": "Compare two vectors by direction, not size: the score behind semantic search and retrieval.",
+  "intro": [
+    "The **dot product** a · b multiplies matching entries and adds them up. It equals ‖a‖ ‖b‖ cos θ, where θ is the angle between the vectors.",
+    "Dividing by both lengths leaves cos θ: **cosine similarity**. It is 1 when the vectors point the same way, 0 when they are at right angles, and −1 when they point in opposite directions. Scaling a vector does not change it, which is why retrieval systems use it to compare text embeddings of different magnitudes.",
+    "Many systems normalise embeddings to length 1 once, at write time. Then cosine similarity is just a dot product, and a whole batch is one matrix multiply."
+  ],
+  "formula": "cos(a, b) = (a · b) / (‖a‖₂ ‖b‖₂)",
+  "prompt": "Write `cosine_similarity(a, b)` for two equal-length lists. If either vector is all zeros, return `0.0` instead of dividing by zero.",
+  "function": "cosine_similarity",
+  "starter": "import numpy as np\n\ndef cosine_similarity(a, b):\n    a = np.asarray(a, dtype=float)\n    b = np.asarray(b, dtype=float)\n    # Dot product divided by both lengths; 0.0 if either length is 0.\n    return a @ b\n",
+  "solution": "import numpy as np\n\ndef cosine_similarity(a, b):\n    a = np.asarray(a, dtype=float)\n    b = np.asarray(b, dtype=float)\n    na, nb = np.linalg.norm(a), np.linalg.norm(b)\n    if na == 0 or nb == 0:\n        return 0.0\n    return float(a @ b / (na * nb))\n",
+  "tests": [
+    {
+      "args": [
+        [
+          1,
+          0
+        ],
+        [
+          0,
+          1
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          3
+        ],
+        [
+          2,
+          4,
+          6
+        ]
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        [
+          1,
+          0
+        ],
+        [
+          -1,
+          0
+        ]
+      ],
+      "expected": -1
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          3,
+          4
+        ],
+        [
+          4,
+          3
+        ]
+      ],
+      "expected": 0.96
+    },
+    {
+      "args": [
+        [
+          0,
+          0
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        [
+          1,
+          2,
+          2
+        ],
+        [
+          2,
+          1,
+          -2
+        ]
+      ],
+      "expected": 0
+    }
+  ],
+  "hints": [
+    "`a @ b` is the dot product of two 1-D arrays.",
+    "`np.linalg.norm(a)` is the L2 length.",
+    "Check for a zero length before you divide."
+  ],
+  "explanation": "`[1, 2, 3]` and `[2, 4, 6]` point the same way, so the score is 1 even though one is twice as long. For `[3, 4]` and `[4, 3]`, the dot product is 24 and both lengths are 5, so the score is 24 / 25 = 0.96. Guarding the zero vector matters in practice: an empty document can embed to zeros.",
+  "lessons": [
+    "ai-tokenization-embeddings",
+    "ai-rag"
+  ]
+}

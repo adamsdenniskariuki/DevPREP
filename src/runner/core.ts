@@ -18,6 +18,16 @@ export interface RunRequest {
   cases: ProblemTest[]
   /** TypeScript only: type-level assertions compiled after the code. They never run; they must type-check. */
   typeChecks?: string
+  /** Numbers (anywhere in the result) pass when within this tolerance of the expected value, like math.isclose. */
+  tolerance?: Tolerance
+  /** Python only: allowlisted packages (see pyodide-version.ts) the worker loads before running the code. */
+  packages?: string[]
+}
+
+/** Relative and absolute tolerance for comparing numbers: |a - b| <= max(rel * max(|a|, |b|), abs). */
+export interface Tolerance {
+  rel?: number
+  abs?: number
 }
 
 /** Outcome of an exercise's type checks. Error lines are relative to the type-check block. */
@@ -53,6 +63,26 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && deepEqual(left[key], right[key]))
 }
 
+/** Like deepEqual, but numbers match when close (math.isclose semantics). Integers and floats compare by value. */
+export function approxEqual(a: unknown, b: unknown, { rel = 1e-9, abs = 0 }: Tolerance = {}): boolean {
+  if (typeof a === 'number' && typeof b === 'number') {
+    if (a === b) return true
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false
+    return Math.abs(a - b) <= Math.max(rel * Math.max(Math.abs(a), Math.abs(b)), abs)
+  }
+  if (a === b) return true
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  if (Array.isArray(a)) {
+    const other = b as unknown[]
+    return a.length === other.length && a.every((item, index) => approxEqual(item, other[index], { rel, abs }))
+  }
+  const left = a as Record<string, unknown>
+  const right = b as Record<string, unknown>
+  const keys = Object.keys(left)
+  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && approxEqual(left[key], right[key], { rel, abs }))
+}
+
 export function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}… (${text.length - limit} more characters)` : text
 }
@@ -77,9 +107,12 @@ export function formatArgs(args: unknown[], lang: CodeLanguage, limit = RESULT_P
   return truncate(args.map(arg => formatValue(arg, lang, Infinity)).join(', '), limit)
 }
 
-export function isPassing(outcome: CaseOutcome, expected: unknown): boolean {
+export function isPassing(outcome: CaseOutcome, expected: unknown, tolerance?: Tolerance): boolean {
   if (outcome.error !== undefined || outcome.actual === undefined) return false
-  return deepEqual(JSON.parse(outcome.actual), expected)
+  let actual: unknown
+  // Python may print NaN or Infinity, which JSON cannot hold: that never matches.
+  try { actual = JSON.parse(outcome.actual) } catch { return false }
+  return tolerance ? approxEqual(actual, expected, tolerance) : deepEqual(actual, expected)
 }
 
 const now = () => (typeof performance === 'undefined' ? Date.now() : performance.now())
@@ -179,8 +212,14 @@ def _devprep_define(code, name):
         raise NameError(f"Define a function named {name}.")
     return fn
 
+def _devprep_plain(value):
+    # NumPy arrays and scalars (and anything else with tolist) become lists and Python numbers.
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
 def _devprep_call(fn, args_json):
-    return _devprep_json.dumps(fn(*_devprep_json.loads(args_json)))
+    return _devprep_json.dumps(fn(*_devprep_json.loads(args_json)), default=_devprep_plain)
 `
 
 /** Minimal surface of a Pyodide instance (lets tests drive Node Pyodide with the same code). */
@@ -200,7 +239,7 @@ export function pythonMessage(error: unknown): string {
 }
 
 /** Runs a Python solution with an initialised Pyodide (PY_HARNESS must already have run). */
-export function runPython(py: PythonRuntime, { code, name, cases }: RunRequest, flushOutput: () => string = () => ''): RunResponse {
+export function runPython(py: PythonRuntime, { code, name, cases, tolerance }: RunRequest, flushOutput: () => string = () => ''): RunResponse {
   const globals = py.globals as { get(name: string): unknown }
   const define = globals.get('_devprep_define') as PyCallable
   const call = globals.get('_devprep_call') as PyCallable
@@ -215,7 +254,7 @@ export function runPython(py: PythonRuntime, { code, name, cases }: RunRequest, 
       const started = now()
       try {
         const outcome: CaseOutcome = { pass: false, actual: call(fn, JSON.stringify(test.args)) as string, ms: now() - started }
-        outcome.pass = isPassing(outcome, test.expected)
+        outcome.pass = isPassing(outcome, test.expected, tolerance)
         return outcome
       } catch (error) {
         return { pass: false, error: pythonMessage(error), ms: now() - started }

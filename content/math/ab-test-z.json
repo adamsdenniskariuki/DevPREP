@@ -1,0 +1,101 @@
+{
+  "id": "ab-test-z",
+  "title": "A/B testing: the two-proportion z-test",
+  "topic": "statistics",
+  "minutes": 40,
+  "summary": "Decide whether a difference in conversion rates is likely to be real, with a pooled z-test.",
+  "intro": [
+    "In an A/B test, group A converts cₐ of nₐ users and group B converts c_b of n_b. Under the **null hypothesis** that both share one rate, we estimate that rate by pooling: p = (cₐ + c_b) / (nₐ + n_b).",
+    "The difference of the two rates then has standard error √(p(1 − p)(1/nₐ + 1/n_b)), and z = (p_b − pₐ) / SE. The two-sided **p-value** is the chance of a |z| at least this large if the null is true: erfc(|z| / √2).",
+    "A small p-value says the data would be surprising with no real difference. It does not measure the size or business value of the effect, and checking repeatedly while the test runs inflates false positives. Decide the sample size up front."
+  ],
+  "formula": "p = (cₐ + c_b)/(nₐ + n_b)     z = (c_b/n_b − cₐ/nₐ) / √(p(1−p)(1/nₐ + 1/n_b))     p-value = erfc(|z|/√2)",
+  "prompt": "Write `two_proportion_z_test(conv_a, n_a, conv_b, n_b)` that returns `[z, p_value]` for the pooled two-sided test, with z positive when B converts better.",
+  "function": "two_proportion_z_test",
+  "starter": "import math\n\ndef two_proportion_z_test(conv_a, n_a, conv_b, n_b):\n    pa, pb = conv_a / n_a, conv_b / n_b\n    # Pool the rate, compute the standard error, then z and erfc(|z| / sqrt(2)).\n    return [pb - pa, 1.0]\n",
+  "solution": "import math\n\ndef two_proportion_z_test(conv_a, n_a, conv_b, n_b):\n    pa, pb = conv_a / n_a, conv_b / n_b\n    pooled = (conv_a + conv_b) / (n_a + n_b)\n    se = math.sqrt(pooled * (1 - pooled) * (1 / n_a + 1 / n_b))\n    z = (pb - pa) / se\n    return [z, math.erfc(abs(z) / math.sqrt(2))]\n",
+  "tests": [
+    {
+      "args": [
+        200,
+        2000,
+        240,
+        2000
+      ],
+      "expected": [
+        2.02133664653,
+        0.043244928043
+      ]
+    },
+    {
+      "args": [
+        50,
+        1000,
+        50,
+        1000
+      ],
+      "expected": [
+        0,
+        1
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        120,
+        1000,
+        90,
+        1000
+      ],
+      "expected": [
+        -2.18826588462,
+        0.0286502403984
+      ]
+    },
+    {
+      "args": [
+        300,
+        5000,
+        380,
+        5000
+      ],
+      "expected": [
+        3.17780741784,
+        0.00148393281308
+      ]
+    }
+  ],
+  "hints": [
+    "Pool the conversions and users of both groups for p.",
+    "`math.sqrt(p * (1 - p) * (1 / n_a + 1 / n_b))` is the standard error.",
+    "`math.erfc(abs(z) / math.sqrt(2))` is the two-sided p-value."
+  ],
+  "explanation": "With 200 of 2,000 against 240 of 2,000, the pooled rate is 0.11 and the standard error is about 0.0099, so z ≈ 2.02 and p ≈ 0.043. That clears a 0.05 bar, but only just: a lift from 10% to 12% needs thousands of users per group to detect reliably.",
+  "lessons": [
+    "ml-evaluation-leakage"
+  ],
+  "diagram": {
+    "type": "bars",
+    "id": "ab-rates",
+    "title": "Conversion rate by group",
+    "alt": "Bar chart of an A/B test: group A converts 10 percent of 2,000 users and group B converts 12 percent of 2,000 users; the pooled rate is 11 percent.",
+    "caption": "A two-point lift on 2,000 users per group gives z ≈ 2.02 and a p-value of about 0.043.",
+    "unit": "% converted",
+    "bars": [
+      {
+        "label": "Group A",
+        "value": 10
+      },
+      {
+        "label": "Group B",
+        "value": 12,
+        "highlight": true
+      },
+      {
+        "label": "Pooled",
+        "value": 11
+      }
+    ]
+  }
+}

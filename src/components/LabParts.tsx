@@ -24,7 +24,7 @@ function displayLanguage(lab: LessonLab): CodeLanguage {
   return lab.lang === 'py' ? 'py' : 'js'
 }
 const DOWNLOAD_NOTE = { py: ' Python’s first run downloads about 13 MB, then works offline.', ts: ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline.' } as const
-const LOADING_LABEL: Partial<Record<RunPhase, string>> = { 'loading-python': 'Loading Python…', 'loading-typescript': 'Loading TypeScript…', running: 'Running…' }
+const LOADING_LABEL: Partial<Record<RunPhase, string>> = { 'loading-python': 'Loading Python…', 'loading-numpy': 'Loading Python and NumPy…', 'loading-typescript': 'Loading TypeScript…', running: 'Running…' }
 const LANGUAGE_NAME = { py: 'Python', ts: 'TypeScript' } as const
 
 /** A lab diagram, numbered by its place in the lab. */

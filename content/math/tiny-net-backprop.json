@@ -1,0 +1,329 @@
+{
+  "id": "tiny-net-backprop",
+  "title": "Backpropagation through a tiny network",
+  "topic": "calculus",
+  "minutes": 50,
+  "summary": "Run the chain rule backwards through a one-hidden-layer network and return every gradient.",
+  "intro": [
+    "A network is a chain of simple functions. Here: z = W₁x, h = tanh(z), ŷ = w₂ · h, and loss L = ½(ŷ − y)². **Backpropagation** applies the chain rule from the loss back to each weight, reusing work as it goes.",
+    "Start with e = ∂L/∂ŷ = ŷ − y. Then ∂L/∂w₂ = e · h and ∂L/∂h = e · w₂. Through tanh, whose derivative is 1 − tanh², ∂L/∂z = (∂L/∂h) ⊙ (1 − h²). Finally ∂L/∂W₁ is the outer product of ∂L/∂z with x.",
+    "Every gradient has the same shape as the thing it differentiates: dW₁ matches W₁. A central-difference gradient check, from the derivatives lab, confirms each entry."
+  ],
+  "formula": "e = ŷ − y     dw₂ = e h     dz = (e w₂) ⊙ (1 − h²)     dW₁ = dz xᵀ",
+  "prompt": "Write `backprop(x, y, W1, w2)` that runs the forward pass and returns a dict with keys `loss`, `dW1` (same shape as W1) and `dw2` (same shape as w2).",
+  "function": "backprop",
+  "starter": "import numpy as np\n\ndef backprop(x, y, W1, w2):\n    x, W1, w2 = np.asarray(x, float), np.asarray(W1, float), np.asarray(w2, float)\n    h = np.tanh(W1 @ x)\n    y_hat = w2 @ h\n    loss = 0.5 * (y_hat - y) ** 2\n    # Work backwards: e, then dw2, then dz, then dW1.\n    return {\"loss\": loss, \"dW1\": np.zeros_like(W1), \"dw2\": np.zeros_like(w2)}\n",
+  "solution": "import numpy as np\n\ndef backprop(x, y, W1, w2):\n    x, W1, w2 = np.asarray(x, float), np.asarray(W1, float), np.asarray(w2, float)\n    h = np.tanh(W1 @ x)\n    y_hat = w2 @ h\n    loss = 0.5 * (y_hat - y) ** 2\n    e = y_hat - y\n    dw2 = e * h\n    dz = e * w2 * (1 - h ** 2)\n    dW1 = np.outer(dz, x)\n    return {\"loss\": loss, \"dW1\": dW1, \"dw2\": dw2}\n",
+  "tests": [
+    {
+      "args": [
+        [
+          1,
+          2
+        ],
+        1,
+        [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        [
+          1,
+          -1
+        ]
+      ],
+      "expected": {
+        "loss": 0.5,
+        "dW1": [
+          [
+            -1,
+            -2
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        "dw2": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "args": [
+        [
+          0.5,
+          -1
+        ],
+        0.3,
+        [
+          [
+            0.2,
+            -0.4
+          ],
+          [
+            0.7,
+            0.1
+          ]
+        ],
+        [
+          1.5,
+          -0.8
+        ]
+      ],
+      "expected": {
+        "loss": 0.0194519677693,
+        "dW1": [
+          [
+            0.116339688526,
+            -0.232679377052
+          ],
+          [
+            -0.0741637145598,
+            0.14832742912
+          ]
+        ],
+        "dw2": [
+          0.0911483605492,
+          0.0483079543689
+        ]
+      }
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1,
+          0,
+          -1
+        ],
+        -0.5,
+        [
+          [
+            0.1,
+            0.2,
+            0.3
+          ],
+          [
+            -0.3,
+            0.5,
+            0.2
+          ],
+          [
+            0.4,
+            -0.1,
+            0
+          ]
+        ],
+        [
+          0.6,
+          -1.2,
+          0.9
+        ]
+      ],
+      "expected": {
+        "loss": 0.816730775624,
+        "dW1": [
+          [
+            0.736967813269,
+            0,
+            -0.736967813269
+          ],
+          [
+            -1.20616179773,
+            0,
+            1.20616179773
+          ],
+          [
+            0.984209223161,
+            0,
+            -0.984209223161
+          ]
+        ],
+        "dw2": [
+          -0.252259369452,
+          -0.590617826841,
+          0.485601166008
+        ]
+      }
+    },
+    {
+      "args": [
+        [
+          2
+        ],
+        0.5,
+        [
+          [
+            0.5
+          ]
+        ],
+        [
+          1
+        ]
+      ],
+      "expected": {
+        "loss": 0.0342157512151,
+        "dW1": [
+          [
+            0.219725666835
+          ]
+        ],
+        "dw2": [
+          0.199228580408
+        ]
+      }
+    }
+  ],
+  "hints": [
+    "Keep h from the forward pass; you need it twice.",
+    "tanh′(z) = 1 − tanh(z)², so use `1 - h ** 2`.",
+    "`np.outer(dz, x)` builds dW1 with the shape of W1."
+  ],
+  "explanation": "With zero first-layer weights, h = 0, so ŷ = 0, e = −1 and L = 0.5. Then dw₂ = e · h = 0, while dz = −1 × [1, −1] × 1 = [−1, 1] and dW₁ = [[−1, −2], [1, 2]]. Moving W₁ against that gradient makes the hidden units useful. The test values were verified with central differences.",
+  "lessons": [
+    "ml-neural-networks"
+  ],
+  "diagram": {
+    "type": "flow",
+    "id": "tiny-net-graph",
+    "title": "Forward and backward through a tiny network",
+    "alt": "Computation graph: input x feeds z = W1 x, then h = tanh(z), then the prediction y-hat = w2 dot h, then the loss. Backward arrows run from the loss back through y-hat and h to z, producing the gradients dw2 and dW1.",
+    "caption": "The forward pass runs left to right; backprop retraces it right to left, multiplying local derivatives as it goes.",
+    "nodes": [
+      {
+        "id": "x",
+        "label": "x",
+        "kind": "client",
+        "col": 0,
+        "row": 1,
+        "sub": "input"
+      },
+      {
+        "id": "z",
+        "label": "z = W1 x",
+        "kind": "service",
+        "col": 1,
+        "row": 1
+      },
+      {
+        "id": "h",
+        "label": "h = tanh(z)",
+        "kind": "service",
+        "col": 2,
+        "row": 1
+      },
+      {
+        "id": "yhat",
+        "label": "ŷ = w2 · h",
+        "kind": "service",
+        "col": 3,
+        "row": 1
+      },
+      {
+        "id": "loss",
+        "label": "L = ½(ŷ − y)²",
+        "kind": "state",
+        "col": 4,
+        "row": 1
+      },
+      {
+        "id": "dW1",
+        "label": "dW1 = dz xᵀ",
+        "kind": "good",
+        "col": 1,
+        "row": 3
+      },
+      {
+        "id": "dw2",
+        "label": "dw2 = e h",
+        "kind": "good",
+        "col": 3,
+        "row": 3
+      }
+    ],
+    "edges": [
+      {
+        "from": "x",
+        "to": "z",
+        "style": "sync"
+      },
+      {
+        "from": "z",
+        "to": "h",
+        "style": "sync"
+      },
+      {
+        "from": "h",
+        "to": "yhat",
+        "style": "sync"
+      },
+      {
+        "from": "yhat",
+        "to": "loss",
+        "style": "sync"
+      },
+      {
+        "from": "loss",
+        "to": "yhat",
+        "label": "e = ŷ − y",
+        "style": "reply"
+      },
+      {
+        "from": "yhat",
+        "to": "h",
+        "label": "e · w2",
+        "style": "reply"
+      },
+      {
+        "from": "h",
+        "to": "z",
+        "label": "× (1 − h²)",
+        "style": "reply"
+      },
+      {
+        "from": "yhat",
+        "to": "dw2",
+        "style": "reply"
+      },
+      {
+        "from": "z",
+        "to": "dW1",
+        "style": "reply"
+      }
+    ],
+    "steps": [
+      {
+        "edges": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "text": "Forward: compute z, h, the prediction and the loss, keeping h for later."
+      },
+      {
+        "edges": [
+          4,
+          5,
+          6
+        ],
+        "text": "Backward: start from e = ŷ − y and multiply by each local derivative on the way back."
+      },
+      {
+        "edges": [
+          7,
+          8
+        ],
+        "text": "Gradients: each weight’s gradient is the incoming error times the input it multiplied."
+      }
+    ]
+  }
+}
