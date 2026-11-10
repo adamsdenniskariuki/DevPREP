@@ -119,6 +119,7 @@ function ErrorLog({ entry, today, save }: { entry: PlanProgress; today: string; 
 
 interface ScoreDraft { kind: ScoreKind; title: string; scores: Scorecard['scores']; notes: string }
 const blankScore = (): ScoreDraft => ({ kind: 'dsa', title: '', scores: [2, 2, 2, 2], notes: '' })
+const SCORE_PLACEHOLDERS: Record<ScoreKind, string> = { dsa: 'e.g. Course schedule', design: 'e.g. Document Q&A copilot', case: 'e.g. AI for a support inbox' }
 
 function Scorecards({ entry, today, save }: { entry: PlanProgress; today: string; save: (change: (entry: PlanProgress) => PlanProgress) => void }) {
   const [draft, setDraft] = useState<ScoreDraft>(blankScore)
@@ -147,7 +148,7 @@ function Scorecards({ entry, today, save }: { entry: PlanProgress; today: string
         <legend>Kind of mock</legend>
         {(Object.keys(SCORE_AREAS) as ScoreKind[]).map(kind => <label key={kind}><input type="radio" name="score-kind" value={kind} checked={draft.kind === kind} onChange={() => setDraft(current => ({ ...current, kind }))} /> {SCORE_KIND_LABELS[kind]}</label>)}
       </fieldset>
-      <label className="plans-field">Mock (required)<input value={draft.title} maxLength={MAX_FIELD} placeholder={draft.kind === 'dsa' ? 'e.g. Course schedule' : 'e.g. Document Q&A copilot'} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} /></label>
+      <label className="plans-field">Mock (required)<input value={draft.title} maxLength={MAX_FIELD} placeholder={SCORE_PLACEHOLDERS[draft.kind]} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} /></label>
       <div className="plans-score-grid">
         {SCORE_AREAS[draft.kind].map((area, index) => <label key={area} className="plans-field">{area}
           <select value={draft.scores[index]} onChange={event => setDraft(current => {

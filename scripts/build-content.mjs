@@ -129,7 +129,7 @@ export function problemCard(problem) {
 export const GUIDES_OUTPUT = 'src/generated/guides.json'
 export const GUIDE_INDEX_OUTPUT = 'src/generated/guide-index.json'
 /** Must match TOPIC_TRACK in src/guide-types.ts (checked by a test). */
-export const GUIDE_TOPIC_TRACK = { api: 'system-design', 'system-design': 'system-design', algorithms: 'dsa', 'code-quality': 'dsa', testing: 'dsa', security: 'system-design', databases: 'system-design', 'ml-production': 'ml', 'llm-apps': 'ai' }
+export const GUIDE_TOPIC_TRACK = { api: 'system-design', 'system-design': 'system-design', algorithms: 'dsa', 'code-quality': 'dsa', testing: 'dsa', security: 'system-design', databases: 'system-design', 'ml-production': 'ml', 'llm-apps': 'ai', 'customer-engineering': 'system-design' }
 
 export function buildGuides(root = 'content') {
   const dir = join(root, 'field-guide')

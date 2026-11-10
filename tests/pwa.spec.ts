@@ -293,6 +293,13 @@ for (const mount of mounts) {
       await offline.getByRole('button', { name: 'Start today' }).click()
       await offline.locator('#item-w1-d1-1').check()
       await expect.poll(() => offline.evaluate(() => JSON.parse(localStorage.getItem('devprep.plans.v1') ?? '{}')['applied-ai-ml-10wk']?.done?.['w1-d1-1'])).toBeTruthy()
+      await offline.goto(`${mount}#plans/forward-deployed-engineer-8wk`)
+      await expect(offline.getByRole('heading', { level: 1, name: '8-week Forward Deployed Engineer plan' })).toBeVisible()
+      await offline.getByRole('button', { name: 'Start today' }).click()
+      await offline.locator('#item-w1-d2-1').check()
+      await expect.poll(() => offline.evaluate(() => JSON.parse(localStorage.getItem('devprep.plans.v1') ?? '{}')['forward-deployed-engineer-8wk']?.done?.['w1-d2-1'])).toBeTruthy()
+      await offline.goto(`${mount}#guide/customer-discovery-scoping`)
+      await expect(offline.getByRole('heading', { level: 1, name: 'Customer discovery: scope the real problem before you build' })).toBeVisible()
     })
 
     test('after one online visit a timed practice board opens, draws and reviews offline', async ({ page, context }) => {

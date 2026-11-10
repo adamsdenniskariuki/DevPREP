@@ -1,6 +1,6 @@
 import type { Track } from './curriculum-types'
 
-export const GUIDE_TOPICS = ['api', 'system-design', 'algorithms', 'code-quality', 'testing', 'security', 'databases', 'ml-production', 'llm-apps'] as const
+export const GUIDE_TOPICS = ['api', 'system-design', 'algorithms', 'code-quality', 'testing', 'security', 'databases', 'ml-production', 'llm-apps', 'customer-engineering'] as const
 export type GuideTopic = typeof GUIDE_TOPICS[number]
 export const TOPIC_LABELS: Record<GuideTopic, string> = {
   api: 'API design',
@@ -12,6 +12,7 @@ export const TOPIC_LABELS: Record<GuideTopic, string> = {
   databases: 'Databases',
   'ml-production': 'ML in production',
   'llm-apps': 'LLM apps',
+  'customer-engineering': 'Customer engineering',
 }
 /** The study track each topic feeds: its quiz cards join that flashcard deck and its practice prompt joins that mock. */
 export const TOPIC_TRACK: Record<GuideTopic, Track> = {
@@ -24,6 +25,7 @@ export const TOPIC_TRACK: Record<GuideTopic, Track> = {
   databases: 'system-design',
   'ml-production': 'ml',
   'llm-apps': 'ai',
+  'customer-engineering': 'system-design',
 }
 
 export type GuideLevel = 'se' | 'sse'

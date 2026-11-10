@@ -112,12 +112,13 @@ export const ENTRY_ID = /^[a-z0-9-]{1,64}$/
 export type CheckResult = 'pass' | 'fail'
 /** One miss: what you were solving, the pattern it needed, why you missed it and what you will do differently. */
 export interface ErrorEntry { id: string; at: string; problem: string; pattern: string; why: string; fix: string }
-export type ScoreKind = 'dsa' | 'design'
+export type ScoreKind = 'dsa' | 'design' | 'case'
 export const SCORE_AREAS: Record<ScoreKind, readonly [string, string, string, string]> = {
   dsa: ['Communication', 'Correctness', 'Complexity', 'Testing'],
   design: ['Requirements', 'Design', 'Depth', 'Trade-offs'],
+  case: ['Problem framing', 'Decomposition', 'Technical depth', 'Communication'],
 }
-export const SCORE_KIND_LABELS: Record<ScoreKind, string> = { dsa: 'Coding', design: 'System design' }
+export const SCORE_KIND_LABELS: Record<ScoreKind, string> = { dsa: 'Coding', design: 'System design', case: 'Customer case' }
 /** A mock interview scorecard, each area scored 1–4. */
 export interface Scorecard { id: string; at: string; kind: ScoreKind; title: string; scores: [number, number, number, number]; notes: string }
 export interface PlanProgress {
@@ -164,9 +165,9 @@ function parseScore(value: unknown): Scorecard {
   only(value, ['id', 'at', 'kind', 'title', 'scores', 'notes'], 'a scorecard')
   if (typeof value.id !== 'string' || !ENTRY_ID.test(value.id)) invalid('a scorecard has an invalid id.')
   if (!isDay(value.at)) invalid('a scorecard has an invalid date.')
-  if (value.kind !== 'dsa' && value.kind !== 'design') invalid('a scorecard has an unknown kind.')
+  if (typeof value.kind !== 'string' || !Object.keys(SCORE_AREAS).includes(value.kind)) invalid('a scorecard has an unknown kind.')
   if (!Array.isArray(value.scores) || value.scores.length !== 4 || value.scores.some(score => !Number.isInteger(score) || score < 1 || score > 4)) invalid('scorecard scores must be four whole numbers from 1 to 4.')
-  return { id: value.id, at: value.at, kind: value.kind, title: field(value.title, MAX_FIELD, 'a scorecard title'), scores: value.scores as Scorecard['scores'], notes: field(value.notes ?? '', MAX_NOTES, 'scorecard notes', false) }
+  return { id: value.id, at: value.at, kind: value.kind as ScoreKind, title: field(value.title, MAX_FIELD, 'a scorecard title'), scores: value.scores as Scorecard['scores'], notes: field(value.notes ?? '', MAX_NOTES, 'scorecard notes', false) }
 }
 
 function parseOne(value: unknown, id: string): PlanProgress {

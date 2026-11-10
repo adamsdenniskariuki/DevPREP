@@ -1,0 +1,68 @@
+{
+  "id": "latest-customer-records",
+  "title": "Clean a customer export",
+  "pattern": "Arrays & hashing",
+  "level": "se",
+  "difficulty": "core",
+  "prompt": "A customer sends you a contact export to load into the new system. It was merged from several old tools, so the same person appears more than once, emails have stray spaces and mixed capital letters, and some rows have no usable email at all.\n\nEach row is [id, email, updated]: a whole-number id, the raw email text, and the day number the row was last edited. Return one row per real email.\n\n- Normalise an email by trimming spaces, tabs and newlines from both ends and lower-casing it.\n- Skip a row whose normalised email is empty or has no \"@\".\n- For each normalised email keep the row with the largest updated value. On a tie keep the larger id (it was loaded later).\n- Return [email, id] pairs, using the normalised email, sorted by email.\n- rows has 0 to 100,000 rows; ids are unique.",
+  "function": {
+    "js": "latestRecords",
+    "py": "latest_records"
+  },
+  "starter": {
+    "js": "function latestRecords(rows) {\n  // Your code here\n}\n",
+    "py": "def latest_records(rows):\n    # Your code here\n    pass\n"
+  },
+  "tests": [
+    {
+      "args": [[[1, " Ana@Mail.test", 3], [2, "ana@mail.test", 5], [3, "ben@mail.test", 1]]],
+      "expected": [["ana@mail.test", 2], ["ben@mail.test", 3]]
+    },
+    {
+      "args": [[[4, "", 2], [5, "   ", 1], [6, "no-at-sign", 3], [7, "cy@mail.test", 2]]],
+      "expected": [["cy@mail.test", 7]]
+    },
+    {
+      "args": [[]],
+      "expected": []
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [[[10, "dee@mail.test", 4], [12, "DEE@mail.test", 4], [11, "dee@mail.test ", 4]]],
+      "expected": [["dee@mail.test", 12]]
+    },
+    {
+      "args": [[[1, "eve@mail.test", 9], [2, "eve@mail.test", 3]]],
+      "expected": [["eve@mail.test", 1]]
+    },
+    {
+      "args": [[[1, "zed@mail.test", 1], [2, "amy@mail.test", 1], [3, "Max@mail.test", 2], [4, "max@mail.test", 1]]],
+      "expected": [["amy@mail.test", 2], ["max@mail.test", 3], ["zed@mail.test", 1]]
+    },
+    {
+      "args": [[[42, "\tsolo@mail.test\n", 0]]],
+      "expected": [["solo@mail.test", 42]]
+    }
+  ],
+  "hints": [
+    "Decide on the key first: two rows are the same customer when their normalised emails match. Normalise once per row.",
+    "Keep a hash map from normalised email to the best row seen so far, and replace it when a row is newer, or equally new with a larger id.",
+    "Comparing (updated, id) pairs handles the tie-break in one step. Sort the map's keys at the end for the output order."
+  ],
+  "solution": {
+    "js": "function latestRecords(rows) {\n  const best = new Map()\n  for (const [id, email, updated] of rows) {\n    const key = email.trim().toLowerCase()\n    if (!key.includes('@')) continue\n    const kept = best.get(key)\n    if (!kept || updated > kept.updated || (updated === kept.updated && id > kept.id)) best.set(key, { id, updated })\n  }\n  return [...best.keys()].sort().map(key => [key, best.get(key).id])\n}\n",
+    "py": "def latest_records(rows):\n    best = {}\n    for row_id, email, updated in rows:\n        key = email.strip().lower()\n        if \"@\" not in key:\n            continue\n        kept = best.get(key)\n        if kept is None or (updated, row_id) > kept:\n            best[key] = (updated, row_id)\n    return [[key, best[key][1]] for key in sorted(best)]\n",
+    "explanation": "This is deduplication by a normalised key, the first step of most data loads. One pass builds a map from the cleaned email to the winning row, comparing (updated, id) so the newest row wins and ties go to the later load. Rows without a usable email are dropped before they can create a bogus group. Sorting the surviving keys gives a deterministic output, which also makes a re-run of the load produce the same result."
+  },
+  "complexity": {
+    "time": "O(n · L + u log u)",
+    "space": "O(u)",
+    "notes": "n rows of email length L, u distinct emails. Without the sorted output the work is linear."
+  },
+  "followUps": [
+    "Two rows have different emails but the same phone number. How would you merge customers that share any identifier?",
+    "The export arrives every night. How would you make loading it idempotent, so running it twice changes nothing?",
+    "How would you report the skipped rows back to the customer so they can fix them at the source?"
+  ]
+}

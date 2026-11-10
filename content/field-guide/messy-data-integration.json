@@ -1,0 +1,212 @@
+{
+  "id": "messy-data-integration",
+  "kind": "guide",
+  "topic": "customer-engineering",
+  "level": "se",
+  "title": "Messy data integration: loads you can safely run twice",
+  "summary": "Land customer data raw, validate and normalise it, deduplicate on cleaned keys, upsert idempotently and report rejected rows back, so a re-run never doubles anything.",
+  "minutes": 15,
+  "principle": "Treat every customer feed as untrusted and every load as something that will be re-run. Keep the raw copy, normalise keys before you join or deduplicate, upsert on a stable key so a second run changes nothing, and send rejected rows back with a reason instead of silently dropping them.",
+  "why": "Customer data rarely matches the documentation. Columns get renamed between exports, dates switch format halfway through a file, the same customer appears under \" Ana@Mail.test\" and \"ana@mail.test\", and join keys carry leading zeros in one system and not the other. On top of that, loads fail halfway: a timeout, a bad row, a laptop that went to sleep. If your load appends blindly, the retry doubles the data and every number downstream is wrong.\n\nThe fix is a small set of habits that interviewers for data-heavy, customer-facing roles look for: land the raw file untouched so you can replay it, validate the schema before transforming, normalise keys once in one place, make the write idempotent (upsert or replace a partition), and count what went in, what came out and what was rejected. These habits work the same in a Python script, a SQL transformation or a managed pipeline tool.",
+  "diagrams": [
+    {
+      "id": "mdi-pipeline",
+      "type": "flow",
+      "title": "A load that survives messy input",
+      "alt": "Flow diagram of a data load. A customer file lands unchanged in raw storage, then goes through schema validation, normalisation of keys and formats, deduplication, and an idempotent upsert into the target table. Rows that fail validation branch to a rejects file that is reported back to the customer.",
+      "caption": "Every stage is repeatable from the raw copy. Rejects are a product, not a log line.",
+      "nodes": [
+        { "id": "src", "label": "Customer file", "kind": "external", "col": 0, "row": 0, "sub": "CSV, API, export" },
+        { "id": "raw", "label": "Raw landing", "kind": "storage", "col": 1, "row": 0, "sub": "never edited" },
+        { "id": "check", "label": "Validate", "kind": "decision", "col": 2, "row": 0, "sub": "schema, types" },
+        { "id": "norm", "label": "Normalise", "kind": "worker", "col": 3, "row": 0, "sub": "keys, dates, case" },
+        { "id": "dedupe", "label": "Deduplicate", "kind": "worker", "col": 4, "row": 0, "sub": "latest per key" },
+        { "id": "upsert", "label": "Upsert", "kind": "db", "col": 4, "row": 2, "sub": "on stable key" },
+        { "id": "rejects", "label": "Rejects report", "kind": "bad", "col": 2, "row": 2, "sub": "row + reason" }
+      ],
+      "edges": [
+        { "from": "src", "to": "raw", "label": "copy as is" },
+        { "from": "raw", "to": "check" },
+        { "from": "check", "to": "norm", "label": "valid rows" },
+        { "from": "norm", "to": "dedupe" },
+        { "from": "dedupe", "to": "upsert" },
+        { "from": "check", "to": "rejects", "label": "bad rows", "style": "fail" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Copy the file into raw storage unchanged, with the load time and source name. Every later step can be replayed from here." },
+        { "edges": [1, 5], "text": "Validate the schema and types. Rows that fail go to a rejects report with the reason, so the customer can fix them at the source." },
+        { "edges": [2, 3], "text": "Normalise keys and formats in one place (trim, lower-case, strip leading zeros, parse dates), then keep one row per key." },
+        { "edges": [4], "text": "Upsert on a stable key so that running the same load twice leaves the target unchanged." }
+      ]
+    },
+    {
+      "id": "mdi-append-vs-upsert",
+      "type": "compare",
+      "title": "Re-running a failed load",
+      "alt": "Side-by-side comparison of re-running a load after a failure. On the left, an append-only load inserts the first half of the rows again, leaving duplicates in the target. On the right, an upsert keyed on customer id updates existing rows and inserts only new ones, so the target is correct.",
+      "caption": "The retry is the normal case, not the exception. Design the write for it.",
+      "before": {
+        "label": "Append: retry doubles rows",
+        "nodes": [
+          { "id": "run", "label": "Load re-run", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "ins", "label": "INSERT all", "kind": "service", "col": 1, "row": 0 },
+          { "id": "dup", "label": "Duplicates", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "run", "to": "ins" },
+          { "from": "ins", "to": "dup", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Upsert: retry is a no-op",
+        "nodes": [
+          { "id": "run", "label": "Load re-run", "kind": "worker", "col": 0, "row": 0 },
+          { "id": "up", "label": "Upsert on key", "kind": "service", "col": 1, "row": 0 },
+          { "id": "ok", "label": "Same result", "kind": "good", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "run", "to": "up" },
+          { "from": "up", "to": "ok" }
+        ]
+      }
+    },
+    {
+      "id": "mdi-drift-sequence",
+      "type": "sequence",
+      "title": "Catching schema drift before it corrupts data",
+      "alt": "Sequence diagram. The customer system sends a nightly export in which a column has been renamed. The loader compares the header with the expected contract, stops before writing, alerts the engineer and keeps the raw file. The engineer confirms the change with the customer, updates the mapping and replays the raw file.",
+      "caption": "Failing loudly on an unexpected header is better than loading a column of nulls for a week.",
+      "actors": [
+        { "id": "cust", "label": "Customer system" },
+        { "id": "load", "label": "Loader" },
+        { "id": "eng", "label": "Engineer" },
+        { "id": "db", "label": "Target table" }
+      ],
+      "messages": [
+        { "from": "cust", "to": "load", "label": "nightly export (email_addr)", "note": "Yesterday the column was called email. The loader compares the header with a small contract of expected columns and types." },
+        { "from": "load", "to": "eng", "label": "alert: unknown column", "style": "fail", "note": "Nothing has been written yet, and the raw file is kept." },
+        { "from": "eng", "to": "cust", "label": "is email_addr the new email?", "note": "Confirm with the owner instead of guessing." },
+        { "from": "cust", "to": "eng", "label": "yes, renamed in an upgrade", "style": "reply" },
+        { "from": "eng", "to": "load", "label": "map email_addr to email" },
+        { "from": "load", "to": "db", "label": "replay raw file, upsert", "note": "Idempotent, so replaying is safe." }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Normalise keys before you deduplicate",
+      "bad": {
+        "label": "Deduplicate on the raw value",
+        "lang": "py",
+        "code": "seen = {}\nfor row in rows:\n    seen[row[\"email\"]] = row   # ' Ana@Mail.test' and 'ana@mail.test' differ\nload(seen.values())"
+      },
+      "good": {
+        "label": "One normalise step, explicit tie-break, rejects kept",
+        "lang": "py",
+        "code": "def clean_email(value):\n    key = (value or \"\").strip().lower()\n    return key if \"@\" in key else None\n\nbest, rejects = {}, []\nfor row in rows:\n    key = clean_email(row[\"email\"])\n    if key is None:\n        rejects.append({**row, \"reason\": \"missing or invalid email\"})\n        continue\n    rank = (row[\"updated\"], row[\"id\"])\n    if key not in best or rank > best[key][0]:\n        best[key] = (rank, {**row, \"email\": key})\nupsert(\"customers\", [r for _, r in best.values()], key=\"email\")\nwrite_report(rejects)"
+      },
+      "why": "Normalising once means joins and deduplication agree on what \"the same customer\" means. The explicit (updated, id) rank makes the winner deterministic, and the rejects list turns silent data loss into a fixable report."
+    },
+    {
+      "title": "Make the write idempotent in SQL",
+      "bad": {
+        "label": "Append the batch",
+        "lang": "sql",
+        "code": "INSERT INTO customers (email, name, updated)\nSELECT email, name, updated FROM staging;"
+      },
+      "good": {
+        "label": "Upsert, and only move forward in time",
+        "lang": "sql",
+        "code": "INSERT INTO customers (email, name, updated)\nSELECT lower(trim(email)), name, updated FROM staging\nWHERE position('@' in email) > 0\nON CONFLICT (email) DO UPDATE\n  SET name = excluded.name, updated = excluded.updated\n  WHERE excluded.updated > customers.updated;"
+      },
+      "why": "The unique key on email makes a second run update instead of insert, and the WHERE on updated stops an older file from overwriting newer data if loads arrive out of order."
+    }
+  ],
+  "checklist": [
+    "The raw input is stored unchanged with its source and load time, so any load can be replayed.",
+    "The expected schema is written down, and an unexpected header or type stops the load before it writes.",
+    "Keys are normalised in exactly one function or SQL expression, used by every join and dedupe.",
+    "Duplicates are resolved with an explicit, deterministic rule (latest timestamp, then id).",
+    "The write is idempotent: an upsert on a stable key or an atomic replace of one partition.",
+    "Row counts in, out and rejected are logged for every run and checked against each other.",
+    "Rejected rows go back to the customer with a reason they can act on."
+  ],
+  "antipatterns": [
+    {
+      "title": "Silently dropping bad rows",
+      "bad": {
+        "label": "Swallow the error",
+        "lang": "py",
+        "code": "for row in rows:\n    try:\n        load_row(row)\n    except Exception:\n        pass"
+      },
+      "better": {
+        "label": "Count and report every reject",
+        "lang": "py",
+        "code": "rejects = []\nfor row in rows:\n    try:\n        load_row(row)\n    except ValueError as error:\n        rejects.append((row, str(error)))\nlog.info(\"loaded=%d rejected=%d\", len(rows) - len(rejects), len(rejects))\nwrite_report(rejects)"
+      },
+      "why": "A bare except hides both bad data and real bugs. Catch the specific error you expect, count rejects, and make the report part of the deliverable so the customer can fix the source."
+    },
+    {
+      "title": "Joining on dirty keys",
+      "bad": {
+        "label": "Raw keys from two systems",
+        "lang": "sql",
+        "code": "SELECT o.*, c.segment\nFROM orders o JOIN crm c ON o.customer_ref = c.account_no;\n-- '00042' never matches '42'"
+      },
+      "better": {
+        "label": "Join on the same normalised key",
+        "lang": "sql",
+        "code": "SELECT o.*, c.segment\nFROM orders o\nLEFT JOIN crm c\n  ON ltrim(trim(o.customer_ref), '0') = ltrim(trim(c.account_no), '0');\n-- then count orders with no match"
+      },
+      "why": "Inner joins on dirty keys lose rows without any error. Normalise both sides the same way, prefer a LEFT JOIN while exploring, and count unmatched rows so the gap is visible."
+    }
+  ],
+  "interview": [
+    "Before writing any transformation, ask what the key is, how duplicates should be resolved and what should happen to bad rows.",
+    "Say that you will keep the raw input and make the load idempotent, and explain why: retries and replays are routine.",
+    "When asked about scale, mention processing by partition (one day or one customer at a time) and replacing that partition atomically.",
+    "Close by describing how you would prove the load is right: row counts, a few spot checks with the customer and a rejects report."
+  ],
+  "quiz": [
+    {
+      "question": "A load failed halfway and you re-run it. Which write strategy keeps the target correct?",
+      "choices": ["Append every row again", "Upsert on a stable key", "Delete the whole table and reload without a transaction"],
+      "answer": 1,
+      "explain": "An upsert on a stable key updates rows already loaded and inserts the rest, so a re-run leaves the same result. Appending duplicates rows."
+    },
+    {
+      "question": "Why keep an unchanged copy of the raw input?",
+      "choices": ["To replay the load after fixing a bug or a mapping", "Raw files compress better", "Auditors require CSV format"],
+      "answer": 0,
+      "explain": "With the raw copy you can fix the transformation and replay it. Without it you must ask the customer to resend, and the original may be gone."
+    },
+    {
+      "question": "The nightly export suddenly has a renamed column. What should the loader do?",
+      "choices": ["Load the column as null and continue", "Guess the mapping from the column name", "Stop before writing, keep the raw file and alert someone"],
+      "answer": 2,
+      "explain": "Failing loudly on an unexpected schema protects the target. Loading nulls or guessing can corrupt data for days before anyone notices."
+    },
+    {
+      "question": "Orders store '00042' and the CRM stores '42'. What is the safest join?",
+      "choices": ["Join on the raw values", "Normalise both sides the same way and count unmatched rows", "Cast both to float"],
+      "answer": 1,
+      "explain": "One shared normalisation makes the keys agree, and counting unmatched rows shows whether anything still falls through."
+    }
+  ],
+  "practice": {
+    "prompt": "A customer sends a weekly CSV of 2 million product rows from three regional systems. Columns sometimes change, SKUs have inconsistent case and padding, and the same SKU can appear in more than one region file. Design the load into a single products table.",
+    "answer": "Land each file unchanged with region, file name and load time. Validate the header against a small contract (required columns, types); stop and alert on a mismatch. Normalise SKU with one function (trim, upper-case, strip padding) and parse prices and dates explicitly. Resolve duplicates with a written rule, for example the most recent updated time and then a region priority. Write with an upsert on the normalised SKU, guarded so older data cannot overwrite newer data, or replace a staging partition and swap it in atomically. Log counts in, loaded and rejected per region and compare with last week. Send a rejects file with row number and reason to the customer. Re-running the same week produces no changes.",
+    "rubric": [
+      "Keeps the raw input and can replay it",
+      "Validates the schema and fails loudly on drift",
+      "Normalises keys in one place and defines a deterministic dedupe rule",
+      "Makes the write idempotent",
+      "Tracks counts and reports rejected rows to the customer"
+    ]
+  },
+  "links": {
+    "lessons": ["sql-upserts", "py-errors-exceptions", "sql-dates-strings-json"],
+    "problems": ["latest-customer-records", "merge-contact-groups"],
+    "guides": ["idempotency-keys", "schema-migrations"]
+  }
+}

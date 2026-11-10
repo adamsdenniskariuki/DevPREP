@@ -1,0 +1,183 @@
+{
+  "id": "rapid-prototyping-demos",
+  "kind": "guide",
+  "topic": "customer-engineering",
+  "level": "se",
+  "title": "Rapid prototypes and demos that earn the next step",
+  "summary": "Build a thin vertical slice on the customer's real data in days, demo it against the agreed metric, and be honest about what is still faked.",
+  "minutes": 13,
+  "principle": "A prototype exists to answer one question for one audience. Build the thinnest slice that touches the real data and the real user, fake everything else on purpose, and end every demo with the evidence and a decision you are asking for.",
+  "why": "In customer-facing engineering, speed builds trust: a working slice in the first week or two shows the customer you understood them and gives them something concrete to react to. But fast work goes wrong in predictable ways. Demos built on hand-picked sample data impress in the room and collapse on real inputs. Prototypes quietly become production without tests, monitoring or security review. And a demo without a clear ask ends with \"looks great\" and no next step.\n\nThe habits that avoid this are simple. Decide the question the prototype must answer. Cut horizontally, not vertically: keep every layer but only one path through it. Use real data early, even a small extract. Keep a list of what is faked. Rehearse the demo with a fallback recording, show the metric, and finish with the decision you need. Interviewers probe these habits with questions like \"Tell me about a time you built something quickly for a customer\".",
+  "diagrams": [
+    {
+      "id": "rpd-thin-slice",
+      "type": "flow",
+      "title": "A thin vertical slice",
+      "alt": "Flow diagram of a thin vertical slice for a prototype. A real user works in a simple web page, which calls a small API, which reads one real data source and calls a model. Below, faded nodes show what is faked on purpose: login, other data sources and scaling.",
+      "caption": "Every layer exists, but only one path through it. The faked parts are listed so nobody mistakes the demo for production.",
+      "nodes": [
+        { "id": "user", "label": "Pilot user", "kind": "client", "col": 0, "row": 0 },
+        { "id": "ui", "label": "Simple page", "kind": "cdn", "col": 1, "row": 0, "sub": "one workflow" },
+        { "id": "api", "label": "Small API", "kind": "service", "col": 2, "row": 0, "sub": "one endpoint" },
+        { "id": "data", "label": "Real extract", "kind": "db", "col": 3, "row": 0, "sub": "one source" },
+        { "id": "model", "label": "Model call", "kind": "external", "col": 2, "row": 2, "sub": "logged" },
+        { "id": "fake", "label": "Faked on purpose", "kind": "note", "col": 4, "row": 2, "sub": "SSO, scale, others" }
+      ],
+      "edges": [
+        { "from": "user", "to": "ui" },
+        { "from": "ui", "to": "api" },
+        { "from": "api", "to": "data", "label": "read" },
+        { "from": "api", "to": "model", "label": "prompt + context" }
+      ],
+      "steps": [
+        { "edges": [0, 1], "text": "One user, one workflow, one page. The UI only needs to make the value obvious." },
+        { "edges": [2], "text": "Read a real but small data extract, so the demo meets real formats and gaps early." },
+        { "edges": [3], "text": "Log every model call with its input and output; these logs become your first evaluation set." }
+      ]
+    },
+    {
+      "id": "rpd-first-week",
+      "type": "timeline",
+      "title": "A first-week prototype",
+      "alt": "Timeline of a five-day prototype. On day 1 the team agrees the question and metric; on day 2 a data extract arrives and has gaps; on day 3 the first end-to-end path works; on day 4 the team tests on 30 real cases and fixes the worst failure; on day 5 they demo with a recorded fallback and ask for a pilot decision.",
+      "caption": "Day 2 surprises are normal. Plan for them by asking for data access on day 1.",
+      "events": [
+        { "at": "Day 1", "label": "Agree the question the prototype answers and the metric to show", "kind": "trigger" },
+        { "at": "Day 2", "label": "Data extract arrives; a key field is missing for 20% of rows", "kind": "impact" },
+        { "at": "Day 3", "label": "First end-to-end path works on real rows", "kind": "mitigate" },
+        { "at": "Day 4", "label": "Run 30 real cases, fix the worst failure, record a fallback video", "kind": "detect" },
+        { "at": "Day 5", "label": "Demo: show the metric, the faked list and ask for a pilot decision", "kind": "resolve" }
+      ]
+    },
+    {
+      "id": "rpd-demo-compare",
+      "type": "compare",
+      "title": "A staged demo versus an honest demo",
+      "alt": "Side-by-side comparison. On the left, a demo on hand-picked samples leads to applause and then failure on real data. On the right, a demo on a real extract shows a measured result and a list of known gaps, leading to an agreed pilot.",
+      "caption": "Showing the gaps costs a little applause and buys a lot of trust.",
+      "before": {
+        "label": "Staged on samples",
+        "nodes": [
+          { "id": "s", "label": "Picked samples", "kind": "note", "col": 0, "row": 0 },
+          { "id": "d", "label": "Wow demo", "kind": "service", "col": 1, "row": 0 },
+          { "id": "f", "label": "Fails on real", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "s", "to": "d" },
+          { "from": "d", "to": "f", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Honest on real data",
+        "nodes": [
+          { "id": "r", "label": "Real extract", "kind": "db", "col": 0, "row": 0 },
+          { "id": "d", "label": "Measured demo", "kind": "service", "col": 1, "row": 0 },
+          { "id": "p", "label": "Pilot agreed", "kind": "good", "col": 2, "row": 0 },
+          { "id": "g", "label": "Known gaps", "kind": "note", "col": 1, "row": 1 }
+        ],
+        "edges": [
+          { "from": "r", "to": "d" },
+          { "from": "d", "to": "p" },
+          { "from": "d", "to": "g", "label": "shown" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Close a demo with evidence and an ask",
+      "bad": {
+        "label": "Feature tour with no ending",
+        "lang": "text",
+        "code": "\"...and here's another thing it can do. And this. Any questions?\""
+      },
+      "good": {
+        "label": "Question, evidence, gaps, decision",
+        "lang": "text",
+        "code": "\"We set out to see if suggested replies cut handle time on billing\ntickets. On 30 real tickets from last week, agents accepted 21\nsuggestions and median time dropped from 24 to 15 minutes.\nStill faked: login and the other ticket types. We'd like a four-week\npilot with ten agents. Can we agree that today?\""
+      },
+      "why": "Restating the question and showing a number ties the demo to the outcome the customer cares about. Naming the faked parts protects your credibility, and a specific ask turns enthusiasm into a decision."
+    }
+  ],
+  "checklist": [
+    "The prototype answers one written question for one named audience.",
+    "It runs on a small extract of real data, not only on examples you wrote.",
+    "There is a written list of what is faked or missing.",
+    "Model and API calls are logged, so failures can be replayed and become test cases.",
+    "Secrets live in environment variables, never in the notebook or the repo.",
+    "The demo is rehearsed, with a recorded fallback in case the network or a service fails.",
+    "The demo ends with the metric and a specific decision you are asking for."
+  ],
+  "antipatterns": [
+    {
+      "title": "The prototype quietly becomes production",
+      "bad": {
+        "label": "Same notebook, now business critical",
+        "lang": "text",
+        "code": "Week 1: demo notebook on a laptop.\nWeek 6: 40 people depend on it; no tests, no alerts, key in the code."
+      },
+      "better": {
+        "label": "A hardening step before rollout",
+        "lang": "text",
+        "code": "Before the pilot: move secrets out, add basic tests on logged cases,\nadd an error alert and a usage log, get a security review,\nand write who owns it after the engagement ends."
+      },
+      "why": "Speed is right for learning, wrong for running a business process. Make the move to a pilot an explicit step with a short hardening list, so the customer is not left owning something fragile."
+    },
+    {
+      "title": "Polishing the UI before the data path works",
+      "bad": {
+        "label": "Two days on styling",
+        "lang": "text",
+        "code": "Day 1-2: design system, animations, dark mode.\nDay 4: discover the data has no usable ticket category."
+      },
+      "better": {
+        "label": "End to end first, polish last",
+        "lang": "text",
+        "code": "Day 1-3: plain page, real data, real model call, logged results.\nDay 4: polish only what the demo audience will see."
+      },
+      "why": "The risky part of most customer prototypes is the data and the integration, not the look. Prove the path end to end first so surprises arrive while there is still time to react."
+    }
+  ],
+  "interview": [
+    "When asked how you would start, say you would agree the question and metric, then build a thin slice on a real data extract within days.",
+    "Mention what you would fake on purpose and how you would keep a list of it.",
+    "Describe how logged prototype calls become your first evaluation set.",
+    "In behavioural answers about fast delivery, include how you handed over or hardened the result, not just how quickly you built it."
+  ],
+  "quiz": [
+    {
+      "question": "What should a first-week prototype be built on?",
+      "choices": ["A small extract of the customer's real data", "Synthetic data that shows every feature", "The full production database"],
+      "answer": 0,
+      "explain": "A small real extract surfaces format and quality problems early without the risk and approvals of full production access."
+    },
+    {
+      "question": "Why keep a written list of what the prototype fakes?",
+      "choices": ["It makes the demo shorter", "So nobody mistakes the demo for something ready to run", "Contracts require it"],
+      "answer": 1,
+      "explain": "Being explicit about faked parts keeps expectations right and protects trust when the customer asks to go live."
+    },
+    {
+      "question": "How should a customer demo end?",
+      "choices": ["With a list of all upcoming features", "With open questions only", "With the metric and a specific decision you are asking for"],
+      "answer": 2,
+      "explain": "A measured result plus a clear ask turns a good reaction into a next step, such as an agreed pilot."
+    }
+  ],
+  "practice": {
+    "prompt": "A customer's finance team wants to see whether invoices can be matched to purchase orders automatically. You have one week and access to last month's invoices as PDFs and the purchase orders as a CSV. Plan the prototype and the demo.",
+    "answer": "Question: what share of invoices can be matched to the right purchase order without a person? Metric: match rate and error rate on last month's data versus the current manual effort. Day 1: agree that and request the files. Days 2-3: extract invoice number, supplier, amount and PO reference from the PDFs, normalise supplier names and amounts, match on PO reference then on supplier plus amount; log every decision. Day 4: hand-check 50 matches with a finance analyst, fix the worst failure class, record a fallback video. Fake: the upload UI, login, and writing back to the finance system. Demo: show the match and error rates, examples of failures, the faked list, and ask for a four-week pilot where the tool suggests matches and a person approves.",
+    "rubric": [
+      "States the question and the metric up front",
+      "Uses the real files and logs each decision",
+      "Checks results with a customer expert",
+      "Lists what is faked",
+      "Ends with a measured result and a concrete ask"
+    ]
+  },
+  "links": {
+    "lessons": ["ai-evals", "behavioral-ownership-impact"],
+    "cases": ["rag-doc-copilot"],
+    "guides": ["llm-evals", "secrets-and-supply-chain"]
+  }
+}
