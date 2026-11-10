@@ -27,7 +27,7 @@ const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 export const PAGES: readonly PaletteEntry[] = [
   ['home', 'Today', '#home', 'home dashboard daily start'],
   ['plan', 'Plan', '#plan', 'study plan schedule interview date'],
-  ['plans', 'Study plans', '#plans', 'structured study plan weeks roadmap 10-week 8-week schedule ai ml forward deployed fde customer'],
+  ['plans', 'Study plans', '#plans', 'structured study plan weeks roadmap 10-week 8-week schedule ai ml forward deployed fde customer math maths linear algebra probability statistics calculus numpy 6-week'],
   ['progress', 'Progress', '#progress', 'stats xp streak badges'],
   ['settings', 'Settings', '#settings', 'preferences theme dark mode accent font editor'],
   ['backup', 'Export or import a backup', '#settings', 'backup restore export import save data'],

@@ -14,7 +14,7 @@ import { SAMPLE_SQL } from '../playground-sample'
 import '../playground.css'
 import { useSaveCheck } from '../relaunch-guard'
 
-const PHASE_LABEL: Record<RunPhase, string> = { 'loading-python': 'Loading Python…', 'loading-typescript': 'Loading TypeScript…', 'loading-sql': 'Starting Postgres…', running: 'Running…' }
+const PHASE_LABEL: Record<RunPhase, string> = { 'loading-python': 'Loading Python…', 'loading-numpy': 'Loading Python and NumPy…', 'loading-typescript': 'Loading TypeScript…', 'loading-sql': 'Starting Postgres…', running: 'Running…' }
 const DOWNLOAD_NOTE: Record<SnippetLang, string> = {
   js: '',
   ts: ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline.',
@@ -268,7 +268,7 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
       <summary>How the Playground works, and its limits</summary>
       <ul>
         <li><strong>JavaScript and TypeScript</strong> run in a background worker. <code>console.log</code> prints; top-level <code>await</code> works; a top-level <code>return</code> shows a value. <code>readline()</code> and <code>input()</code> read the input box line by line, and <code>stdin</code> holds all of it. Pending timers are waited for. TypeScript is type-checked first: type errors are listed, and the code still runs. There is no DOM and no <code>import</code>.</li>
-        <li><strong>Python</strong> runs on Pyodide with the standard library only: no extra packages. <code>print</code> writes output and <code>input()</code> reads the input box (EOFError when it runs out). The value of a final expression is shown, like a REPL.</li>
+        <li><strong>Python</strong> runs on Pyodide with the standard library, plus NumPy: a program that starts with <code>import numpy</code> (or <code>from numpy …</code>) loads it first, about 3 MB more the first time. No other packages. <code>print</code> writes output and <code>input()</code> reads the input box (EOFError when it runs out). The value of a final expression is shown, like a REPL.</li>
         <li><strong>SQL</strong> runs on Postgres (PGlite) with its own database, kept in this browser between visits and separate from the exercises. Separate statements with <code>;</code>. Each result set shows as a table (first {SQL_ROW_LIMIT} rows), and other statements show their row counts. A batch runs as one transaction: if a statement fails, the whole batch is rolled back.</li>
         <li><strong>Time limits:</strong> JavaScript {FREE_TIMEOUT_MS.js / 1000} s, TypeScript {FREE_TIMEOUT_MS.ts / 1000} s, Python {FREE_TIMEOUT_MS.py / 1000} s, SQL {FREE_TIMEOUT_MS.sql / 1000} s. A run that goes over is stopped and the runner restarts.</li>
         <li><strong>No network:</strong> fetch, XMLHttpRequest, WebSocket and similar are turned off inside the runners, so code can’t send or load anything. Everything works offline once each language has loaded once.</li>

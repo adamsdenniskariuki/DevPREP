@@ -1,0 +1,148 @@
+{
+  "id": "power-iteration",
+  "title": "Eigenvectors by power iteration",
+  "topic": "linear-algebra",
+  "minutes": 40,
+  "summary": "Find the dominant eigenvalue and eigenvector by repeated multiplication, the idea behind PageRank.",
+  "intro": [
+    "An **eigenvector** v of a square matrix A keeps its direction when multiplied: Av = λv. The number λ is its **eigenvalue**: how much A stretches that direction.",
+    "**Power iteration** starts from any vector and repeats v ← Av / ‖Av‖. Each step amplifies the direction with the largest |λ| more than the others, so v lines up with it. Convergence is fast when the top eigenvalue is well ahead of the next.",
+    "The **Rayleigh quotient** vᵀAv (with ‖v‖ = 1) recovers λ, including its sign. An eigenvector is only defined up to sign, so choose a convention: here, flip v so its largest-magnitude entry is positive."
+  ],
+  "formula": "v ← A v / ‖A v‖     λ ≈ vᵀ A v   (‖v‖ = 1)",
+  "prompt": "Write `top_eigenpair(A, steps)` that starts from a vector of ones, runs `steps` rounds of power iteration, and returns `[eigenvalue, eigenvector]`. Return a unit-length vector whose largest-magnitude entry is positive, and use the Rayleigh quotient for the eigenvalue.",
+  "function": "top_eigenpair",
+  "starter": "import numpy as np\n\ndef top_eigenpair(A, steps):\n    A = np.asarray(A, dtype=float)\n    v = np.ones(A.shape[0])\n    # Repeat v = A v / |A v|, then fix the sign and compute v^T A v.\n    return [0.0, v]\n",
+  "solution": "import numpy as np\n\ndef top_eigenpair(A, steps):\n    A = np.asarray(A, dtype=float)\n    v = np.ones(A.shape[0])\n    v = v / np.linalg.norm(v)\n    for _ in range(steps):\n        w = A @ v\n        v = w / np.linalg.norm(w)\n    if v[np.argmax(np.abs(v))] < 0:\n        v = -v\n    return [float(v @ A @ v), v]\n",
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            2,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ],
+        50
+      ],
+      "expected": [
+        3,
+        [
+          0.707106781187,
+          0.707106781187
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            2,
+            0
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        100
+      ],
+      "expected": [
+        2,
+        [
+          1,
+          0
+        ]
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            3,
+            1
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        200
+      ],
+      "expected": [
+        3.41421356237,
+        [
+          0.923879532511,
+          0.382683432365
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            -3,
+            0
+          ],
+          [
+            0,
+            1
+          ]
+        ],
+        101
+      ],
+      "expected": [
+        -3,
+        [
+          1,
+          0
+        ]
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            4,
+            1,
+            0
+          ],
+          [
+            1,
+            3,
+            1
+          ],
+          [
+            0,
+            1,
+            2
+          ]
+        ],
+        300
+      ],
+      "expected": [
+        4.73205080757,
+        [
+          0.788675134595,
+          0.57735026919,
+          0.211324865405
+        ]
+      ]
+    }
+  ],
+  "hints": [
+    "Normalise after every multiply so the numbers stay small.",
+    "Use `v @ A @ v` for the eigenvalue so a negative λ keeps its sign.",
+    "Flip with `if v[np.argmax(np.abs(v))] < 0: v = -v`."
+  ],
+  "explanation": "For `[[2, 1], [1, 2]]` the vector of ones is already an eigenvector with eigenvalue 3. With A = diag(−3, 1), the iterate flips sign every step while its second entry shrinks by 3 each time; the sign rule and the Rayleigh quotient give λ = −3, which ‖Av‖ alone would report as 3.",
+  "lessons": [
+    "ml-clustering"
+  ]
+}

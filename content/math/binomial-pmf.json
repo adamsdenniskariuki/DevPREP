@@ -1,0 +1,91 @@
+{
+  "id": "binomial-pmf",
+  "title": "The binomial distribution",
+  "topic": "probability",
+  "minutes": 30,
+  "summary": "Count successes in n independent trials and compute the whole probability table.",
+  "intro": [
+    "Run n independent trials, each a success with probability p. The number of successes K follows a **binomial** distribution: P(K = k) = C(n, k) pᵏ (1 − p)ⁿ⁻ᵏ, where C(n, k) counts the ways to choose which trials succeed.",
+    "Its mean is np and its variance np(1 − p). For large n it looks like a normal curve, which is why conversion rates and click-through rates are often treated as approximately normal.",
+    "`math.comb(n, k)` gives C(n, k) exactly. The probabilities over k = 0..n must add up to 1, a quick check on your code."
+  ],
+  "formula": "P(K = k) = C(n, k) · pᵏ · (1 − p)ⁿ⁻ᵏ",
+  "prompt": "Write `binomial_pmf(n, p)` that returns the list `[P(K = 0), …, P(K = n)]`.",
+  "function": "binomial_pmf",
+  "starter": "import math\nimport numpy as np\n\ndef binomial_pmf(n, p):\n    # One probability for each k from 0 to n.\n    return [p ** k for k in range(n + 1)]\n",
+  "solution": "import math\nimport numpy as np\n\ndef binomial_pmf(n, p):\n    k = np.arange(n + 1)\n    comb = np.array([math.comb(n, i) for i in k], dtype=float)\n    return comb * p ** k * (1 - p) ** (n - k)\n",
+  "tests": [
+    {
+      "args": [
+        2,
+        0.5
+      ],
+      "expected": [
+        0.25,
+        0.5,
+        0.25
+      ]
+    },
+    {
+      "args": [
+        3,
+        0.1
+      ],
+      "expected": [
+        0.729,
+        0.243,
+        0.027,
+        0.001
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        0,
+        0.3
+      ],
+      "expected": [
+        1
+      ]
+    },
+    {
+      "args": [
+        10,
+        0.3
+      ],
+      "expected": [
+        0.0282475249,
+        0.121060821,
+        0.2334744405,
+        0.266827932,
+        0.200120949,
+        0.1029193452,
+        0.036756909,
+        0.009001692,
+        0.0014467005,
+        0.000137781,
+        0.0000059049
+      ]
+    },
+    {
+      "args": [
+        4,
+        1
+      ],
+      "expected": [
+        0,
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  ],
+  "hints": [
+    "`math.comb(n, k)` counts the arrangements.",
+    "Build k with `np.arange(n + 1)` and compute every term at once.",
+    "The list should add up to 1."
+  ],
+  "explanation": "With n = 3 and p = 0.1, no successes has probability 0.9³ = 0.729, and exactly one has 3 × 0.1 × 0.9² = 0.243. The factor 3 is C(3, 1): the success can be any of the three trials. Using floats for the combinations avoids integer overflow for larger n."
+}

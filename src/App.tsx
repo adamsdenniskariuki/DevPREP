@@ -95,6 +95,7 @@ export default function App() {
   const [companyId, setCompanyId] = useState(() => parseHash().companyId)
   const [snippetId, setSnippetId] = useState(() => parseHash().snippetId)
   const [planId, setPlanId] = useState(() => parseHash().planId)
+  const [labId, setLabId] = useState(() => parseHash().labId)
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
@@ -153,6 +154,7 @@ export default function App() {
       setCompanyId(parsed.companyId)
       setSnippetId(parsed.snippetId)
       setPlanId(parsed.planId)
+      setLabId(parsed.labId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -160,7 +162,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId, labId])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -189,6 +191,7 @@ export default function App() {
     setPatternView(undefined)
     setCompanyId(undefined)
     setPlanId(undefined)
+    setLabId(undefined)
   }
 
   const latest = useRef(progress)
@@ -450,7 +453,7 @@ export default function App() {
             {route === 'progress' && <Suspense fallback={<p role="status">Loading progress…</p>}><ProgressScreen app={app} /></Suspense>}
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'playground' && <Suspense fallback={<p role="status">Loading the Playground…</p>}><PlaygroundScreen app={app} snippetId={snippetId} /></Suspense>}
-            {route === 'plans' && <Suspense fallback={<p role="status">Loading study plans…</p>}><PlansScreen app={app} planId={planId} /></Suspense>}
+            {route === 'plans' && <Suspense fallback={<p role="status">Loading study plans…</p>}><PlansScreen app={app} planId={planId} labId={labId} /></Suspense>}
       {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
             {route === 'changelog' && <Suspense fallback={<p role="status">Loading the changelog…</p>}><ChangelogScreen app={app} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}

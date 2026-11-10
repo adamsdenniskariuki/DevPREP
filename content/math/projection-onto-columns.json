@@ -1,0 +1,128 @@
+{
+  "id": "projection-onto-columns",
+  "title": "Projections: the closest point in a subspace",
+  "topic": "linear-algebra",
+  "minutes": 35,
+  "summary": "Project a vector onto the space spanned by some columns, the geometry behind least squares.",
+  "intro": [
+    "The columns of A span a subspace: every vector you can make as A w for some w. The **projection** of v onto that subspace is the point in it closest to v.",
+    "The leftover part, v minus its projection, is at right angles to every column of A. Writing that condition as Aᵀ(v − A w) = 0 gives the normal equations again. Least squares and projection are the same idea: the fitted values of a regression are the projection of y onto the columns of X.",
+    "When A is a single column u, the formula shrinks to (u · v / u · u) u."
+  ],
+  "formula": "proj(v) = A (AᵀA)⁻¹ Aᵀ v     residual v − proj(v) ⟂ every column of A",
+  "prompt": "Write `project(A, v)` that returns the projection of v onto the column space of A. A has independent columns.",
+  "function": "project",
+  "starter": "import numpy as np\n\ndef project(A, v):\n    A = np.asarray(A, dtype=float)\n    v = np.asarray(v, dtype=float)\n    # Solve (A^T A) w = A^T v, then return A @ w.\n    return v\n",
+  "solution": "import numpy as np\n\ndef project(A, v):\n    A = np.asarray(A, dtype=float)\n    v = np.asarray(v, dtype=float)\n    w = np.linalg.solve(A.T @ A, A.T @ v)\n    return A @ w\n",
+  "tests": [
+    {
+      "args": [
+        [
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ],
+        [
+          2,
+          0
+        ]
+      ],
+      "expected": [
+        1,
+        1
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            0,
+            0
+          ]
+        ],
+        [
+          3,
+          4,
+          5
+        ]
+      ],
+      "expected": [
+        3,
+        4,
+        0
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            1,
+            3
+          ]
+        ],
+        [
+          1,
+          2,
+          2
+        ]
+      ],
+      "expected": [
+        1.16666666667,
+        1.66666666667,
+        2.16666666667
+      ]
+    },
+    {
+      "args": [
+        [
+          [
+            2
+          ],
+          [
+            0
+          ],
+          [
+            0
+          ]
+        ],
+        [
+          7,
+          1,
+          1
+        ]
+      ],
+      "expected": [
+        7,
+        0,
+        0
+      ]
+    }
+  ],
+  "hints": [
+    "Solve for the weights w first: `np.linalg.solve(A.T @ A, A.T @ v)`.",
+    "The projection is `A @ w`.",
+    "Check: `A.T @ (v - projection)` should be all zeros."
+  ],
+  "explanation": "Projecting `[2, 0]` onto the line through `[1, 1]` gives `[1, 1]`, and the residual `[1, -1]` is at right angles to `[1, 1]`. In the hidden case with columns of ones and 1, 2, 3, the projection is exactly the fitted values of the least-squares line through (1, 1), (2, 2) and (3, 2)."
+}

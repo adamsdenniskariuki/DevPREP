@@ -1,0 +1,145 @@
+{
+  "id": "mse-gradient",
+  "title": "The gradient of mean squared error",
+  "topic": "calculus",
+  "minutes": 35,
+  "summary": "Derive and vectorise the gradient that linear regression follows downhill.",
+  "intro": [
+    "For a linear model with predictions Xw, the **mean squared error** is L(w) = (1/n) ‖Xw − y‖². The **gradient** ∇L is the vector of partial derivatives ∂L/∂wⱼ, and it points uphill.",
+    "Using the chain rule on each squared residual gives ∇L = (2/n) Xᵀ(Xw − y). Read it as: each feature column is weighted by how wrong each prediction is, then averaged.",
+    "The gradient is zero exactly at the least-squares solution, which recovers the normal equations from week 2. Gradient descent steps w ← w − η∇L; with a vectorised gradient one step is two matrix products."
+  ],
+  "formula": "L(w) = (1/n) ‖X w − y‖²     ∇L = (2/n) Xᵀ (X w − y)",
+  "prompt": "Write `mse_gradient(w, X, y)` that returns the gradient of the mean squared error with respect to w.",
+  "function": "mse_gradient",
+  "starter": "import numpy as np\n\ndef mse_gradient(w, X, y):\n    w, X, y = np.asarray(w, float), np.asarray(X, float), np.asarray(y, float)\n    residual = X @ w - y\n    # Multiply by X transposed and scale by 2 / n.\n    return residual\n",
+  "solution": "import numpy as np\n\ndef mse_gradient(w, X, y):\n    w, X, y = np.asarray(w, float), np.asarray(X, float), np.asarray(y, float)\n    residual = X @ w - y\n    return 2 / len(y) * X.T @ residual\n",
+  "tests": [
+    {
+      "args": [
+        [
+          0
+        ],
+        [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ],
+        [
+          1,
+          2
+        ]
+      ],
+      "expected": [
+        -5
+      ]
+    },
+    {
+      "args": [
+        [
+          1,
+          1
+        ],
+        [
+          [
+            1,
+            0
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        [
+          1,
+          1,
+          2
+        ]
+      ],
+      "expected": [
+        0,
+        0
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          0.5,
+          -1
+        ],
+        [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            5,
+            6
+          ]
+        ],
+        [
+          1,
+          0,
+          -1
+        ]
+      ],
+      "expected": [
+        -15,
+        -20
+      ]
+    },
+    {
+      "args": [
+        [
+          2
+        ],
+        [
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ],
+          [
+            1
+          ]
+        ],
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "expected": [
+        -1
+      ]
+    }
+  ],
+  "hints": [
+    "The residual is `X @ w - y`, one entry per example.",
+    "`X.T @ residual` has one entry per weight.",
+    "Scale by 2 / n, where n is the number of examples."
+  ],
+  "explanation": "With X = [[1], [2]], y = [1, 2] and w = 0, the residuals are −1 and −2, so Xᵀr = −5 and the gradient is 2/2 × −5 = −5: increase w. At w = 1 the fit is exact and the gradient is zero. Fitting a constant to 1, 2, 3, 4 at w = 2 gives −1, pulling w towards the mean 2.5.",
+  "lessons": [
+    "ml-optimization-regularization",
+    "ml-regression-classification"
+  ]
+}

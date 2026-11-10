@@ -741,6 +741,35 @@ test('code runner works offline: JavaScript from the precache, Python after its 
   await expect(offline.locator('.run-summary')).toContainText(/All \d+ tests passed/, { timeout: 120_000 })
 })
 
+test('math labs load NumPy from the app, not the network, and run offline after the first load', async ({ page, context }) => {
+  test.setTimeout(240_000)
+  const lab = JSON.parse(await readFile('content/math/cosine-similarity.json', 'utf8'))
+  const passed = `All ${lab.tests.length + lab.hiddenTests.length} tests passed.`
+  const external: string[] = []
+  page.on('request', request => { if (!new URL(request.url()).hostname.match(/^(127\.0\.0\.1|localhost)$/)) external.push(request.url()) })
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await page.goto(`/DevPREP/#plans/math-for-ml-6wk/${lab.id}`)
+  await page.getByRole('textbox', { name: /Your code/ }).fill(lab.solution)
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-results')).toContainText(passed, { timeout: 180_000 })
+  expect(external).toEqual([])
+  const cached = await page.evaluate(async () => {
+    const names = (await caches.keys()).filter(name => name.startsWith('devprep-runtime-pyodide:'))
+    return (await Promise.all(names.map(async name => (await (await caches.open(name)).keys()).map(request => request.url)))).flat()
+  })
+  expect(cached.some(url => /\/numpy-[^/]+\.whl$/.test(url))).toBe(true)
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto(`/DevPREP/#plans/math-for-ml-6wk/${lab.id}`)
+  await expect(offline.getByRole('heading', { level: 1 })).toHaveText(lab.title)
+  await offline.getByRole('textbox', { name: /Your code/ }).fill(lab.solution)
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-results')).toContainText(passed, { timeout: 120_000 })
+})
+
 test('TypeScript labs run offline after the compiler\'s first online load', async ({ page, context }) => {
   test.setTimeout(180_000)
   const track = JSON.parse(await readFile('content/typescript/track.json', 'utf8'))

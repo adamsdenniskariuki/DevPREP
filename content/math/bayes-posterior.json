@@ -1,0 +1,89 @@
+{
+  "id": "bayes-posterior",
+  "title": "Bayes’ rule and base rates",
+  "topic": "probability",
+  "minutes": 30,
+  "summary": "Turn a test’s accuracy into the chance a positive result is real, and see why rare events mislead.",
+  "intro": [
+    "**Bayes’ rule** updates a prior belief P(D) with evidence. For a positive test, P(D | +) = P(+ | D) P(D) / P(+).",
+    "The denominator adds both ways of testing positive: true positives, sensitivity × prior, and false positives, false-positive rate × (1 − prior).",
+    "When the condition is rare, false positives from the large healthy group can swamp the true ones. The same arithmetic explains why a fraud or anomaly model with 99% recall can still have low precision."
+  ],
+  "formula": "P(D | +) = s·p / (s·p + f·(1 − p))     p = prior, s = sensitivity, f = false-positive rate",
+  "prompt": "Write `posterior(prior, sensitivity, false_positive_rate)` that returns P(condition | positive test).",
+  "function": "posterior",
+  "starter": "def posterior(prior, sensitivity, false_positive_rate):\n    # P(D | +) = P(+ | D) P(D) / P(+)\n    return sensitivity\n",
+  "solution": "def posterior(prior, sensitivity, false_positive_rate):\n    true_pos = sensitivity * prior\n    false_pos = false_positive_rate * (1 - prior)\n    return true_pos / (true_pos + false_pos)\n",
+  "tests": [
+    {
+      "args": [
+        0.01,
+        0.99,
+        0.05
+      ],
+      "expected": 0.166666666667
+    },
+    {
+      "args": [
+        0.5,
+        0.9,
+        0.1
+      ],
+      "expected": 0.9
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        0,
+        0.9,
+        0.1
+      ],
+      "expected": 0
+    },
+    {
+      "args": [
+        0.2,
+        0.8,
+        0
+      ],
+      "expected": 1
+    },
+    {
+      "args": [
+        0.001,
+        0.95,
+        0.01
+      ],
+      "expected": 0.0868372943327
+    }
+  ],
+  "hints": [
+    "Work out the true-positive mass, sensitivity × prior.",
+    "Then the false-positive mass, false-positive rate × (1 − prior).",
+    "The answer is the true share of all positives."
+  ],
+  "explanation": "Out of 10,000 people with a 1% prior, 100 have the condition and 99 of them test positive. Of the 9,900 without it, 5% (495) also test positive. So only 99 of 594 positives are real: 1/6, about 17%. With a 50% prior the same test is right 90% of the time.",
+  "lessons": [
+    "ml-imbalance-thresholds"
+  ],
+  "diagram": {
+    "type": "bars",
+    "id": "bayes-positives",
+    "title": "Who tests positive, out of 10,000 people",
+    "alt": "Bar chart of 10,000 people tested with a 1 percent prior, 99 percent sensitivity and 5 percent false-positive rate: 99 true positives against 495 false positives.",
+    "caption": "False positives from the large healthy group outnumber true positives five to one, so a positive result is real only about 17% of the time.",
+    "unit": "people",
+    "bars": [
+      {
+        "label": "True positives",
+        "value": 99,
+        "highlight": true
+      },
+      {
+        "label": "False positives",
+        "value": 495
+      }
+    ]
+  }
+}

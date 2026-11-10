@@ -1,0 +1,85 @@
+{
+  "id": "vector-norms",
+  "title": "Vector norms: how long is a vector?",
+  "topic": "linear-algebra",
+  "minutes": 30,
+  "summary": "Measure vectors three ways (L1, L2 and max) and see why the choice changes what “close” means.",
+  "intro": [
+    "A vector is an ordered list of numbers, such as a row of features or an embedding. A **norm** gives it a length. Distances, regularisation penalties and gradient clipping are all norms in disguise.",
+    "The **L2** (Euclidean) norm is the straight-line length. The **L1** norm adds absolute values, so it grows with every small entry; that is why an L1 penalty pushes weights to exactly zero. The **max** (L∞) norm is the single largest absolute entry.",
+    "In NumPy, `np.abs(v).sum()`, `np.sqrt((v * v).sum())` and `np.abs(v).max()` compute them. `np.linalg.norm(v, ord)` does the same with `ord` set to 1, 2 or `np.inf`."
+  ],
+  "formula": "‖v‖₁ = Σ |vᵢ|     ‖v‖₂ = √(Σ vᵢ²)     ‖v‖∞ = max |vᵢ|",
+  "prompt": "Write `norms(v)` that returns `[l1, l2, max_abs]` for a non-empty list of numbers `v`.",
+  "function": "norms",
+  "starter": "import numpy as np\n\ndef norms(v):\n    v = np.asarray(v, dtype=float)\n    # Return [L1, L2, max-abs] norms of v.\n    return [0.0, 0.0, 0.0]\n",
+  "solution": "import numpy as np\n\ndef norms(v):\n    v = np.asarray(v, dtype=float)\n    l1 = np.abs(v).sum()\n    l2 = np.sqrt((v * v).sum())\n    return [float(l1), float(l2), float(np.abs(v).max())]\n",
+  "tests": [
+    {
+      "args": [
+        [
+          3,
+          -4
+        ]
+      ],
+      "expected": [
+        7,
+        5,
+        4
+      ]
+    },
+    {
+      "args": [
+        [
+          1,
+          1,
+          1,
+          1
+        ]
+      ],
+      "expected": [
+        4,
+        2,
+        1
+      ]
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          -2
+        ]
+      ],
+      "expected": [
+        2,
+        2,
+        2
+      ]
+    },
+    {
+      "args": [
+        [
+          0.5,
+          -1.5,
+          2,
+          0
+        ]
+      ],
+      "expected": [
+        4,
+        2.5495097568,
+        2
+      ]
+    }
+  ],
+  "hints": [
+    "Convert to a float array first so the arithmetic is element by element.",
+    "Take absolute values before summing for L1 and before the max.",
+    "For a vector of n equal ones, L2 is √n."
+  ],
+  "explanation": "For `[3, -4]` the L1 norm is 3 + 4 = 7, the L2 norm is √(9 + 16) = 5, and the largest absolute entry is 4. The three always satisfy ‖v‖∞ ≤ ‖v‖₂ ≤ ‖v‖₁. Converting to `float` before returning keeps the JSON clean; NumPy scalars would also work here.",
+  "lessons": [
+    "ml-optimization-regularization"
+  ]
+}

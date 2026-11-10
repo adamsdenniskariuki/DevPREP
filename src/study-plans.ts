@@ -245,6 +245,13 @@ export function toggleItem(entry: PlanProgress, itemId: string, today: string): 
   return { ...entry, done }
 }
 
+/** Ticks items (keeping the day an item was first ticked), e.g. when a linked lab passes. */
+export function markDone(entry: PlanProgress, itemIds: readonly string[], today: string): PlanProgress {
+  const done = { ...entry.done }
+  for (const id of itemIds) done[id] ??= today
+  return { ...entry, done }
+}
+
 export function setCheck(entry: PlanProgress, phase: string, result: CheckResult | undefined): PlanProgress {
   const checks = { ...entry.checks }
   if (result) checks[phase] = result

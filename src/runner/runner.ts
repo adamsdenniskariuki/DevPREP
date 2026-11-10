@@ -1,6 +1,6 @@
 import type { CodeLanguage } from '../problem-types'
 import { TIMEOUT_MS, type RunRequest, type RunResponse } from './core'
-import { PYODIDE_VERSION } from './pyodide-version'
+import { isPyPackage, packagesImported, PYODIDE_VERSION, type PyPackage } from './pyodide-version'
 import type { PyWorkerMessage } from './py.worker'
 import { TYPESCRIPT_VERSION } from './ts-version'
 import type { TsWorkerMessage } from './ts.worker'
@@ -15,7 +15,7 @@ export type RunReport =
   | { kind: 'timeout'; ms: number }
   | { kind: 'load-error'; error: string }
 
-export type RunPhase = 'loading-python' | 'loading-typescript' | 'loading-sql' | 'running'
+export type RunPhase = 'loading-python' | 'loading-numpy' | 'loading-typescript' | 'loading-sql' | 'running'
 /** Languages the runner executes: problem languages plus TypeScript (labs only). */
 export type RunLanguage = CodeLanguage | 'ts'
 /** TypeScript runs as JavaScript after type-checking; the extra second covers compiling. */
@@ -32,6 +32,8 @@ let tsReady: Promise<void> | undefined
 let jsWorker: Worker | undefined
 let pyWorker: Worker | undefined
 let pyReady: Promise<void> | undefined
+/** Packages the current Python worker loaded. A worker that has NumPy keeps it for later runs. */
+let pyPackages: PyPackage[] = []
 let queue: Promise<unknown> = Promise.resolve()
 
 export function pyodideIndexURL(base = document.baseURI) {
@@ -68,11 +70,25 @@ function resetPython() {
   pyWorker?.terminate()
   pyWorker = undefined
   pyReady = undefined
+  pyPackages = []
 }
 
-/** Starts (or reuses) the Python worker and resolves once Pyodide is ready. */
-export function preparePython(): Promise<void> {
+/** Validates requested packages against the allowlist. */
+function pythonPackages(names: readonly string[] = []): PyPackage[] {
+  const refused = names.find(name => !isPyPackage(name))
+  if (refused !== undefined) throw new Error(`The Python package "${refused}" is not available.`)
+  return [...new Set(names as PyPackage[])]
+}
+
+/**
+ * Starts (or reuses) the Python worker and resolves once Pyodide, and any allowlisted packages asked for, are ready.
+ * The worker turns off the network once loading is done, so a worker without a needed package is replaced.
+ */
+export function preparePython(packages: readonly string[] = []): Promise<void> {
+  const wanted = pythonPackages(packages)
+  if (pyReady && wanted.some(name => !pyPackages.includes(name))) resetPython()
   if (!pyReady) {
+    pyPackages = wanted
     const worker = new Worker(new URL('./py.worker.ts', import.meta.url), { type: 'module', name: 'devprep-python' })
     pyWorker = worker
     pyReady = (async () => {
@@ -81,11 +97,12 @@ export function preparePython(): Promise<void> {
         if (message.type === 'ready') return 'ready'
         if (message.type === 'load-error') return `error:${message.error}`
       })
-      worker.postMessage({ type: 'init', indexURL: pyodideIndexURL() } satisfies PyWorkerMessage)
+      worker.postMessage({ type: 'init', indexURL: pyodideIndexURL(), packages: wanted } satisfies PyWorkerMessage)
       const result = await done
       if (result !== 'ready') throw new Error(result === 'timeout' ? 'Python took too long to load. Check your connection and try again.' : result.slice(6))
     })()
-    pyReady.catch(resetPython)
+    const ready = pyReady
+    ready.catch(() => { if (pyReady === ready) resetPython() })
   }
   return pyReady
 }
@@ -230,9 +247,9 @@ async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: 
     jsWorker = undefined
     return { kind: 'timeout', ms: Math.round(performance.now() - started) }
   }
-  onPhase('loading-python')
+  onPhase(request.packages?.length ? 'loading-numpy' : 'loading-python')
   try {
-    await preparePython()
+    await preparePython(request.packages)
   } catch (error) {
     return { kind: 'load-error', error: error instanceof Error ? error.message : String(error) }
   }
@@ -281,9 +298,10 @@ async function freeOnce(lang: FreeLanguage, request: FreeRunRequest, onPhase: (p
     worker = jsWorker
     reset = () => { worker.terminate(); if (jsWorker === worker) jsWorker = undefined }
   } else {
-    onPhase(lang === 'py' ? 'loading-python' : 'loading-typescript')
+    const packages = lang === 'py' ? packagesImported(request.code) : []
+    onPhase(lang === 'py' ? packages.length ? 'loading-numpy' : 'loading-python' : 'loading-typescript')
     try {
-      await (lang === 'py' ? preparePython() : prepareTypeScript())
+      await (lang === 'py' ? preparePython(packages) : prepareTypeScript())
     } catch (error) {
       return loadError(error)
     }

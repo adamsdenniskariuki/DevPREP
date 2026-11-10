@@ -1,0 +1,84 @@
+{
+  "id": "stable-cross-entropy",
+  "title": "Numerically stable cross-entropy",
+  "topic": "optimisation",
+  "minutes": 30,
+  "summary": "Compute the classification loss from raw logits without overflow, using log-sum-exp.",
+  "intro": [
+    "Classifiers output **logits** z, unnormalised scores. The **cross-entropy** loss for the true class k is −log softmax(z)ₖ, which simplifies to log Σⱼ e^{zⱼ} − zₖ.",
+    "Computing e^{zⱼ} directly overflows for large logits. The **log-sum-exp trick** factors out m = max(z): log Σ e^{zⱼ} = m + log Σ e^{zⱼ − m}. Every exponent is now at most 0, so nothing overflows.",
+    "This is why training code takes logits rather than probabilities: the loss function can combine softmax and log stably. Language models use exactly this loss, once per predicted token."
+  ],
+  "formula": "CE(z, k) = log Σⱼ e^{zⱼ} − zₖ = m + log Σⱼ e^{zⱼ − m} − zₖ,   m = max z",
+  "prompt": "Write `cross_entropy(logits, label)` that returns the cross-entropy loss for the true class index `label`, computed stably.",
+  "function": "cross_entropy",
+  "starter": "import numpy as np\n\ndef cross_entropy(logits, label):\n    z = np.asarray(logits, dtype=float)\n    # Overflows for large logits: subtract the max first.\n    return float(np.log(np.exp(z).sum()) - z[label])\n",
+  "solution": "import numpy as np\n\ndef cross_entropy(logits, label):\n    z = np.asarray(logits, dtype=float)\n    m = z.max()\n    return float(m + np.log(np.exp(z - m).sum()) - z[label])\n",
+  "tests": [
+    {
+      "args": [
+        [
+          0,
+          0
+        ],
+        0
+      ],
+      "expected": 0.69314718056
+    },
+    {
+      "args": [
+        [
+          2,
+          1,
+          0.1
+        ],
+        0
+      ],
+      "expected": 0.417030016278
+    }
+  ],
+  "hiddenTests": [
+    {
+      "args": [
+        [
+          1000,
+          0
+        ],
+        1
+      ],
+      "expected": 1000
+    },
+    {
+      "args": [
+        [
+          1000,
+          1000,
+          1000
+        ],
+        2
+      ],
+      "expected": 1.09861228867
+    },
+    {
+      "args": [
+        [
+          -5,
+          3,
+          1
+        ],
+        1
+      ],
+      "expected": 0.127223441901
+    }
+  ],
+  "hints": [
+    "Find `m = z.max()` first.",
+    "Compute `np.log(np.exp(z - m).sum())` and add m back.",
+    "Subtract the logit of the true class."
+  ],
+  "explanation": "With two equal logits each class has probability ½, so the loss is log 2 ≈ 0.693. For [1000, 0] with label 1, the model is almost certain of the wrong class and the loss is about 1000; the naive version computes e^{1000}, which overflows to infinity.",
+  "lessons": [
+    "ai-transformers-attention",
+    "ml-neural-networks"
+  ]
+}

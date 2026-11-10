@@ -466,6 +466,13 @@ function labTests(check: Checker, list: unknown, path: string, min: number) {
   })
 }
 
+/** Checks a math lab's optional diagram with the same rules as Field Guide diagrams (the build checks the rest). */
+export function validateMathLabDiagram(value: unknown, where = 'math lab'): string[] {
+  const check = new Checker(where)
+  diagram(check, value, 'diagram')
+  return check.errors
+}
+
 function sqlTests(check: Checker, list: unknown, path: string, min: number) {
   if (!Array.isArray(list) || list.length < min) return check.fail(path, `expected at least ${min} tests`)
   const names = new Set<string>()

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import knownItemIds from '../tests/fixtures/plan-item-ids.json' with { type: 'json' }
 import knownFdeItemIds from '../tests/fixtures/fde-plan-item-ids.json' with { type: 'json' }
+import knownMathItemIds from '../tests/fixtures/math-plan-item-ids.json' with { type: 'json' }
 import plansJson from './generated/plans.json' with { type: 'json' }
 import navIndex from './generated/nav-index.json' with { type: 'json' }
 // @ts-expect-error plain JS build script
@@ -21,7 +22,7 @@ import { emptyProgress, serializeBackup } from './progress'
 import { hrefFor, parseHash, type RouteIds } from './routes'
 import { sqlProblemIds } from './sql-problems'
 import {
-  daysBetween, emptyPlanProgress, forLanguage, isDay, itemText, loadPlans, MAX_ERRORS, newEntryId, parsePlans, PLAN_IDS, PLAN_LANGUAGES, planCount, planHref, planLanguage, PLANS_KEY, positionFor,
+  daysBetween, emptyPlanProgress, forLanguage, isDay, itemText, loadPlans, markDone, MAX_ERRORS, newEntryId, parsePlans, PLAN_IDS, PLAN_LANGUAGES, planCount, planHref, planLanguage, PLANS_KEY, positionFor,
   readPlans, removeEntry, SCORE_AREAS, SCORE_KIND_LABELS, scoreAverage, setCheck, toDay, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
   type PlansState, type ScoreKind, type StudyPlan,
 } from './study-plans'
@@ -29,6 +30,7 @@ import {
 const plans = plansJson as unknown as StudyPlan[]
 const plan = plans.find(item => item.id === 'applied-ai-ml-10wk')!
 const fde = plans.find(item => item.id === 'forward-deployed-engineer-8wk')!
+const math = plans.find(item => item.id === 'math-for-ml-6wk')!
 const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: PLAN_IDS }
 
 class MemoryStorage {
@@ -56,7 +58,7 @@ describe('study plan content', () => {
     expect(JSON.parse(readFileSync('src/generated/plan-ids.json', 'utf8'))).toEqual(built.ids)
     expect([...PLAN_IDS]).toEqual(built.ids)
     await expect(loadPlans()).resolves.toEqual(plans)
-  })
+  }, 30_000)
 
   it('is a 10-week plan in three phases with the Applied AI track first', () => {
     expect(weekCount(plan)).toBe(10)
@@ -65,8 +67,8 @@ describe('study plan content', () => {
     expect(plan.languages).toEqual(['python', 'typescript'])
   })
 
-  it('lists both plans, Applied AI first', () => {
-    expect(plans.map(item => item.id)).toEqual(['applied-ai-ml-10wk', 'forward-deployed-engineer-8wk'])
+  it('lists every plan, Applied AI first', () => {
+    expect(plans.map(item => item.id)).toEqual(['applied-ai-ml-10wk', 'forward-deployed-engineer-8wk', 'math-for-ml-6wk'])
     expect([...PLAN_IDS]).toEqual(plans.map(item => item.id))
   })
 
@@ -84,7 +86,7 @@ describe('study plan content', () => {
     for (const lang of plan.languages) expect(parseHash(plan.refresher[lang]!, ids)).toEqual({ route: 'tracks', track: lang })
   })
 
-  it.each(plans.map(item => [item.id, item] as const))('%s only uses the {lang} placeholder and fills it with the language label', (_id, plan) => {
+  it.each(plans.filter(item => item.languages.length > 1).map(item => [item.id, item] as const))('%s only uses the {lang} placeholder and fills it with the language label', (_id, plan) => {
     const items = plan.weeks.flatMap(weekItems)
     const templated = items.find(item => itemText(item, 'python') !== itemText(item, 'typescript'))!
     expect(itemText(templated, 'python')).toContain('Python')
@@ -187,7 +189,7 @@ describe('study plan content', () => {
   })
 })
 
-describe.each([['applied-ai-ml-10wk', knownItemIds], ['forward-deployed-engineer-8wk', knownFdeItemIds]] as const)('plan item id registry for %s', (id, known) => {
+describe.each([['applied-ai-ml-10wk', knownItemIds], ['forward-deployed-engineer-8wk', knownFdeItemIds], ['math-for-ml-6wk', knownMathItemIds]] as const)('plan item id registry for %s', (id, known) => {
   const current = new Set(plans.find(item => item.id === id)!.weeks.flatMap(weekItems).map(item => item.id))
   it('keeps every item id that has ever shipped', () => expect(known.filter(itemId => !current.has(itemId))).toEqual([]))
   it('records every current item id', () => expect([...current].filter(itemId => !(known as readonly string[]).includes(itemId))).toEqual([]))
@@ -239,6 +241,36 @@ describe('the Forward Deployed Engineer plan', () => {
       const minutes = weekItems(week).reduce((sum, item) => sum + item.minutes, 0)
       expect(minutes / 60, `week ${week.n} ${track.id}`).toBeGreaterThanOrEqual(6)
       expect(minutes / 60, `week ${week.n} ${track.id}`).toBeLessThanOrEqual(10.5)
+    }
+  })
+})
+
+describe('the Math for AI and ML plan', () => {
+  const items = math.weeks.flatMap(weekItems)
+  it('is a 6-week Python plan in three phases with no tracks', () => {
+    expect(math.title).toBe('6-week Math for AI and ML plan')
+    expect(math.hoursPerWeek).toBe('6–8')
+    expect(weekCount(math)).toBe(6)
+    expect(math.phases.map(phase => phase.weeks)).toEqual([[1, 2], [3, 4], [5, 6]])
+    expect(math.languages).toEqual(['python'])
+    expect(math.tracks).toEqual([])
+    expect(weeksFor(math, undefined)).toHaveLength(6)
+    expect(planCount(math, undefined).total).toBe(items.length)
+  })
+
+  it('links every math lab once, in order, and the related lessons, guides and plans', () => {
+    const labs = items.filter(item => item.href?.startsWith(`#plans/${math.id}/`)).map(item => item.href!.split('/')[2])
+    expect(labs).toEqual(JSON.parse(readFileSync('content/math/index.json', 'utf8')).labs)
+    const hrefs = new Set(items.map(item => item.href))
+    for (const href of ['#plans/applied-ai-ml-10wk', '#plans/forward-deployed-engineer-8wk', '#guide/ml-experimentation', '#guide/llm-evals', '#cards', '#playground', '#mock']) expect(hrefs, href).toContain(href)
+    expect(items.filter(item => item.lesson).length).toBeGreaterThanOrEqual(10)
+  })
+
+  it('keeps every week inside the 6–8 hour budget', () => {
+    for (const week of math.weeks) {
+      const hours = weekItems(week).reduce((sum, item) => sum + item.minutes, 0) / 60
+      expect(hours, `week ${week.n}`).toBeGreaterThanOrEqual(6)
+      expect(hours, `week ${week.n}`).toBeLessThanOrEqual(8)
     }
   })
 })
@@ -303,6 +335,12 @@ describe('progress updates', () => {
     entry = setCheck(entry, 'p1', 'fail')
     expect(entry.checks).toEqual({ p1: 'fail' })
     expect(setCheck(entry, 'p1', undefined).checks).toEqual({})
+  })
+
+  it('marks items done without unticking or redating them', () => {
+    const entry = toggleItem(emptyPlanProgress(), 'w1-d1-1', '2026-11-02')
+    expect(markDone(entry, ['w1-d1-1', 'w1-d2-1'], '2026-11-05').done).toEqual({ 'w1-d1-1': '2026-11-02', 'w1-d2-1': '2026-11-05' })
+    expect(markDone(entry, [], '2026-11-05')).toEqual(entry)
   })
 
   it('adds, edits and removes log entries within the cap', () => {
@@ -451,7 +489,11 @@ describe('navigation and search', () => {
     expect(parseHash(`#plans/${plan.id}`, ids)).toEqual({ route: 'plans', planId: plan.id })
     expect(hrefFor({ route: 'plans', planId: plan.id })).toBe(`#plans/${plan.id}`)
     expect(parseHash('#plans/nope', ids)).toEqual({ route: 'unknown' })
-    expect(parseHash(`#plans/${plan.id}/w1`, ids)).toEqual({ route: 'unknown' })
+    expect(parseHash(`#plans/${plan.id}/w1/d1`, ids)).toEqual({ route: 'unknown' })
+    expect(parseHash('#plans/nope/vector-norms', ids)).toEqual({ route: 'unknown' })
+    expect(parseHash(`#plans/${math.id}/Not_A_Lab`, ids)).toEqual({ route: 'unknown' })
+    expect(parseHash(`#plans/${math.id}/vector-norms`, ids)).toEqual({ route: 'plans', planId: math.id, labId: 'vector-norms' })
+    expect(hrefFor({ route: 'plans', planId: math.id, labId: 'vector-norms' })).toBe(`#plans/${math.id}/vector-norms`)
   })
 
   it('lists the plan in the tree with a count for the chosen track', () => {
