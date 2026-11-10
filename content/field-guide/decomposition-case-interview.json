@@ -1,0 +1,168 @@
+{
+  "id": "decomposition-case-interview",
+  "kind": "guide",
+  "topic": "customer-engineering",
+  "level": "se",
+  "title": "The decomposition case interview: from a vague ask to a plan",
+  "summary": "A repeatable structure for customer-scenario interviews: clarify, map users and data, design the first slice, then name risks and how you would measure success.",
+  "minutes": 15,
+  "principle": "Break the customer's problem into users, workflow, data and constraints before choosing technology. Then design one thin slice end to end, say how you would measure it, and name the risks you would retire first. Keep the interviewer in the loop at every step.",
+  "why": "Customer-facing engineering roles often replace or add to the classic system design round with a case: \"A hospital network wants to use AI to cut the time nurses spend on paperwork. How would you approach it?\" There is no single right architecture. The interviewer is scoring how you structure an ambiguous problem, whether your technical choices follow from the constraints, and whether you would be safe to put in front of a customer.\n\nCandidates usually fail in one of two ways: they jump straight to a diagram full of services and models, or they ask questions for 30 minutes and never commit to anything. A fixed structure avoids both. It also gives you natural checkpoints to summarise, which is the behaviour the interviewer wants to see you use with real customers.",
+  "diagrams": [
+    {
+      "id": "dci-case-structure",
+      "type": "flow",
+      "title": "Five moves for a decomposition case",
+      "alt": "Flow diagram with five steps in a row: clarify the goal, map users and workflow, map data and systems, design a first slice, then risks and metrics. A dashed edge from the last step returns to the first step labelled check in.",
+      "caption": "Summarise out loud after each move. The check-in loop is where the interviewer adds new information.",
+      "nodes": [
+        { "id": "goal", "label": "Clarify goal", "kind": "decision", "col": 0, "row": 0, "sub": "outcome, metric" },
+        { "id": "users", "label": "Users + flow", "kind": "client", "col": 1, "row": 0, "sub": "who does what" },
+        { "id": "data", "label": "Data + systems", "kind": "db", "col": 2, "row": 0, "sub": "where it lives" },
+        { "id": "slice", "label": "First slice", "kind": "service", "col": 3, "row": 0, "sub": "end to end" },
+        { "id": "risk", "label": "Risks + metrics", "kind": "good", "col": 4, "row": 0, "sub": "what could fail" }
+      ],
+      "edges": [
+        { "from": "goal", "to": "users" },
+        { "from": "users", "to": "data" },
+        { "from": "data", "to": "slice" },
+        { "from": "slice", "to": "risk" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Clarify the goal and how success is measured, then list the people involved and what they do today." },
+        { "edges": [1], "text": "Map the data each step needs: which systems hold it, who owns it, how clean it is and what access rules apply." },
+        { "edges": [2], "text": "Design one thin slice that touches real users and real data, and say what you are deliberately leaving out." },
+        { "edges": [3], "text": "Close with risks (data quality, adoption, security, model errors) and the metric and rollout plan that would tell you it worked." }
+      ]
+    },
+    {
+      "id": "dci-time-budget",
+      "type": "bars",
+      "title": "Where the 45 minutes go",
+      "alt": "Bar chart of a suggested time budget for a 45-minute case interview: 8 minutes clarifying, 7 on users and data, 15 on the first slice design, 8 on risks and metrics, and 7 on the interviewer's twists and wrap-up. The design bar is highlighted.",
+      "caption": "A guide, not a rule. If the interviewer pushes into detail early, follow them and compress the rest.",
+      "unit": "minutes",
+      "bars": [
+        { "label": "Clarify", "value": 8 },
+        { "label": "Users and data", "value": 7 },
+        { "label": "First slice design", "value": 15, "highlight": true },
+        { "label": "Risks and metrics", "value": 8 },
+        { "label": "Twists and wrap-up", "value": 7 }
+      ]
+    },
+    {
+      "id": "dci-sample-run",
+      "type": "timeline",
+      "title": "A sample run of the case",
+      "alt": "Timeline of a sample decomposition case. At minute 0 the prompt arrives, at minute 3 the candidate restates the goal and a metric, at minute 10 a data constraint surfaces, at minute 14 the candidate proposes a first slice, at minute 30 the interviewer adds a twist, at minute 36 the candidate adapts the plan, and at minute 42 the candidate summarises.",
+      "caption": "The twist at minute 30 is normal. Treat it as new customer information, not as a sign you were wrong.",
+      "events": [
+        { "at": "0 min", "label": "Prompt: help a clinic group cut paperwork time for nurses", "kind": "trigger" },
+        { "at": "3 min", "label": "Restate the goal and propose a metric: minutes of charting per shift", "kind": "detect" },
+        { "at": "10 min", "label": "Constraint surfaces: patient notes cannot leave the clinic's own cloud tenant", "kind": "impact" },
+        { "at": "14 min", "label": "First slice: draft handover notes from vitals; nurse edits before saving", "kind": "mitigate" },
+        { "at": "30 min", "label": "Twist: half the sites have unreliable internet", "kind": "impact" },
+        { "at": "36 min", "label": "Adapt: queue drafts locally and sync later; start with well-connected sites", "kind": "mitigate" },
+        { "at": "42 min", "label": "Summarise outcome, slice, risks, metric and next step", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Opening the case",
+      "bad": {
+        "label": "Straight to architecture",
+        "lang": "text",
+        "code": "\"OK, so we'd put an LLM behind an API gateway, store the documents\nin a vector database, add a cache, and deploy it on Kubernetes.\""
+      },
+      "good": {
+        "label": "Restate, clarify, then structure",
+        "lang": "text",
+        "code": "\"Let me check I have it: nurses spend too long on paperwork and the\ngoal is more time with patients. Which paperwork takes longest today?\nHow would we measure success, minutes per shift? I'll go through users,\ndata, a first slice, then risks. Stop me if you want depth anywhere.\""
+      },
+      "why": "The good opening shows the interviewer your structure, gets a metric on the table and invites them to steer. Technology choices come later and can then be justified by what you learned."
+    }
+  ],
+  "checklist": [
+    "Restate the problem in one sentence and confirm it before going further.",
+    "Agree a success metric and a rough baseline.",
+    "List the user groups and walk one through the current workflow.",
+    "Map where the data lives, who owns it, its quality and the access rules.",
+    "Propose one thin end-to-end slice and name what it leaves out.",
+    "Give technical detail where it matters: integration points, failure handling, evaluation.",
+    "Name the top three risks and how you would retire each one early.",
+    "Finish with a summary and a concrete next step, such as a two-week pilot."
+  ],
+  "antipatterns": [
+    {
+      "title": "Asking questions forever",
+      "bad": {
+        "label": "Twenty questions, no proposal",
+        "lang": "text",
+        "code": "Minute 25: \"And what about the other departments? And how is\nbilling handled? And which version of the records system...\""
+      },
+      "better": {
+        "label": "State an assumption and move on",
+        "lang": "text",
+        "code": "\"I'll assume one department and the main records system for the\nfirst slice, and revisit the rest once that works. Does that fit?\""
+      },
+      "why": "Interviewers want to see you make progress under ambiguity. Stating assumptions keeps momentum and lets them correct you cheaply."
+    },
+    {
+      "title": "A slice that skips the hard part",
+      "bad": {
+        "label": "A demo with fake data",
+        "lang": "text",
+        "code": "First slice: a chat UI over sample PDFs we write ourselves."
+      },
+      "better": {
+        "label": "A slice through the real constraint",
+        "lang": "text",
+        "code": "First slice: read-only access to last month's real notes for one\nward, drafts reviewed by two nurses, accuracy checked against 50\nhand-labelled examples."
+      },
+      "why": "The biggest risks in customer work are usually access, data quality and trust. A slice that avoids them proves little and delays the bad news."
+    }
+  ],
+  "interview": [
+    "Say your structure out loud in the first two minutes so the interviewer can follow and steer.",
+    "Tie every technical choice back to a constraint you heard: \"Because the data cannot leave their tenant, the model runs there.\"",
+    "When the interviewer adds a twist, summarise what changes and what stays, then adapt the plan rather than starting over.",
+    "Reserve the last few minutes for a crisp summary: outcome, first slice, risks, metric, next step."
+  ],
+  "quiz": [
+    {
+      "question": "What should you do in the first few minutes of a decomposition case?",
+      "choices": ["Draw the full architecture", "Restate the goal, agree a success metric and outline your structure", "Ask about every department in the organisation"],
+      "answer": 1,
+      "explain": "Restating and agreeing a metric checks understanding, and an outlined structure lets the interviewer steer you."
+    },
+    {
+      "question": "Why should a first slice use real data even if it is small?",
+      "choices": ["Real data is easier to get than sample data", "It retires the biggest risks early: access, quality and trust", "Interviewers dislike sample data"],
+      "answer": 1,
+      "explain": "Customer projects usually fail on data access, quality or user trust, not on the happy path. Touching real data early surfaces those problems."
+    },
+    {
+      "question": "The interviewer says half the sites have poor internet. What is the best response?",
+      "choices": ["Start the design again from scratch", "Say it is out of scope", "Summarise what changes, adapt the slice and keep going"],
+      "answer": 2,
+      "explain": "Twists simulate new customer facts. Adapting calmly, and saying what changes and what stays, is exactly the behaviour being tested."
+    }
+  ],
+  "practice": {
+    "prompt": "A retail chain wants to \"use AI to reduce out-of-stock shelves\". Run the five moves: clarify, users and workflow, data and systems, first slice, risks and metrics.",
+    "answer": "Clarify: the goal is fewer lost sales from empty shelves; metric is out-of-stock rate per store-day, with a baseline from the last quarter. Users: store staff who restock, regional planners who order, head office. Workflow: nightly orders from a forecasting spreadsheet; staff check shelves by eye. Data: point-of-sale transactions (clean, daily), inventory counts (often wrong), supplier lead times (in emails), shelf photos (none yet). First slice: for 20 high-volume products in 5 stores, flag likely gaps each morning using sales velocity versus recorded stock, and send a short list to staff to confirm; leave forecasting and automatic ordering out. Risks: inaccurate inventory records (measure by spot checks), staff ignoring the list (keep it short, measure confirmations), seasonal effects. Measure out-of-stock rate in pilot stores against similar control stores for six weeks, then decide on expansion.",
+    "rubric": [
+      "Agrees a metric and baseline before designing",
+      "Maps users and the current workflow",
+      "Identifies data sources, their quality and owners",
+      "Proposes a thin slice with explicit non-goals",
+      "Names risks with ways to retire them and a pilot measurement plan"
+    ]
+  },
+  "links": {
+    "lessons": ["design-requirements-capacity", "behavioral-technical-communication"],
+    "cases": ["support-agent", "rag-doc-copilot"],
+    "guides": ["customer-discovery-scoping"]
+  }
+}

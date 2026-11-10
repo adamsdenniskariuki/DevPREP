@@ -1,0 +1,1688 @@
+{
+  "id": "forward-deployed-engineer-8wk",
+  "title": "8-week Forward Deployed Engineer plan",
+  "summary": "Coding and SQL on messy data, customer discovery and case interviews, building and debugging in customer environments, then LLM apps or data integration and full mock loops. About 8–10 hours a week.",
+  "hoursPerWeek": "8–10",
+  "languages": [
+    "python",
+    "typescript"
+  ],
+  "rhythm": [
+    {
+      "when": "Days 1–4",
+      "time": "1 h",
+      "text": "Two coding or SQL problems, or one lesson and a guide: 25 minutes to solve, 10 to review, then rewrite one from memory."
+    },
+    {
+      "when": "Day 5",
+      "time": "1 h",
+      "text": "Customer or system design reading and a one-page note: scope, load plan, runbook or pilot plan."
+    },
+    {
+      "when": "Days 6–7",
+      "time": "3–4 h",
+      "text": "One 45-minute mock (coding, design or customer case) with a written debrief, then a story, a 15-minute weekly review and an error-log update."
+    }
+  ],
+  "rules": [
+    "Talk out loud while you solve, as you would in the interview.",
+    "State the time and space complexity before you code.",
+    "Test edge cases: empty input, one item, duplicates, and the largest size.",
+    "Log every miss with why it happened and the fix.",
+    "In every design or case answer, restate the customer’s goal and how success will be measured before you propose a solution."
+  ],
+  "tips": {
+    "python": [
+      "collections.Counter counts in one pass, and defaultdict(list) groups without checking for missing keys.",
+      "Use collections.deque for queues: popleft() is O(1), while list.pop(0) is O(n).",
+      "heapq is a min-heap on a plain list. Push (priority, item) tuples, and negate the priority for a max-heap.",
+      "bisect_left and bisect_right binary-search a sorted list for you.",
+      "sorted(items, key=lambda r: (r[1], -r[0])) sorts by several keys. list.sort() sorts in place and returns None.",
+      "Recursion stops at about 1,000 frames by default. Use an explicit stack for deep trees and graphs.",
+      "Integers never overflow, and float(\"inf\") is a clean starting minimum.",
+      "Read messy input defensively: strip and lower-case text keys, and convert numbers inside try/except ValueError so one bad row does not stop the load."
+    ],
+    "typescript": [
+      "Use Map and Set for lookups and counts: keys keep their type, and size and insertion order come built in.",
+      "There is no built-in heap. Write a small binary heap (an array with sift-up and sift-down) that takes a comparator.",
+      "There is no deque. For a BFS queue, keep an array and a head index; shift() can cost O(n).",
+      "sort() compares as strings by default: [10, 9, 1].sort() gives [1, 10, 9]. Pass (a, b) => a - b for numbers.",
+      "Numbers are 64-bit floats, exact up to Number.MAX_SAFE_INTEGER (2^53 − 1). Use BigInt beyond that, and Math.floor for integer division.",
+      "Type the signature first, e.g. function topK(nums: number[], k: number): number[], and narrow nullable nodes before using them.",
+      "Infinity and -Infinity are clean starting values for a minimum or maximum.",
+      "Parse untrusted input at the edge: Number(\"\") is 0 and Number(\"abc\") is NaN, so check for empty text and use Number.isFinite before trusting a value."
+    ]
+  },
+  "refresher": {
+    "python": "#tracks/python",
+    "typescript": "#tracks/typescript"
+  },
+  "tracks": [
+    {
+      "id": "llm-apps",
+      "title": "LLM apps",
+      "summary": "Retrieval, prompts, agents, evals and guardrails built on a customer’s own documents and tools."
+    },
+    {
+      "id": "data-integration",
+      "title": "Data integration",
+      "summary": "Pipelines, sync, reconciliation, consistency and runbooks for a customer’s existing systems."
+    }
+  ],
+  "phases": [
+    {
+      "id": "p1",
+      "title": "Coding and data foundations",
+      "weeks": [
+        1,
+        2
+      ],
+      "check": "Solve two unseen medium problems in 45 minutes total, and write a dedupe-and-upsert SQL query for a messy table without hints."
+    },
+    {
+      "id": "p2",
+      "title": "Build, integrate and debug",
+      "weeks": [
+        3,
+        5
+      ],
+      "check": "One customer case mock and one design mock, each averaging 3 or more on the scorecard, plus an unseen medium problem in 25 minutes."
+    },
+    {
+      "id": "p3",
+      "title": "Specialise and rehearse",
+      "weeks": [
+        6,
+        8
+      ],
+      "check": "Two full mock loops (customer case, coding, design and behavioural) with every round averaging 3 or more."
+    }
+  ],
+  "weeks": [
+    {
+      "n": 1,
+      "phase": "p1",
+      "title": "Hashing, windows and messy input",
+      "focus": "Hash maps for counting, grouping and deduplication, sliding windows, and interval merges: the shapes that show up when you clean real customer data.",
+      "tip": {
+        "python": "Normalise keys once: key = email.strip().lower(). A dict from key to the best row so far deduplicates in one pass, and comparing (updated, id) tuples settles ties.",
+        "typescript": "Normalise keys once: email.trim().toLowerCase(). A Map from key to the best row so far deduplicates in one pass. Compare updated first, then id, since arrays do not compare element by element."
+      },
+      "days": [
+        {
+          "title": "Arrays and hashing",
+          "items": [
+            {
+              "id": "w1-d1-1",
+              "text": "Read the pattern: Arrays & hashing.",
+              "minutes": 10,
+              "href": "#patterns/arrays-hashing"
+            },
+            {
+              "id": "w1-d1-2",
+              "text": "Solve “Count pair sums” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/count-pair-sums"
+            },
+            {
+              "id": "w1-d1-3",
+              "text": "Solve “Group words by letters” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/group-by-letters"
+            },
+            {
+              "id": "w1-d1-4",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Deduplicate a customer export",
+          "items": [
+            {
+              "id": "w1-d2-1",
+              "text": "Solve “Clean a customer export” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/latest-customer-records"
+            },
+            {
+              "id": "w1-d2-2",
+              "text": "Solve “Repeat badge scan” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/has-nearby-duplicate"
+            },
+            {
+              "id": "w1-d2-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Sliding window",
+          "items": [
+            {
+              "id": "w1-d3-1",
+              "text": "Read the pattern: Sliding window.",
+              "minutes": 10,
+              "href": "#patterns/sliding-window"
+            },
+            {
+              "id": "w1-d3-2",
+              "text": "Solve “Longest no-repeat stretch” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/longest-distinct-stretch"
+            },
+            {
+              "id": "w1-d3-3",
+              "text": "Solve “Scrambled code sightings” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/anagram-windows"
+            },
+            {
+              "id": "w1-d3-4",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Intervals",
+          "items": [
+            {
+              "id": "w1-d4-1",
+              "text": "Read the pattern: Intervals.",
+              "minutes": 10,
+              "href": "#patterns/intervals"
+            },
+            {
+              "id": "w1-d4-2",
+              "text": "Solve “Merge overlapping ranges” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/merge-overlaps"
+            },
+            {
+              "id": "w1-d4-3",
+              "text": "Solve “Add a booking to a merged calendar” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/insert-and-merge"
+            },
+            {
+              "id": "w1-d4-4",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Customer discovery",
+          "items": [
+            {
+              "id": "w1-d5-1",
+              "text": "Read: Customer discovery: scope the real problem before you build.",
+              "minutes": 35,
+              "href": "#guide/customer-discovery-scoping"
+            },
+            {
+              "id": "w1-d5-2",
+              "text": "Write a one-page scope for the ask “we want AI for our support inbox”: the outcome, the users, one baseline number, and what is out of scope.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "w1-d6-1",
+              "text": "Read: Communicating your solution in a coding interview.",
+              "minutes": 15,
+              "href": "#guide/communicating-solutions"
+            },
+            {
+              "id": "w1-d6-2",
+              "text": "45-min DSA mock on hashing and windows: talk out loud, state complexity before coding, test edge cases.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w1-d6-3",
+              "text": "Solve “Longest unbroken ticket run” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/longest-consecutive-run"
+            },
+            {
+              "id": "w1-d6-4",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "w1-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w1-d7-2",
+              "text": "Behavioural (30 min): draft a STAR story about a time you worked directly with a customer or user to solve their problem. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "w1-d7-3",
+              "text": "Lesson: STAR: make your contribution observable.",
+              "minutes": 15,
+              "lesson": "behavioral-star-evidence"
+            },
+            {
+              "id": "w1-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "phase": "p1",
+      "title": "SQL for messy data, and graphs",
+      "focus": "Joins, upserts and deduplication in SQL, plus graph traversal for merging records that share identifiers.",
+      "tip": {
+        "python": "For graphs, build adjacency with defaultdict(list) and use collections.deque for BFS. For union-find, keep a parent dict and compress paths as you find roots.",
+        "typescript": "For graphs, build adjacency as a Map<string, string[]>. For BFS, keep an array and a head index instead of shift(), which can cost O(n)."
+      },
+      "days": [
+        {
+          "title": "Deduplicate in SQL",
+          "items": [
+            {
+              "id": "w2-d1-1",
+              "text": "Lesson: Upserts: ON CONFLICT, RETURNING and MERGE.",
+              "minutes": 30,
+              "lesson": "sql-upserts"
+            },
+            {
+              "id": "w2-d1-2",
+              "text": "Solve the SQL problem “Remove duplicate mailing list signups”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/dedupe-mailing-list-signups"
+            },
+            {
+              "id": "w2-d1-3",
+              "text": "Solve the SQL problem “Duplicate member emails”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/duplicate-member-emails"
+            }
+          ]
+        },
+        {
+          "title": "Joins and dirty text",
+          "items": [
+            {
+              "id": "w2-d2-1",
+              "text": "Lesson: Dates, strings and JSONB.",
+              "minutes": 30,
+              "lesson": "sql-dates-strings-json"
+            },
+            {
+              "id": "w2-d2-2",
+              "text": "Lesson: Joins: outer, self, semi and anti.",
+              "minutes": 20,
+              "lesson": "sql-joins"
+            },
+            {
+              "id": "w2-d2-3",
+              "text": "Solve the SQL problem “Customers who never ordered”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/inactive-customers"
+            }
+          ]
+        },
+        {
+          "title": "Graphs",
+          "items": [
+            {
+              "id": "w2-d3-1",
+              "text": "Read the pattern: Graphs.",
+              "minutes": 10,
+              "href": "#patterns/graphs"
+            },
+            {
+              "id": "w2-d3-2",
+              "text": "Solve “Reachable services” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/reachable-count"
+            },
+            {
+              "id": "w2-d3-3",
+              "text": "Solve “Merge overlapping contact cards” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/merge-contact-groups"
+            },
+            {
+              "id": "w2-d3-4",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Intervals and counting",
+          "items": [
+            {
+              "id": "w2-d4-1",
+              "text": "Solve “Overlap of two availability lists” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/list-intersections"
+            },
+            {
+              "id": "w2-d4-2",
+              "text": "Solve “Meeting rooms needed” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/rooms-needed"
+            },
+            {
+              "id": "w2-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Messy data integration",
+          "items": [
+            {
+              "id": "w2-d5-1",
+              "text": "Read: Messy data integration: loads you can safely run twice.",
+              "minutes": 35,
+              "href": "#guide/messy-data-integration"
+            },
+            {
+              "id": "w2-d5-2",
+              "text": "Write a load plan for a nightly CSV export from a customer: the key, validation rules, where bad rows go, and how a re-run stays safe.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "w2-d6-1",
+              "text": "Read: Edge-case checklist: the inputs that break correct-looking code.",
+              "minutes": 15,
+              "href": "#guide/edge-case-checklist"
+            },
+            {
+              "id": "w2-d6-2",
+              "text": "45-min DSA mock on graphs and intervals: clarify the input format first, then talk out loud.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w2-d6-3",
+              "text": "Solve the SQL problem “Sync greenhouse sensors from a supplier feed”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/merge-greenhouse-sensor-feed"
+            },
+            {
+              "id": "w2-d6-4",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "w2-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w2-d7-2",
+              "text": "Behavioural (30 min): draft a story about a vague request you turned into a clear plan. Say which assumptions you wrote down. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "w2-d7-3",
+              "text": "Lesson: Ambiguity: prioritize with explicit assumptions.",
+              "minutes": 15,
+              "lesson": "behavioral-ambiguity-prioritization"
+            },
+            {
+              "id": "w2-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "phase": "p2",
+      "title": "APIs, auth and safe retries",
+      "focus": "How customer systems talk to yours: authentication, idempotent writes, webhooks, retries, and small stateful components such as rate limiters.",
+      "tip": {
+        "python": "Raise specific exceptions with context, e.g. raise ValueError(f\"row {i}: bad email {email!r}\"), and catch the narrowest type. Always pass a timeout to network calls.",
+        "typescript": "fetch only rejects on network errors, so check response.ok yourself. It has no default timeout: pass signal: AbortSignal.timeout(5000)."
+      },
+      "days": [
+        {
+          "title": "API design and auth",
+          "items": [
+            {
+              "id": "w3-d1-1",
+              "text": "Lesson: APIs and data models: make retries safe.",
+              "minutes": 30,
+              "lesson": "design-api-data-model"
+            },
+            {
+              "id": "w3-d1-2",
+              "text": "Read: API authentication and authorization.",
+              "minutes": 20,
+              "href": "#guide/api-auth"
+            },
+            {
+              "id": "w3-d1-3",
+              "text": "Solve “Token bucket rate limiter” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/token-bucket-limiter"
+            }
+          ]
+        },
+        {
+          "title": "Safe retries",
+          "items": [
+            {
+              "id": "w3-d2-1",
+              "text": "Read: Idempotency keys: safe retries for unsafe requests.",
+              "minutes": 20,
+              "href": "#guide/idempotency-keys"
+            },
+            {
+              "id": "w3-d2-2",
+              "text": "Read: Designing webhooks that survive the real internet.",
+              "minutes": 20,
+              "href": "#guide/webhooks"
+            },
+            {
+              "id": "w3-d2-3",
+              "text": "Solve “Hits in the last five minutes” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/hit-counter-window"
+            }
+          ]
+        },
+        {
+          "title": "Stateful components",
+          "items": [
+            {
+              "id": "w3-d3-1",
+              "text": "Read: Retries and backoff: recover without causing the next outage.",
+              "minutes": 20,
+              "href": "#guide/retries-backoff"
+            },
+            {
+              "id": "w3-d3-2",
+              "text": "Solve “Time-versioned key-value store” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/time-versioned-store"
+            },
+            {
+              "id": "w3-d3-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Design-style coding",
+          "items": [
+            {
+              "id": "w3-d4-1",
+              "text": "Solve “Least-recently-used cache” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/lru-cache"
+            },
+            {
+              "id": "w3-d4-2",
+              "text": "Solve “Balanced brackets in a config line” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/balanced-brackets"
+            },
+            {
+              "id": "w3-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Decomposition cases",
+          "items": [
+            {
+              "id": "w3-d5-1",
+              "text": "Read: The decomposition case interview: from a vague ask to a plan.",
+              "minutes": 35,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "w3-d5-2",
+              "text": "Decompose “help field technicians find the right manual page” into users, data, milestones and risks, with one success metric.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "w3-d6-1",
+              "text": "Read: API error format: status codes and Problem Details.",
+              "minutes": 15,
+              "href": "#guide/api-error-format"
+            },
+            {
+              "id": "w3-d6-2",
+              "text": "45-min design mock: the notification service. Start with the customer’s goal, then requirements, API and data model.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w3-d6-3",
+              "text": "Solve the SQL problem “Fold a batch of plays into episode counters”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/podcast-play-counter-upsert"
+            },
+            {
+              "id": "w3-d6-4",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "w3-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w3-d7-2",
+              "text": "Behavioural (30 min): draft a story about a disagreement with a customer or stakeholder over scope, and how you settled it with data. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "w3-d7-3",
+              "text": "Lesson: Disagreement: explain tradeoffs without blame.",
+              "minutes": 15,
+              "lesson": "behavioral-tradeoffs-conflict"
+            },
+            {
+              "id": "w3-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "phase": "p2",
+      "title": "Prototypes and demos",
+      "focus": "Build the smallest thing that proves the riskiest assumption, show it to the customer, and be honest about what is faked.",
+      "tip": {
+        "python": "Prototype with plain functions and dataclasses, then add type hints at the boundaries. A few assert-style tests on the core function keep a fast demo from breaking live.",
+        "typescript": "Prototype with plain functions and type the boundaries first. Use unknown for parsed input and narrow it, rather than any, so bad data fails loudly."
+      },
+      "days": [
+        {
+          "title": "Prototype mindset",
+          "items": [
+            {
+              "id": "w4-d1-1",
+              "text": "Read: Rapid prototypes and demos that earn the next step.",
+              "minutes": 30,
+              "href": "#guide/rapid-prototyping-demos"
+            },
+            {
+              "id": "w4-d1-2",
+              "text": "Solve “Most requested items” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/most-frequent-k"
+            }
+          ]
+        },
+        {
+          "title": "Tests that keep a demo alive",
+          "items": [
+            {
+              "id": "w4-d2-1",
+              "text": "Read: Testing strategy: fast feedback you can trust.",
+              "minutes": 25,
+              "href": "#guide/testing-strategy"
+            },
+            {
+              "id": "w4-d2-2",
+              "text": "Solve “Earliest build order” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/build-order"
+            },
+            {
+              "id": "w4-d2-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Timeboxed build",
+          "items": [
+            {
+              "id": "w4-d3-1",
+              "text": "Timeboxed prototype (45 min) in {lang}: load a list of raw rows, reject the bad ones with a reason, and print a summary of what loaded. Stop when time is up.",
+              "minutes": 45,
+              "href": "#playground"
+            },
+            {
+              "id": "w4-d3-2",
+              "text": "Read: Secrets and the software supply chain.",
+              "minutes": 20,
+              "href": "#guide/secrets-and-supply-chain"
+            }
+          ]
+        },
+        {
+          "title": "Grids and paths",
+          "items": [
+            {
+              "id": "w4-d4-1",
+              "text": "Solve “Count land regions” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/count-regions"
+            },
+            {
+              "id": "w4-d4-2",
+              "text": "Solve “Shortest path through a floor plan” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/grid-shortest-path"
+            },
+            {
+              "id": "w4-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Async work",
+          "items": [
+            {
+              "id": "w4-d5-1",
+              "text": "Lesson: Queues and events: durable work, bounded delay.",
+              "minutes": 30,
+              "lesson": "design-queues-events"
+            },
+            {
+              "id": "w4-d5-2",
+              "text": "Sketch the demo for a document-search prototype: what is real, what is faked, and what must be true before production.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Case mock and debrief",
+          "items": [
+            {
+              "id": "w4-d6-1",
+              "text": "45-min customer case mock, out loud or with a friend: use the practice prompt in the decomposition guide. Score it on the Customer case scorecard below.",
+              "minutes": 45,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "w4-d6-2",
+              "text": "Solve the SQL problem “Next page of match history with a keyset cursor”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/keyset-match-history-page"
+            },
+            {
+              "id": "w4-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "w4-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w4-d7-2",
+              "text": "Behavioural (30 min): draft a story about something you owned end to end for a customer, with a number for the impact. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "w4-d7-3",
+              "text": "Lesson: Ownership: connect your decisions to bounded impact.",
+              "minutes": 15,
+              "lesson": "behavioral-ownership-impact"
+            },
+            {
+              "id": "w4-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "phase": "p2",
+      "title": "Deploy and debug in the field",
+      "focus": "Debug in an environment you do not control: gather evidence, change one thing at a time, and leave the system observable and recoverable.",
+      "tip": {
+        "python": "Use the logging module with one logger per module and structured fields, not print. Log the exception with logger.exception inside except so the traceback is kept.",
+        "typescript": "Wrap awaits at the boundary and log error.cause as well as the message. An unhandled rejection can end a Node process, so never leave a promise floating."
+      },
+      "days": [
+        {
+          "title": "Debugging on site",
+          "items": [
+            {
+              "id": "w5-d1-1",
+              "text": "Read: Debugging a deployment in someone else's environment.",
+              "minutes": 30,
+              "href": "#guide/on-site-deployment-debugging"
+            },
+            {
+              "id": "w5-d1-2",
+              "text": "Lesson: Reliability and observability: test the promise.",
+              "minutes": 30,
+              "lesson": "design-reliability-observability"
+            }
+          ]
+        },
+        {
+          "title": "Observability",
+          "items": [
+            {
+              "id": "w5-d2-1",
+              "text": "Read: Observability: metrics, logs, traces and SLOs.",
+              "minutes": 20,
+              "href": "#guide/observability"
+            },
+            {
+              "id": "w5-d2-2",
+              "text": "Solve “Can every task be scheduled?” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/can-schedule"
+            },
+            {
+              "id": "w5-d2-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Fail softly",
+          "items": [
+            {
+              "id": "w5-d3-1",
+              "text": "Read: Graceful degradation: serve less instead of failing.",
+              "minutes": 20,
+              "href": "#guide/graceful-degradation"
+            },
+            {
+              "id": "w5-d3-2",
+              "text": "Solve “First deadlock in a lock log” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/lock-order-deadlock"
+            },
+            {
+              "id": "w5-d3-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Scheduling and outages",
+          "items": [
+            {
+              "id": "w5-d4-1",
+              "text": "Solve “Worker pool with dependencies” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/worker-pool-makespan"
+            },
+            {
+              "id": "w5-d4-2",
+              "text": "Solve the SQL problem “Game server outage windows”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/game-server-outage-windows"
+            }
+          ]
+        },
+        {
+          "title": "Monitoring design",
+          "items": [
+            {
+              "id": "w5-d5-1",
+              "text": "Work the design case “Metrics and alerting”: requirements, API, data model, then one deep dive. Compare with the reference answer.",
+              "minutes": 45,
+              "href": "#design/metrics-monitoring"
+            },
+            {
+              "id": "w5-d5-2",
+              "text": "Write a short runbook for a customer deployment: health checks, the three logs you read first, and how to roll back.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "w5-d6-1",
+              "text": "45-min debugging mock: a teammate describes a failing deployment and you ask for evidence, form hypotheses and narrow it down.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w5-d6-2",
+              "text": "Solve the SQL problem “Latest lab result before each clinic visit”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/latest-lab-before-clinic-visit"
+            },
+            {
+              "id": "w5-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "w5-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w5-d7-2",
+              "text": "Behavioural (30 min): draft a story about a release or deployment that went wrong, what you changed afterwards, and how you told the customer. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "w5-d7-3",
+              "text": "Lesson: Failure: explain accountability and changed behavior.",
+              "minutes": 15,
+              "lesson": "behavioral-failure-learning"
+            },
+            {
+              "id": "w5-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "phase": "p3",
+      "title": "Retrieval apps on customer documents",
+      "focus": "Ground a model in a customer’s own documents: chunking, retrieval, prompts, cost and how you prove the answers are right.",
+      "tip": {
+        "python": "Keep prompts as templates with named fields and build them in one function you can test. Use generators to stream chunks rather than loading every document at once.",
+        "typescript": "Keep prompts as typed template functions, e.g. (q: string, docs: Doc[]) => string. Stream with for await...of over an async iterator rather than buffering everything."
+      },
+      "track": "llm-apps",
+      "days": [
+        {
+          "title": "Retrieval",
+          "items": [
+            {
+              "id": "llm-w6-d1-1",
+              "text": "Lesson: Retrieval-augmented generation that you can trust.",
+              "minutes": 30,
+              "lesson": "ai-rag"
+            },
+            {
+              "id": "llm-w6-d1-2",
+              "text": "Read: RAG in production: retrieval you can trust.",
+              "minutes": 25,
+              "href": "#guide/rag-in-production"
+            }
+          ]
+        },
+        {
+          "title": "Prompts as an interface",
+          "items": [
+            {
+              "id": "llm-w6-d2-1",
+              "text": "Lesson: Prompting as an engineering interface.",
+              "minutes": 30,
+              "lesson": "ai-prompting"
+            },
+            {
+              "id": "llm-w6-d2-2",
+              "text": "Solve “Search box suggestions” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/autocomplete-suggestions"
+            }
+          ]
+        },
+        {
+          "title": "Design case",
+          "items": [
+            {
+              "id": "llm-w6-d3-1",
+              "text": "Work the design case “Document Q&A copilot (RAG)”: requirements, API, data model, then one deep dive. Compare with the reference answer.",
+              "minutes": 60,
+              "href": "#design/rag-doc-copilot"
+            }
+          ]
+        },
+        {
+          "title": "Heaps and streams",
+          "items": [
+            {
+              "id": "llm-w6-d4-1",
+              "text": "Solve “Leaderboard cut-off” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/kth-largest-stream"
+            },
+            {
+              "id": "llm-w6-d4-2",
+              "text": "Solve “Merge k sorted streams” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/merge-sorted-streams"
+            },
+            {
+              "id": "llm-w6-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Cost and the pilot plan",
+          "items": [
+            {
+              "id": "llm-w6-d5-1",
+              "text": "Read: LLM cost and latency: budgets, routing, caching and fallbacks.",
+              "minutes": 20,
+              "href": "#guide/llm-cost-latency"
+            },
+            {
+              "id": "llm-w6-d5-2",
+              "text": "Write a one-page pilot plan for document Q&A at a customer: users, sources, success metric, eval set and rollout.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "llm-w6-d6-1",
+              "text": "45-min design mock: document Q&A copilot for a customer’s internal manuals.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "llm-w6-d6-2",
+              "text": "Solve “Shifts that hit the quota” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/subarrays-hitting-target"
+            },
+            {
+              "id": "llm-w6-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "llm-w6-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "llm-w6-d7-2",
+              "text": "Behavioural (30 min): draft a story about explaining a technical tradeoff to a non-technical stakeholder. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "llm-w6-d7-3",
+              "text": "Lesson: Technical interviews: clarify, reason aloud, and manage time.",
+              "minutes": 15,
+              "lesson": "behavioral-technical-communication"
+            },
+            {
+              "id": "llm-w6-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "phase": "p3",
+      "title": "Pipelines and sync",
+      "focus": "Move data between a customer’s systems and yours on a schedule: reconcile, reshape, upsert and backfill without double counting.",
+      "tip": {
+        "python": "Process large files with generators so memory stays flat: read a row, validate it, yield it. itertools.groupby needs input sorted by the same key.",
+        "typescript": "Process large inputs in batches and await each one, so memory and connections stay bounded. Validate every row before it reaches the database."
+      },
+      "track": "data-integration",
+      "days": [
+        {
+          "title": "Window functions",
+          "items": [
+            {
+              "id": "di-w6-d1-1",
+              "text": "Lesson: Window functions.",
+              "minutes": 30,
+              "lesson": "sql-window-functions"
+            },
+            {
+              "id": "di-w6-d1-2",
+              "text": "Solve the SQL problem “Reconcile the bank feed against the books”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/reconcile-bank-and-books"
+            }
+          ]
+        },
+        {
+          "title": "Reshape and normalise",
+          "items": [
+            {
+              "id": "di-w6-d2-1",
+              "text": "Lesson: Subqueries, CTEs and recursive queries.",
+              "minutes": 30,
+              "lesson": "sql-subqueries-ctes"
+            },
+            {
+              "id": "di-w6-d2-2",
+              "text": "Solve the SQL problem “Normalise key-value intake answers”: 20 min to solve, 10 min to review.",
+              "minutes": 30,
+              "href": "#sql/normalise-patient-intake-eav"
+            }
+          ]
+        },
+        {
+          "title": "Design case",
+          "items": [
+            {
+              "id": "di-w6-d3-1",
+              "text": "Work the design case “Distributed job scheduler”: requirements, API, data model, then one deep dive. Compare with the reference answer.",
+              "minutes": 60,
+              "href": "#design/job-scheduler"
+            }
+          ]
+        },
+        {
+          "title": "Heaps and streams",
+          "items": [
+            {
+              "id": "di-w6-d4-1",
+              "text": "Solve “Leaderboard cut-off” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/kth-largest-stream"
+            },
+            {
+              "id": "di-w6-d4-2",
+              "text": "Solve “Merge k sorted streams” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/merge-sorted-streams"
+            },
+            {
+              "id": "di-w6-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Change without downtime",
+          "items": [
+            {
+              "id": "di-w6-d5-1",
+              "text": "Read: Schema migrations without downtime: expand, migrate, contract.",
+              "minutes": 20,
+              "href": "#guide/schema-migrations"
+            },
+            {
+              "id": "di-w6-d5-2",
+              "text": "Plan a nightly sync from a customer’s system into yours: source of truth, key, conflict rule, backfill and alerting.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Mock and debrief",
+          "items": [
+            {
+              "id": "di-w6-d6-1",
+              "text": "45-min design mock: a distributed job scheduler that runs customer data loads.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "di-w6-d6-2",
+              "text": "Solve “Shifts that hit the quota” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/subarrays-hitting-target"
+            },
+            {
+              "id": "di-w6-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "di-w6-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "di-w6-d7-2",
+              "text": "Behavioural (30 min): draft a story about explaining a technical tradeoff to a non-technical stakeholder. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "di-w6-d7-3",
+              "text": "Lesson: Technical interviews: clarify, reason aloud, and manage time.",
+              "minutes": 15,
+              "lesson": "behavioral-technical-communication"
+            },
+            {
+              "id": "di-w6-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "phase": "p3",
+      "title": "Agents, evals and guardrails",
+      "focus": "Let a model take actions safely: tool design, limits, evaluation sets, injection defences and human handoff.",
+      "track": "llm-apps",
+      "days": [
+        {
+          "title": "Agents and tools",
+          "items": [
+            {
+              "id": "llm-w7-d1-1",
+              "text": "Lesson: Agents and tool use: loops, limits, and safe actions.",
+              "minutes": 30,
+              "lesson": "ai-agents-tools"
+            },
+            {
+              "id": "llm-w7-d1-2",
+              "text": "Read: Prompt injection: design for a model you cannot fully trust.",
+              "minutes": 25,
+              "href": "#guide/prompt-injection-guardrails"
+            }
+          ]
+        },
+        {
+          "title": "Evals",
+          "items": [
+            {
+              "id": "llm-w7-d2-1",
+              "text": "Lesson: Evaluating LLM systems: golden sets, judges, and noise.",
+              "minutes": 30,
+              "lesson": "ai-evals"
+            },
+            {
+              "id": "llm-w7-d2-2",
+              "text": "Read: LLM evals: golden sets, judges and regression gates.",
+              "minutes": 25,
+              "href": "#guide/llm-evals"
+            }
+          ]
+        },
+        {
+          "title": "Design case",
+          "items": [
+            {
+              "id": "llm-w7-d3-1",
+              "text": "Work the design case “Support agent with tools and handoff”: requirements, API, data model, then one deep dive. Compare with the reference answer.",
+              "minutes": 60,
+              "href": "#design/support-agent"
+            }
+          ]
+        },
+        {
+          "title": "Intervals",
+          "items": [
+            {
+              "id": "llm-w7-d4-1",
+              "text": "Solve “Clear the double-booked stage” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/fewest-removals-no-overlap"
+            },
+            {
+              "id": "llm-w7-d4-2",
+              "text": "Solve “Free time for the whole team” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/common-free-slots"
+            },
+            {
+              "id": "llm-w7-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Responsible AI",
+          "items": [
+            {
+              "id": "llm-w7-d5-1",
+              "text": "Lesson: Responsible AI and safety: grounding, injection, privacy, and oversight.",
+              "minutes": 30,
+              "lesson": "ai-responsible-ai"
+            },
+            {
+              "id": "llm-w7-d5-2",
+              "text": "Write an eval plan for a support agent: the golden set, the pass bar, and what blocks a release.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Loop rehearsal",
+          "items": [
+            {
+              "id": "llm-w7-d6-1",
+              "text": "45-min customer case mock: a customer wants an assistant that can update orders. Score it on the Customer case scorecard below.",
+              "minutes": 45,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "llm-w7-d6-2",
+              "text": "45-min coding mock on a medium problem you have not seen.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "llm-w7-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "llm-w7-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "llm-w7-d7-2",
+              "text": "Behavioural (30 min): draft a story about leading a group to a shared decision without formal authority. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "llm-w7-d7-3",
+              "text": "Lesson: Collaboration: lead through shared understanding.",
+              "minutes": 15,
+              "lesson": "behavioral-collaboration-leadership"
+            },
+            {
+              "id": "llm-w7-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "phase": "p3",
+      "title": "Integration reliability",
+      "focus": "Keep integrations correct under load and failure: caching, consistency, indexes and the runbook you hand over.",
+      "track": "data-integration",
+      "days": [
+        {
+          "title": "Caching",
+          "items": [
+            {
+              "id": "di-w7-d1-1",
+              "text": "Lesson: Caching: trace hits, misses, and writes.",
+              "minutes": 30,
+              "lesson": "design-cache-data-flow"
+            },
+            {
+              "id": "di-w7-d1-2",
+              "text": "Read: Queues and async work: at-least-once, done safely.",
+              "minutes": 25,
+              "href": "#guide/queues-async-work"
+            }
+          ]
+        },
+        {
+          "title": "Consistency",
+          "items": [
+            {
+              "id": "di-w7-d2-1",
+              "text": "Lesson: Consistency: choose guarantees per operation.",
+              "minutes": 30,
+              "lesson": "design-consistency"
+            },
+            {
+              "id": "di-w7-d2-2",
+              "text": "Read: Pagination: offset vs cursor, done right.",
+              "minutes": 20,
+              "href": "#guide/pagination"
+            }
+          ]
+        },
+        {
+          "title": "Design case",
+          "items": [
+            {
+              "id": "di-w7-d3-1",
+              "text": "Work the design case “Notification service”: requirements, API, data model, then one deep dive. Compare with the reference answer.",
+              "minutes": 60,
+              "href": "#design/notification-service"
+            }
+          ]
+        },
+        {
+          "title": "Intervals",
+          "items": [
+            {
+              "id": "di-w7-d4-1",
+              "text": "Solve “Clear the double-booked stage” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/fewest-removals-no-overlap"
+            },
+            {
+              "id": "di-w7-d4-2",
+              "text": "Solve “Free time for the whole team” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/common-free-slots"
+            },
+            {
+              "id": "di-w7-d4-3",
+              "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+              "minutes": 10,
+              "href": "#playground"
+            }
+          ]
+        },
+        {
+          "title": "Indexes and the handover",
+          "items": [
+            {
+              "id": "di-w7-d5-1",
+              "text": "Lesson: Indexes: B-tree, composite, partial, GIN.",
+              "minutes": 30,
+              "lesson": "sql-indexes"
+            },
+            {
+              "id": "di-w7-d5-2",
+              "text": "Write the handover runbook for a customer sync: alerts, safe replays, and how to rebuild from the source.",
+              "minutes": 20,
+              "href": "#board"
+            }
+          ]
+        },
+        {
+          "title": "Loop rehearsal",
+          "items": [
+            {
+              "id": "di-w7-d6-1",
+              "text": "45-min customer case mock: a customer wants their three order systems to agree every morning. Score it on the Customer case scorecard below.",
+              "minutes": 45,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "di-w7-d6-2",
+              "text": "45-min coding mock on a medium problem you have not seen.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "di-w7-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Review and stories",
+          "items": [
+            {
+              "id": "di-w7-d7-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "di-w7-d7-2",
+              "text": "Behavioural (30 min): draft a story about leading a group to a shared decision without formal authority. Keep it to about two minutes out loud.",
+              "minutes": 30,
+              "href": "#stories"
+            },
+            {
+              "id": "di-w7-d7-3",
+              "text": "Lesson: Collaboration: lead through shared understanding.",
+              "minutes": 15,
+              "lesson": "behavioral-collaboration-leadership"
+            },
+            {
+              "id": "di-w7-d7-4",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 8,
+      "phase": "p3",
+      "title": "Full loops and polish",
+      "focus": "Two full mock loops with a customer case, coding, design and behavioural round, then fix the weakest area before the real thing.",
+      "days": [
+        {
+          "title": "Loop 1: customer case",
+          "items": [
+            {
+              "id": "w8-d1-1",
+              "text": "45-min customer case mock on a vague ask you have not seen. Score it on the Customer case scorecard below.",
+              "minutes": 45,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "w8-d1-2",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Loop 1: coding",
+          "items": [
+            {
+              "id": "w8-d2-1",
+              "text": "45-min coding mock: two medium problems, talking out loud throughout.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w8-d2-2",
+              "text": "Solve “Meeting rooms needed” in {lang}: 25 min to solve, 10 min to review.",
+              "minutes": 35,
+              "href": "#code/rooms-needed"
+            }
+          ]
+        },
+        {
+          "title": "Loop 1: design",
+          "items": [
+            {
+              "id": "w8-d3-1",
+              "text": "45-min design mock in your track: document Q&A, a support agent, a job scheduler or a notification service.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w8-d3-2",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Loop 1: behavioural",
+          "items": [
+            {
+              "id": "w8-d4-1",
+              "text": "Behavioural mock (45 min): answer one customer, one failure and one conflict question out loud from your stories.",
+              "minutes": 45,
+              "href": "#stories"
+            },
+            {
+              "id": "w8-d4-2",
+              "text": "Lesson: Project deep dive: explain decisions at several depths.",
+              "minutes": 20,
+              "lesson": "behavioral-project-deep-dive"
+            }
+          ]
+        },
+        {
+          "title": "Fix the weakest area",
+          "items": [
+            {
+              "id": "w8-d5-1",
+              "text": "Weekly review (15 min): reread the error log, redo one missed problem, and plan next week.",
+              "minutes": 15
+            },
+            {
+              "id": "w8-d5-2",
+              "text": "Pick the lowest scorecard area and spend 45 minutes on the lesson, guide or problem that targets it.",
+              "minutes": 45,
+              "href": "#progress"
+            }
+          ]
+        },
+        {
+          "title": "Loop 2",
+          "items": [
+            {
+              "id": "w8-d6-1",
+              "text": "45-min customer case mock with a different industry from loop 1. Score it on the Customer case scorecard below.",
+              "minutes": 45,
+              "href": "#guide/decomposition-case-interview"
+            },
+            {
+              "id": "w8-d6-2",
+              "text": "45-min coding or design mock, whichever scored lower in loop 1.",
+              "minutes": 45,
+              "href": "#mock"
+            },
+            {
+              "id": "w8-d6-3",
+              "text": "Written debrief (15 min): what went well, what to fix, and one error-log entry per miss.",
+              "minutes": 15
+            }
+          ]
+        },
+        {
+          "title": "Final review",
+          "items": [
+            {
+              "id": "w8-d7-1",
+              "text": "Final review (20 min): reread every error-log entry and your scorecards, and write three things to do on the day.",
+              "minutes": 20
+            },
+            {
+              "id": "w8-d7-2",
+              "text": "Flashcards: clear today’s due cards.",
+              "minutes": 15,
+              "href": "#cards"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

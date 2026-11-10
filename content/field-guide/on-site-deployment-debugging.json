@@ -1,0 +1,183 @@
+{
+  "id": "on-site-deployment-debugging",
+  "kind": "guide",
+  "topic": "customer-engineering",
+  "level": "sse",
+  "title": "Debugging a deployment in someone else's environment",
+  "summary": "Works on your machine, fails at the customer: narrow it down layer by layer through config, network, TLS, identity and data, and always keep a rollback ready.",
+  "minutes": 16,
+  "principle": "When a deployment fails in a customer's environment, first make it safe (roll back or contain), then find the difference between where it works and where it fails, one layer at a time: version and config, network path, TLS and proxies, identity and SSO, then data. Change one thing at a time and write down what you learn.",
+  "why": "Customer environments are full of things your test setup never had: outbound proxies that rewrite TLS, firewalls that only allow named hosts, a corporate identity provider with its own clock and claim names, older operating systems, read-only file systems and data that is bigger and stranger than your fixtures. You often cannot attach a debugger or even see the logs directly; you are on a shared screen with an administrator who has fifteen minutes.\n\nPeople who are good at this work in a calm, ordered way. They stop the bleeding first, they ask for the exact error text and timestamps, they compare a working and a failing environment systematically, and they test one hypothesis at a time with the cheapest command that can disprove it. Interviewers check for this with scenario questions like \"Your service deploys fine in staging but returns 502s at the customer. Walk me through it.\"",
+  "diagrams": [
+    {
+      "id": "osd-triage-ladder",
+      "type": "flow",
+      "title": "Narrowing a customer-only failure",
+      "alt": "Flow diagram of a triage ladder for a deployment that fails only at the customer. First contain the impact or roll back. Then check the version and config, then the network path, then TLS and proxies, then identity and SSO, and finally the data. Each layer is checked before moving down.",
+      "caption": "Work top to bottom: earlier layers are cheaper to check and explain more failures.",
+      "nodes": [
+        { "id": "safe", "label": "Contain", "kind": "good", "col": 0, "row": 0, "sub": "rollback ready" },
+        { "id": "cfg", "label": "Version + config", "kind": "state", "col": 1, "row": 0, "sub": "diff vs working" },
+        { "id": "net", "label": "Network path", "kind": "lb", "col": 2, "row": 0, "sub": "DNS, firewall" },
+        { "id": "tls", "label": "TLS + proxy", "kind": "cdn", "col": 3, "row": 0, "sub": "certs, intercept" },
+        { "id": "idp", "label": "Identity + SSO", "kind": "external", "col": 3, "row": 2, "sub": "claims, clock" },
+        { "id": "data", "label": "Data", "kind": "db", "col": 2, "row": 2, "sub": "size, encoding" },
+        { "id": "fix", "label": "Fix + note", "kind": "note", "col": 1, "row": 2, "sub": "one change" }
+      ],
+      "edges": [
+        { "from": "safe", "to": "cfg" },
+        { "from": "cfg", "to": "net" },
+        { "from": "net", "to": "tls" },
+        { "from": "tls", "to": "idp" },
+        { "from": "idp", "to": "data" },
+        { "from": "data", "to": "fix" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Make it safe first: roll back, switch off the feature flag or route traffic away. Then diff the running version and config against a working environment." },
+        { "edges": [1, 2], "text": "Check the network path from where the service actually runs: name resolution, firewall rules and whether an outbound proxy is required or is intercepting TLS." },
+        { "edges": [3], "text": "Check identity: redirect URIs, client secrets, claim names, group mappings and clock skew between servers and the identity provider." },
+        { "edges": [4, 5], "text": "Only then suspect the data: sizes, encodings, nulls and permissions. Make one change, verify, and write down what you found." }
+      ]
+    },
+    {
+      "id": "osd-sso-failure",
+      "type": "sequence",
+      "title": "An SSO login that fails only at the customer",
+      "alt": "Sequence diagram of a single sign-on failure. The user's browser is redirected from the app to the customer's identity provider and back with a token. The app rejects the token because the server clock is three minutes ahead and the token is not yet valid. The engineer finds the clock skew in the logs, fixes time sync and adds a small allowed skew.",
+      "caption": "Token validation failures often come from configuration around the token, not the code: clocks, audiences, redirect URIs and claim names.",
+      "actors": [
+        { "id": "browser", "label": "Browser" },
+        { "id": "app", "label": "App" },
+        { "id": "idp", "label": "Customer IdP" },
+        { "id": "eng", "label": "Engineer" }
+      ],
+      "messages": [
+        { "from": "browser", "to": "app", "label": "GET /dashboard" },
+        { "from": "app", "to": "browser", "label": "302 to IdP login", "style": "reply", "note": "The redirect URI registered at the IdP must match exactly, including scheme and trailing slash." },
+        { "from": "browser", "to": "idp", "label": "sign in" },
+        { "from": "idp", "to": "browser", "label": "302 back with code", "style": "reply" },
+        { "from": "app", "to": "idp", "label": "exchange code for token" },
+        { "from": "app", "to": "browser", "label": "401: token not yet valid", "style": "fail", "note": "The app server's clock runs 3 minutes ahead of the IdP's." },
+        { "from": "eng", "to": "app", "label": "read logs: nbf vs server time", "note": "Log the reason for a rejected token (expired, audience, issuer, not yet valid) without logging the token itself." },
+        { "from": "eng", "to": "app", "label": "enable time sync, allow 60s skew" }
+      ]
+    },
+    {
+      "id": "osd-rollout-timeline",
+      "type": "timeline",
+      "title": "An on-site rollout that needed a rollback",
+      "alt": "Timeline of an on-site rollout. At 09:00 version 2 is deployed to the customer. At 09:12 error rates rise because calls to an external API time out. At 09:15 the engineer rolls back to version 1 and errors recover. At 10:30 the cause is found: the new version calls a host not on the customer's firewall allow list. At 14:00 the host is approved and version 2 is redeployed behind a flag.",
+      "caption": "Rolling back at 09:15 turned an outage into a delay. The root cause took over an hour to find and did not need to be found under pressure.",
+      "events": [
+        { "at": "09:00", "label": "Version 2 deployed to the customer's environment", "kind": "trigger" },
+        { "at": "09:12", "label": "Error rate rises; calls to a new external host time out", "kind": "impact" },
+        { "at": "09:15", "label": "Roll back to version 1; errors recover", "kind": "mitigate" },
+        { "at": "10:30", "label": "Cause found: the new host is not on the customer's firewall allow list", "kind": "detect" },
+        { "at": "14:00", "label": "Host approved; version 2 redeployed behind a flag and watched", "kind": "resolve" }
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "title": "Test one hypothesis with the cheapest command",
+      "bad": {
+        "label": "Change several things and redeploy",
+        "lang": "text",
+        "code": "Bumped timeouts, turned off TLS verification, upgraded the HTTP\nlibrary and redeployed. Works now? Not sure which change did it."
+      },
+      "good": {
+        "label": "Probe each layer from the failing host",
+        "lang": "shell",
+        "code": "# from inside the customer's container or VM\nnslookup api.vendor.example          # DNS resolves?\ncurl -sv https://api.vendor.example/health --max-time 5\n# connect timeout -> firewall or proxy\n# certificate error -> TLS interception: add the customer CA bundle\nenv | grep -i proxy                  # is HTTPS_PROXY expected here?\ndate -u                              # clock drift breaks tokens"
+      },
+      "why": "Each command answers one question from the place where the failure happens. Changing many things at once may hide the cause, and disabling TLS verification trades a bug for a security hole."
+    }
+  ],
+  "checklist": [
+    "Rollback or a kill switch is ready and tested before you deploy at a customer.",
+    "You have the exact error text, timestamps and request ids, not a summary.",
+    "You compared the version and config of a working and the failing environment.",
+    "You checked DNS, firewall rules and proxy settings from the host that fails, not from your laptop.",
+    "TLS problems are fixed by trusting the right CA bundle, never by disabling verification.",
+    "Token failures are logged with a reason (expired, audience, issuer, clock) without logging the token.",
+    "You changed one thing at a time and recorded what each test showed.",
+    "Afterwards you added a startup or health check that would have caught the issue earlier."
+  ],
+  "antipatterns": [
+    {
+      "title": "Debugging forward while users are down",
+      "bad": {
+        "label": "Hunt for the root cause first",
+        "lang": "text",
+        "code": "09:12 errors start\n09:15-11:00 try fixes in production while users wait"
+      },
+      "better": {
+        "label": "Contain, then investigate calmly",
+        "lang": "text",
+        "code": "09:12 errors start\n09:15 roll back (or flag off), confirm recovery, tell the customer\n09:30 investigate in a copy of the environment"
+      },
+      "why": "Root cause analysis is slow and needs a clear head. Restoring service first limits the damage and the pressure, and keeps the customer's trust."
+    },
+    {
+      "title": "Turning off TLS verification to get past a proxy",
+      "bad": {
+        "label": "Silence the certificate error",
+        "lang": "py",
+        "code": "requests.get(url, verify=False)  # works now"
+      },
+      "better": {
+        "label": "Trust the customer's inspection CA",
+        "lang": "py",
+        "code": "# the customer's proxy re-signs TLS with an internal CA\nrequests.get(url, verify=\"/etc/ssl/certs/customer-ca-bundle.pem\")"
+      },
+      "why": "Corporate proxies often intercept TLS with their own certificate authority. Point your client at that CA bundle; disabling verification would also accept an attacker's certificate."
+    }
+  ],
+  "interview": [
+    "Start any \"works here, fails there\" scenario with containment: how you would roll back or switch the change off.",
+    "Then describe a layered comparison of working and failing environments: version and config, network, TLS and proxy, identity, data.",
+    "Name the specific probes you would run from the failing host and what each result would tell you.",
+    "Finish with prevention: a health check, a preflight script for customer environments, or documentation for the next deployment."
+  ],
+  "quiz": [
+    {
+      "question": "A service works in staging but times out calling an external API at the customer. What do you check first after containing the impact?",
+      "choices": ["Rewrite the HTTP client", "The network path from the failing host: DNS, firewall and proxy", "The database indexes"],
+      "answer": 1,
+      "explain": "A connect timeout only in one environment usually means the network path differs. Probe it from the host that fails."
+    },
+    {
+      "question": "Calls fail with a certificate error only on the customer network. What is the right fix?",
+      "choices": ["Disable TLS verification", "Switch to plain HTTP", "Trust the customer's proxy CA bundle"],
+      "answer": 2,
+      "explain": "Many corporate networks intercept TLS with an internal CA. Trusting that CA keeps verification on; disabling it opens a security hole."
+    },
+    {
+      "question": "SSO tokens are rejected as \"not yet valid\". What is the likely cause?",
+      "choices": ["Clock skew between the app server and the identity provider", "The password is wrong", "The token is too large"],
+      "answer": 0,
+      "explain": "The not-before and expiry checks compare token times with the server clock. Fix time sync and allow a small, documented skew."
+    },
+    {
+      "question": "Errors spike right after a deployment at a customer site. What should you do first?",
+      "choices": ["Find the root cause before touching anything", "Roll back or switch the change off, then investigate", "Ask the customer to restart their servers"],
+      "answer": 1,
+      "explain": "Restoring service first limits harm and pressure. The root cause can be found afterwards, in a copy of the environment."
+    }
+  ],
+  "practice": {
+    "prompt": "Your team's container runs fine in your cloud account. At a customer's site it starts, but every request returns 502 from their reverse proxy and users cannot sign in through the company's SSO. You have a shared screen with their administrator for 30 minutes. What do you do?",
+    "answer": "First confirm the impact and whether the previous version or an off switch exists, so the customer is not blocked. Collect the exact errors with timestamps from the proxy and the container. Check the container is listening on the port and interface the proxy expects (a common cause of 502 is binding to localhost or the wrong port) and that health checks pass from the proxy host. Diff environment variables and config against the working setup, including base URL and proxy settings. For SSO, compare the redirect URI registered at the identity provider with the external URL the proxy presents (scheme, host, path, trailing slash), check that forwarded headers are trusted so the app builds https URLs, and check the server clock. Make one change at a time, note each result, and afterwards add a preflight script and documentation for these settings.",
+    "rubric": [
+      "Contains impact or confirms a rollback path first",
+      "Collects exact errors and timestamps",
+      "Checks port binding and proxy health checks for the 502",
+      "Checks redirect URI, forwarded headers and clock for SSO",
+      "Changes one thing at a time and adds prevention afterwards"
+    ]
+  },
+  "links": {
+    "lessons": ["design-reliability-observability"],
+    "guides": ["observability", "api-auth", "secrets-and-supply-chain", "graceful-degradation"]
+  }
+}

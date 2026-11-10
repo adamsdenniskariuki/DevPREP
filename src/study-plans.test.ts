@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json' }
 import knownItemIds from '../tests/fixtures/plan-item-ids.json' with { type: 'json' }
+import knownFdeItemIds from '../tests/fixtures/fde-plan-item-ids.json' with { type: 'json' }
 import plansJson from './generated/plans.json' with { type: 'json' }
 import navIndex from './generated/nav-index.json' with { type: 'json' }
 // @ts-expect-error plain JS build script
@@ -21,12 +22,13 @@ import { hrefFor, parseHash, type RouteIds } from './routes'
 import { sqlProblemIds } from './sql-problems'
 import {
   daysBetween, emptyPlanProgress, forLanguage, isDay, itemText, loadPlans, MAX_ERRORS, newEntryId, parsePlans, PLAN_IDS, PLAN_LANGUAGES, planCount, planHref, planLanguage, PLANS_KEY, positionFor,
-  readPlans, removeEntry, scoreAverage, setCheck, toDay, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
-  type PlansState, type StudyPlan,
+  readPlans, removeEntry, SCORE_AREAS, SCORE_KIND_LABELS, scoreAverage, setCheck, toDay, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
+  type PlansState, type ScoreKind, type StudyPlan,
 } from './study-plans'
 
 const plans = plansJson as unknown as StudyPlan[]
 const plan = plans.find(item => item.id === 'applied-ai-ml-10wk')!
+const fde = plans.find(item => item.id === 'forward-deployed-engineer-8wk')!
 const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: PLAN_IDS }
 
 class MemoryStorage {
@@ -63,7 +65,12 @@ describe('study plan content', () => {
     expect(plan.languages).toEqual(['python', 'typescript'])
   })
 
-  it('links every item to content that exists, and every link parses with the app router', () => {
+  it('lists both plans, Applied AI first', () => {
+    expect(plans.map(item => item.id)).toEqual(['applied-ai-ml-10wk', 'forward-deployed-engineer-8wk'])
+    expect([...PLAN_IDS]).toEqual(plans.map(item => item.id))
+  })
+
+  it.each(plans.map(item => [item.id, item] as const))('%s links every item to content that exists, and every link parses with the app router', (_id, plan) => {
     const lessonIds = new Set(lessons.map(lesson => lesson.id))
     for (const item of plan.weeks.flatMap(weekItems)) {
       if (item.lesson) expect(lessonIds.has(item.lesson), item.id).toBe(true)
@@ -77,7 +84,7 @@ describe('study plan content', () => {
     for (const lang of plan.languages) expect(parseHash(plan.refresher[lang]!, ids)).toEqual({ route: 'tracks', track: lang })
   })
 
-  it('only uses the {lang} placeholder and fills it with the language label', () => {
+  it.each(plans.map(item => [item.id, item] as const))('%s only uses the {lang} placeholder and fills it with the language label', (_id, plan) => {
     const items = plan.weeks.flatMap(weekItems)
     const templated = items.find(item => itemText(item, 'python') !== itemText(item, 'typescript'))!
     expect(itemText(templated, 'python')).toContain('Python')
@@ -127,6 +134,7 @@ describe('study plan content', () => {
   it('has no personal or employer details', () => {
     const text = JSON.stringify(plans)
     for (const word of ['Microsoft', 'EntityServe', 'Polymer', 'Fitto', 'Substrate']) expect(text).not.toContain(word)
+    for (const href of plans.flatMap(item => item.weeks.flatMap(weekItems)).map(item => item.href ?? '')) expect(href).not.toMatch(/^#(company|mock)\//)
   })
 
   it('rejects broken plans with a readable message', () => {
@@ -179,10 +187,60 @@ describe('study plan content', () => {
   })
 })
 
-describe('plan item id registry', () => {
-  const current = new Set(plan.weeks.flatMap(weekItems).map(item => item.id))
-  it('keeps every item id that has ever shipped', () => expect(knownItemIds.filter(id => !current.has(id))).toEqual([]))
-  it('records every current item id', () => expect([...current].filter(id => !knownItemIds.includes(id))).toEqual([]))
+describe.each([['applied-ai-ml-10wk', knownItemIds], ['forward-deployed-engineer-8wk', knownFdeItemIds]] as const)('plan item id registry for %s', (id, known) => {
+  const current = new Set(plans.find(item => item.id === id)!.weeks.flatMap(weekItems).map(item => item.id))
+  it('keeps every item id that has ever shipped', () => expect(known.filter(itemId => !current.has(itemId))).toEqual([]))
+  it('records every current item id', () => expect([...current].filter(itemId => !(known as readonly string[]).includes(itemId))).toEqual([]))
+  it('has a registry for every plan', () => expect(plans.map(item => item.id)).toContain(id))
+})
+
+describe('the Forward Deployed Engineer plan', () => {
+  const items = fde.weeks.flatMap(weekItems)
+  const hrefs = new Set(items.map(item => item.href))
+  it('is an 8-week plan in three phases, Python first with TypeScript too', () => {
+    expect(fde.title).toBe('8-week Forward Deployed Engineer plan')
+    expect(fde.hoursPerWeek).toBe('8–10')
+    expect(weekCount(fde)).toBe(8)
+    expect(fde.phases.map(phase => phase.weeks)).toEqual([[1, 2], [3, 5], [6, 8]])
+    expect(fde.languages).toEqual(['python', 'typescript'])
+    expect(fde.tracks.map(track => track.id)).toEqual(['llm-apps', 'data-integration'])
+  })
+
+  it('shares weeks 1–5 and 8, and swaps weeks 6–7 with the track', () => {
+    const llm = weeksFor(fde, 'llm-apps')
+    const data = weeksFor(fde, 'data-integration')
+    expect(llm.map(week => week.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(data.map(week => week.n)).toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    expect(llm.slice(0, 5)).toEqual(data.slice(0, 5))
+    expect(llm[7]).toEqual(data[7])
+    for (const n of [6, 7]) expect(weekItems(llm[n - 1]).map(item => item.id)).not.toEqual(weekItems(data[n - 1]).map(item => item.id))
+    expect(weekItems(data[5])[0].id).toBe('di-w6-d1-1')
+  })
+
+  it('links the customer-engineering guides, the cleanup problem, SQL, design cases and stories', () => {
+    for (const href of ['#guide/customer-discovery-scoping', '#guide/decomposition-case-interview', '#guide/messy-data-integration', '#guide/rapid-prototyping-demos', '#guide/on-site-deployment-debugging',
+      '#code/latest-customer-records', '#sql/dedupe-mailing-list-signups', '#design/rag-doc-copilot', '#design/support-agent', '#stories', '#playground']) expect(hrefs, href).toContain(href)
+    expect(items.some(item => item.lesson?.startsWith('behavioral-'))).toBe(true)
+  })
+
+  it('has idioms and week tips that differ by language', () => {
+    expect(fde.tips.python!.join()).toContain('ValueError')
+    expect(fde.tips.typescript!.join()).toContain('Number.isFinite')
+    const tipped = fde.weeks.filter(week => week.tip)
+    expect(tipped.length).toBeGreaterThanOrEqual(5)
+    for (const week of tipped) expect(forLanguage(week.tip, 'python'), `week ${week.n}`).not.toBe(forLanguage(week.tip, 'typescript'))
+    const code = items.find(item => item.href === '#code/latest-customer-records')!
+    expect(itemText(code, 'typescript')).toContain('TypeScript')
+    expect(planHref(code.href!, 'typescript')).toBe('#code/latest-customer-records/ts')
+  })
+
+  it('keeps every week inside the 8–10 hour budget', () => {
+    for (const track of fde.tracks) for (const week of weeksFor(fde, track.id)) {
+      const minutes = weekItems(week).reduce((sum, item) => sum + item.minutes, 0)
+      expect(minutes / 60, `week ${week.n} ${track.id}`).toBeGreaterThanOrEqual(6)
+      expect(minutes / 60, `week ${week.n} ${track.id}`).toBeLessThanOrEqual(10.5)
+    }
+  })
 })
 
 describe('tracks', () => {
@@ -307,6 +365,14 @@ describe('parsePlans', () => {
   it('accepts each plan language', () => {
     for (const lang of PLAN_LANGUAGES) expect(parsePlans(started({ lang: lang.id }))[plan.id].lang).toBe(lang.id)
   })
+  it('accepts every scorecard kind, including the customer case', () => {
+    expect(SCORE_KIND_LABELS.case).toBe('Customer case')
+    expect(SCORE_AREAS.case).toEqual(['Problem framing', 'Decomposition', 'Technical depth', 'Communication'])
+    for (const kind of Object.keys(SCORE_AREAS) as ScoreKind[]) {
+      const state = started({ scores: [{ id: 's', at: '2026-11-02', kind, title: 'x', scores: [1, 2, 3, 4], notes: '' }] })
+      expect(parsePlans(state)).toEqual(state)
+    }
+  })
 
   it.each([
     ['not an object', []],
@@ -319,6 +385,7 @@ describe('parsePlans', () => {
     ['bad item day', { [plan.id]: { ...emptyPlanProgress(), done: { 'w1-d1-1': 'yesterday' } } }],
     ['bad check', { [plan.id]: { ...emptyPlanProgress(), checks: { p1: 'maybe' } } }],
     ['score out of range', { [plan.id]: { ...emptyPlanProgress(), scores: [{ id: 's', at: '2026-11-02', kind: 'dsa', title: 'x', scores: [1, 2, 3, 5], notes: '' }] } }],
+    ['unknown score kind', { [plan.id]: { ...emptyPlanProgress(), scores: [{ id: 's', at: '2026-11-02', kind: 'toString', title: 'x', scores: [1, 2, 3, 4], notes: '' }] } }],
     ['empty problem', { [plan.id]: { ...emptyPlanProgress(), errors: [{ id: 'e', at: '2026-11-02', problem: ' ', pattern: '', why: '', fix: '' }] } }],
     ['too many errors', { [plan.id]: { ...emptyPlanProgress(), errors: Array.from({ length: MAX_ERRORS + 1 }, (_, i) => ({ id: `e${i}`, at: '2026-11-02', problem: 'x', pattern: '', why: '', fix: '' })) } }],
   ])('rejects %s', (_, value) => expect(() => parsePlans(value)).toThrow(/^Invalid backup: /))
@@ -354,6 +421,17 @@ describe('backups', () => {
     expect(parseFullBackup(serializeFullBackup(emptyProgress(), undefined, [], typescript)).plans).toEqual(typescript)
   })
 
+  it('round-trips progress in two plans at once, with a customer case scorecard', () => {
+    const state: PlansState = {
+      ...started({ done: { 'w1-d1-1': '2026-11-02' } }),
+      [fde.id]: { ...emptyPlanProgress(), start: '2026-11-09', track: 'data-integration', lang: 'typescript', done: { 'di-w6-d1-1': '2026-12-14' }, checks: { p1: 'pass' },
+        scores: [{ id: 'score-1', at: '2026-11-15', kind: 'case', title: 'AI for a support inbox', scores: [3, 2, 3, 4], notes: '' }] },
+    }
+    expect(parseFullBackup(serializeFullBackup(emptyProgress(), undefined, [], state)).plans).toEqual(state)
+    expect(writePlans(state)).toBe(true)
+    expect(readPlans()).toEqual(state)
+  })
+
   it('rejects an unknown language in a backup', () => {
     const base = JSON.parse(serializeBackup(emptyProgress()))
     expect(() => parseFullBackup(JSON.stringify({ ...base, plans: { [plan.id]: { ...emptyPlanProgress(), lang: 'rust' } } }))).toThrow(/^Invalid backup: /)
@@ -380,17 +458,24 @@ describe('navigation and search', () => {
     const progress = emptyProgress()
     const state = started({ done: { 'w1-d1-1': '2026-11-02', 'ml-w8-d1-1': '2026-11-02' } })
     const section = deepSections(progress, nav, state).plans!
-    expect(section.children.map(node => node.href)).toEqual([`#plans/${plan.id}`])
-    expect(section.count).toEqual({ done: 1, total: planCount(plan, undefined).total })
+    expect(section.children.map(node => node.href)).toEqual(plans.map(item => `#plans/${item.id}`))
+    expect(section.count).toEqual({ done: 1, total: plans.reduce((sum, item) => sum + planCount(item, undefined).total, 0) })
     expect(deepSections(progress, nav, { [plan.id]: { ...state[plan.id], track: 'ml-engineer' } }).plans!.count!.done).toBe(2)
+    const both = { ...state, [fde.id]: { ...emptyPlanProgress(), done: { 'w1-d1-1': '2026-11-09', 'di-w6-d1-1': '2026-11-09' } } }
+    expect(deepSections(progress, nav, both).plans!.count!.done).toBe(2)
+    expect(deepSections(progress, nav, { ...both, [fde.id]: { ...both[fde.id], track: 'data-integration' } }).plans!.count!.done).toBe(3)
   })
 
-  it('finds the plan and its weeks in the palette', () => {
+  it('finds both plans and their weeks in the palette', () => {
     const entries = buildPaletteIndex(nav)
     expect(entries.find(entry => entry.id === `plan:${plan.id}`)).toMatchObject({ kind: 'plan', href: `#plans/${plan.id}` })
-    expect(entries.filter(entry => entry.kind === 'plan')).toHaveLength(1 + plan.weeks.length)
+    expect(entries.find(entry => entry.id === `plan:${fde.id}`)).toMatchObject({ kind: 'plan', href: `#plans/${fde.id}`, detail: 'Study plan · 8 weeks' })
+    expect(entries.filter(entry => entry.kind === 'plan')).toHaveLength(plans.reduce((sum, item) => sum + 1 + item.weeks.length, 0))
     expect(searchPalette(entries, 'study plans')[0].items.map(item => item.href)).toContain('#plans')
+    expect(searchPalette(entries, 'forward deployed').flatMap(group => group.items.map(item => item.href))).toContain(`#plans/${fde.id}`)
+    expect(searchPalette(entries, 'fde').flatMap(group => group.items.map(item => item.href))).toContain('#plans')
     const week8 = entries.find(entry => entry.id === `plan:${plan.id}:w8:ml-engineer`)!
     expect(week8.detail).toContain('ML engineer')
+    expect(entries.find(entry => entry.id === `plan:${fde.id}:w6:data-integration`)!.detail).toContain('Data integration')
   })
 })

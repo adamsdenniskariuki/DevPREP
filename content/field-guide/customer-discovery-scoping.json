@@ -1,0 +1,198 @@
+{
+  "id": "customer-discovery-scoping",
+  "kind": "guide",
+  "topic": "customer-engineering",
+  "level": "se",
+  "title": "Customer discovery: scope the real problem before you build",
+  "summary": "Turn a customer's feature request into a measurable outcome, a first slice you can ship in weeks, and a written scope both sides agree on.",
+  "minutes": 14,
+  "principle": "Customers arrive with a solution in mind. Your job is to find the outcome behind it, measure today's baseline, and agree on the smallest slice that moves that number. Write the scope down, including what is out of scope, before anyone writes code.",
+  "why": "An engineer embedded with a customer is paid for outcomes, not features. The first request you hear (\"we need a chatbot\", \"connect our database to your API\") is usually one person's guess at a fix. If you build it as stated, you can deliver exactly what was asked and still fail, because the real constraint was elsewhere: the data was never clean, the users work offline, or the approver who signs the budget cares about a different metric.\n\nDiscovery is cheap compared with rework. A few focused conversations, watching the work being done, and one baseline number give you a target to aim at and a way to prove you hit it. Interviewers for customer-facing engineering roles test exactly this: they hand you a vague ask and watch whether you jump to architecture or ask who hurts, how much, and how you will know it worked.",
+  "diagrams": [
+    {
+      "id": "cds-discovery-loop",
+      "type": "flow",
+      "title": "From request to agreed scope",
+      "alt": "Flow diagram. A customer request leads to questions about the outcome, then watching the current workflow, then measuring a baseline, then choosing a first slice, and finally a written scope. A dashed edge loops from the written scope back to the questions when new facts appear.",
+      "caption": "Each step produces something you can show back to the customer. Loop back whenever a new fact changes the picture.",
+      "nodes": [
+        { "id": "ask", "label": "Request", "kind": "client", "col": 0, "row": 0, "sub": "\"we need X\"" },
+        { "id": "why", "label": "Outcome", "kind": "decision", "col": 1, "row": 0, "sub": "who hurts and why" },
+        { "id": "watch", "label": "Watch the work", "kind": "note", "col": 2, "row": 0, "sub": "today's workflow" },
+        { "id": "base", "label": "Baseline", "kind": "db", "col": 3, "row": 0, "sub": "one number" },
+        { "id": "slice", "label": "First slice", "kind": "good", "col": 3, "row": 2, "sub": "ship in weeks" },
+        { "id": "scope", "label": "Written scope", "kind": "state", "col": 1, "row": 2, "sub": "in and out" }
+      ],
+      "edges": [
+        { "from": "ask", "to": "why", "label": "ask why" },
+        { "from": "why", "to": "watch" },
+        { "from": "watch", "to": "base", "label": "measure" },
+        { "from": "base", "to": "slice", "label": "pick target" },
+        { "from": "slice", "to": "scope", "label": "write down" },
+        { "from": "scope", "to": "why", "label": "new facts", "style": "async" }
+      ],
+      "steps": [
+        { "edges": [0], "text": "Start from the request but ask what outcome it is meant to change, for whom, and what it costs them today." },
+        { "edges": [1, 2], "text": "Watch someone do the task. Then measure one baseline number, such as hours per week or error rate, so success is testable." },
+        { "edges": [3], "text": "Choose the smallest slice that moves the baseline and can ship in a few weeks with the data and access you actually have." },
+        { "edges": [4, 5], "text": "Write the scope down with success criteria and explicit non-goals. When new facts appear, go back to the outcome rather than quietly growing the scope." }
+      ]
+    },
+    {
+      "id": "cds-discovery-call",
+      "type": "sequence",
+      "title": "A first discovery call",
+      "alt": "Sequence diagram of a discovery call between an engineer, the customer's team lead and an end user. The engineer asks about the goal, hears a feature request, asks for a recent example, watches the user do the task, confirms the baseline and plays back a summary for agreement.",
+      "caption": "Most of the call is questions and listening. The playback at the end is where misunderstandings surface.",
+      "actors": [
+        { "id": "eng", "label": "Engineer" },
+        { "id": "lead", "label": "Team lead" },
+        { "id": "user", "label": "End user" }
+      ],
+      "messages": [
+        { "from": "eng", "to": "lead", "label": "What should change in 3 months?", "note": "Open with the outcome, not the product." },
+        { "from": "lead", "to": "eng", "label": "We need a search assistant", "style": "reply", "note": "A solution, not yet a problem. Note it and keep asking." },
+        { "from": "eng", "to": "lead", "label": "Tell me about last Tuesday's case", "note": "A recent concrete example beats a general description." },
+        { "from": "eng", "to": "user", "label": "Can I watch you do it?", "note": "Watching shows the steps nobody thinks to mention." },
+        { "from": "user", "to": "eng", "label": "4 tools, 25 min per ticket", "style": "reply", "note": "This is your baseline." },
+        { "from": "eng", "to": "lead", "label": "Play back goal, baseline, slice", "note": "Say it in their words and ask what is wrong with it." },
+        { "from": "lead", "to": "eng", "label": "Yes, and legal must approve data", "style": "reply", "note": "A constraint that only surfaced at playback." }
+      ]
+    },
+    {
+      "id": "cds-scope-compare",
+      "type": "compare",
+      "title": "Building the request versus scoping the outcome",
+      "alt": "Side-by-side comparison. On the left, a feature request goes straight to a full build, which ends in low adoption. On the right, the request goes through an outcome and baseline step to a small pilot that is measured against the baseline.",
+      "caption": "The right-hand path takes a few more days up front and saves weeks of building the wrong thing.",
+      "before": {
+        "label": "Build what was asked",
+        "nodes": [
+          { "id": "req", "label": "Feature ask", "kind": "client", "col": 0, "row": 0 },
+          { "id": "build", "label": "Full build", "kind": "service", "col": 1, "row": 0 },
+          { "id": "flop", "label": "Low adoption", "kind": "bad", "col": 2, "row": 0 }
+        ],
+        "edges": [
+          { "from": "req", "to": "build" },
+          { "from": "build", "to": "flop", "style": "fail" }
+        ]
+      },
+      "after": {
+        "label": "Scope the outcome",
+        "nodes": [
+          { "id": "req", "label": "Feature ask", "kind": "client", "col": 0, "row": 0 },
+          { "id": "goal", "label": "Outcome + base", "kind": "decision", "col": 1, "row": 0 },
+          { "id": "pilot", "label": "Small pilot", "kind": "good", "col": 2, "row": 0 },
+          { "id": "metric", "label": "Measured win", "kind": "good", "col": 2, "row": 1 }
+        ],
+        "edges": [
+          { "from": "req", "to": "goal" },
+          { "from": "goal", "to": "pilot" },
+          { "from": "pilot", "to": "metric", "label": "vs baseline" }
+        ]
+      }
+    }
+  ],
+  "examples": [
+    {
+      "title": "Write a one-page scope, not a feature list",
+      "bad": {
+        "label": "A list of features with no target",
+        "lang": "text",
+        "code": "Scope:\n- AI assistant for support agents\n- Connect to ticket system and wiki\n- Nice UI\n- Go live ASAP"
+      },
+      "good": {
+        "label": "Outcome, baseline, slice and non-goals",
+        "lang": "text",
+        "code": "Outcome: agents resolve billing tickets faster.\nBaseline: median 25 min per billing ticket (last 30 days).\nTarget: median under 15 min for the pilot group.\nFirst slice (3 weeks): suggested answer with cited wiki pages,\n  billing tickets only, 10 pilot agents, read-only access.\nOut of scope: auto-sending replies, other ticket types.\nRisks: wiki is out of date; legal sign-off on ticket data.\nDecision owner: support operations lead."
+      },
+      "why": "The good version can be tested: everyone knows what number should move, for whom, and by when. The non-goals stop the pilot from quietly growing, and naming the decision owner tells you whose approval actually ends the project."
+    }
+  ],
+  "checklist": [
+    "You can state the outcome in one sentence that does not name your product.",
+    "You have watched at least one real user do the task today, not just heard it described.",
+    "There is one baseline number, measured before you build, and a target for the first slice.",
+    "You know who uses it, who pays for it and who can say no (security, legal, data owners).",
+    "You know what data and access you will really get, and when.",
+    "The scope lists explicit non-goals and the date of the first demo.",
+    "You played the scope back in the customer's words and they corrected it."
+  ],
+  "antipatterns": [
+    {
+      "title": "Leading questions that confirm your plan",
+      "bad": {
+        "label": "Asking for agreement",
+        "lang": "text",
+        "code": "\"Would an AI assistant that searches your wiki help your team?\""
+      },
+      "better": {
+        "label": "Asking about the last real case",
+        "lang": "text",
+        "code": "\"Walk me through the last ticket that took over an hour.\nWhere did the time go? What did you look up, and where?\""
+      },
+      "why": "Almost everyone says yes to a free tool. Questions about past behaviour reveal where the time and errors really are, which may have nothing to do with search."
+    },
+    {
+      "title": "Scope with no exit criteria",
+      "bad": {
+        "label": "Open-ended pilot",
+        "lang": "text",
+        "code": "Pilot: let's try it with the team and see how it goes."
+      },
+      "better": {
+        "label": "Pilot with a decision at the end",
+        "lang": "text",
+        "code": "Pilot: 4 weeks, 10 agents, billing tickets.\nSuccess: median handle time under 15 min and no rise in reopen rate.\nAt week 4 we decide: expand, change course, or stop."
+      },
+      "why": "Without a target and a date, a pilot never ends and never succeeds. A written decision point keeps both sides honest and makes the result easy to report upward."
+    }
+  ],
+  "interview": [
+    "When given a vague customer ask, spend the first minutes on who the users are, what they do today and what it costs, before any architecture.",
+    "Say the baseline out loud and propose how you would measure it if nobody has.",
+    "Name the people who can block the project (security, data owners, the budget holder) and how you would involve them early.",
+    "Close by playing back a one-sentence outcome, a first slice and the non-goals, and ask the interviewer what you got wrong."
+  ],
+  "quiz": [
+    {
+      "question": "A customer asks for \"a chatbot over our documents\". What is the best first question?",
+      "choices": ["Which vector database do you use?", "What should be different for your users in three months, and what does it cost them today?", "Do you want it in the browser or in a chat app?"],
+      "answer": 1,
+      "explain": "Start from the outcome and its current cost. Tool and channel choices only make sense once you know what you are trying to change."
+    },
+    {
+      "question": "Why measure a baseline before building anything?",
+      "choices": ["It makes the first slice testable and lets you prove the result", "Contracts always require it", "It is needed to size the servers"],
+      "answer": 0,
+      "explain": "Without a before number you cannot show improvement, and the customer cannot decide whether to expand the work."
+    },
+    {
+      "question": "Which item belongs in a written scope but is often forgotten?",
+      "choices": ["The programming language", "The office location", "Explicit non-goals"],
+      "answer": 2,
+      "explain": "Non-goals stop the work from growing silently and make trade-offs visible when new requests arrive."
+    },
+    {
+      "question": "Why watch a user do the task instead of only interviewing their manager?",
+      "choices": ["Managers are usually wrong", "Watching shows steps and workarounds nobody thinks to describe", "It is faster than a meeting"],
+      "answer": 1,
+      "explain": "People leave out the habits and side tools they no longer notice. Those details often decide what a first slice must handle."
+    }
+  ],
+  "practice": {
+    "prompt": "A regional logistics firm says: \"We want AI to optimise our delivery routes.\" You have a 45-minute call with their operations lead. Outline your discovery plan and the one-page scope you would aim to agree.",
+    "answer": "Ask what should change (late deliveries, fuel cost, driver overtime) and how they plan routes today, who does it and how long it takes. Ask for last week's worst day as a concrete case and offer to sit with a dispatcher. Agree one baseline, for example the share of deliveries outside their time window over the last 30 days. Find constraints: data quality of addresses and time windows, the system dispatchers use, driver rules, and who signs off on changes. Scope a first slice such as suggested next-day routes for one depot, reviewed by a dispatcher before use, measured against the baseline for four weeks. List non-goals (real-time rerouting, all depots, automatic dispatch) and a decision date.",
+    "rubric": [
+      "Starts from the outcome and its current cost, not from algorithms",
+      "Uses a concrete recent example and proposes observing the work",
+      "Defines one baseline metric and a target",
+      "Identifies data, system and approval constraints",
+      "Proposes a small first slice with non-goals and a decision date"
+    ]
+  },
+  "links": {
+    "lessons": ["behavioral-ambiguity-prioritization", "design-requirements-capacity"],
+    "guides": ["communicating-solutions"]
+  }
+}
