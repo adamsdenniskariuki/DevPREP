@@ -3,11 +3,12 @@ import type { AppModel } from '../app-model'
 import { lessons } from '../curriculum'
 import { displayDate } from '../format'
 import {
-  isDay, itemText, loadPlans, MAX_ERRORS, MAX_FIELD, MAX_NOTES, MAX_SCORES, newEntryId, PLAN_LANGUAGES, PLANS_KEY, phaseOf, planCount, positionFor, progressFor,
+  forLanguage, isDay, itemText, languageLabel, loadPlans, MAX_ERRORS, MAX_FIELD, MAX_NOTES, MAX_SCORES, newEntryId, PLAN_LANGUAGES, PLANS_KEY, phaseOf, planCount, planHref, positionFor, progressFor,
   readPlans, removeEntry, SCORE_AREAS, SCORE_KIND_LABELS, scoreAverage, setCheck, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
   type CheckResult, type ErrorEntry, type PlanItem, type PlanLanguage, type PlanProgress, type PlanWeek, type PlansState, type ScoreKind, type Scorecard, type StudyPlan,
 } from '../study-plans'
 import '../plans.css'
+import { planSnippet } from '../plan-playground'
 
 /** Plan progress from this device, kept in step with other tabs. */
 function usePlanState() {
@@ -33,12 +34,19 @@ function ItemCheck({ item, entry, lang, idPrefix, onToggle, app }: { item: PlanI
   const id = `${idPrefix}-${item.id}`
   const text = itemText(item, lang)
   const lesson = item.lesson ? lessons.find(entry => entry.id === item.lesson) : undefined
+  const [failed, setFailed] = useState('')
+  // The Playground opens a snippet in the plan's language rather than the last one used.
+  const openPlayground = () => {
+    try { window.location.hash = `#playground/${planSnippet(lang)}` } catch (error) { setFailed(error instanceof Error ? error.message : 'Could not open the Playground.') }
+  }
   return <li className={`plans-item${entry.done[item.id] ? ' done' : ''}`}>
     <input type="checkbox" id={id} checked={!!entry.done[item.id]} onChange={() => onToggle(item.id)} />
     <label htmlFor={id}>{text} <span className="muted">{item.minutes} min</span></label>
     {lesson
       ? <button type="button" className="text-button plans-go" aria-label={`Start lesson: ${lesson.title}`} onClick={() => app.start(lesson, app.progress.records[lesson.id] ? 'review' : 'learn')}>Start lesson</button>
-      : item.href ? <a className="plans-go" href={item.href} aria-label={`Open: ${text}`}>Open</a> : null}
+      : item.href === '#playground' ? <button type="button" className="text-button plans-go" aria-label={`Open in the ${languageLabel(lang)} Playground: ${text}`} onClick={openPlayground}>Open</button>
+      : item.href ? <a className="plans-go" href={planHref(item.href, lang)} aria-label={`Open: ${text}`}>Open</a> : null}
+    {failed && <p className="alert plans-item-alert" role="alert">{failed}</p>}
   </li>
 }
 
@@ -226,6 +234,9 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
       <ul className="plans-rhythm">{plan.rhythm.map(item => <li key={item.when}><strong>{item.when}</strong> <span className="pill">{item.time}</span> {item.text}</li>)}</ul>
       <h3>Rules</h3>
       <ul>{plan.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>
+      <h3 id="plans-idioms">{languageLabel(entry.lang)} idioms</h3>
+      <ul aria-labelledby="plans-idioms">{(forLanguage(plan.tips, entry.lang) ?? []).map(tip => <li key={tip}>{tip}</li>)}</ul>
+      {forLanguage(plan.refresher, entry.lang) && <p><a href={forLanguage(plan.refresher, entry.lang)}>Brush up on {languageLabel(entry.lang)} in its track</a></p>}
     </section>
 
     {plan.phases.map((phase, index) => {
@@ -243,6 +254,7 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
           return <details key={`${week.n}-${week.track ?? ''}`} className="card plans-week" open={week.n === (currentWeek ?? 1)}>
             <summary><span className="plans-week-title">Week {week.n}: {week.title}</span><span className="muted">{done}/{items.length}{week.track ? ` · ${track.title}` : ''}{week.n === currentWeek ? ' · This week' : ''}</span></summary>
             <p>{week.focus}</p>
+            {forLanguage(week.tip, entry.lang) && <p className="plans-tip"><strong>{languageLabel(entry.lang)} tip:</strong> {forLanguage(week.tip, entry.lang)}</p>}
             <WeekDays week={week} {...shared} />
           </details>
         })}

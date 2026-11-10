@@ -1,9 +1,12 @@
 import planIds from './generated/plan-ids.json' with { type: 'json' }
 
 /** Study plan content, built from content/plans by scripts/build-content.mjs. */
-export interface PlanItem { id: string; text: string; minutes: number; href?: string; lesson?: string }
+/** Text written once per interview language the plan offers. */
+export type PerLanguage<T> = Partial<Record<PlanLanguage, T>>
+export interface PlanItem { id: string; text: string | PerLanguage<string>; minutes: number; href?: string; lesson?: string }
 export interface PlanDay { title: string; items: PlanItem[] }
-export interface PlanWeek { n: number; phase: string; title: string; focus: string; track?: string; days: PlanDay[] }
+/** `tip` is a language-specific idiom for the week's patterns. */
+export interface PlanWeek { n: number; phase: string; title: string; focus: string; track?: string; tip?: PerLanguage<string>; days: PlanDay[] }
 export interface PlanTrack { id: string; title: string; summary: string }
 export interface PlanPhase { id: string; title: string; weeks: [first: number, last: number]; check: string }
 export interface StudyPlan {
@@ -14,15 +17,24 @@ export interface StudyPlan {
   languages: PlanLanguage[]
   rhythm: { when: string; time: string; text: string }[]
   rules: string[]
+  /** Interview idioms for each language, and a link to brush up on it. */
+  tips: PerLanguage<string[]>
+  refresher: PerLanguage<string>
   tracks: PlanTrack[]
   phases: PlanPhase[]
   weeks: PlanWeek[]
 }
 
 /** Interview languages a plan can be followed in. Add an entry here (and in build-content PLAN_LANGUAGES) to offer another. */
-export const PLAN_LANGUAGES = [{ id: 'python', label: 'Python' }] as const
+export const PLAN_LANGUAGES = [{ id: 'python', label: 'Python', code: 'py' }, { id: 'typescript', label: 'TypeScript', code: 'ts' }] as const
 export type PlanLanguage = typeof PLAN_LANGUAGES[number]['id']
-export const languageLabel = (id: string | undefined) => (PLAN_LANGUAGES.find(lang => lang.id === id) ?? PLAN_LANGUAGES[0]).label
+/** The chosen language, or Python when none (or an unknown one) is set. */
+export const planLanguage = (id: string | undefined) => PLAN_LANGUAGES.find(lang => lang.id === id) ?? PLAN_LANGUAGES[0]
+export const languageLabel = (id: string | undefined) => planLanguage(id).label
+/** Per-language content for the chosen language, falling back to the default language. */
+export const forLanguage = <T>(value: PerLanguage<T> | undefined, lang: string | undefined): T | undefined => value?.[planLanguage(lang).id] ?? value?.[PLAN_LANGUAGES[0].id]
+/** Code problem links open in the plan's language (#code/<id>/<lang>); other links are unchanged. */
+export const planHref = (href: string, lang: string | undefined) => /^#code\/[a-z0-9-]+$/.test(href) ? `${href}/${planLanguage(lang).code}` : href
 
 export const PLAN_IDS: ReadonlySet<string> = new Set(planIds)
 
@@ -83,7 +95,7 @@ export function planCount(plan: StudyPlan, progress: PlanProgress | undefined): 
   return { done: items.filter(item => progress?.done[item.id]).length, total: items.length }
 }
 /** Replaces the {lang} placeholder with the chosen interview language. */
-export const itemText = (item: PlanItem, lang: string | undefined) => item.text.replaceAll('{lang}', languageLabel(lang))
+export const itemText = (item: PlanItem, lang: string | undefined) => (typeof item.text === 'string' ? item.text : forLanguage(item.text, lang) ?? '').replaceAll('{lang}', languageLabel(lang))
 
 /* ---------- Local progress ---------- */
 

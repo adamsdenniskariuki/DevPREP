@@ -20,7 +20,7 @@ import { emptyProgress, serializeBackup } from './progress'
 import { hrefFor, parseHash, type RouteIds } from './routes'
 import { sqlProblemIds } from './sql-problems'
 import {
-  daysBetween, emptyPlanProgress, isDay, itemText, loadPlans, MAX_ERRORS, newEntryId, parsePlans, PLAN_IDS, PLAN_LANGUAGES, planCount, PLANS_KEY, positionFor,
+  daysBetween, emptyPlanProgress, forLanguage, isDay, itemText, loadPlans, MAX_ERRORS, newEntryId, parsePlans, PLAN_IDS, PLAN_LANGUAGES, planCount, planHref, planLanguage, PLANS_KEY, positionFor,
   readPlans, removeEntry, scoreAverage, setCheck, toDay, toggleItem, upsert, weekCount, weekItems, weeksFor, withPlan, writePlans,
   type PlansState, type StudyPlan,
 } from './study-plans'
@@ -60,7 +60,7 @@ describe('study plan content', () => {
     expect(weekCount(plan)).toBe(10)
     expect(plan.phases.map(phase => phase.weeks)).toEqual([[1, 4], [5, 7], [8, 10]])
     expect(plan.tracks.map(track => track.id)).toEqual(['applied-ai', 'ml-engineer'])
-    expect(plan.languages).toEqual(['python'])
+    expect(plan.languages).toEqual(['python', 'typescript'])
   })
 
   it('links every item to content that exists, and every link parses with the app router', () => {
@@ -71,16 +71,53 @@ describe('study plan content', () => {
         const parsed = parseHash(item.href, ids)
         expect(parsed.route, `${item.id} ${item.href}`).not.toBe('unknown')
         expect(hrefFor(parsed), item.href).toBe(item.href)
+        for (const lang of PLAN_LANGUAGES) expect(parseHash(planHref(item.href, lang.id), ids).route, `${item.id} ${lang.id}`).toBe(parsed.route)
       }
     }
+    for (const lang of plan.languages) expect(parseHash(plan.refresher[lang]!, ids)).toEqual({ route: 'tracks', track: lang })
   })
 
   it('only uses the {lang} placeholder and fills it with the language label', () => {
     const items = plan.weeks.flatMap(weekItems)
-    const templated = items.find(item => item.text.includes('{lang}'))!
+    const templated = items.find(item => itemText(item, 'python') !== itemText(item, 'typescript'))!
     expect(itemText(templated, 'python')).toContain('Python')
-    expect(itemText(templated, undefined)).not.toContain('{')
-    for (const item of items) expect(itemText(item, 'python'), item.id).not.toMatch(/[{}]/)
+    expect(itemText(templated, 'typescript')).toContain('TypeScript')
+    expect(itemText(templated, undefined)).toBe(itemText(templated, 'python'))
+    for (const lang of [undefined, ...plan.languages]) for (const item of items) expect(itemText(item, lang), item.id).not.toMatch(/[{}]/)
+  })
+
+  it('resolves per-language text, falling back to the default language', () => {
+    const item = { id: 'x', minutes: 10, text: { python: 'Use heapq in {lang}.', typescript: 'Write a heap in {lang}.' } }
+    expect(itemText(item, 'python')).toBe('Use heapq in Python.')
+    expect(itemText(item, 'typescript')).toBe('Write a heap in TypeScript.')
+    expect(itemText(item, undefined)).toBe('Use heapq in Python.')
+    expect(itemText(item, 'cobol')).toBe('Use heapq in Python.')
+    expect(itemText({ ...item, text: { python: 'Only {lang}.' } }, 'typescript')).toBe('Only TypeScript.')
+    expect(forLanguage({ python: 1, typescript: 2 }, 'typescript')).toBe(2)
+    expect(forLanguage({ python: 1 }, 'typescript')).toBe(1)
+    expect(forLanguage(undefined, 'typescript')).toBeUndefined()
+    const w3 = plan.weeks.flatMap(weekItems).find(entry => entry.id === 'w3-d4-4')!
+    expect(itemText(w3, 'python')).toContain('heapq')
+    expect(itemText(w3, 'typescript')).toContain('binary heap')
+  })
+
+  it('has idioms for every language, and they differ by language', () => {
+    for (const lang of plan.languages) expect(plan.tips[lang]!.length, lang).toBeGreaterThan(3)
+    expect(plan.tips.python!.join()).toContain('heapq')
+    expect(plan.tips.typescript!.join()).toContain('(a, b) => a - b')
+    const tipped = plan.weeks.filter(week => week.tip)
+    expect(tipped.map(week => week.n)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    for (const week of tipped) expect(forLanguage(week.tip, 'python'), `week ${week.n}`).not.toBe(forLanguage(week.tip, 'typescript'))
+  })
+
+  it('opens code problems in the chosen language and leaves other links alone', () => {
+    expect(planHref('#code/two-sum', 'python')).toBe('#code/two-sum/py')
+    expect(planHref('#code/two-sum', 'typescript')).toBe('#code/two-sum/ts')
+    expect(planHref('#code/two-sum', undefined)).toBe('#code/two-sum/py')
+    for (const href of ['#code', '#playground', '#patterns/heaps', '#sql/x']) expect(planHref(href, 'typescript')).toBe(href)
+    expect(planLanguage('typescript').code).toBe('ts')
+    expect(planLanguage(undefined).id).toBe('python')
+    expect(planLanguage('cobol').id).toBe('python')
   })
 
   it('keeps the language list in step with the build script', () => {
@@ -106,6 +143,39 @@ describe('study plan content', () => {
     const badLang = copy()
     badLang.languages = ['cobol' as 'python']
     expect(() => validatePlan(badLang, plan.id, opts)).toThrow('languages')
+    const repeated = copy()
+    repeated.languages = ['python', 'python']
+    expect(() => validatePlan(repeated, plan.id, opts)).toThrow('must not repeat')
+    const missingTips = copy()
+    delete missingTips.tips.typescript
+    expect(() => validatePlan(missingTips, plan.id, opts)).toThrow('tips need 1–8 short strings for each of python, typescript')
+    const extraTips = copy()
+    extraTips.tips = { ...extraTips.tips, cobol: ['x'] } as StudyPlan['tips']
+    expect(() => validatePlan(extraTips, plan.id, opts)).toThrow('tips need')
+    const longTip = copy()
+    longTip.tips.python = ['x'.repeat(201)]
+    expect(() => validatePlan(longTip, plan.id, opts)).toThrow('tips need')
+    const badRefresher = copy()
+    badRefresher.refresher.typescript = '#tracks/nope'
+    expect(() => validatePlan(badRefresher, plan.id, opts)).toThrow('refresher')
+    const oneWeekTip = copy()
+    oneWeekTip.weeks[0].tip = { python: 'Only Python.' }
+    expect(() => validatePlan(oneWeekTip, plan.id, opts)).toThrow('week 1: tip needs')
+    const stringTip = copy()
+    stringTip.weeks[0].tip = 'Not per language.' as unknown as StudyPlan['weeks'][number]['tip']
+    expect(() => validatePlan(stringTip, plan.id, opts)).toThrow('week 1: tip needs')
+    const halfText = copy()
+    halfText.weeks[0].days[0].items[0].text = { python: 'Only Python.' }
+    expect(() => validatePlan(halfText, plan.id, opts)).toThrow('one such text per language')
+    const badPlaceholder = copy()
+    badPlaceholder.weeks[0].days[0].items[0].text = { python: 'Fine.', typescript: 'Use {language}.' }
+    expect(() => validatePlan(badPlaceholder, plan.id, opts)).toThrow('{lang} placeholder')
+    const perLanguage = copy()
+    perLanguage.weeks[0].days[0].items[0].text = { python: 'In {lang}.', typescript: 'In {lang} too.' }
+    expect(validatePlan(perLanguage, plan.id, opts)).toBeTruthy()
+    const pythonOnly = copy()
+    pythonOnly.languages = ['python']
+    expect(() => validatePlan(pythonOnly, plan.id, opts)).toThrow('tips need 1–8 short strings for each of python')
   })
 })
 
@@ -203,6 +273,17 @@ describe('storage', () => {
     expect(readPlans()).toEqual(state)
   })
 
+  it('keeps the TypeScript choice, and reads old progress without a language as Python', () => {
+    const state = started({ lang: 'typescript' })
+    expect(writePlans(state)).toBe(true)
+    expect(readPlans()[plan.id].lang).toBe('typescript')
+    const old = started()
+    expect(old[plan.id].lang).toBeUndefined()
+    storage.setItem(PLANS_KEY, JSON.stringify(old))
+    expect(readPlans()[plan.id].lang).toBeUndefined()
+    expect(planLanguage(readPlans()[plan.id].lang).id).toBe('python')
+  })
+
   it('reads nothing from empty or malformed storage', () => {
     expect(readPlans()).toEqual({})
     storage.setItem(PLANS_KEY, '{not json')
@@ -223,12 +304,17 @@ describe('parsePlans', () => {
     scores: [{ id: 'score-1', at: '2026-11-08', kind: 'design', title: 'RAG copilot', scores: [3, 3, 2, 4], notes: 'Go deeper on evals.' }],
   })
   it('accepts valid progress', () => expect(parsePlans(valid())).toEqual(valid()))
+  it('accepts each plan language', () => {
+    for (const lang of PLAN_LANGUAGES) expect(parsePlans(started({ lang: lang.id }))[plan.id].lang).toBe(lang.id)
+  })
 
   it.each([
     ['not an object', []],
     ['unknown plan', { nope: emptyPlanProgress() }],
     ['bad start', { [plan.id]: { ...emptyPlanProgress(), start: '2026-02-30' } }],
     ['unknown language', { [plan.id]: { ...emptyPlanProgress(), lang: 'cobol' } }],
+    ['language in the wrong case', { [plan.id]: { ...emptyPlanProgress(), lang: 'TypeScript' } }],
+    ['language that is not a string', { [plan.id]: { ...emptyPlanProgress(), lang: 1 } }],
     ['extra field', { [plan.id]: { ...emptyPlanProgress(), extra: 1 } }],
     ['bad item day', { [plan.id]: { ...emptyPlanProgress(), done: { 'w1-d1-1': 'yesterday' } } }],
     ['bad check', { [plan.id]: { ...emptyPlanProgress(), checks: { p1: 'maybe' } } }],
@@ -264,6 +350,13 @@ describe('backups', () => {
     expect(JSON.parse(text).plans).toEqual(state)
     expect(parseFullBackup(text).plans).toEqual(state)
     expect(parseFullBackup(serializeFullBackup(emptyProgress(), [], [], state)).plans).toEqual(state)
+    const typescript = started({ lang: 'typescript', done: { 'w3-d4-4': '2026-11-20' } })
+    expect(parseFullBackup(serializeFullBackup(emptyProgress(), undefined, [], typescript)).plans).toEqual(typescript)
+  })
+
+  it('rejects an unknown language in a backup', () => {
+    const base = JSON.parse(serializeBackup(emptyProgress()))
+    expect(() => parseFullBackup(JSON.stringify({ ...base, plans: { [plan.id]: { ...emptyPlanProgress(), lang: 'rust' } } }))).toThrow(/^Invalid backup: /)
   })
 
   it('rejects invalid or oversized plan progress in a backup', () => {

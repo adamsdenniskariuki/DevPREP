@@ -86,6 +86,7 @@ export default function App() {
   const [route, setRoute] = useState(() => parseHash().route)
   const [track, setTrack] = useState<Track | 'all'>('all')
   const [problemId, setProblemId] = useState(() => parseHash().problemId)
+  const [codeLang, setCodeLang] = useState(() => parseHash().codeLang)
   const [caseId, setCaseId] = useState(() => parseHash().caseId)
   const [guideId, setGuideId] = useState(() => parseHash().guideId)
   const [sqlId, setSqlId] = useState(() => parseHash().sqlId)
@@ -143,6 +144,7 @@ export default function App() {
       setHash(window.location.hash)
       setRoute(parsed.route)
       setProblemId(parsed.problemId)
+      setCodeLang(parsed.codeLang)
       setCaseId(parsed.caseId)
       setGuideId(parsed.guideId)
       setSqlId(parsed.sqlId)
@@ -434,7 +436,7 @@ export default function App() {
             {route === 'home' && <HomeScreen app={app} />}
             {route === 'tracks' && <TracksScreen app={app} />}
             {route === 'practice' && <Suspense fallback={<p role="status">Loading practice…</p>}><PracticeScreen app={app} /></Suspense>}
-            {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} /></Suspense>}
+            {route === 'code' && <Suspense fallback={<p role="status">Loading code runner…</p>}><CodeScreen app={app} problemId={problemId} lang={codeLang} /></Suspense>}
             {route === 'sql' && <Suspense fallback={<p role="status">Loading SQL problems…</p>}><SqlProblemsScreen app={app} problemId={sqlId} /></Suspense>}
             {(route === 'guide' || route === 'antipatterns') && <Suspense fallback={<p role="status">Loading the Field Guide…</p>}><FieldGuideScreen app={app} guideId={guideId} gallery={route === 'antipatterns'} /></Suspense>}
             {route === 'design' && <Suspense fallback={<p role="status">Loading system design…</p>}><DesignScreen app={app} caseId={caseId} /></Suspense>}

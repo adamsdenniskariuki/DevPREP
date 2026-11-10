@@ -4,7 +4,8 @@
  "summary": "Coding patterns and system design first, then either applied AI or ML engineering, ending with two full mock loops. About 8–10 hours a week.",
  "hoursPerWeek": "8–10",
  "languages": [
-  "python"
+  "python",
+  "typescript"
  ],
  "rhythm": [
   {
@@ -29,6 +30,30 @@
   "Test edge cases: empty input, one item, duplicates, and the largest size.",
   "Log every miss with why it happened and the fix."
  ],
+ "tips": {
+  "python": [
+   "collections.Counter counts in one pass, and defaultdict(list) groups without checking for missing keys.",
+   "Use collections.deque for queues: popleft() is O(1), while list.pop(0) is O(n).",
+   "heapq is a min-heap on a plain list. Push (priority, item) tuples, and negate the priority for a max-heap.",
+   "bisect_left and bisect_right binary-search a sorted list for you.",
+   "sorted(items, key=lambda r: (r[1], -r[0])) sorts by several keys. list.sort() sorts in place and returns None.",
+   "Recursion stops at about 1,000 frames by default. Use an explicit stack for deep trees and graphs.",
+   "Integers never overflow, and float(\"inf\") is a clean starting minimum."
+  ],
+  "typescript": [
+   "Use Map and Set for lookups and counts: keys keep their type, and size and insertion order come built in.",
+   "There is no built-in heap. Write a small binary heap (an array with sift-up and sift-down) that takes a comparator.",
+   "There is no deque. For a BFS queue, keep an array and a head index; shift() can cost O(n).",
+   "sort() compares as strings by default: [10, 9, 1].sort() gives [1, 10, 9]. Pass (a, b) => a - b for numbers.",
+   "Numbers are 64-bit floats, exact up to Number.MAX_SAFE_INTEGER (2^53 − 1). Use BigInt beyond that, and Math.floor for integer division.",
+   "Type the signature first, e.g. function topK(nums: number[], k: number): number[], and narrow nullable nodes before using them.",
+   "Infinity and -Infinity are clean starting values for a minimum or maximum."
+  ]
+ },
+ "refresher": {
+  "python": "#tracks/python",
+  "typescript": "#tracks/typescript"
+ },
  "tracks": [
   {
    "id": "applied-ai",
@@ -76,6 +101,10 @@
    "phase": "p1",
    "title": "Arrays, two pointers and sliding window",
    "focus": "Hash maps for counting and lookup, two pointers on sorted data, and windows that grow and shrink.",
+   "tip": {
+    "python": "Counter(nums) and defaultdict(list) cover most counting and grouping. Key anagram groups by \"\".join(sorted(word)).",
+    "typescript": "Count with a Map: counts.set(x, (counts.get(x) ?? 0) + 1). Plain objects turn keys into strings. Key anagram groups by [...word].sort().join(\"\")."
+   },
    "days": [
     {
      "title": "Arrays and hashing",
@@ -267,6 +296,10 @@
    "phase": "p1",
    "title": "Stacks, binary search and prefix sums",
    "focus": "Stacks for nesting and next-greater questions, binary search on sorted data and on the answer, and prefix sums for range totals.",
+   "tip": {
+    "python": "A list is a stack: append, pop and stack[-1]. bisect_left finds the first index whose value is not less than the target. list(accumulate(nums, initial=0)) builds prefix sums.",
+    "typescript": "An array is a stack: push, pop and stack.at(-1). Write binary search yourself, with Math.floor((lo + hi) / 2) for the midpoint. Prefix sums go in an array of length n + 1 that starts at 0."
+   },
    "days": [
     {
      "title": "Stack",
@@ -464,6 +497,10 @@
    "phase": "p1",
    "title": "Linked lists, trees and heaps",
    "focus": "Pointer manipulation, depth-first and breadth-first tree traversals, binary search trees, and heaps for top-K.",
+   "tip": {
+    "python": "heapq is a min-heap: push (-count, item) for a max-heap, or use heapq.nlargest(k, items) for a quick top-K. Use a deque for level-order traversal.",
+    "typescript": "Type nodes as ListNode | null and check for null before reading .next. With no built-in heap, write a small binary heap for top-K, or sort when n is small and say why that is acceptable."
+   },
    "days": [
     {
      "title": "Linked lists",
@@ -569,7 +606,10 @@
       },
       {
        "id": "w3-d4-4",
-       "text": "Rewrite one of today’s solutions from memory in {lang}. Log any miss in the error log.",
+       "text": {
+        "python": "Rewrite one of today’s solutions from memory in {lang}, using heapq. Log any miss in the error log.",
+        "typescript": "Rewrite one of today’s solutions from memory in {lang}, with a binary heap you write yourself. Log any miss in the error log."
+       },
        "minutes": 10,
        "href": "#playground"
       }
@@ -655,6 +695,10 @@
    "phase": "p1",
    "title": "Graphs and intervals",
    "focus": "Breadth-first and depth-first search, topological sort, union-find, Dijkstra, and sorting intervals. Ends with the phase 1 check.",
+   "tip": {
+    "python": "BFS: deque([start]) with popleft(). Sort intervals with ranges.sort(key=lambda r: r[0]). Dijkstra: heapq with (distance, node) tuples, skipping stale entries.",
+    "typescript": "BFS: an array queue with a head index. Sort intervals with ranges.sort((a, b) => a[0] - b[0]). Dijkstra needs your own heap, or an O(V²) scan for small graphs."
+   },
    "days": [
     {
      "title": "Graph traversal",
@@ -840,6 +884,10 @@
    "phase": "p2",
    "title": "Backtracking, tries and the design framework",
    "focus": "Search with pruning, prefix trees, and a repeatable system design framework: requirements, API, data model, high-level design, deep dives and trade-offs.",
+   "tip": {
+    "python": "Append path[:] (a copy), not path, to the results. A trie node can be a dict of children plus an end-of-word flag.",
+    "typescript": "Push [...path] (a copy), not path, to the results. A trie node can be { children: Map<string, TrieNode>; end: boolean }."
+   },
    "days": [
     {
      "title": "Backtracking",
@@ -1018,6 +1066,10 @@
    "phase": "p2",
    "title": "1-D dynamic programming and scaling reads",
    "focus": "Recurrences over one index (climbing stairs, then house robber, then longest increasing subsequence), plus caching, CDNs, load balancing, consistent hashing, replication and sharding.",
+   "tip": {
+    "python": "@functools.cache memoises a recursive solution in one line. Switch to a bottom-up list when the recursion could go deeper than about 1,000 calls.",
+    "typescript": "Memoise with a Map<number, number> or a filled array. Prefer bottom-up loops for long inputs, since deep recursion can overflow the call stack."
+   },
    "days": [
     {
      "title": "1-D DP",
@@ -1185,6 +1237,10 @@
    "phase": "p2",
    "title": "2-D dynamic programming, greedy and async systems",
    "focus": "Grid and two-string DP, greedy choices with a proof sketch, queues and streams, idempotency, why exactly-once delivery is a myth, and search indexing. Ends with the phase 2 check.",
+   "tip": {
+    "python": "Build grids with [[0] * cols for _ in range(rows)]; [[0] * cols] * rows repeats one shared row. Greedy orderings usually start with sort(key=...).",
+    "typescript": "Build grids with Array.from({ length: rows }, () => new Array(cols).fill(0)); new Array(rows).fill(row) shares one row. Pass a comparator to every numeric sort."
+   },
    "days": [
     {
      "title": "2-D DP",
