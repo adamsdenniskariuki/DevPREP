@@ -5,8 +5,9 @@ import Icon from '../components/Icon'
 import Editor from '../components/Editor'
 import DiagramFigure from '../components/Diagram'
 import PatternVisualiser from '../components/PatternVisualiser'
+import RunProgress, { BUSY_LABEL } from '../components/RunProgress'
 import RunResults from '../components/RunResults'
-import { runCode, type RunPhase, type RunReport } from '../runner/runner'
+import { RUN_TIMEOUT_MS, runCode, type RunPhase, type RunReport } from '../runner/runner'
 import { stripMarkers } from '../patterns/markers'
 import { PICKER_ROUND, loadPatterns, patternIndex, patternTree, pickerRound, pickerScore } from '../patterns'
 import { patternPageDone } from '../gamification'
@@ -150,17 +151,20 @@ function Exercise({ app, page }: { app: AppModel; page: PatternPage }) {
   const [lang, setLang] = useState<PatternLang>('py')
   const [code, setCode] = useState<Record<PatternLang, string>>(() => ({ ...exercise.starter }))
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [running, setRunning] = useState<{ lang: PatternLang; done: number }>({ lang: 'py', done: 0 })
   const [result, setResult] = useState<{ lang: PatternLang; report: RunReport; message?: string }>()
   const [hints, setHints] = useState(0)
   const live = useRef(true)
   useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const passed = app.progress.patterns?.[page.id]?.exercise ?? {}
   const fnName = (item: PatternLang) => item === 'py' ? exercise.function.py : exercise.function.js
+  const cases = [...exercise.tests, ...exercise.hiddenTests]
 
   async function run() {
     const runLang = lang
     setResult(undefined)
-    const report = await runCode(runLang, { code: code[runLang], name: fnName(runLang), cases: [...exercise.tests, ...exercise.hiddenTests] }, setPhase)
+    setRunning({ lang: runLang, done: 0 })
+    const report = await runCode(runLang, { code: code[runLang], name: fnName(runLang), cases }, setPhase, done => setRunning({ lang: runLang, done }))
     if (!live.current) return
     setPhase('idle')
     let message: string | undefined
@@ -185,10 +189,11 @@ function Exercise({ app, page }: { app: AppModel; page: PatternPage }) {
     <Editor id="pattern-exercise" lang={lang} value={code[lang]} onChange={value => setCode(current => ({ ...current, [lang]: value }))} describedBy="pattern-exercise-help" />
     <p id="pattern-exercise-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : ''}</p>
     <div className="code-actions">
-      <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'loading-typescript' ? 'Loading TypeScript…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
+      <button className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : BUSY_LABEL[phase]}</button>
       <button onClick={reset} disabled={busy}>Reset to starter</button>
       {hints < exercise.hints.length && <button className="text-button" onClick={() => setHints(hints + 1)}>Show a hint</button>}
     </div>
+    <RunProgress phase={phase} total={cases.length} done={running.done} limitMs={RUN_TIMEOUT_MS[running.lang]} />
     {hints > 0 && <ol className="pattern-hints" aria-label="Hints">{exercise.hints.slice(0, hints).map(hint => <li key={hint}>{hint}</li>)}</ol>}
     <div className="run-results" role="status" aria-live="polite">
       {result && <RunResults tests={exercise.tests} fn={fnName(result.lang)} lang={result.lang === 'py' ? 'py' : 'js'} typescript={result.lang === 'ts'} report={result.report} message={result.message} />}

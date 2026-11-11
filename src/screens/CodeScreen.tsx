@@ -7,8 +7,9 @@ import { clearDraft, readDraft, writeDraft, type DraftLanguage } from '../code-d
 import { isPathCore, loadProblems, patternProgress, problemIndex, problemPatterns } from '../problems'
 import type { CodeLanguage, Problem, ProblemSummary } from '../problem-types'
 import { formatArgs, formatValue } from '../runner/core'
+import RunProgress, { BUSY_LABEL } from '../components/RunProgress'
 import RunResults from '../components/RunResults'
-import { runCode, type RunPhase, type RunReport } from '../runner/runner'
+import { RUN_TIMEOUT_MS, runCode, type RunPhase, type RunReport } from '../runner/runner'
 import TextBlocks from '../components/TextBlocks'
 import OpenInPlayground from '../components/OpenInPlayground'
 import { loadPatterns, patternsForProblem, type PatternPage, type PatternSummary } from '../patterns'
@@ -148,6 +149,7 @@ function Workspace({ app, problem, patterns, linkLang }: { app: AppModel; proble
     return { js: draft.js ?? starter.js, py: draft.py ?? starter.py, ts: draft.ts ?? starter.ts }
   })
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [running, setRunning] = useState<{ lang: DraftLanguage; done: number }>({ lang: 'js', done: 0 })
   const [result, setResult] = useState<{ lang: DraftLanguage; report: RunReport; message?: string }>()
   const [hints, setHints] = useState(0)
   const [saveFailed, setSaveFailed] = useState(false)
@@ -157,6 +159,7 @@ function Workspace({ app, problem, patterns, linkLang }: { app: AppModel; proble
   const lesson = lessons.find(item => item.id === problem.lessonId)
   const fn = problem.function[base(lang)]
   const solution = lang === 'ts' ? tsSolution(problem) : problem.solution[lang]
+  const cases = [...problem.tests, ...problem.hiddenTests]
 
   function chooseLang(next: DraftLanguage) {
     setLang(next)
@@ -179,7 +182,8 @@ function Workspace({ app, problem, patterns, linkLang }: { app: AppModel; proble
   async function run() {
     const runLang = lang
     setResult(undefined)
-    const report = await runCode(runLang, { code: code[runLang], name: problem.function[base(runLang)], cases: [...problem.tests, ...problem.hiddenTests] }, setPhase)
+    setRunning({ lang: runLang, done: 0 })
+    const report = await runCode(runLang, { code: code[runLang], name: problem.function[base(runLang)], cases }, setPhase, done => setRunning({ lang: runLang, done }))
     if (!live.current) return
     setPhase('idle')
     let message: string | undefined
@@ -233,9 +237,10 @@ function Workspace({ app, problem, patterns, linkLang }: { app: AppModel; proble
       <Editor id="code-editor" lang={lang} value={code[lang]} onChange={edit} describedBy="editor-help" />
       <p id="editor-help" className="helper">Tab indents. Press Esc, then Tab, to leave the editor.{lang === 'py' ? ' Python’s first run downloads about 13 MB, then works offline.' : lang === 'ts' ? ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline. Type errors are listed but don’t fail tests.' : ''}{saveFailed ? ' Drafts can’t be saved in this browser.' : ''}</p>
       <div className="button-row">
-        <button className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'loading-python' ? 'Loading Python…' : phase === 'loading-typescript' ? 'Loading TypeScript…' : phase === 'running' ? 'Running…' : 'Run tests'}</button>
+        <button className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : BUSY_LABEL[phase]}</button>
         <OpenInPlayground lang={lang} name={problem.title} code={code[lang]} />
       </div>
+      <RunProgress phase={phase} total={cases.length} done={running.done} limitMs={RUN_TIMEOUT_MS[running.lang]} />
       <div className="run-results" role="status" aria-live="polite">
         {result && <RunResults tests={problem.tests} fn={problem.function[base(result.lang)]} lang={base(result.lang)} typescript={result.lang === 'ts'} report={result.report} message={result.message} />}
       </div>

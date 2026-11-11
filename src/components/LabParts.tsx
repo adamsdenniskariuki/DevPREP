@@ -3,13 +3,14 @@ import type { ReactNode } from 'react'
 import DiagramFigure from './Diagram'
 import Editor from './Editor'
 import Icon from './Icon'
+import RunProgress, { BUSY_LABEL } from './RunProgress'
 import RunResults from './RunResults'
 import SqlLabRunner from './SqlLab'
 import { lessons } from '../curriculum'
 import { isSqlExercise, type AnyLabExercise, type LabExercise, type Lesson, type LessonLab, type TrackInfo } from '../curriculum-types'
 import { problemIndex } from '../problems'
 import { guideIndex } from '../guides'
-import { runCode, type RunLanguage, type RunPhase, type RunReport } from '../runner/runner'
+import { RUN_TIMEOUT_MS, runCode, type RunLanguage, type RunPhase, type RunReport } from '../runner/runner'
 import type { CodeLanguage } from '../problem-types'
 import { inline } from '../inline'
 import '../field-guide.css'
@@ -24,7 +25,6 @@ function displayLanguage(lab: LessonLab): CodeLanguage {
   return lab.lang === 'py' ? 'py' : 'js'
 }
 const DOWNLOAD_NOTE = { py: ' Python’s first run downloads about 13 MB, then works offline.', ts: ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline.' } as const
-const LOADING_LABEL: Partial<Record<RunPhase, string>> = { 'loading-python': 'Loading Python…', 'loading-numpy': 'Loading Python and NumPy…', 'loading-typescript': 'Loading TypeScript…', running: 'Running…' }
 const LANGUAGE_NAME = { py: 'Python', ts: 'TypeScript' } as const
 
 /** A lab diagram, numbered by its place in the lab. */
@@ -107,6 +107,7 @@ function CodeLabRunner({ lab, exercise, value, onChange, onPass, label }: {
   const lang = runLanguage(lab)
   const shown = displayLanguage(lab)
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [done, setDone] = useState(0)
   const [result, setResult] = useState<{ report: RunReport; message?: string }>()
   const live = useRef(true)
   useEffect(() => {
@@ -114,9 +115,11 @@ function CodeLabRunner({ lab, exercise, value, onChange, onPass, label }: {
     return () => { live.current = false }
   }, [])
   const id = `lab-${exercise.id}`
+  const cases = [...exercise.tests, ...exercise.hiddenTests]
   async function run() {
     setResult(undefined)
-    const report = await runCode(lang, { code: value, name: exercise.function, cases: [...exercise.tests, ...exercise.hiddenTests], typeChecks: exercise.typeChecks }, setPhase)
+    setDone(0)
+    const report = await runCode(lang, { code: value, name: exercise.function, cases, typeChecks: exercise.typeChecks }, setPhase, setDone)
     if (!live.current) return
     setPhase('idle')
     const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass) && report.typeChecks?.pass !== false
@@ -138,7 +141,8 @@ function CodeLabRunner({ lab, exercise, value, onChange, onPass, label }: {
     <Editor id={id} lang={shown} value={value} onChange={onChange} describedBy={`${id}-help`} />
     <p id={`${id}-help`} className="helper">Implement <code>{exercise.function}</code>. Tab indents; press Esc, then Tab, to leave the editor.{DOWNLOAD_NOTE[lab.lang === 'ts' ? 'ts' : 'py']}</p>
     {exercise.typeChecks && <details className="type-checks"><summary>Type checks your types must pass</summary><pre><code>{exercise.typeChecks}</code></pre></details>}
-    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase]}</button></div>
+    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : BUSY_LABEL[phase]}</button></div>
+    <RunProgress phase={phase} total={cases.length} done={done} limitMs={RUN_TIMEOUT_MS[lang]} />
     <div className="run-results" role="status" aria-live="polite">
       {result && <RunResults tests={exercise.tests} fn={exercise.function} lang={shown} typescript={lab.lang === 'ts'} report={result.report} message={result.message} typeChecks={exercise.typeChecks} />}
     </div>

@@ -162,10 +162,14 @@ export async function runSqlCase(db: SqlDb, request: Omit<SqlRunRequest, 'cases'
   return { pass, actual: { columns: actual.columns, rows: actual.rows.slice(0, SQL_ROW_LIMIT) }, reason, ms: ms() }
 }
 
-export async function runSql(db: SqlDb, request: SqlRunRequest): Promise<SqlRunResponse> {
+/** Runs every case on a fresh database. `onCase` hears how many cases are done after each one. */
+export async function runSql(db: SqlDb, request: SqlRunRequest, onCase: (done: number) => void = () => {}): Promise<SqlRunResponse> {
   if (!request.code.trim()) return { kind: 'error', error: 'Write a query first.' }
   const outcomes: SqlCaseOutcome[] = []
-  for (const test of request.cases) outcomes.push(await runSqlCase(db, request, test))
+  for (const test of request.cases) {
+    outcomes.push(await runSqlCase(db, request, test))
+    onCase(outcomes.length)
+  }
   await resetDb(db)
   return { kind: 'done', outcomes }
 }

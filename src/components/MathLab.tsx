@@ -3,15 +3,15 @@ import type { AppModel } from '../app-model'
 import { lessons } from '../curriculum'
 import { inline } from '../inline'
 import { labTolerance, MATH_PACKAGES, MATH_TOPIC_LABELS, mathLabHref, type MathLab } from '../math-labs'
-import { runCode, type RunPhase, type RunReport } from '../runner/runner'
+import { RUN_TIMEOUT_MS, runCode, type RunPhase, type RunReport } from '../runner/runner'
 import { markDone, type PlanProgress, type StudyPlan } from '../study-plans'
 import DiagramFigure from './Diagram'
 import Editor from './Editor'
 import Icon from './Icon'
+import RunProgress, { BUSY_LABEL } from './RunProgress'
 import RunResults from './RunResults'
 import '../lab.css'
 
-const LOADING_LABEL: Partial<Record<RunPhase, string>> = { 'loading-python': 'Loading Python…', 'loading-numpy': 'Loading Python and NumPy…', running: 'Running…' }
 /** Code typed in a lab lasts until the tab closes, so leaving for the plan and coming back keeps it. */
 const drafts = new Map<string, string>()
 
@@ -32,6 +32,7 @@ export default function MathLabView({ app, plan, lab, labs, entry, save }: {
 }) {
   const [code, setCode] = useState(() => drafts.get(lab.id) ?? lab.starter)
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [done, setDone] = useState(0)
   const [result, setResult] = useState<{ report: RunReport; message?: string }>()
   const live = useRef(true)
   useEffect(() => {
@@ -52,9 +53,11 @@ export default function MathLabView({ app, plan, lab, labs, entry, save }: {
     drafts.set(lab.id, value)
     setCode(value)
   }
+  const cases = [...lab.tests, ...lab.hiddenTests]
   async function run() {
     setResult(undefined)
-    const report = await runCode('py', { code, name: lab.function, cases: [...lab.tests, ...lab.hiddenTests], tolerance: labTolerance(lab), packages: MATH_PACKAGES }, setPhase)
+    setDone(0)
+    const report = await runCode('py', { code, name: lab.function, cases, tolerance: labTolerance(lab), packages: MATH_PACKAGES }, setPhase, setDone)
     if (!live.current) return
     setPhase('idle')
     const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass)
@@ -102,7 +105,8 @@ export default function MathLabView({ app, plan, lab, labs, entry, save }: {
         </div>
         <Editor id={id} lang="py" value={code} onChange={change} describedBy={`${id}-help`} />
         <p id={`${id}-help`} className="helper">Implement <code>{lab.function}</code> and return plain numbers, lists or NumPy arrays. Answers match to about six significant figures. Tab indents; press Esc, then Tab, to leave the editor. The first run downloads Python (about 13 MB) and NumPy (about 3 MB), then works offline.</p>
-        <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : LOADING_LABEL[phase] ?? 'Running…'}</button></div>
+        <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : BUSY_LABEL[phase]}</button></div>
+        <RunProgress phase={phase} total={cases.length} done={done} limitMs={RUN_TIMEOUT_MS.py} />
         <div className="run-results" role="status" aria-live="polite">
           {result && <RunResults tests={lab.tests} fn={lab.function} lang="py" report={result.report} message={result.message} />}
         </div>

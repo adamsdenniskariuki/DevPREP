@@ -125,8 +125,18 @@ function describeError(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error)
 }
 
+/** Called after each test case finishes with how many are done, so the page can show progress. */
+export type CaseProgress = (done: number) => void
+
+/** Workers post this after each finished test case, before the result. */
+export interface ProgressMessage { type: 'progress'; done: number }
+
+export function isProgressMessage(data: unknown): data is ProgressMessage {
+  return typeof data === 'object' && data !== null && (data as { type?: unknown }).type === 'progress' && typeof (data as { done?: unknown }).done === 'number'
+}
+
 /** Runs a JavaScript solution against cases in the current realm (the app calls it from a worker). */
-export function runJs({ code, name, cases }: RunRequest): RunResponse {
+export function runJs({ code, name, cases }: RunRequest, onCase: CaseProgress = () => {}): RunResponse {
   const output: string[] = []
   let size = 0
   const write = (...parts: unknown[]) => {
@@ -144,7 +154,7 @@ export function runJs({ code, name, cases }: RunRequest): RunResponse {
     return { kind: 'error', error: describeError(error), output: flush() }
   }
   if (typeof fn !== 'function') return { kind: 'error', error: `Define a function named ${name}.`, output: flush() }
-  const outcomes = cases.map((test): CaseOutcome => {
+  const outcomes = cases.map((test, index): CaseOutcome => {
     const started = now()
     try {
       const value = (fn as (...args: unknown[]) => unknown)(...structuredClone(test.args))
@@ -153,6 +163,8 @@ export function runJs({ code, name, cases }: RunRequest): RunResponse {
       return outcome
     } catch (error) {
       return { pass: false, error: describeError(error), ms: now() - started }
+    } finally {
+      onCase(index + 1)
     }
   })
   return { kind: 'done', outcomes, output: flush() }
@@ -162,7 +174,7 @@ export function runJs({ code, name, cases }: RunRequest): RunResponse {
  * Like runJs, but awaits promise results (with a per-case limit) so async and event-loop exercises can be tested.
  * Used by the TypeScript runner after transpiling.
  */
-export async function runJsAsync({ code, name, cases }: RunRequest, caseLimitMs = 3000): Promise<RunResponse> {
+export async function runJsAsync({ code, name, cases }: RunRequest, caseLimitMs = 3000, onCase: CaseProgress = () => {}): Promise<RunResponse> {
   const output: string[] = []
   let size = 0
   const write = (...parts: unknown[]) => {
@@ -196,6 +208,7 @@ export async function runJsAsync({ code, name, cases }: RunRequest, caseLimitMs 
     } catch (error) {
       outcomes.push({ pass: false, error: describeError(error), ms: now() - started })
     }
+    onCase(outcomes.length)
   }
   return { kind: 'done', outcomes, output: flush() }
 }
@@ -239,7 +252,7 @@ export function pythonMessage(error: unknown): string {
 }
 
 /** Runs a Python solution with an initialised Pyodide (PY_HARNESS must already have run). */
-export function runPython(py: PythonRuntime, { code, name, cases, tolerance }: RunRequest, flushOutput: () => string = () => ''): RunResponse {
+export function runPython(py: PythonRuntime, { code, name, cases, tolerance }: RunRequest, flushOutput: () => string = () => '', onCase: CaseProgress = () => {}): RunResponse {
   const globals = py.globals as { get(name: string): unknown }
   const define = globals.get('_devprep_define') as PyCallable
   const call = globals.get('_devprep_call') as PyCallable
@@ -250,7 +263,7 @@ export function runPython(py: PythonRuntime, { code, name, cases, tolerance }: R
     return { kind: 'error', error: pythonMessage(error), output: truncate(flushOutput(), OUTPUT_LIMIT) }
   }
   try {
-    const outcomes = cases.map((test): CaseOutcome => {
+    const outcomes = cases.map((test, index): CaseOutcome => {
       const started = now()
       try {
         const outcome: CaseOutcome = { pass: false, actual: call(fn, JSON.stringify(test.args)) as string, ms: now() - started }
@@ -258,6 +271,8 @@ export function runPython(py: PythonRuntime, { code, name, cases, tolerance }: R
         return outcome
       } catch (error) {
         return { pass: false, error: pythonMessage(error), ms: now() - started }
+      } finally {
+        onCase(index + 1)
       }
     })
     return { kind: 'done', outcomes, output: truncate(flushOutput(), OUTPUT_LIMIT) }

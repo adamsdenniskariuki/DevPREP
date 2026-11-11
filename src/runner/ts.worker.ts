@@ -1,6 +1,6 @@
 import type { TypeScriptApi } from './ts-core'
 import { checkWithTypeChecks, createTsCompiler, formatDiagnostic, type TsDiagnostic } from './ts-core'
-import { runJsAsync, type RunRequest, type RunResponse, type TypeCheckOutcome } from './core'
+import { runJsAsync, type ProgressMessage, type RunRequest, type RunResponse, type TypeCheckOutcome } from './core'
 import { blockNetwork, runTypeScriptFree, type FreeRunRequest } from './free'
 
 export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest)
@@ -55,7 +55,7 @@ scope.onmessage = async (event: MessageEvent<TsWorkerMessage>) => {
     scope.postMessage({ type: 'result', result: { kind: 'error', error: error instanceof Error ? error.message : String(error), output: '', diagnostics } })
     return
   }
-  const response = await runJsAsync({ ...message, code })
+  const response = await runJsAsync({ ...message, code }, undefined, done => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage))
   const result: RunResponse = response.kind === 'error'
     ? diagnostics.length ? { ...response, error: `${response.error}\n\nType errors:\n${diagnostics.map(formatDiagnostic).join('\n')}`, diagnostics } : { ...response, diagnostics }
     : { ...response, diagnostics, typeChecks }
