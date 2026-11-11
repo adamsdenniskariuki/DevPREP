@@ -1,0 +1,45 @@
+{
+  "id": "rn-testing",
+  "title": "Testing React Native apps",
+  "minutes": 30,
+  "summary": "Unit tests for logic, component tests that query by what the user sees, mocking native modules, and end-to-end tests on devices.",
+  "sections": [
+    {
+      "title": "The test pyramid on mobile",
+      "body": "End-to-end tests on simulators and devices are slow and flaky, so most tests should be fast unit tests of pure logic (reducers, formatters, parsers) and component tests that render in Node. Keep a small set of end-to-end tests for critical flows like sign-in and checkout."
+    },
+    {
+      "title": "Component tests",
+      "body": "A testing library for React Native renders components in a test renderer (no device) and lets you query like a user: by text, by accessibility role and label, or by placeholder. Fire events with `fireEvent.press` or the user-event API, then assert on what is shown. Avoid relying on component internals or test ids when a role or label works.",
+      "code": "test('adds an item', async () => {\n  render(<TodoScreen />)\n  await user.type(screen.getByLabelText('New item'), 'Milk')\n  await user.press(screen.getByRole('button', { name: 'Add' }))\n  expect(screen.getByText('Milk')).toBeOnTheScreen()\n})"
+    },
+    {
+      "title": "Mocking the native side",
+      "body": "Tests run in Node, where native modules do not exist. Test frameworks use a React Native preset that mocks core modules; for third-party native modules, add a manual mock or use the mock the library ships. Inject dependencies such as storage, clocks and network clients so tests can pass fakes instead of mocking modules globally. Use fake timers for debounce, retry and animation timing."
+    },
+    {
+      "title": "End-to-end",
+      "body": "End-to-end runners drive a real build on a simulator or device. Gray-box runners synchronise with the app (waiting for animations and network to go idle), which reduces flakiness; black-box runners use the accessibility tree. Give important elements stable `testID`s and accessibility labels, and run E2E in CI on both platforms."
+    }
+  ],
+  "pitfalls": [
+    "Testing implementation details like state values instead of what the user sees.",
+    "Using real timers for debounce and retry tests, making them slow and flaky.",
+    "Not mocking a native module, so the test crashes on import.",
+    "Relying only on end-to-end tests."
+  ],
+  "gotchas": [
+    {
+      "question": "Why does a component test crash with \"native module cannot be null\"?",
+      "answer": "The component imports a native module that does not exist in the Node test environment. Mock it, or inject the dependency."
+    },
+    {
+      "question": "Which query is best for a button: test id, text or role?",
+      "answer": "Role with an accessible name, such as `getByRole('button', { name: 'Add' })`. It tests what users and assistive technology see."
+    },
+    {
+      "question": "How do you test a 300 ms debounce without waiting?",
+      "answer": "Use fake timers and advance them by 300 ms, then assert."
+    }
+  ]
+}

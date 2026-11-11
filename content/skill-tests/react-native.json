@@ -1,0 +1,781 @@
+{
+  "id": "react-native",
+  "title": "React Native skill test",
+  "summary": "A timed practice assessment: multiple-choice questions on components, layout, lists, navigation, architecture, data, performance, releases and accessibility, plus two short coding tasks.",
+  "minutes": 40,
+  "pick": 30,
+  "topics": [
+    {
+      "id": "core",
+      "title": "Core components",
+      "review": "#react-native/rn-core-components"
+    },
+    {
+      "id": "styling",
+      "title": "Styling and flexbox",
+      "review": "#react-native/rn-styling-flexbox"
+    },
+    {
+      "id": "lists",
+      "title": "Lists",
+      "review": "#react-native/rn-lists"
+    },
+    {
+      "id": "navigation",
+      "title": "Navigation",
+      "review": "#react-native/rn-navigation"
+    },
+    {
+      "id": "platform",
+      "title": "Platform differences",
+      "review": "#react-native/rn-platform"
+    },
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "review": "#react-native/rn-architecture"
+    },
+    {
+      "id": "native",
+      "title": "Native modules",
+      "review": "#react-native/rn-native-modules"
+    },
+    {
+      "id": "state",
+      "title": "State and data",
+      "review": "#react-native/rn-state-data"
+    },
+    {
+      "id": "storage",
+      "title": "Storage",
+      "review": "#react-native/rn-storage"
+    },
+    {
+      "id": "offline",
+      "title": "Networking and offline",
+      "review": "#react-native/rn-networking-offline"
+    },
+    {
+      "id": "animations",
+      "title": "Animations",
+      "review": "#react-native/rn-animations"
+    },
+    {
+      "id": "performance",
+      "title": "Performance",
+      "review": "#react-native/rn-performance"
+    },
+    {
+      "id": "lifecycle",
+      "title": "App lifecycle and permissions",
+      "review": "#react-native/rn-app-lifecycle"
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "review": "#react-native/rn-testing"
+    },
+    {
+      "id": "release",
+      "title": "Releases and updates",
+      "review": "#react-native/rn-release"
+    },
+    {
+      "id": "a11y",
+      "title": "Accessibility",
+      "review": "#react-native/rn-accessibility"
+    },
+    {
+      "id": "expo",
+      "title": "Expo and bare projects",
+      "review": "#react-native/rn-expo-vs-bare"
+    }
+  ],
+  "questions": [
+    {
+      "id": "core-raw-text",
+      "topic": "core",
+      "prompt": "What happens when this renders?",
+      "code": "<View>Hello</View>",
+      "choices": [
+        "It shows \"Hello\" in the default font",
+        "It throws: text strings must be rendered within a Text component",
+        "It renders nothing and logs a warning",
+        "It shows \"Hello\" only on Android"
+      ],
+      "answer": 1,
+      "explain": "In React Native only Text can render strings. A bare string inside a View is an error, unlike a div on the web."
+    },
+    {
+      "id": "core-view-native",
+      "topic": "core",
+      "prompt": "What does a View become on a device?",
+      "choices": [
+        "A real native view on each platform",
+        "Nothing, until it has a Text child",
+        "An HTML div inside a hidden web view",
+        "A bitmap drawn by the JavaScript engine"
+      ],
+      "answer": 0,
+      "explain": "React Native maps its components to native platform views. There is no HTML or DOM."
+    },
+    {
+      "id": "core-scrollview",
+      "topic": "core",
+      "prompt": "Which component suits a short settings screen with a dozen fixed rows that must scroll?",
+      "choices": [
+        "FlatList with a keyExtractor",
+        "A View with overflow set to scroll",
+        "SectionList with one section",
+        "ScrollView"
+      ],
+      "answer": 3,
+      "explain": "A ScrollView renders all its children at once, which is fine for a short, fixed set. Virtualised lists pay off for long or unbounded data. A View does not scroll."
+    },
+    {
+      "id": "styling-direction",
+      "topic": "styling",
+      "prompt": "With no style, how are a View's children laid out?",
+      "choices": [
+        "In a wrapping grid",
+        "In a row, left to right",
+        "In a column, top to bottom",
+        "Stacked on top of each other"
+      ],
+      "answer": 2,
+      "explain": "flexDirection defaults to column in React Native, unlike the web where it defaults to row."
+    },
+    {
+      "id": "styling-flex-ratio",
+      "topic": "styling",
+      "prompt": "The parent fills the screen. What share of the height does the second child take?",
+      "code": "<View style={{ flex: 1 }}>\n  <View style={{ flex: 1 }} />\n  <View style={{ flex: 2 }} />\n</View>",
+      "choices": [
+        "One third",
+        "Two thirds",
+        "All of it",
+        "One half"
+      ],
+      "answer": 1,
+      "explain": "flex values split the free space by ratio: 1 + 2 = 3 parts, so the second child gets two of them."
+    },
+    {
+      "id": "styling-array",
+      "topic": "styling",
+      "prompt": "What colour is the background when active is true?",
+      "code": "const s = StyleSheet.create({ a: { backgroundColor: 'blue' }, b: { backgroundColor: 'red' } })\n<View style={[s.a, active && s.b]} />",
+      "choices": [
+        "red, because later styles override earlier ones",
+        "It throws, because style must be an object",
+        "It depends on the platform",
+        "blue, because the first style wins"
+      ],
+      "answer": 0,
+      "explain": "Style arrays merge left to right, so later entries win. A false entry is skipped, so this pattern makes conditional styles easy."
+    },
+    {
+      "id": "lists-virtual",
+      "topic": "lists",
+      "prompt": "Why is FlatList better than items.map inside a ScrollView for 5,000 rows?",
+      "choices": [
+        "ScrollView cannot scroll more than 1,000 rows",
+        "FlatList renders rows on a background thread",
+        "FlatList sorts the data for you",
+        "FlatList only renders rows near the viewport and drops the rest"
+      ],
+      "answer": 3,
+      "explain": "FlatList virtualises: it keeps a window of rows around the viewport mounted. A ScrollView mounts every child, which costs time and memory."
+    },
+    {
+      "id": "lists-key",
+      "topic": "lists",
+      "prompt": "Rows hold local state such as an expanded flag. Rows can be deleted. Which key is safest?",
+      "choices": [
+        "The row index",
+        "Math.random() on each render",
+        "The item's stable id from the data",
+        "No key: FlatList works it out"
+      ],
+      "answer": 2,
+      "explain": "A stable id lets React match each row to the same component after inserts and deletes. Index keys move state to the wrong row, and random keys remount every row."
+    },
+    {
+      "id": "lists-layout",
+      "topic": "lists",
+      "prompt": "Every row is exactly 72 points tall. What does adding getItemLayout give you?",
+      "choices": [
+        "Rows render in parallel",
+        "FlatList can skip measuring and jump straight to any index",
+        "The list stops virtualising",
+        "Rows get sticky headers"
+      ],
+      "answer": 1,
+      "explain": "With known heights, FlatList can compute offsets itself, so scrollToIndex works for rows not yet rendered and layout work drops."
+    },
+    {
+      "id": "nav-back",
+      "topic": "navigation",
+      "prompt": "Screen A pushes screen B on a stack. The user goes back. What happens?",
+      "choices": [
+        "B is popped and unmounted; A was mounted the whole time and keeps its state",
+        "Both screens unmount and the stack resets",
+        "B stays mounted but is hidden",
+        "A remounts and loses its state"
+      ],
+      "answer": 0,
+      "explain": "A stack keeps lower screens mounted. Going back pops and unmounts the top screen and reveals the one beneath with its state intact."
+    },
+    {
+      "id": "nav-params",
+      "topic": "navigation",
+      "prompt": "What is the best thing to pass as a param when opening an order details screen?",
+      "choices": [
+        "A ref to the previous screen",
+        "The whole order object with its methods",
+        "An onSave callback function",
+        "The order id, then load the order on the details screen"
+      ],
+      "answer": 3,
+      "explain": "Params should be small and serialisable so deep links and saved navigation state work. Pass an id and load the data where it is shown."
+    },
+    {
+      "id": "nav-focus",
+      "topic": "navigation",
+      "prompt": "A screen must refresh its data every time the user returns to it. Why is useEffect with [] not enough?",
+      "choices": [
+        "It is enough; it reruns on every focus",
+        "useEffect does not run in React Native",
+        "The screen stays mounted under the stack, so a mount effect runs only once",
+        "Effects run before navigation finishes"
+      ],
+      "answer": 2,
+      "explain": "Screens below the top of a stack stay mounted, so mount effects do not rerun on return. Use the navigator's focus event or focus effect hook."
+    },
+    {
+      "id": "platform-select",
+      "topic": "platform",
+      "prompt": "On Android, what is padding?",
+      "code": "const padding = Platform.select({ ios: 20, android: 12, default: 0 })",
+      "choices": [
+        "20",
+        "12",
+        "0",
+        "undefined"
+      ],
+      "answer": 1,
+      "explain": "Platform.select returns the value for the current platform, and falls back to default only when there is no matching key."
+    },
+    {
+      "id": "platform-files",
+      "topic": "platform",
+      "prompt": "A folder has Picker.ios.tsx and Picker.android.tsx. How should other files import it?",
+      "choices": [
+        "import Picker from './Picker'",
+        "import Picker from './Picker.ios'",
+        "Use require with a Platform.OS check",
+        "It cannot be imported; both files must be merged"
+      ],
+      "answer": 0,
+      "explain": "The bundler resolves ./Picker to the platform-specific file when it builds for each platform."
+    },
+    {
+      "id": "platform-back",
+      "topic": "platform",
+      "prompt": "In an Android back button handler, what does returning true mean?",
+      "choices": [
+        "Ignore the next press",
+        "Close the app",
+        "Let the default back action run",
+        "You handled the press, so the default back action is skipped"
+      ],
+      "answer": 3,
+      "explain": "Returning true consumes the event. Return false to let the navigator or system handle it."
+    },
+    {
+      "id": "arch-jsi",
+      "topic": "architecture",
+      "prompt": "What does JSI change compared with the old bridge?",
+      "choices": [
+        "All native calls become asynchronous",
+        "JavaScript now runs on the UI thread only",
+        "JavaScript can hold references to native objects and call them directly, without serialising JSON messages",
+        "Apps no longer need a JavaScript engine"
+      ],
+      "answer": 2,
+      "explain": "The old bridge batched asynchronous JSON messages. JSI lets JavaScript call into C++ host objects directly, and even synchronously when needed."
+    },
+    {
+      "id": "arch-hermes",
+      "topic": "architecture",
+      "prompt": "Why does Hermes improve start-up time?",
+      "choices": [
+        "It skips rendering the first screen",
+        "It compiles JavaScript to bytecode at build time, so less work happens on launch",
+        "It runs JavaScript on the GPU",
+        "It removes unused native modules at runtime"
+      ],
+      "answer": 1,
+      "explain": "Hermes ships precompiled bytecode, so the device does not parse and compile the bundle on each launch."
+    },
+    {
+      "id": "arch-turbo",
+      "topic": "architecture",
+      "prompt": "What is a key benefit of TurboModules?",
+      "choices": [
+        "They load lazily, the first time JavaScript uses them",
+        "They let modules run without native code",
+        "They replace React state",
+        "They render views faster than Fabric"
+      ],
+      "answer": 0,
+      "explain": "Old native modules were all set up at start-up. TurboModules load on first use, which helps start-up time, and are called through JSI."
+    },
+    {
+      "id": "native-cleanup",
+      "topic": "native",
+      "prompt": "What is wrong with this hook?",
+      "code": "useEffect(() => {\n  emitter.addListener('battery', setLevel)\n}, [])",
+      "choices": [
+        "addListener must be awaited",
+        "Effects cannot subscribe to native events",
+        "Nothing",
+        "The listener is never removed, so it leaks and keeps firing after unmount"
+      ],
+      "answer": 3,
+      "explain": "Return a cleanup from the effect that calls subscription.remove(), so each mount adds one listener and unmount removes it."
+    },
+    {
+      "id": "native-when",
+      "topic": "native",
+      "prompt": "Which need most clearly calls for writing a native module?",
+      "choices": [
+        "Formatting dates in the user's locale",
+        "Sorting a large list",
+        "Calling a platform SDK that has no JavaScript API",
+        "Validating a form"
+      ],
+      "answer": 2,
+      "explain": "Native modules bridge to platform features that JavaScript cannot reach. Pure logic belongs in JavaScript."
+    },
+    {
+      "id": "native-codegen",
+      "topic": "native",
+      "prompt": "In the new architecture, what does codegen use as input?",
+      "choices": [
+        "The navigation config",
+        "A typed spec file that describes the module's interface",
+        "The compiled app binary",
+        "Runtime logs from the device"
+      ],
+      "answer": 1,
+      "explain": "You write a typed spec, and codegen generates the native interface so JavaScript and native code agree on types at build time."
+    },
+    {
+      "id": "state-reducer",
+      "topic": "state",
+      "prompt": "What is wrong with this reducer?",
+      "code": "function reducer(state, action) {\n  if (action.type === 'add') { state.items.push(action.item); return state }\n  return state\n}",
+      "choices": [
+        "It mutates state, so React may not see a change and skip the re-render",
+        "Reducers cannot handle arrays",
+        "It must return undefined for unknown actions",
+        "Nothing"
+      ],
+      "answer": 0,
+      "explain": "Reducers must be pure and return a new object. Return { ...state, items: [...state.items, action.item] } instead."
+    },
+    {
+      "id": "state-server",
+      "topic": "state",
+      "prompt": "What is the main difference between server state and client state?",
+      "choices": [
+        "Client state cannot use hooks",
+        "There is no difference in practice",
+        "Server state is always faster",
+        "Server state is a copy of data owned elsewhere, so it can go stale and needs caching and refetching"
+      ],
+      "answer": 3,
+      "explain": "Data from an API is a cached snapshot. It needs loading and error states, refetching and invalidation, which is why it is often handled by a data-fetching cache."
+    },
+    {
+      "id": "state-optimistic",
+      "topic": "state",
+      "prompt": "An optimistic \"like\" fails on the server. What should the app do?",
+      "choices": [
+        "Reload the whole app",
+        "Leave the like in place",
+        "Roll back to the previous state and tell the user",
+        "Retry forever without telling the user"
+      ],
+      "answer": 2,
+      "explain": "Optimistic updates show the change before the server confirms. On failure, restore the saved previous state and show an error."
+    },
+    {
+      "id": "storage-secret",
+      "topic": "storage",
+      "prompt": "Where should a refresh token be stored?",
+      "choices": [
+        "A module-level variable",
+        "The platform secure store, such as Keychain or Keystore",
+        "A file in the app bundle",
+        "Async key-value storage, as JSON"
+      ],
+      "answer": 1,
+      "explain": "Async key-value storage is not encrypted. The secure store encrypts at rest and is the right place for credentials."
+    },
+    {
+      "id": "storage-object",
+      "topic": "storage",
+      "prompt": "Async key-value storage only stores strings. How do you save a settings object?",
+      "choices": [
+        "JSON.stringify on write and JSON.parse on read",
+        "Use String(settings)",
+        "Store each key in a separate app",
+        "Pass the object; it is converted for you"
+      ],
+      "answer": 0,
+      "explain": "Serialise with JSON.stringify, and parse on read inside a try so corrupt data does not crash the app."
+    },
+    {
+      "id": "storage-migrate",
+      "topic": "storage",
+      "prompt": "A new release changes the shape of stored data. What is the safest approach?",
+      "choices": [
+        "Clear all storage on every launch",
+        "Ask users to reinstall",
+        "Assume the old data matches the new shape",
+        "Store a schema version and migrate old data when the app starts"
+      ],
+      "answer": 3,
+      "explain": "Users upgrade from any older version. A stored version number lets you run migrations step by step."
+    },
+    {
+      "id": "offline-timeout",
+      "topic": "offline",
+      "prompt": "A request hangs on a poor connection. What does fetch do by default?",
+      "choices": [
+        "Rejects after 30 seconds",
+        "Retries three times",
+        "Waits with no timeout of its own",
+        "Falls back to cached data"
+      ],
+      "answer": 2,
+      "explain": "fetch has no built-in timeout. Use an AbortController and a timer to abort slow requests."
+    },
+    {
+      "id": "offline-idempotent",
+      "topic": "offline",
+      "prompt": "A queued \"create order\" request is retried after a timeout. How do you avoid creating two orders?",
+      "choices": [
+        "Never retry writes",
+        "Send an idempotency key so the server can spot the repeat",
+        "Wait longer before retrying",
+        "Retry only on Wi-Fi"
+      ],
+      "answer": 1,
+      "explain": "The first request may have succeeded even though the response was lost. An idempotency key lets the server return the original result instead of acting twice."
+    },
+    {
+      "id": "offline-connected",
+      "topic": "offline",
+      "prompt": "The network listener says the device is connected. What can you safely assume?",
+      "choices": [
+        "Only that there is a network connection; requests can still fail",
+        "The device is on Wi-Fi",
+        "Your API is reachable",
+        "Requests will be fast"
+      ],
+      "answer": 0,
+      "explain": "Being connected does not mean the internet or your server is reachable. Always handle request failures."
+    },
+    {
+      "id": "anim-native",
+      "topic": "animations",
+      "prompt": "Which animation can use useNativeDriver: true?",
+      "choices": [
+        "Animating flex",
+        "Animating the text content",
+        "Animating width from 100 to 200",
+        "Animating opacity and a translateY transform"
+      ],
+      "answer": 3,
+      "explain": "The native driver supports non-layout props such as opacity and transform. Layout props such as width and flex need a different approach."
+    },
+    {
+      "id": "anim-clamp",
+      "topic": "animations",
+      "prompt": "The input value is 150. What is the output?",
+      "code": "value.interpolate({\n  inputRange: [0, 100],\n  outputRange: [0, 1],\n  extrapolate: 'clamp',\n})",
+      "choices": [
+        "0.5",
+        "1.5",
+        "1",
+        "0"
+      ],
+      "answer": 2,
+      "explain": "With extrapolate set to clamp, values beyond the input range stay at the end of the output range."
+    },
+    {
+      "id": "anim-jank",
+      "topic": "animations",
+      "prompt": "A JS-driven animation stutters while a list loads. Why?",
+      "choices": [
+        "Animations always stutter on Android",
+        "Each frame needs the JS thread, which is busy with the list work",
+        "The UI thread is idle",
+        "The animation has no duration"
+      ],
+      "answer": 1,
+      "explain": "Without the native driver, every frame is computed in JavaScript. Move it to the native driver or a UI-thread animation library."
+    },
+    {
+      "id": "perf-budget",
+      "topic": "performance",
+      "prompt": "At 60 frames per second, how long is each frame?",
+      "choices": [
+        "About 16.7 ms",
+        "About 33 ms",
+        "About 100 ms",
+        "About 6 ms"
+      ],
+      "answer": 0,
+      "explain": "1000 ms / 60 ≈ 16.7 ms. Work longer than that on a busy thread drops frames."
+    },
+    {
+      "id": "perf-memo",
+      "topic": "performance",
+      "prompt": "Row is wrapped in React.memo, but every row still re-renders when the parent does. Why?",
+      "code": "renderItem={({ item }) => (\n  <Row item={item} onPress={() => open(item.id)} />\n)}",
+      "choices": [
+        "renderItem must be a class",
+        "The list has no keys",
+        "memo does not work in React Native",
+        "onPress is a new function each render, so props are never equal"
+      ],
+      "answer": 3,
+      "explain": "memo compares props shallowly. A new arrow function each render changes the prop. Wrap the handler in useCallback."
+    },
+    {
+      "id": "perf-logs",
+      "topic": "performance",
+      "prompt": "Why remove heavy console.log calls from release builds?",
+      "choices": [
+        "They disable the native driver",
+        "They crash the app in release",
+        "They still cost time on the JS thread, especially when logging large objects",
+        "Stores reject apps with logs"
+      ],
+      "answer": 2,
+      "explain": "Logging serialises values and does work on the JS thread. Strip logs in release builds."
+    },
+    {
+      "id": "life-appstate",
+      "topic": "lifecycle",
+      "prompt": "Which AppState value means the user switched to another app?",
+      "choices": [
+        "active",
+        "background",
+        "closed",
+        "paused"
+      ],
+      "answer": 1,
+      "explain": "AppState is active in the foreground and background when another app is in front. iOS also reports inactive briefly during transitions."
+    },
+    {
+      "id": "life-blocked",
+      "topic": "lifecycle",
+      "prompt": "The user has permanently denied camera access. What should the app do when they tap \"Scan\"?",
+      "choices": [
+        "Explain why the camera is needed and offer a button that opens the app settings",
+        "Use the camera anyway",
+        "Ask for the permission again in a loop",
+        "Crash with an error"
+      ],
+      "answer": 0,
+      "explain": "Once a permission is blocked, the system will not show the prompt again. Only the user can change it in settings."
+    },
+    {
+      "id": "life-timers",
+      "topic": "lifecycle",
+      "prompt": "Can you rely on setInterval to sync data every minute while the app is in the background?",
+      "choices": [
+        "Yes, but only on iOS",
+        "Yes, if the interval is under a minute",
+        "Yes, timers always run",
+        "No, the OS can suspend JavaScript in the background; use the platform background task APIs"
+      ],
+      "answer": 3,
+      "explain": "The OS suspends backgrounded apps to save battery. Background work must go through the scheduled background task APIs, and even then timing is not guaranteed."
+    },
+    {
+      "id": "test-query",
+      "topic": "testing",
+      "prompt": "Which query best matches how a user finds a submit button?",
+      "choices": [
+        "Match on the style object",
+        "getByTestId('submit-btn')",
+        "getByRole('button', { name: 'Submit' })",
+        "Find the third Pressable in the tree"
+      ],
+      "answer": 2,
+      "explain": "Querying by role and accessible name tests what users and screen readers see, and also checks accessibility."
+    },
+    {
+      "id": "test-native",
+      "topic": "testing",
+      "prompt": "A unit test fails with \"native module is null\". What is the usual fix?",
+      "choices": [
+        "Run unit tests on a phone",
+        "Mock the native module in the Jest setup",
+        "Delete the module from the app",
+        "Turn off TypeScript"
+      ],
+      "answer": 1,
+      "explain": "Jest runs in Node without native code. Mock native modules so the JavaScript logic can be tested."
+    },
+    {
+      "id": "test-e2e",
+      "topic": "testing",
+      "prompt": "What do end-to-end tests add over component tests?",
+      "choices": [
+        "They drive the real built app on a simulator or device, including native code and navigation",
+        "They need no build",
+        "They replace type checking",
+        "They run faster"
+      ],
+      "answer": 0,
+      "explain": "End-to-end tests catch integration problems that unit tests cannot, at the cost of speed and flakiness."
+    },
+    {
+      "id": "release-ota",
+      "topic": "release",
+      "prompt": "Which change can ship as an over-the-air update?",
+      "choices": [
+        "Adding a new permission to the app config",
+        "Upgrading the React Native version",
+        "Adding a new native camera library",
+        "Fixing a typo in a JavaScript screen"
+      ],
+      "answer": 3,
+      "explain": "OTA updates replace the JavaScript bundle and assets only. Native changes need a new store build."
+    },
+    {
+      "id": "release-runtime",
+      "topic": "release",
+      "prompt": "Why must an OTA update target a matching runtime version?",
+      "choices": [
+        "It is not needed",
+        "To keep download size small",
+        "JavaScript that expects native code the installed binary lacks will crash",
+        "Stores require it for review"
+      ],
+      "answer": 2,
+      "explain": "An update must only reach binaries with the native code it was built against. A runtime version makes that match explicit."
+    },
+    {
+      "id": "release-build",
+      "topic": "release",
+      "prompt": "A store rejects your upload even though the version is 2.1.0, a new version. What is the most likely cause?",
+      "choices": [
+        "The app uses TypeScript",
+        "The build number was not increased",
+        "The app icon is too large",
+        "The JavaScript bundle is minified"
+      ],
+      "answer": 1,
+      "explain": "Every upload needs a new, higher build number, even if the user-facing version changes."
+    },
+    {
+      "id": "a11y-label",
+      "topic": "a11y",
+      "prompt": "An icon-only button shows a trash can. What should a screen reader hear?",
+      "choices": [
+        "A label such as \"Delete message\" with the role button",
+        "The icon's file name",
+        "Nothing",
+        "\"Image\""
+      ],
+      "answer": 0,
+      "explain": "Give icon-only controls an accessibilityLabel that says what they do, and an accessibilityRole of button."
+    },
+    {
+      "id": "a11y-target",
+      "topic": "a11y",
+      "prompt": "A close icon is 20 by 20 points and hard to tap. What is the simplest fix?",
+      "choices": [
+        "Add a long press handler",
+        "Remove the icon",
+        "Make the icon smaller",
+        "Add hitSlop or padding so the touch target is about 44–48 points"
+      ],
+      "answer": 3,
+      "explain": "Platform guidelines recommend touch targets of about 44 points or 48 dp. hitSlop grows the target without changing the layout."
+    },
+    {
+      "id": "a11y-state",
+      "topic": "a11y",
+      "prompt": "How do you tell a screen reader that a button is disabled?",
+      "choices": [
+        "Add \"disabled\" to the testID",
+        "Grey out the text only",
+        "Set accessibilityState={{ disabled: true }} (or the disabled prop)",
+        "Hide the button"
+      ],
+      "answer": 2,
+      "explain": "Colour alone is not announced. Expose the state so assistive tech reads \"dimmed\" or \"disabled\"."
+    },
+    {
+      "id": "expo-go",
+      "topic": "expo",
+      "prompt": "You add a library with custom native code. Why can't you keep testing in the prebuilt Expo Go app?",
+      "choices": [
+        "Expo Go does not run JavaScript",
+        "Expo Go only includes the native modules it was built with; you need a development build",
+        "Expo Go only works on Android",
+        "Libraries must be web only"
+      ],
+      "answer": 1,
+      "explain": "A development build is your own app binary with your native modules, plus the developer tools."
+    },
+    {
+      "id": "expo-prebuild",
+      "topic": "expo",
+      "prompt": "What does prebuild (continuous native generation) do?",
+      "choices": [
+        "Generates the native iOS and Android projects from your app config and plugins",
+        "Minifies JavaScript",
+        "Runs end-to-end tests",
+        "Uploads the app to the stores"
+      ],
+      "answer": 0,
+      "explain": "Native folders become generated output, so upgrades and config changes are repeatable instead of hand-edited."
+    },
+    {
+      "id": "expo-bare",
+      "topic": "expo",
+      "prompt": "What is the main trade-off of a bare project?",
+      "choices": [
+        "You cannot ship to stores",
+        "You cannot use React hooks",
+        "You cannot use TypeScript",
+        "Full control of the native projects, but you maintain them yourself, including upgrades"
+      ],
+      "answer": 3,
+      "explain": "Bare projects suit heavy native customisation. The cost is owning native build files and upgrade work."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-offline-queue",
+      "title": "Coding task: offline request queue",
+      "module": "react-native",
+      "exercise": "offline-queue"
+    },
+    {
+      "id": "task-nav-stack",
+      "title": "Coding task: navigation stack reducer",
+      "module": "react-native",
+      "exercise": "nav-stack"
+    }
+  ]
+}

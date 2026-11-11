@@ -1,0 +1,41 @@
+{
+  "id": "rn-accessibility",
+  "title": "Accessibility",
+  "minutes": 25,
+  "summary": "Screen readers on both platforms, accessibility props for roles, labels and state, touch target size, font scaling and reduced motion.",
+  "sections": [
+    {
+      "title": "Screen readers",
+      "body": "iOS has VoiceOver and Android has TalkBack. Both read the accessibility tree that React Native builds from your components. Interactive elements need an accessible name and a role, and grouped content should be read as one element where it makes sense."
+    },
+    {
+      "title": "The props",
+      "body": "- `accessible`: groups children into one focusable element (`Pressable` and `Text` are accessible by default).\n- `accessibilityLabel`: the name read out, needed for icon-only buttons.\n- `accessibilityRole` (or the newer `role`): `button`, `link`, `header`, `image`, `switch` and more.\n- `accessibilityState`: `{ disabled, selected, checked, busy, expanded }`.\n- `accessibilityHint`: what happens when activated, read after a pause.\n- `accessibilityLiveRegion` (Android) and `AccessibilityInfo.announceForAccessibility` for announcing changes.\n- `importantForAccessibility=\"no-hide-descendants\"` (Android) and `accessibilityElementsHidden` (iOS) hide decorative content.",
+      "code": "<Pressable\n  onPress={toggle}\n  accessibilityRole=\"switch\"\n  accessibilityLabel=\"Dark mode\"\n  accessibilityState={{ checked: dark }}\n  hitSlop={8}\n>\n  <MoonIcon />\n</Pressable>"
+    },
+    {
+      "title": "Size, text and motion",
+      "body": "Touch targets should be at least 44×44 points on iOS and 48×48 dp on Android. Use `hitSlop` to enlarge a small visual target. Text scales with the system font size by default; design layouts that wrap rather than truncate, and cap scaling with `maxFontSizeMultiplier` only where a layout truly cannot grow. Check `AccessibilityInfo.isReduceMotionEnabled()` and tone down large animations.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise audits a tree of component descriptions for missing labels, roles and small targets."
+    }
+  ],
+  "pitfalls": [
+    "Icon-only buttons without an `accessibilityLabel`.",
+    "Small touch targets with no `hitSlop`.",
+    "Setting `allowFontScaling={false}` everywhere.",
+    "Conveying state only by color."
+  ],
+  "gotchas": [
+    {
+      "question": "A heart icon button toggles favourite. What does it need?",
+      "answer": "`accessibilityRole=\"button\"` (or a toggle role), an `accessibilityLabel` such as \"Favourite\", and `accessibilityState={{ selected }}` so the state is read out."
+    },
+    {
+      "question": "What is the minimum touch target on Android?",
+      "answer": "48×48 dp per the platform guidelines (44×44 points on iOS)."
+    },
+    {
+      "question": "A decorative image is read as \"image\". How do you hide it?",
+      "answer": "Mark it not accessible: `accessible={false}` plus `importantForAccessibility=\"no\"` on Android, or wrap and hide it with `accessibilityElementsHidden` on iOS."
+    }
+  ]
+}

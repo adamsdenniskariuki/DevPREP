@@ -1,0 +1,45 @@
+{
+  "id": "rn-animations",
+  "title": "Animations and gestures",
+  "minutes": 30,
+  "summary": "The Animated API, the native driver, interpolation, layout animations and why animations should run on the UI thread.",
+  "sections": [
+    {
+      "title": "Animated values",
+      "body": "`Animated.Value` holds a number that drives styles without re-rendering React. `Animated.timing`, `spring` and `decay` change it over time, and `Animated.View` applies it. Combine animations with `sequence`, `parallel` and `stagger`.",
+      "code": "const opacity = useRef(new Animated.Value(0)).current\n\nuseEffect(() => {\n  Animated.timing(opacity, { toValue: 1, duration: 250, useNativeDriver: true }).start()\n}, [opacity])\n\nreturn <Animated.View style={{ opacity }} />"
+    },
+    {
+      "title": "The native driver",
+      "body": "With `useNativeDriver: true`, the animation is sent to native code once and runs on the UI thread, so it stays smooth even when the JS thread is busy. It only supports non-layout properties: `transform` and `opacity`. Animating `width`, `height`, `top` or colors needs the JS driver (or a UI-thread animation library). Prefer `transform: [{ translateX }]` and `scale` over layout properties."
+    },
+    {
+      "title": "Interpolation",
+      "body": "`value.interpolate({ inputRange, outputRange })` maps one range onto another, piecewise linearly. Both ranges need the same length and `inputRange` must increase. `extrapolate` controls values outside the range: `extend` (the default) continues the line, `clamp` holds the end value and `identity` returns the input. Output can be numbers, colors or strings like `'45deg'`.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise implements numeric interpolation with each extrapolation mode."
+    },
+    {
+      "title": "Gestures and UI-thread code",
+      "body": "Gesture libraries recognise pans, pinches and swipes natively. Animation libraries built on worklets run small JS functions on the UI thread, so a drag can follow the finger with no JS thread round trip. `LayoutAnimation` animates the next layout change for simple cases like expanding a row."
+    }
+  ],
+  "pitfalls": [
+    "Animating `width` or `top` with `useNativeDriver: true`, which throws.",
+    "Creating `new Animated.Value` on every render instead of in a ref.",
+    "Driving a drag through `setState` on every move event.",
+    "Passing a decreasing `inputRange`."
+  ],
+  "gotchas": [
+    {
+      "question": "What is `x.interpolate({ inputRange: [0, 100], outputRange: [0, 1] })` when `x` is 150?",
+      "answer": "`1.5`, because the default extrapolation is `extend`. With `extrapolate: 'clamp'` it would be `1`."
+    },
+    {
+      "question": "Why does an animation stutter while a list loads?",
+      "answer": "It runs on the JS thread, which is busy. Use `useNativeDriver: true` with transform or opacity so it runs on the UI thread."
+    },
+    {
+      "question": "Can the native driver animate `backgroundColor`?",
+      "answer": "Not with the built-in Animated driver in most versions; it supports transform and opacity (and a few other non-layout props). Check the version, or animate on the UI thread with a worklet library."
+    }
+  ]
+}

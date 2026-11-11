@@ -1,0 +1,44 @@
+{
+  "id": "rn-release",
+  "title": "Builds, releases and OTA updates",
+  "minutes": 30,
+  "summary": "Debug and release builds, signing, version numbers, store review, over-the-air JS updates and how runtime versions keep them compatible.",
+  "sections": [
+    {
+      "title": "Debug and release",
+      "body": "In development the app loads JavaScript from the Metro bundler on your machine, with fast refresh. A release build bundles and minifies the JS (as Hermes bytecode) into the app, strips development checks and must be signed. Always test a release build before shipping: behaviour and performance differ."
+    },
+    {
+      "title": "Versions and signing",
+      "body": "Each platform has two numbers: a user-facing version (iOS `CFBundleShortVersionString`, Android `versionName`, such as `2.4.0`) and a build number that must increase with every upload (iOS `CFBundleVersion`, Android `versionCode`, an integer). iOS builds are signed with certificates and provisioning profiles; Android builds with an upload key. Losing signing keys or reusing a build number blocks releases.\n\nStores review binaries, and releases can be staged to a percentage of users."
+    },
+    {
+      "title": "Over-the-air updates",
+      "body": "Because most of an app is JavaScript and assets, you can ship a new JS bundle without a store release. The app checks an update server, downloads a bundle and applies it on the next launch (or immediately, with a reload).\n\nRules that keep this safe:\n\n- An update must only target binaries with the same **runtime version**: the same native code and native modules. JS that calls a native module the binary lacks will crash. Any native change needs a store release and a new runtime version.\n- Use channels (such as `production` and `staging`) to target audiences.\n- Keep the ability to roll back, and stage rollouts.\n- Store policies allow interpreted code updates for bug fixes and improvements, but not changing the app's primary purpose.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise picks the right update for a device from a list."
+    },
+    {
+      "title": "CI/CD",
+      "body": "Automate builds, signing and uploads in CI so releases are repeatable. Cloud build services and scripted tooling can manage certificates, bump build numbers and submit to stores. Keep secrets in the CI secret store, not the repo."
+    }
+  ],
+  "pitfalls": [
+    "Shipping an OTA update that needs a native module the installed binary does not have.",
+    "Reusing a build number, which the store rejects.",
+    "Only testing debug builds.",
+    "Committing signing keys to the repository."
+  ],
+  "gotchas": [
+    {
+      "question": "You added a native camera module. Can you ship it as an OTA update?",
+      "answer": "No. OTA updates replace JS and assets only. Native code needs a new binary through the store, with a new runtime version."
+    },
+    {
+      "question": "What must increase on every upload: version name or build number?",
+      "answer": "The build number (`versionCode` on Android, `CFBundleVersion` on iOS). The user-facing version can stay the same across builds."
+    },
+    {
+      "question": "Why might an app behave differently in release than in debug?",
+      "answer": "Release uses a bundled, minified (Hermes bytecode) JS build without development checks, so timing, errors and performance differ."
+    }
+  ]
+}

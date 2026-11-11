@@ -10,6 +10,7 @@ import { companyIds } from './companies'
 import { CODEBASE_TASK_IDS } from './codebase'
 import { REACT_EXERCISE_IDS, REACT_LESSON_IDS } from './react-module'
 import { NODE_EXERCISE_IDS, NODE_LESSON_IDS } from './node-module'
+import { REACT_NATIVE_EXERCISE_IDS, REACT_NATIVE_LESSON_IDS } from './react-native-module'
 import { SKILL_TESTS } from './skill-tests'
 import { EXTRA_DECK_IDS } from './content-schema'
 import { emptyProgress } from './progress'
@@ -62,7 +63,7 @@ describe('buildNavTree', () => {
   it('has the five goal groups in order, each with its sections', () => {
     expect(tree.map(node => node.label)).toEqual(GROUPS.map(group => group.label))
     expect(tree.map(node => node.children!.map(child => child.label))).toEqual([
-      ['Tracks', 'Patterns', 'Field Guide', 'React', 'Node.js'],
+      ['Tracks', 'Patterns', 'Field Guide', 'React', 'Node.js', 'React Native'],
       ['Coding problems', 'SQL problems', 'Flashcards', 'Playground'],
       ['Design cases', 'Whiteboard'],
       ['Company prep', 'Mock interviews', 'Codebase interviews', 'Skill tests', 'Story bank'],
@@ -90,6 +91,9 @@ describe('buildNavTree', () => {
     const node = find(tree, 'node')!
     expect(node.children!.map(child => child.label)).toEqual(['Lessons', 'Exercises'])
     expect(node.children!.flatMap(child => child.children!.map(item => item.href))).toEqual([...NODE_LESSON_IDS, ...NODE_EXERCISE_IDS].map(id => `#node/${id}`))
+    const reactNative = find(tree, 'react-native')!
+    expect(reactNative.children!.map(child => child.label)).toEqual(['Lessons', 'Exercises'])
+    expect(reactNative.children!.flatMap(child => child.children!.map(item => item.href))).toEqual([...REACT_NATIVE_LESSON_IDS, ...REACT_NATIVE_EXERCISE_IDS].map(id => `#react-native/${id}`))
     expect(find(tree, 'skilltest')!.children!.map(item => item.href)).toEqual(SKILL_TESTS.map(({ id }) => `#skilltest/${id}`))
     expect(find(tree, 'company')!.children!.map(item => item.href)).toEqual(companyIds.map(id => `#company/${id}`))
     expect(find(tree, 'mock')!.children!.map(item => item.href)).toEqual(companyIds.map(id => `#mock/${id}`))
@@ -142,7 +146,7 @@ describe('buildNavTree', () => {
 describe('groupFor', () => {
   it('puts every route in one of the five groups', () => {
     const expected: Record<string, string> = {
-      tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn', node: 'learn',
+      tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn', node: 'learn', 'react-native': 'learn',
       practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
       design: 'design', board: 'design', company: 'interview', mock: 'interview', codebase: 'interview', skilltest: 'interview', stories: 'interview',
       home: 'me', plan: 'me', plans: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',

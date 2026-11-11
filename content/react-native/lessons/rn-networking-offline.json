@@ -1,0 +1,45 @@
+{
+  "id": "rn-networking-offline",
+  "title": "Networking and offline",
+  "minutes": 30,
+  "summary": "fetch on mobile, timeouts and retries, detecting connectivity, and queueing writes so the app keeps working offline.",
+  "sections": [
+    {
+      "title": "fetch works, with caveats",
+      "body": "React Native provides `fetch`, `XMLHttpRequest` and `WebSocket`. Mobile networks are slow and flaky, so:\n\n- Always set a timeout with an `AbortController`; a request on a dead connection may hang for a long time.\n- Retry idempotent requests (GET, PUT with the same body) with exponential backoff and jitter; do not blindly retry non-idempotent POSTs.\n- iOS blocks plain `http://` by default (App Transport Security) and Android blocks cleartext traffic by default from API 28.",
+      "code": "async function getJson(url: string, ms = 10_000) {\n  const controller = new AbortController()\n  const timer = setTimeout(() => controller.abort(), ms)\n  try {\n    const res = await fetch(url, { signal: controller.signal })\n    if (!res.ok) throw new Error(`HTTP ${res.status}`)\n    return await res.json()\n  } finally {\n    clearTimeout(timer)\n  }\n}"
+    },
+    {
+      "title": "Connectivity",
+      "body": "A network info module reports whether the device is connected and whether the internet is reachable. Being on Wi-Fi does not mean requests will succeed, so treat it as a hint and still handle failures. Refetch stale data when the app returns to the foreground or the connection comes back."
+    },
+    {
+      "title": "An offline queue",
+      "body": "An offline-first app writes locally first and syncs later. User actions go into a persisted queue of mutations. When online, the queue sends them **in order**, one at a time, removing each only after the server confirms it. A failure leaves the item at the head and stops the flush so ordering holds; retries back off. Give each mutation a client-generated id so the server can ignore a duplicate if a response was lost and the app retries.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise models the queue with an injected `send` function and an `online` flag."
+    },
+    {
+      "title": "Optimistic updates",
+      "body": "Show the change immediately, send it in the background, and roll back with a message if it fails. Keep the previous value so the rollback is exact."
+    }
+  ],
+  "pitfalls": [
+    "No timeout, so a request on a dead network hangs.",
+    "Retrying POSTs without an idempotency key, creating duplicates.",
+    "Removing a queued mutation before the server confirms it.",
+    "Trusting the connectivity flag instead of handling request failures."
+  ],
+  "gotchas": [
+    {
+      "question": "Why should an offline queue stop at the first failure instead of skipping it?",
+      "answer": "Later mutations may depend on earlier ones (create then edit). Sending them out of order can fail or corrupt data, so keep order and retry the head."
+    },
+    {
+      "question": "Why add jitter to exponential backoff?",
+      "answer": "Without it, many clients that failed together retry together and overload the server again. Random jitter spreads the retries out."
+    },
+    {
+      "question": "Does `fetch` reject on a 500 response?",
+      "answer": "No. `fetch` only rejects on network failure or abort. Check `response.ok` or `status` yourself."
+    }
+  ]
+}

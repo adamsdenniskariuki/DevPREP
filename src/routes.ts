@@ -1,7 +1,7 @@
 import type { Track } from './curriculum'
 import type { Route } from './app-model'
 
-export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans', 'codebase', 'react', 'node', 'skilltest']
+export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans', 'codebase', 'react', 'node', 'react-native', 'skilltest']
 /** Hashes from earlier releases keep working as bookmarks. */
 export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
@@ -33,6 +33,8 @@ export interface ParsedRoute {
   reactId?: string
   /** A Node.js lesson or exercise (#node/<id>). */
   nodeId?: string
+  /** A React Native lesson or exercise (#react-native/<id>). */
+  reactNativeId?: string
   /** A timed skill test (#skilltest/<id>). */
   skillTestId?: string
 }
@@ -54,6 +56,8 @@ export interface RouteIds {
   react?: ReadonlySet<string>
   /** Node.js lesson and exercise ids, with the same fallback. */
   node?: ReadonlySet<string>
+  /** React Native lesson and exercise ids, with the same fallback. */
+  reactNative?: ReadonlySet<string>
   /** Skill test ids, with the same fallback. */
   skillTests?: ReadonlySet<string>
 }
@@ -77,6 +81,7 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   }
   if (route === 'react') return (ids.react ? ids.react.has(sub) : BOARD_ID.test(sub)) ? { route, reactId: sub } : { route: 'unknown' }
   if (route === 'node') return (ids.node ? ids.node.has(sub) : BOARD_ID.test(sub)) ? { route, nodeId: sub } : { route: 'unknown' }
+  if (route === 'react-native') return (ids.reactNative ? ids.reactNative.has(sub) : BOARD_ID.test(sub)) ? { route, reactNativeId: sub } : { route: 'unknown' }
   if (route === 'skilltest') return (ids.skillTests ? ids.skillTests.has(sub) : BOARD_ID.test(sub)) ? { route, skillTestId: sub } : { route: 'unknown' }
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
@@ -87,6 +92,6 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
 /** The canonical hash for a parsed route: aliases resolve to their target, sub-ids are kept. */
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
-  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask ?? parsed.reactId ?? parsed.nodeId ?? parsed.skillTestId
+  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask ?? parsed.reactId ?? parsed.nodeId ?? parsed.reactNativeId ?? parsed.skillTestId
   return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}`
 }

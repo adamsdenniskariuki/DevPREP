@@ -1,0 +1,45 @@
+{
+  "id": "rn-styling-flexbox",
+  "title": "Styling and Flexbox",
+  "minutes": 30,
+  "summary": "StyleSheet, style arrays and how React Native Flexbox differs from the web: column by default, unitless sizes and no cascade.",
+  "sections": [
+    {
+      "title": "Styles are objects",
+      "body": "Styles are plain JavaScript objects with camelCase keys: `backgroundColor`, `marginHorizontal`, `borderRadius`. Numbers are density-independent pixels (dp, called points on iOS), so `16` means the same physical size on every screen. Percentages are strings: `width: '50%'`.\n\n`StyleSheet.create` validates styles in development and lets you refer to them by name. The `style` prop also accepts an array; later entries override earlier ones, and falsy entries are ignored, which makes conditional styles easy.",
+      "code": "const styles = StyleSheet.create({\n  button: { padding: 12, borderRadius: 8, backgroundColor: '#2563eb' },\n  disabled: { opacity: 0.5 },\n})\n\n<Pressable style={[styles.button, disabled && styles.disabled, props.style]} />"
+    },
+    {
+      "title": "Flexbox defaults",
+      "body": "Every `View` is a flex container. The differences from the web:\n\n- `flexDirection` defaults to `column`, not `row`.\n- `alignContent` defaults to `flex-start` and `flexShrink` to `0`.\n- `flex: 1` means \"grow to fill the space\"; a positive `flex` number is shared in proportion between siblings.\n- `position` is `relative` by default, and `absolute` positions against the parent.\n- `gap`, `rowGap` and `columnGap` are supported in current versions.\n\nA screen that renders nothing is often a `View` with no `flex: 1`, so it has zero height."
+    },
+    {
+      "title": "Layout engine",
+      "body": "Layout is computed by a C++ Flexbox implementation (Yoga) off the JS thread, then applied to native views. You read the result with `onLayout`, which reports `{ x, y, width, height }` after layout. Use `useWindowDimensions()` for the screen size, which updates on rotation, rather than reading `Dimensions` once."
+    },
+    {
+      "title": "Flattening styles",
+      "body": "Native code receives one flat object. `StyleSheet.flatten(style)` walks nested arrays left to right, skips `false`, `null` and `undefined`, and merges objects so the last value wins. Libraries call it when they need to read a computed style, such as a color passed through props.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store."
+    }
+  ],
+  "pitfalls": [
+    "Expecting rows by default and wondering why items stack vertically.",
+    "Using CSS strings like `'16px'`; sizes are unitless numbers.",
+    "Creating new style objects inline on every render in hot list rows instead of using `StyleSheet.create`.",
+    "Expecting styles to cascade from a parent `View`."
+  ],
+  "gotchas": [
+    {
+      "question": "Two siblings have `flex: 1` and `flex: 2` in a 300 dp tall column. How tall is each?",
+      "answer": "100 dp and 200 dp. Free space is shared in proportion to the `flex` values (1:2) when neither has a fixed height."
+    },
+    {
+      "question": "What does `StyleSheet.flatten([{ padding: 4 }, false, [{ padding: 8, margin: 2 }]])` return?",
+      "answer": "`{ padding: 8, margin: 2 }`. Arrays are flattened recursively, falsy entries are skipped and later values win."
+    },
+    {
+      "question": "Why does a screen-level `View` with a background color show nothing?",
+      "answer": "Its height is decided by its content. Without `flex: 1` (or an explicit size) an empty container has zero height."
+    }
+  ]
+}

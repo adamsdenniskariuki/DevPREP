@@ -1,0 +1,45 @@
+{
+  "id": "rn-expo-vs-bare",
+  "title": "Framework projects vs bare projects",
+  "minutes": 25,
+  "summary": "Starting with a framework (such as Expo) versus a bare React Native project: prebuild, config plugins, development builds and when you need native folders.",
+  "sections": [
+    {
+      "title": "Two ways to start",
+      "body": "A **bare** project has `ios/` and `android/` folders that you own and edit: Xcode projects, Gradle files and native code. You have full control and full responsibility for upgrades.\n\nA **framework** project (Expo is the common choice and the officially recommended way to start) gives you a curated set of native modules, a router, build tooling and update services. You describe native configuration in an app config file, and the native folders are generated."
+    },
+    {
+      "title": "Prebuild and config plugins",
+      "body": "`prebuild` generates `ios/` and `android/` from your app config and installed modules. Config plugins are functions that modify the generated native projects (add a permission, an Info.plist key or a Gradle setting), so native changes are code, reviewed and repeatable. This is called continuous native generation: you can delete the native folders and regenerate them, which makes upgrades much easier.",
+      "code": "// app.config.ts\nexport default {\n  name: 'Shop',\n  ios: { bundleIdentifier: 'com.example.shop', infoPlist: { NSCameraUsageDescription: 'Scan receipts' } },\n  android: { package: 'com.example.shop', permissions: ['CAMERA'] },\n  plugins: ['./plugins/with-custom-gradle'],\n}"
+    },
+    {
+      "title": "Development builds and the sandbox app",
+      "body": "A prebuilt sandbox client app lets you scan a QR code and run your JS immediately, but it only contains the native modules it ships with. Once you add custom native code you make a **development build**: your own debug binary with your modules, plus the dev tools. This is normal and does not mean leaving the framework."
+    },
+    {
+      "title": "Choosing",
+      "body": "Start with a framework unless you have a clear reason not to: it handles most native setup, upgrades and builds. Choose bare when you are adding React Native to an existing native app (brownfield), need deep custom native build steps, or your team owns native code day to day. Either way you can write custom native modules."
+    }
+  ],
+  "pitfalls": [
+    "Thinking a framework project cannot use custom native code; development builds and config plugins allow it.",
+    "Hand-editing generated native folders and losing the change on the next prebuild.",
+    "Testing features that need custom native modules in a generic sandbox client.",
+    "Choosing bare by default and then owning every native upgrade."
+  ],
+  "gotchas": [
+    {
+      "question": "You edited `ios/Info.plist` by hand, then ran prebuild with `--clean`. What happened?",
+      "answer": "The change was lost, because the native folders were regenerated from the app config. Put it in the config or a config plugin."
+    },
+    {
+      "question": "When must you make a development build instead of using the sandbox client app?",
+      "answer": "As soon as the app needs a native module or native configuration the sandbox client does not include."
+    },
+    {
+      "question": "What is a brownfield app?",
+      "answer": "An existing native iOS or Android app that adds React Native screens, as opposed to a new app built in React Native from the start."
+    }
+  ]
+}

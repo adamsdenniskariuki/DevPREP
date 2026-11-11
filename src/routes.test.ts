@@ -49,7 +49,7 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase', '#react', '#skilltest', '#node'])
+const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase', '#react', '#skilltest', '#node', '#react-native'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
@@ -118,6 +118,16 @@ describe('route compatibility', () => {
     expect(hrefFor({ route: 'node', nodeId: 'promise-pool' })).toBe('#node/promise-pool')
     for (const hash of ['#node/nope', '#node/promise-pool/x', '#Node']) expect(parseHash(hash, withIds), hash).toEqual({ route: 'unknown' })
     expect(parseHash('#node/any-id', ids)).toEqual({ route: 'node', nodeId: 'any-id' })
+  })
+
+  it('adds the React Native module with an optional lesson or exercise id', () => {
+    const withIds: RouteIds = { ...ids, reactNative: new Set(['rn-lists', 'offline-queue']), skillTests: new Set(['react-native']) }
+    expect(parseHash('#react-native', withIds)).toEqual({ route: 'react-native' })
+    expect(parseHash('#react-native/rn-lists', withIds)).toEqual({ route: 'react-native', reactNativeId: 'rn-lists' })
+    expect(parseHash('#skilltest/react-native', withIds)).toEqual({ route: 'skilltest', skillTestId: 'react-native' })
+    expect(hrefFor({ route: 'react-native', reactNativeId: 'offline-queue' })).toBe('#react-native/offline-queue')
+    for (const hash of ['#react-native/nope', '#react-native/offline-queue/x', '#React-Native']) expect(parseHash(hash, withIds), hash).toEqual({ route: 'unknown' })
+    expect(parseHash('#react-native/any-id', ids)).toEqual({ route: 'react-native', reactNativeId: 'any-id' })
   })
 
   it('keeps the old aliases pointing at the same screens', () => {

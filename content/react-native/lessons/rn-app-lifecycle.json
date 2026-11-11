@@ -1,0 +1,45 @@
+{
+  "id": "rn-app-lifecycle",
+  "title": "App lifecycle and permissions",
+  "minutes": 30,
+  "summary": "AppState transitions, pausing work in the background, locking sensitive apps, and the request flow for runtime permissions on iOS and Android.",
+  "sections": [
+    {
+      "title": "AppState",
+      "body": "`AppState.currentState` is `active`, `background` or (iOS only) `inactive`, which happens briefly during transitions, for incoming calls or when the app switcher opens. Subscribe with `AppState.addEventListener('change', fn)` and remove the subscription in cleanup.\n\nUse it to pause timers, video and polling in the background, refresh data when the app returns to `active`, and save drafts when it leaves. The OS may suspend or kill a backgrounded app without warning, so persist important state early.",
+      "code": "useEffect(() => {\n  const sub = AppState.addEventListener('change', next => {\n    if (next === 'active') refetch()\n  })\n  return () => sub.remove()\n}, [refetch])"
+    },
+    {
+      "title": "Locking after time away",
+      "body": "Banking and health apps lock after some time in the background. Record when the app left `active`, and when it returns, compare the elapsed time with the limit. Treat `inactive` carefully: on iOS it appears on the way to the background and when a system dialog opens, so do not lock on `inactive` alone.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise models AppState as a reducer with an injected clock."
+    },
+    {
+      "title": "Runtime permissions",
+      "body": "Camera, location, contacts, notifications and similar features need user consent. Both platforms follow roughly the same flow:\n\n- Check the current status before asking.\n- If undetermined, explain why you need it (in context, at the moment of use), then request.\n- If denied but you may ask again (Android), show a rationale before asking.\n- If permanently denied (iOS after one denial; Android after repeated denial or \"don't ask again\"), the system will not show the prompt again, so offer a button that opens the app's settings.\n\nAlso declare usage strings on iOS (`Info.plist`) and permissions in the Android manifest, or the request fails or the build is rejected."
+    },
+    {
+      "title": "Limited and partial grants",
+      "body": "Users can grant limited photo access, approximate rather than precise location, or allow location only while using the app. Handle those states rather than treating anything but full access as denied."
+    }
+  ],
+  "pitfalls": [
+    "Requesting every permission at launch instead of at the moment of use.",
+    "Re-requesting after a permanent denial, when the system will silently refuse.",
+    "Locking or pausing on iOS `inactive`, which also fires for system dialogs.",
+    "Forgetting to remove the AppState subscription."
+  ],
+  "gotchas": [
+    {
+      "question": "On iOS the user denied camera access once. What happens if you request again?",
+      "answer": "The system does not show the prompt again; the request resolves as denied. Send the user to Settings instead."
+    },
+    {
+      "question": "Why does `inactive` exist?",
+      "answer": "iOS reports it during transitions: while opening the app switcher, during a call or when pulling down notification centre. Android does not use it."
+    },
+    {
+      "question": "Where do you refresh stale data after the user returns to the app?",
+      "answer": "In an AppState `change` listener when the next state is `active` (and usually when connectivity returns)."
+    }
+  ]
+}

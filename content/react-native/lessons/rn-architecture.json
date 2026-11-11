@@ -1,0 +1,44 @@
+{
+  "id": "rn-architecture",
+  "title": "The New Architecture and Hermes",
+  "minutes": 35,
+  "summary": "How JavaScript talks to native code: the old asynchronous bridge, JSI, Fabric, TurboModules, Codegen and the Hermes engine.",
+  "sections": [
+    {
+      "title": "Threads",
+      "body": "A React Native app runs several threads. The **JS thread** runs your React code, event handlers and business logic. The **main (UI) thread** draws native views and receives touches. Layout runs in native code too. Dropping frames on either the JS or the UI thread makes the app feel janky, and they can drop frames independently."
+    },
+    {
+      "title": "The old bridge",
+      "body": "In the legacy architecture, JS and native talked over an asynchronous bridge. Every call and every UI update was serialised to JSON, batched, and sent across. Calls could not return values synchronously, large payloads were slow, and all native modules were loaded at startup."
+    },
+    {
+      "title": "JSI, Fabric and TurboModules",
+      "body": "The New Architecture, the default since React Native 0.76, replaces the bridge.\n\n- **JSI** (JavaScript Interface) is a C++ API that lets JavaScript hold references to C++ host objects and call their methods directly, with no JSON serialisation, synchronously when needed.\n- **Fabric** is the new renderer. It keeps the shadow tree in C++, supports React's concurrent features (transitions, Suspense) and can apply layout synchronously, which removes layout jumps.\n- **TurboModules** are native modules built on JSI. They load lazily on first use and can expose synchronous methods.\n- **Codegen** reads typed TypeScript or Flow specs for modules and components and generates the C++ and platform glue, so JS and native agree on types at build time.\n- **Bridgeless mode** removes the bridge entirely; an interop layer keeps many legacy modules working."
+    },
+    {
+      "title": "Hermes",
+      "body": "Hermes is a JavaScript engine built for React Native and the default engine. It compiles JavaScript to bytecode at build time, so the app does not parse source at startup. That improves time to interactive and memory use, especially on lower-end Android devices. It supports modern JS but not everything (for example, some Intl features depend on the version), and you debug it with Chrome DevTools-compatible tooling."
+    }
+  ],
+  "pitfalls": [
+    "Saying the New Architecture makes all JS faster; it removes bridge overhead but your JS still runs on one thread.",
+    "Assuming every native call is now synchronous; most should stay async.",
+    "Upgrading without checking libraries for New Architecture support.",
+    "Confusing Hermes (an engine) with Fabric (a renderer)."
+  ],
+  "gotchas": [
+    {
+      "question": "What did the old bridge do that JSI removes?",
+      "answer": "It serialised every message to JSON and sent it asynchronously in batches. JSI lets JS call C++ host objects directly, without serialisation, and synchronously when needed."
+    },
+    {
+      "question": "Why does Hermes improve startup time?",
+      "answer": "It ships precompiled bytecode, so the engine skips parsing and compiling JavaScript source when the app starts."
+    },
+    {
+      "question": "What is Codegen for?",
+      "answer": "It generates type-safe native glue (C++ and platform code) from typed JS specs for TurboModules and Fabric components, so mismatches fail at build time."
+    }
+  ]
+}
