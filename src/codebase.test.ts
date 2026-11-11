@@ -148,7 +148,8 @@ describe('codebase storage and backups', () => {
   it('still imports an old backup, which has no codebase progress', () => {
     const parsed = parseFullBackup(JSON.stringify(legacyBackup))
     expect(Object.keys(parsed)).toEqual(['progress'])
-    expect(serializeFullBackup(emptyProgress(), undefined, [], {}, {})).toBe(serializeBackup(emptyProgress()))
+    const progress = emptyProgress()
+    expect(serializeFullBackup(progress, undefined, [], {}, {})).toBe(serializeBackup(progress))
   })
 
   it('round-trips codebase progress alone and alongside other data, and rejects bad entries', () => {
