@@ -29,6 +29,8 @@ export interface NavIndex {
   guides: [id: string, title: string, topic: string, kind: string][]
   cases: [id: string, title: string][]
   companies: [id: string, name: string][]
+  /** Codebase practice repos with their tasks. */
+  codebase?: [id: string, title: string, lang: string, tasks: [id: string, title: string, kind: string][]][]
   decks: [track: string, title: string, cards: number][]
   /** Anti-pattern titles with the guide they appear in, for the command palette. */
   antipatterns: [guide: string, title: string][]
@@ -70,7 +72,7 @@ const ROUTE_GROUP: Record<string, GroupId> = {
   tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
   practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
-  company: 'interview', mock: 'interview', stories: 'interview',
+  company: 'interview', mock: 'interview', codebase: 'interview', stories: 'interview',
   home: 'me', plan: 'me', plans: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
 }
 
@@ -112,6 +114,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
     group('interview', [
       branch({ id: 'company', label: 'Company prep', href: '#company' }),
       branch({ id: 'mock', label: 'Mock interviews', href: '#mock' }),
+      branch({ id: 'codebase', label: 'Codebase interviews', href: '#codebase' }),
       { id: 'stories', label: 'Story bank', href: '#stories' },
     ]),
     group('me', [

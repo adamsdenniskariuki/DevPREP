@@ -7,6 +7,7 @@ import type { TsWorkerMessage } from './ts.worker'
 import { PGLITE_VERSION } from './pglite-version'
 import { SQL_TIMEOUT_MS, type SqlFreeResponse, type SqlRunRequest, type SqlRunResponse } from './sql-core'
 import type { FreeRunRequest, FreeRunResult } from './free'
+import { PROJECT_TIMEOUT_MS, type ProjectResponse, type ProjectRunRequest } from './project'
 import type { JsWorkerMessage } from './js.worker'
 import type { SqlWorkerMessage } from './sql.worker'
 
@@ -292,6 +293,46 @@ async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: 
 /** Runs code against test cases in a sandboxed worker, one run at a time, with a time limit. */
 export function runCode(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void = ignore, onProgress: RunProgress = ignore): Promise<RunReport> {
   const next = queue.then(() => runOnce(lang, request, onPhase, onProgress))
+  queue = next.catch(() => undefined)
+  return next
+}
+
+/** Practice-codebase reports: per-test outcomes, or why the suite did not finish. */
+export type ProjectReport = ProjectResponse | { kind: 'timeout'; ms: number; limitMs: number } | { kind: 'load-error'; error: string }
+export type ProjectLanguage = 'py' | 'ts'
+
+async function projectOnce(lang: ProjectLanguage, request: ProjectRunRequest, onPhase: (phase: RunPhase) => void, onProgress: RunProgress): Promise<ProjectReport> {
+  onPhase(lang === 'py' ? 'loading-python' : 'loading-typescript')
+  try {
+    await (lang === 'py' ? preparePython() : prepareTypeScript())
+  } catch (error) {
+    return loadError(error)
+  }
+  const worker = (lang === 'py' ? pyWorker : tsWorker)!
+  const reset = lang === 'py' ? resetPython : resetTypeScript
+  onPhase('running')
+  const limitMs = PROJECT_TIMEOUT_MS[lang]
+  const started = performance.now()
+  const pending = reply(worker, limitMs, withProgress(data => {
+    const message = data as { type: string; result?: ProjectResponse }
+    return message.type === 'result' ? message.result : undefined
+  }, onProgress))
+  worker.postMessage({ type: 'project', ...request } satisfies Extract<PyWorkerMessage, { type: 'project' }> & Extract<TsWorkerMessage, { type: 'project' }>)
+  try {
+    const result = await pending
+    if (result !== 'timeout') return result
+  } catch (error) {
+    reset()
+    return { kind: 'error', error: error instanceof Error ? error.message : String(error), output: '' }
+  }
+  // A runaway loop blocks the worker, so stop it; the next run reloads the runtime from cache.
+  reset()
+  return { kind: 'timeout', ms: Math.round(performance.now() - started), limitMs }
+}
+
+/** Runs a multi-file practice codebase's tests, sharing the one-at-a-time queue with every other run. */
+export function runProject(lang: ProjectLanguage, request: ProjectRunRequest, onPhase: (phase: RunPhase) => void = ignore, onProgress: RunProgress = ignore): Promise<ProjectReport> {
+  const next = queue.then(() => projectOnce(lang, request, onPhase, onProgress))
   queue = next.catch(() => undefined)
   return next
 }

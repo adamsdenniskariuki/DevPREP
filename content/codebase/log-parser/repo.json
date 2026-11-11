@@ -1,0 +1,80 @@
+{
+  "id": "log-parser",
+  "title": "Logscan",
+  "lang": "py",
+  "summary": "A log parser and summariser behind an on-call dashboard.",
+  "tasks": [
+    {
+      "id": "whole-message",
+      "kind": "bug",
+      "title": "Truncated error messages",
+      "minutes": 45,
+      "brief": [
+        "The on-call dashboard’s “top errors” panel shows entries like “disk” and “could”. The raw logs say “disk full on /var” and “could not reach payments”, and different errors are being lumped together.",
+        "Find the cause and fix it. The dashboard team would like a test that pins the behaviour down."
+      ],
+      "done": [
+        "Messages keep every word after the level.",
+        "top_messages groups by the whole message.",
+        "Lines without a message are still ignored."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Should extra spaces inside a message be kept as they are? (Yes; only trim the ends.)",
+          "Is a line with a time and level but no message valid? (No, ignore it.)"
+        ],
+        "orient": [
+          "README shows the line format: time, level, then free text.",
+          "The symptom is in the dashboard, but top_messages only counts what parse_line gives it, so started at parse.py.",
+          "Baseline run: all green, because every test message is a single word."
+        ],
+        "failingTest": "def test_keeps_the_whole_message():\n    assert parse_line(\"2026-03-04T09:30:00 ERROR disk full on /var\")[\"message\"] == \"disk full on /var\"  # fails: \"disk\"",
+        "trace": [
+          "Printed parse_line(...) for the sample line: message was \"disk\".",
+          "line.split() splits on every space, and the code keeps only parts[2], the first word of the message.",
+          "split(\" \", 2) splits at most twice, so the message keeps its spaces; the length check still rejects short lines."
+        ],
+        "wrapUp": [
+          "Cause: the parser split the whole line on every space and kept only the first word of the message.",
+          "Fix: split at most twice, so the rest of the line is the message. One-line change plus a regression test.",
+          "Checked by hand: a missing message is still ignored, and lower-case levels still parse.",
+          "Noticed but not changed: tabs between fields are not supported; worth asking whether real logs use them."
+        ]
+      }
+    },
+    {
+      "id": "time-window",
+      "kind": "feature",
+      "title": "Entries in a time window",
+      "minutes": 50,
+      "brief": [
+        "On-call engineers want to zoom in on an incident. Add between(lines, start, end) to logs/summary.py, returning parsed entries whose time is at or after start and before end, in log order.",
+        "Noise lines are skipped as usual. A window whose end is before its start is a caller mistake and should raise ValueError."
+      ],
+      "done": [
+        "between returns entries with start <= time < end, in their original order.",
+        "An empty window returns []; a backwards window raises ValueError."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Inclusive or exclusive ends? (Start inclusive, end exclusive, so back-to-back windows do not overlap.)",
+          "Strings or datetime objects? (The same ISO strings the logs use.)",
+          "Sorted by time or log order? (Log order.)"
+        ],
+        "orient": [
+          "summary.py already builds on parse_all, so the new function belongs beside count_by_level and top_messages.",
+          "Times share one fixed-width ISO format, so string comparison orders them correctly without parsing dates."
+        ],
+        "failingTest": "def test_between_is_start_inclusive_end_exclusive():\n    found = between(LINES, \"2026-03-04T09:01:00\", \"2026-03-04T09:03:00\")\n    assert [entry[\"time\"] for entry in found] == [\"2026-03-04T09:01:00\", \"2026-03-04T09:02:00\"]",
+        "trace": [
+          "parse_all drops noise and returns entries in order, so a single filter keeps log order for free."
+        ],
+        "wrapUp": [
+          "Added between using the existing parse_all, with a guard for backwards windows.",
+          "Trade-off: comparing strings depends on every line using the same ISO format. Noted in the docstring.",
+          "With more time: accept datetime objects and time zones."
+        ]
+      }
+    }
+  ]
+}

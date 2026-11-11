@@ -1,7 +1,7 @@
 import type { Track } from './curriculum'
 import type { Route } from './app-model'
 
-export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans']
+export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans', 'codebase']
 /** Hashes from earlier releases keep working as bookmarks. */
 export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
@@ -27,6 +27,8 @@ export interface ParsedRoute {
   planId?: string
   /** A math lab inside a study plan (#plans/<plan>/<lab>). The screen reports an unknown lab. */
   labId?: string
+  /** A codebase practice task, as "repo/task" (#codebase/<repo>/<task>). */
+  codebaseTask?: string
 }
 
 /** The ids each sub-route accepts. Passed in so this module stays free of content imports. */
@@ -40,13 +42,15 @@ export interface RouteIds {
   companies: readonly string[]
   /** Study plan ids. Without them any well-formed id parses, and the screen reports an unknown plan. */
   plans?: ReadonlySet<string>
+  /** Codebase practice tasks as "repo/task". Without them any well-formed pair parses, and the screen reports an unknown task. */
+  codebase?: ReadonlySet<string>
 }
 
 /** Parses a location hash (with or without the leading '#') into a route and its sub-id. */
 export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   const [head, sub, ...rest] = hash.replace(/^#/, '').split('/')
   const route = ALIASES[head || 'home'] ?? (ROUTES as string[]).find(item => item === (head || 'home')) as Route | undefined
-  if (!route || rest.length > (route === 'code' || route === 'plans' ? 1 : 0)) return { route: 'unknown' }
+  if (!route || rest.length > (route === 'code' || route === 'plans' || route === 'codebase' ? 1 : 0)) return { route: 'unknown' }
   if (sub === undefined) return { route }
   if (route === 'code') return ids.problems.has(sub) && (!rest.length || CODE_LANGS.includes(rest[0])) ? { route, problemId: sub, codeLang: rest[0] as ParsedRoute['codeLang'] } : { route: 'unknown' }
   if (route === 'sql') return ids.sql.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
@@ -55,6 +59,10 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   if (route === 'board') return BOARD_ID.test(sub) ? { route, boardId: sub } : { route: 'unknown' }
   if (route === 'playground') return BOARD_ID.test(sub) ? { route, snippetId: sub } : { route: 'unknown' }
   if (route === 'plans') return (ids.plans ? ids.plans.has(sub) : BOARD_ID.test(sub)) && (!rest.length || BOARD_ID.test(rest[0])) ? { route, planId: sub, ...rest.length ? { labId: rest[0] } : {} } : { route: 'unknown' }
+  if (route === 'codebase') {
+    const task = `${sub}/${rest[0]}`
+    return rest.length && (ids.codebase ? ids.codebase.has(task) : BOARD_ID.test(sub) && BOARD_ID.test(rest[0])) ? { route, codebaseTask: task } : { route: 'unknown' }
+  }
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = ids.tracks.find(item => item === sub) as Track | undefined
@@ -64,6 +72,6 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
 /** The canonical hash for a parsed route: aliases resolve to their target, sub-ids are kept. */
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
-  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView
+  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask
   return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}`
 }

@@ -1,0 +1,77 @@
+{
+  "id": "text-search",
+  "title": "Finder",
+  "lang": "ts",
+  "summary": "An in-memory full-text search index for help-centre articles.",
+  "tasks": [
+    {
+      "id": "stale-results",
+      "kind": "bug",
+      "title": "Edited articles still match old words",
+      "minutes": 45,
+      "brief": [
+        "After an editor rewrote the “password” article to be about email settings, searching for “password” still returns it. Articles that are re-saved often also creep up the rankings.",
+        "Find the cause and fix it. Re-adding an article should behave exactly as if it had been removed and added fresh."
+      ],
+      "done": [
+        "Re-adding a document replaces its old words and counts.",
+        "Removing a document after re-adding it leaves nothing behind."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Is re-adding the normal way articles are edited? (Yes, the CMS re-saves the whole text.)",
+          "Should ranking reflect only the latest text? (Yes.)"
+        ],
+        "orient": [
+          "README rule: “adding a document with an existing id replaces it”.",
+          "Two symptoms (stale matches and rising rank) both suggest old postings surviving a re-add."
+        ],
+        "failingTest": "export function testReAddingReplacesOldText() {\n  const index = sample();\n  index.add('password', 'Change your email address in settings.');\n  assertEqual(index.search('password'), []); // fails: ['password']\n}",
+        "trace": [
+          "add() overwrites docs[id] but only ever adds to postings, so old words and counts stay.",
+          "remove() already knows how to clean postings for an id, so add can call it first."
+        ],
+        "wrapUp": [
+          "Cause: add never removed the previous version’s postings.",
+          "Fix: call this.remove(id) at the start of add, reusing the existing clean-up code.",
+          "With more time: an update() that diffs word sets, if re-indexing large articles becomes slow."
+        ]
+      }
+    },
+    {
+      "id": "prefix-search",
+      "kind": "feature",
+      "title": "Prefix search",
+      "minutes": 55,
+      "brief": [
+        "Users type partial words. Support a trailing * on a query term: “pay*” matches payment, payments and payouts. Terms without * still match whole words only.",
+        "Prefix and exact terms combine with the usual AND rule and ranking. Matching is case-insensitive."
+      ],
+      "done": [
+        "A term ending in * matches every indexed word that starts with it.",
+        "Exact terms are unchanged, and the two mix with AND semantics.",
+        "Ranking still counts occurrences of every matched word."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Only trailing *? (Yes; a * in the middle is out of scope.)",
+          "Does a bare * match everything? (No; it tokenises to nothing and is ignored.)"
+        ],
+        "orient": [
+          "tokenize() strips the * because it splits on non-alphanumerics, so the * has to be noticed before tokenising.",
+          "search() builds scores per term from one posting; a helper that merges the postings of every word with the prefix slots straight in."
+        ],
+        "failingTest": "export function testPrefixTerm() {\n  assertEqual(sample().search('pass*'), ['password']);\n}",
+        "trace": [
+          "Split the raw query on whitespace, remember which raw terms end in *, then tokenise each one.",
+          "A linear scan of the posting keys is simple and fine for a help centre; noted it as a scaling limit."
+        ],
+        "wrapUp": [
+          "Added prefix terms by marking them before tokenising and merging postings for matching words.",
+          "Trade-off: prefix lookups scan every indexed word. A sorted word list or trie would fix that at scale.",
+          "Noticed but not changed: stop words with a * (for example “the*”) are dropped like any other stop word."
+        ]
+      }
+    }
+  ]
+}

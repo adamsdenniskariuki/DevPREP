@@ -1,0 +1,76 @@
+{
+  "id": "event-bus",
+  "title": "Signals",
+  "lang": "ts",
+  "summary": "An in-process event bus with subscribe, once and unsubscribe.",
+  "tasks": [
+    {
+      "id": "skipped-handler",
+      "kind": "bug",
+      "title": "A handler that never fires",
+      "minutes": 45,
+      "brief": [
+        "The app registers a one-off “ready” handler and then a permanent one. On the first “ready” event the permanent handler does not run, and emit reports 1 handler called instead of 2.",
+        "Find the cause and fix it so that removing handlers while an event is being emitted never skips anyone."
+      ],
+      "done": [
+        "Every handler subscribed when emit starts is called exactly once for that emit.",
+        "Handlers added during an emit wait for the next one.",
+        "emit returns the number of handlers it called."
+      ],
+      "walkthrough": {
+        "questions": [
+          "If a handler unsubscribes a later handler mid-emit, should the later one still run this time? (Snapshot semantics: yes. Confirm it with the interviewer.)",
+          "Should handlers added during an emit run in the same emit? (No.)"
+        ],
+        "orient": [
+          "README rules: order of subscription, once runs one time, emit returns the count.",
+          "once wraps the handler and calls off before calling it, so emit and off are the two places to read."
+        ],
+        "failingTest": "export function testOnceDoesNotSkipTheNextHandler() {\n  const bus = new EventBus();\n  const calls: string[] = [];\n  bus.once('ready', () => calls.push('once'));\n  bus.on('ready', () => calls.push('always'));\n  assertEqual(bus.emit('ready'), 2); // fails: 1\n}",
+        "trace": [
+          "Hypothesis: off mutates the array emit is walking. i = 0 runs the once wrapper, which splices index 0 out; the “always” handler shifts to index 0 and the loop moves on to i = 1, past it.",
+          "Confirmed by logging list.length inside the loop: 2, then the loop ends after one call."
+        ],
+        "wrapUp": [
+          "Cause: emit iterated the live handler array while once/unsubscribe spliced it.",
+          "Fix: iterate a copy taken at the start of emit. That also makes handlers added mid-emit wait for the next emit.",
+          "Trade-off: one array copy per emit, which is fine for UI event volumes."
+        ]
+      }
+    },
+    {
+      "id": "on-any",
+      "kind": "feature",
+      "title": "Wildcard listeners",
+      "minutes": 50,
+      "brief": [
+        "The analytics widget wants to hear every event. Add bus.onAny(handler), where handler receives (event, payload). It returns an unsubscribe function, like on.",
+        "Wildcard handlers run after the specific handlers for the event. emit’s return value includes them. count(event) still counts only specific handlers."
+      ],
+      "done": [
+        "onAny handlers see every emit, after the specific handlers.",
+        "The unsubscribe function works; emit counts wildcard calls; count() does not.",
+        "The new type is exported from src/index.ts."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Before or after specific handlers? (After.)",
+          "Does emit’s count include wildcards? (Yes; count(event) does not.)"
+        ],
+        "orient": [
+          "index.ts is the public surface, so a new AnyHandler type belongs there too.",
+          "Copied the shape of on(): push, then return a closure that removes the handler."
+        ],
+        "failingTest": "export function testOnAnySeesEveryEvent() {\n  const bus = new EventBus();\n  const seen: string[] = [];\n  bus.onAny((event) => seen.push(event));\n  bus.emit('save');\n  bus.emit('load');\n  assertEqual(seen, ['save', 'load']);\n}",
+        "trace": [
+          "emit already snapshots its handlers; snapshot the wildcard list the same way, for the same reason."
+        ],
+        "wrapUp": [
+          "Added onAny with its own list, snapshotted in emit, and exported the type.",
+          "With more time: an offAny for symmetry, and error isolation so one throwing handler does not stop the rest."
+        ]
+      }
+    }
+  ]
+}

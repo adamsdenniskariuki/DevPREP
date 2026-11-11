@@ -1,0 +1,86 @@
+{
+  "id": "inventory",
+  "title": "Stockroom",
+  "lang": "py",
+  "summary": "A small warehouse service: stock levels per SKU and all-or-nothing order fulfilment.",
+  "tasks": [
+    {
+      "id": "split-lines",
+      "kind": "bug",
+      "title": "Orders that list a SKU twice",
+      "minutes": 45,
+      "brief": [
+        "Support reports that a customer order failed with OutOfStock, yet some of its units still left the shelf. The order listed the same mug twice: two lines of 2 against a shelf of 3.",
+        "Orders are meant to be all or nothing. Find out why this one was not, fix it, and leave a test behind so it stays fixed."
+      ],
+      "done": [
+        "A failed order never changes any stock level.",
+        "Orders that repeat a SKU are judged on the total they ask for.",
+        "The existing tests still pass."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Should two lines for the same SKU be treated as one request for the total? (Yes.)",
+          "Should the error still name the SKU that ran short? (Yes, the message is shown to support staff.)",
+          "Can I change the function’s shape? (Keep the signature; callers depend on it.)"
+        ],
+        "orient": [
+          "Read the README rules: “an order is all or nothing” is the promise that broke.",
+          "Ran the suite first: everything passed, so the bug lives in a case the tests do not cover.",
+          "Searched for “OutOfStock” to see who raises it: Stock.remove and fulfil. fulfil is the entry point for orders."
+        ],
+        "failingTest": "def test_repeated_sku_is_checked_as_a_whole():\n    stock = make_stock()  # 3 mugs\n    try:\n        fulfil(stock, [(\"mug\", 2), (\"mug\", 2)])\n    except OutOfStock:\n        pass\n    else:\n        raise AssertionError(\"expected OutOfStock\")\n    assert stock.quantity(\"mug\") == 3  # fails: 1",
+        "trace": [
+          "Hypothesis: the check runs per line, not per SKU. The first loop compares 2 with 3 twice and passes both times.",
+          "The second loop removes 2 mugs, then Stock.remove raises on the next line, after the first removal has happened.",
+          "Confirmed with a print of stock.quantity(\"mug\") inside the except branch: 1, not 3."
+        ],
+        "wrapUp": [
+          "Cause: the up-front check looked at each line alone, so repeated SKUs could pass the check together and fail halfway through removal.",
+          "Fix: total the lines per SKU first, check the totals, then remove. Two small loops, same signature and error message.",
+          "Trade-off: a dict per order is extra memory, which is negligible at order sizes.",
+          "With more time: give Stock a reserve/commit API so the all-or-nothing rule lives in one place.",
+          "Noticed but not changed: fulfil does not reject zero or negative quantities itself; it relies on Stock.remove."
+        ]
+      }
+    },
+    {
+      "id": "low-stock",
+      "kind": "feature",
+      "title": "Low-stock report",
+      "minutes": 45,
+      "brief": [
+        "The buyers want a reorder list. Add Stock.low(threshold), returning (sku, quantity) pairs for every SKU at or below the threshold.",
+        "Lowest quantity first, ties broken by SKU name. SKUs that have sold out (quantity 0) must still appear. A negative threshold is a mistake and should raise ValueError."
+      ],
+      "done": [
+        "Stock.low(threshold) returns sorted (sku, quantity) pairs, threshold inclusive.",
+        "Sold-out SKUs are included; an empty stockroom gives an empty list.",
+        "A negative threshold raises ValueError, matching how add and remove validate input."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Is the threshold inclusive? (Yes: “at or below”.)",
+          "Pairs or just SKUs? (Pairs, so the buyer sees how low.)",
+          "Should SKUs never added at all appear? (No, only SKUs the stockroom knows about.)"
+        ],
+        "orient": [
+          "Stock is one small class; skus() is the closest existing pattern (it sorts its output).",
+          "Checked how errors are signalled: add and remove raise ValueError for bad input, so low should too.",
+          "Ran the suite for a baseline: all green."
+        ],
+        "failingTest": "def test_low_lists_lowest_first():\n    stock = Stock()\n    stock.add(\"mug\", 5)\n    stock.add(\"bowl\", 1)\n    stock.add(\"cup\", 2)\n    assert stock.low(2) == [(\"bowl\", 1), (\"cup\", 2)]  # AttributeError before the change",
+        "trace": [
+          "Data lives in self._levels, a dict of SKU to level. Removing to zero keeps the key, so sold-out SKUs are still there to report.",
+          "Sorting by (quantity, sku) gives lowest first with a stable, readable tie-break."
+        ],
+        "wrapUp": [
+          "Added Stock.low with input validation that mirrors add and remove, plus a visible test.",
+          "Checked by hand: threshold 0 lists only sold-out SKUs, a big threshold lists everything, an empty stockroom gives [].",
+          "With more time: let the buyer set a per-SKU reorder point instead of one threshold.",
+          "Noticed but not changed: skus() and low() both sort; if the stockroom grew large, a sorted structure would help."
+        ]
+      }
+    }
+  ]
+}

@@ -228,6 +228,7 @@ export default defineConfig({
           if (path.endsWith('/src/generated/problems.json')) return 'problems'
           if (path.endsWith('/src/generated/nav-index.json')) return 'nav-index'
           if (path.endsWith('/src/generated/changelog.json')) return 'changelog'
+          if (path.endsWith('/src/generated/codebase.json')) return 'codebase'
           if ((path.includes('/content/') || path.includes('/src/generated/')) && path.endsWith('.json')) return 'curriculum'
         },
       },

@@ -804,6 +804,32 @@ test('TypeScript labs run offline after the compiler\'s first online load', asyn
   await expect(offline.locator('.run-results')).toContainText(`All ${core.tests.length + core.hiddenTests.length} tests passed.`, { timeout: 60_000 })
 })
 
+test('a TypeScript codebase task opens and submits offline after one online load', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  const files = {
+    'src/cart.ts': await readFile('content/codebase/cart/tasks/repeat-add/solution/src/cart.ts', 'utf8'),
+    'tests/cart.test.ts': await readFile('content/codebase/cart/tasks/repeat-add/solution/tests/cart.test.ts', 'utf8'),
+  }
+  const passed = /^Submitted: all \d+ tests passed, including the hidden review tests\.$/
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await page.evaluate(value => localStorage.setItem('devprep.codebase.drafts.v1', JSON.stringify({ 'cart/repeat-add': { files: value } })), files)
+  await page.goto('/DevPREP/#codebase/cart/repeat-add')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Adding an item twice')
+  await page.getByRole('button', { name: 'Submit' }).click()
+  await expect(page.locator('.run-summary')).toHaveText(passed, { timeout: 120_000 })
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto('/DevPREP/#codebase')
+  await expect(offline.getByRole('heading', { level: 1 })).toHaveText('Codebase interviews')
+  await offline.getByRole('link', { name: 'Adding an item twice' }).click()
+  await expect(offline.getByRole('heading', { name: 'Model diff' })).toBeVisible()
+  await offline.getByRole('button', { name: 'Submit' }).click()
+  await expect(offline.locator('.run-summary')).toHaveText(passed, { timeout: 60_000 })
+})
+
 test('SQL labs run offline after Postgres\'s first online load', async ({ page, context }) => {
   test.setTimeout(240_000)
   const track = JSON.parse(await readFile('content/sql/track.json', 'utf8'))

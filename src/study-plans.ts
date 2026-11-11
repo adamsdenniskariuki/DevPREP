@@ -112,13 +112,15 @@ export const ENTRY_ID = /^[a-z0-9-]{1,64}$/
 export type CheckResult = 'pass' | 'fail'
 /** One miss: what you were solving, the pattern it needed, why you missed it and what you will do differently. */
 export interface ErrorEntry { id: string; at: string; problem: string; pattern: string; why: string; fix: string }
-export type ScoreKind = 'dsa' | 'design' | 'case'
+/** 'codebase' was added in 1.14; older backups simply have no scorecards of that kind. */
+export type ScoreKind = 'dsa' | 'design' | 'case' | 'codebase'
 export const SCORE_AREAS: Record<ScoreKind, readonly [string, string, string, string]> = {
   dsa: ['Communication', 'Correctness', 'Complexity', 'Testing'],
   design: ['Requirements', 'Design', 'Depth', 'Trade-offs'],
   case: ['Problem framing', 'Decomposition', 'Technical depth', 'Communication'],
+  codebase: ['Orientation', 'Debugging', 'Code change', 'Communication'],
 }
-export const SCORE_KIND_LABELS: Record<ScoreKind, string> = { dsa: 'Coding', design: 'System design', case: 'Customer case' }
+export const SCORE_KIND_LABELS: Record<ScoreKind, string> = { dsa: 'Coding', design: 'System design', case: 'Customer case', codebase: 'Codebase' }
 /** A mock interview scorecard, each area scored 1–4. */
 export interface Scorecard { id: string; at: string; kind: ScoreKind; title: string; scores: [number, number, number, number]; notes: string }
 export interface PlanProgress {
