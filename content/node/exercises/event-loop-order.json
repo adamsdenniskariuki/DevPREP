@@ -1,0 +1,13 @@
+{
+  "id": "event-loop-order",
+  "title": "Simulate the event loop",
+  "lesson": "node-event-loop",
+  "summary": "Build a tiny scheduler that runs sync code, nextTick callbacks, microtasks and timers in the same order Node does.",
+  "prompt": "Finish `runLoop(main)`. It calls `main(api)` synchronously, where `api` has `log(message)`, `nextTick(fn)`, `microtask(fn)` and `timeout(fn, ms)`, and returns every logged message in order.\n\nRules, as in Node: after the main script and after **every** timer callback, drain the nextTick queue completely, then the microtask queue completely, and repeat until both are empty (callbacks may queue more). Timers run in order of due time (`ms` added to the simulated clock when scheduled); equal due times run in scheduling order. The clock jumps straight to the next due timer.",
+  "hints": [
+    "Keep `now`, a timer list of `{ due, seq, fn }`, and two plain arrays for the queues.",
+    "Write a `drain()` helper: while either queue has items, run all nextTicks first (`shift()` one at a time), then one microtask, and loop.",
+    "Pick the next timer by smallest `due`, then smallest `seq`; set `now = due` before running it so nested timeouts are relative to it."
+  ],
+  "minutes": 25
+}

@@ -1,0 +1,48 @@
+{
+  "id": "node-async",
+  "title": "Callbacks, promises and async/await",
+  "minutes": 40,
+  "summary": "From error-first callbacks to promises and async functions, running work in sequence or in parallel, and the combinators you reach for every day.",
+  "sections": [
+    {
+      "title": "Error-first callbacks",
+      "body": "Classic Node APIs take a callback as the last argument and call it as `callback(err, result)`. If `err` is not null, `result` must be ignored. Two rules keep callback code safe: always return after handling an error, and never call the callback twice.\n\n`util.promisify` wraps any function that follows this convention and returns a promise-based version; most built-ins also ship promise APIs directly, such as `node:fs/promises`.",
+      "code": "fs.readFile('a.txt', 'utf8', (err, text) => {\n  if (err) return done(err)\n  done(null, text.length)\n})"
+    },
+    {
+      "title": "Promises and async functions",
+      "body": "A promise is a placeholder for a value that settles once: **fulfilled** or **rejected**. `then` returns a new promise, so chains pass values along and a rejection skips ahead to the next `catch`.\n\nAn `async` function always returns a promise. `await` pauses the function until the promise settles and either gives you the value or throws the rejection, so plain `try`/`catch`/`finally` handles async errors. `await` only pauses that function, never the thread.",
+      "code": "async function loadUser(id: string) {\n  try {\n    const res = await fetch(`/users/${id}`)\n    if (!res.ok) throw new Error(`HTTP ${res.status}`)\n    return await res.json()\n  } finally {\n    metrics.done('loadUser')\n  }\n}"
+    },
+    {
+      "title": "Sequential versus parallel",
+      "body": "`await` in a loop runs one item at a time. When the items are independent, start them all and wait once:\n\n- `Promise.all` resolves with every result in order and rejects as soon as **one** rejects (the others keep running; their results are ignored).\n- `Promise.allSettled` waits for all and reports each `{status, value | reason}`.\n- `Promise.race` settles with the first to settle; `Promise.any` resolves with the first to **fulfill** and rejects only if all reject (`AggregateError`).\n\nFor hundreds of items, unbounded parallelism can exhaust sockets or hit rate limits; run them through a pool with a fixed concurrency instead.",
+      "code": "// slow: one after another\nfor (const id of ids) results.push(await load(id))\n// fast: all at once\nconst results = await Promise.all(ids.map(load))"
+    },
+    {
+      "title": "Cancellation with AbortController",
+      "body": "Promises cannot be cancelled by themselves. The platform answer is an `AbortSignal`: the caller creates an `AbortController`, passes `controller.signal` down, and calls `controller.abort(reason)` later. `fetch`, timers in `node:timers/promises`, streams and many fs calls accept a `signal`.\n\n`AbortSignal.timeout(ms)` gives a signal that aborts on its own, and `AbortSignal.any([a, b])` combines signals. In your own functions, check `signal.aborted` before starting and listen for the `'abort'` event while waiting."
+    }
+  ],
+  "pitfalls": [
+    "Forgetting `await`, so errors escape the surrounding `try`.",
+    "Using `await` in a loop for independent work and making it serial.",
+    "`forEach` with an async callback: nothing waits for the callbacks.",
+    "Calling a callback twice, for example once in the error path and again after it."
+  ],
+  "gotchas": [
+    {
+      "question": "Why does `items.forEach(async x => await save(x))` not wait?",
+      "answer": "`forEach` ignores the promises that the async callback returns, so the surrounding code continues immediately and rejections become unhandled. Use `for...of` with `await` for sequential work or `await Promise.all(items.map(save))` for parallel work."
+    },
+    {
+      "question": "What is the difference between `return promise` and `return await promise` inside `try`?",
+      "answer": "With `return await`, a rejection is thrown inside the `try`, so the `catch` and the stack trace include this function. With a bare `return`, the promise is handed back unawaited and the local `catch` never runs.",
+      "code": "async function a() {\n  try { return await risky() } catch { return 'fallback' } // catches\n}\nasync function b() {\n  try { return risky() } catch { return 'fallback' } // does not catch\n}"
+    },
+    {
+      "question": "`Promise.all` rejected. Did the other tasks stop?",
+      "answer": "No. Promises are not cancellable, so the other operations keep running and their results are dropped. To actually stop them, pass an `AbortSignal` and abort it when one fails."
+    }
+  ]
+}

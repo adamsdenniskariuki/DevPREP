@@ -1,0 +1,48 @@
+{
+  "id": "node-modules",
+  "title": "Modules: CommonJS and ES modules",
+  "minutes": 30,
+  "summary": "require versus import, how resolution and caching work, the type field in package.json, and how to mix the two systems safely.",
+  "sections": [
+    {
+      "title": "Two module systems",
+      "body": "**CommonJS** (CJS) is Node's original system: `require()` loads a module synchronously and returns whatever it assigned to `module.exports`. **ES modules** (ESM) use `import` and `export`, are parsed before they run, support top-level `await` and are the standard shared with browsers.\n\nNode decides which system a file uses by its extension and the nearest `package.json`: `.mjs` is always ESM, `.cjs` is always CJS, and `.js` follows `\"type\": \"module\"` or `\"type\": \"commonjs\"` (the default).",
+      "code": "// math.cjs\nmodule.exports = { add: (a, b) => a + b }\nconst { add } = require('./math.cjs')\n\n// math.mjs\nexport const add = (a, b) => a + b\nimport { add } from './math.mjs'"
+    },
+    {
+      "title": "Resolution and caching",
+      "body": "A relative specifier (`./util`) is resolved against the importing file. A bare specifier (`express`) is looked up in `node_modules` folders, walking up the directory tree, and then through the package's `\"exports\"` map (or `\"main\"`). In ESM you must write the file extension for relative imports.\n\nModules are **cached** after the first load: every `require('./config')` returns the same object, and module code runs once. That makes a module a natural singleton, and it also means mutable module state is shared by every importer."
+    },
+    {
+      "title": "Mixing CJS and ESM",
+      "body": "ESM can import CJS: the `module.exports` value becomes the default export, and Node tries to detect named exports. CJS loading ESM traditionally needed a dynamic `import()`, which returns a promise; recent Node versions can `require()` synchronous ES modules (no top-level `await`).\n\nOther differences worth knowing: ESM has no `__dirname` or `__filename` (use `import.meta.dirname` or `fileURLToPath(import.meta.url)`), ESM is always in strict mode, and ESM bindings are **live**, whereas a CJS destructure copies the value at require time.",
+      "code": "// ESM replacement for __dirname\nimport { fileURLToPath } from 'node:url'\nimport { dirname } from 'node:path'\nconst here = dirname(fileURLToPath(import.meta.url))"
+    },
+    {
+      "title": "The exports map",
+      "body": "A package's `\"exports\"` field defines its public entry points and hides everything else: consumers cannot reach `pkg/src/internal.js` unless it is listed. Conditions let one package ship both formats: `\"import\"` for ESM consumers, `\"require\"` for CJS, plus `\"types\"` for TypeScript.\n\nPrefer the `node:` prefix for built-ins (`node:fs`, `node:path`); it is explicit and cannot be shadowed by a package with the same name.",
+      "code": "{\n  \"name\": \"tiny-lib\",\n  \"type\": \"module\",\n  \"exports\": {\n    \".\": { \"types\": \"./dist/index.d.ts\", \"import\": \"./dist/index.js\", \"require\": \"./dist/index.cjs\" }\n  }\n}"
+    }
+  ],
+  "pitfalls": [
+    "Leaving out the file extension in an ESM relative import.",
+    "Using `__dirname` in an ES module.",
+    "Assuming each `require` of a module gets a fresh copy of its state.",
+    "Circular imports that read a value before the other module finished initialising."
+  ],
+  "gotchas": [
+    {
+      "question": "What happens with a circular `require`?",
+      "answer": "Node returns the **partially filled** `module.exports` of the module that is still loading. Code that reads an export at load time may see `undefined`. Fix it by moving the shared piece into a third module or reading the export lazily inside a function."
+    },
+    {
+      "question": "Why does `exports = { a }` not work in CommonJS?",
+      "answer": "`exports` is just a local variable pointing at `module.exports`. Reassigning it breaks the link, so the module still exports the original empty object. Assign `module.exports = { a }` or add properties: `exports.a = a`."
+    },
+    {
+      "question": "How do you load an ES module from CommonJS?",
+      "answer": "Use dynamic `import()`, which returns a promise of the module namespace. Recent Node versions can also `require()` an ES module as long as it does not use top-level `await`.",
+      "code": "async function main() {\n  const { parse } = await import('./parser.mjs')\n  return parse('x')\n}"
+    }
+  ]
+}

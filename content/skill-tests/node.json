@@ -1,0 +1,928 @@
+{
+  "id": "node",
+  "title": "Node.js skill test",
+  "summary": "A timed practice assessment: multiple-choice questions on the event loop, async code, streams, HTTP APIs, security and tooling, plus two short coding tasks.",
+  "minutes": 40,
+  "pick": 30,
+  "topics": [
+    {
+      "id": "loop",
+      "title": "The event loop",
+      "review": "#node/node-event-loop"
+    },
+    {
+      "id": "modules",
+      "title": "Modules",
+      "review": "#node/node-modules"
+    },
+    {
+      "id": "async",
+      "title": "Promises and async/await",
+      "review": "#node/node-async"
+    },
+    {
+      "id": "errors",
+      "title": "Error handling",
+      "review": "#node/node-errors"
+    },
+    {
+      "id": "events",
+      "title": "EventEmitter",
+      "review": "#node/node-events"
+    },
+    {
+      "id": "streams",
+      "title": "Streams and backpressure",
+      "review": "#node/node-streams"
+    },
+    {
+      "id": "buffers",
+      "title": "Buffers and encodings",
+      "review": "#node/node-buffers"
+    },
+    {
+      "id": "fs",
+      "title": "Files and paths",
+      "review": "#node/node-fs-path"
+    },
+    {
+      "id": "http",
+      "title": "HTTP and middleware",
+      "review": "#node/node-http"
+    },
+    {
+      "id": "api",
+      "title": "REST APIs",
+      "review": "#node/node-rest-api"
+    },
+    {
+      "id": "ops",
+      "title": "Config, processes and scaling",
+      "review": "#node/node-processes"
+    },
+    {
+      "id": "perf",
+      "title": "Performance and caching",
+      "review": "#node/node-performance"
+    },
+    {
+      "id": "security",
+      "title": "Security",
+      "review": "#node/node-security"
+    },
+    {
+      "id": "tooling",
+      "title": "Testing and npm",
+      "review": "#node/node-testing"
+    }
+  ],
+  "questions": [
+    {
+      "id": "loop-order-basic",
+      "topic": "loop",
+      "prompt": "What does this print?",
+      "code": "console.log('A')\nsetTimeout(() => console.log('B'), 0)\nPromise.resolve().then(() => console.log('C'))\nconsole.log('D')",
+      "choices": [
+        "A B C D",
+        "A D C B",
+        "A D B C",
+        "A C D B"
+      ],
+      "answer": 1,
+      "explain": "Synchronous code runs first (A, D). Then the microtask queue (C), then the timer (B)."
+    },
+    {
+      "id": "loop-nexttick",
+      "topic": "loop",
+      "prompt": "What does this print?",
+      "code": "Promise.resolve().then(() => console.log('promise'))\nprocess.nextTick(() => console.log('tick'))",
+      "choices": [
+        "tick promise",
+        "promise tick",
+        "It depends on the OS",
+        "Only tick"
+      ],
+      "answer": 0,
+      "explain": "The `process.nextTick` queue is drained before the promise microtask queue."
+    },
+    {
+      "id": "loop-immediate-io",
+      "topic": "loop",
+      "prompt": "Inside an fs callback, which logs first?",
+      "code": "fs.readFile(file, () => {\n  setTimeout(() => console.log('timeout'), 0)\n  setImmediate(() => console.log('immediate'))\n})",
+      "choices": [
+        "timeout",
+        "immediate",
+        "Random every run",
+        "Neither runs"
+      ],
+      "answer": 1,
+      "explain": "After the poll phase the loop goes to the check phase, where `setImmediate` callbacks run, before it wraps round to timers."
+    },
+    {
+      "id": "loop-blocking",
+      "topic": "loop",
+      "prompt": "A handler runs a synchronous loop for 3 seconds. What happens to other requests during that time?",
+      "choices": [
+        "They run in parallel on other threads",
+        "They wait until the loop finishes",
+        "They are rejected with 503",
+        "Node pauses the loop to serve them"
+      ],
+      "answer": 1,
+      "explain": "JavaScript runs on one thread. Nothing else, including timers and other requests, runs until the synchronous work ends."
+    },
+    {
+      "id": "loop-threadpool",
+      "topic": "loop",
+      "prompt": "Which of these uses the libuv thread pool?",
+      "choices": [
+        "A TCP socket read",
+        "fs.readFile",
+        "setTimeout",
+        "Promise.then"
+      ],
+      "answer": 1,
+      "explain": "File system calls, DNS lookup, some crypto and zlib use the thread pool. Network sockets use the OS event mechanism directly."
+    },
+    {
+      "id": "modules-cache",
+      "topic": "modules",
+      "prompt": "Two files `require('./counter')`. How many times does counter.js run?",
+      "choices": [
+        "Once",
+        "Twice",
+        "Once per call site",
+        "Never, until a function is called"
+      ],
+      "answer": 0,
+      "explain": "Modules are cached by resolved file name after the first load, so later calls get the same `module.exports`."
+    },
+    {
+      "id": "modules-type",
+      "topic": "modules",
+      "prompt": "package.json has `\"type\": \"module\"`. How is `util.cjs` loaded?",
+      "choices": [
+        "As an ES module",
+        "As CommonJS",
+        "It fails to load",
+        "As JSON"
+      ],
+      "answer": 1,
+      "explain": "`.cjs` is always CommonJS and `.mjs` is always ESM, whatever the `type` field says."
+    },
+    {
+      "id": "modules-dirname",
+      "topic": "modules",
+      "prompt": "In an ES module, what replaces `__dirname`?",
+      "choices": [
+        "`process.cwd()`",
+        "It works the same as CommonJS",
+        "Derive it from `import.meta.url`",
+        "`module.path`"
+      ],
+      "answer": 2,
+      "explain": "`__dirname` is not defined in ESM. Use `import.meta.dirname` (newer Node) or `path.dirname(fileURLToPath(import.meta.url))`."
+    },
+    {
+      "id": "modules-exports",
+      "topic": "modules",
+      "prompt": "What does `require('./a')` return?",
+      "code": "// a.js\nexports = { x: 1 }\nmodule.exports.y = 2",
+      "choices": [
+        "{ x: 1 }",
+        "{ y: 2 }",
+        "{ x: 1, y: 2 }",
+        "{}"
+      ],
+      "answer": 1,
+      "explain": "Reassigning `exports` only changes the local variable. `require` returns `module.exports`, which only gained `y`."
+    },
+    {
+      "id": "modules-top-await",
+      "topic": "modules",
+      "prompt": "Where can you use top-level `await`?",
+      "choices": [
+        "In CommonJS files",
+        "In ES modules",
+        "Only inside functions",
+        "Only in the REPL"
+      ],
+      "answer": 1,
+      "explain": "Top-level await works in ES modules. In CommonJS you need an async function."
+    },
+    {
+      "id": "async-all-reject",
+      "topic": "async",
+      "prompt": "One of three promises passed to `Promise.all` rejects. What happens to the other two?",
+      "choices": [
+        "They are cancelled",
+        "They keep running; their results are ignored",
+        "They are retried",
+        "They resolve to undefined"
+      ],
+      "answer": 1,
+      "explain": "Promises cannot be cancelled. `Promise.all` rejects early, but the other operations still run. Use `allSettled` to see every result."
+    },
+    {
+      "id": "async-loop-await",
+      "topic": "async",
+      "prompt": "Each `fetchUser` takes 100 ms. Roughly how long does this take for 10 ids?",
+      "code": "for (const id of ids) {\n  users.push(await fetchUser(id))\n}",
+      "choices": [
+        "100 ms",
+        "1 second",
+        "10 ms",
+        "It does not compile"
+      ],
+      "answer": 1,
+      "explain": "Each iteration waits for the one before. Start them together with `Promise.all(ids.map(fetchUser))` to take about 100 ms."
+    },
+    {
+      "id": "async-foreach",
+      "topic": "async",
+      "prompt": "What logs first?",
+      "code": "items.forEach(async item => { await save(item) })\nconsole.log('done')",
+      "choices": [
+        "done, then the saves finish",
+        "all saves finish, then done",
+        "It throws",
+        "Only done; save never runs"
+      ],
+      "answer": 0,
+      "explain": "`forEach` ignores the promises its callback returns, so it does not wait. Use `for…of` with await or `Promise.all`."
+    },
+    {
+      "id": "async-return-await",
+      "topic": "async",
+      "prompt": "Why does the `catch` here not handle a rejection from `load()`?",
+      "code": "async function get() {\n  try {\n    return load()\n  } catch {\n    return null\n  }\n}",
+      "choices": [
+        "It does handle it",
+        "The promise is returned without await, so it rejects after the try block has ended",
+        "catch never handles async errors",
+        "Because load is not async"
+      ],
+      "answer": 1,
+      "explain": "Write `return await load()` inside try/catch so the rejection happens while the try block is active."
+    },
+    {
+      "id": "async-promisify",
+      "topic": "async",
+      "prompt": "What does `util.promisify(fs.readFile)` return?",
+      "choices": [
+        "A stream",
+        "A function that returns a promise",
+        "A promise",
+        "An EventEmitter"
+      ],
+      "answer": 1,
+      "explain": "It wraps an error-first callback function into a function returning a promise that rejects with `err` or resolves with the result."
+    },
+    {
+      "id": "errors-unhandled",
+      "topic": "errors",
+      "prompt": "What does current Node do by default with an unhandled promise rejection?",
+      "choices": [
+        "Ignores it",
+        "Logs a warning and continues",
+        "Prints the error and exits with a non-zero code",
+        "Retries the promise"
+      ],
+      "answer": 2,
+      "explain": "Since Node 15 the default mode is `throw`: an unhandled rejection crashes the process."
+    },
+    {
+      "id": "errors-async-throw",
+      "topic": "errors",
+      "prompt": "Why does the try/catch not catch this error?",
+      "code": "try {\n  setTimeout(() => { throw new Error('boom') }, 0)\n} catch (err) {\n  console.log('caught')\n}",
+      "choices": [
+        "It does catch it",
+        "The callback runs later, after the try block has finished",
+        "setTimeout swallows errors",
+        "Errors cannot be thrown in arrow functions"
+      ],
+      "answer": 1,
+      "explain": "The callback runs on a later turn of the loop with a fresh call stack. Handle errors inside the callback, or use promises with await."
+    },
+    {
+      "id": "errors-operational",
+      "topic": "errors",
+      "prompt": "Which is an operational error rather than a programmer error?",
+      "choices": [
+        "Reading a property of undefined",
+        "A database connection timeout",
+        "Calling a function with the wrong type",
+        "A typo in a variable name"
+      ],
+      "answer": 1,
+      "explain": "Operational errors are expected runtime failures you handle (retry, return 503). Programmer errors are bugs to fix."
+    },
+    {
+      "id": "errors-uncaught",
+      "topic": "errors",
+      "prompt": "What should an `uncaughtException` handler do?",
+      "choices": [
+        "Log and keep serving",
+        "Log, clean up briefly and exit so a supervisor restarts the process",
+        "Restart the event loop",
+        "Re-run the failed request"
+      ],
+      "answer": 1,
+      "explain": "After an uncaught exception the process may be in an unknown state. Log it and exit; let the orchestrator restart it."
+    },
+    {
+      "id": "errors-cause",
+      "topic": "errors",
+      "prompt": "How do you wrap a low-level error and keep the original?",
+      "choices": [
+        "`new Error(msg + err)`",
+        "`new Error(msg, { cause: err })`",
+        "`err.message = msg`",
+        "`throw msg`"
+      ],
+      "answer": 1,
+      "explain": "The `cause` option keeps the original error and stack for logs while you throw a clearer, higher-level error."
+    },
+    {
+      "id": "events-sync",
+      "topic": "events",
+      "prompt": "What does this print?",
+      "code": "emitter.on('go', () => console.log('listener'))\nconsole.log('before')\nemitter.emit('go')\nconsole.log('after')",
+      "choices": [
+        "before after listener",
+        "before listener after",
+        "listener before after",
+        "before after"
+      ],
+      "answer": 1,
+      "explain": "`emit` calls listeners synchronously, in order, before it returns."
+    },
+    {
+      "id": "events-error",
+      "topic": "events",
+      "prompt": "What happens when `emit('error', err)` is called with no error listener?",
+      "choices": [
+        "Nothing",
+        "The error is thrown",
+        "It is logged as a warning",
+        "The emitter is closed"
+      ],
+      "answer": 1,
+      "explain": "An unhandled `error` event throws, which usually crashes the process. Always add an error listener."
+    },
+    {
+      "id": "events-once",
+      "topic": "events",
+      "prompt": "How many times does the listener run?",
+      "code": "emitter.once('x', handler)\nemitter.emit('x')\nemitter.emit('x')\nemitter.emit('x')",
+      "choices": [
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "answer": 1,
+      "explain": "`once` removes the listener before calling it the first time."
+    },
+    {
+      "id": "events-leak",
+      "topic": "events",
+      "prompt": "What does the \"MaxListenersExceededWarning\" usually point to?",
+      "choices": [
+        "Too many emitters",
+        "Listeners added repeatedly, for example per request, and never removed",
+        "A slow listener",
+        "An error with no handler"
+      ],
+      "answer": 1,
+      "explain": "Adding a listener on each request without removing it leaks memory. Remove listeners or use `once`."
+    },
+    {
+      "id": "streams-write-false",
+      "topic": "streams",
+      "prompt": "`writable.write(chunk)` returns false. What should the producer do?",
+      "choices": [
+        "Write again immediately",
+        "Stop writing until the `drain` event",
+        "Destroy the stream",
+        "Nothing; false means success"
+      ],
+      "answer": 1,
+      "explain": "False means the internal buffer is over `highWaterMark`. Waiting for `drain` is how backpressure works."
+    },
+    {
+      "id": "streams-pipeline",
+      "topic": "streams",
+      "prompt": "Why is `pipeline(a, b, c, cb)` safer than `a.pipe(b).pipe(c)`?",
+      "choices": [
+        "It is faster",
+        "It forwards errors and destroys every stream on failure",
+        "It buffers the whole file first",
+        "It runs in a worker"
+      ],
+      "answer": 1,
+      "explain": "`.pipe` does not forward errors, so a failed stream can leave others open. `pipeline` cleans up and reports one error."
+    },
+    {
+      "id": "streams-transform",
+      "topic": "streams",
+      "prompt": "Which stream type fits a gzip compressor?",
+      "choices": [
+        "Readable",
+        "Writable",
+        "Transform",
+        "PassThrough only"
+      ],
+      "answer": 2,
+      "explain": "A Transform is a duplex stream whose output is computed from its input."
+    },
+    {
+      "id": "streams-big-file",
+      "topic": "streams",
+      "prompt": "Why stream a 2 GB file to the response instead of `readFile` then `send`?",
+      "choices": [
+        "Streams are always faster",
+        "Memory stays small and bytes start flowing immediately",
+        "readFile cannot read big files on any OS",
+        "Streams skip the event loop"
+      ],
+      "answer": 1,
+      "explain": "Reading the whole file holds 2 GB in memory per request. A stream sends chunks as they arrive and respects backpressure."
+    },
+    {
+      "id": "streams-async-iter",
+      "topic": "streams",
+      "prompt": "How can you read a Readable stream chunk by chunk with async/await?",
+      "choices": [
+        "`for await (const chunk of stream)`",
+        "`await stream.read()` in a while loop only",
+        "`stream.then(chunk => …)`",
+        "You cannot"
+      ],
+      "answer": 0,
+      "explain": "Readable streams are async iterable, and the loop pauses the stream while your code awaits."
+    },
+    {
+      "id": "buffers-length",
+      "topic": "buffers",
+      "prompt": "What does this print?",
+      "code": "const s = 'café!'\nconsole.log(s.length, Buffer.byteLength(s))",
+      "choices": [
+        "5 5",
+        "5 6",
+        "6 6",
+        "6 5"
+      ],
+      "answer": 1,
+      "explain": "`length` counts UTF-16 code units (5); \"é\" takes 2 bytes in UTF-8, so the byte length is 6."
+    },
+    {
+      "id": "buffers-base64",
+      "topic": "buffers",
+      "prompt": "How do you base64-encode the string \"hi\"?",
+      "choices": [
+        "`btoa` only",
+        "`Buffer.from('hi').toString('base64')`",
+        "`'hi'.toBase64()`",
+        "`Buffer.base64('hi')`"
+      ],
+      "answer": 1,
+      "explain": "Make bytes with `Buffer.from(text)` (UTF-8 by default), then encode with `toString('base64')`."
+    },
+    {
+      "id": "buffers-chunk-split",
+      "topic": "buffers",
+      "prompt": "Why can decoding each chunk with `chunk.toString()` corrupt text?",
+      "choices": [
+        "Chunks are always ASCII",
+        "A multi-byte character can be split across two chunks",
+        "toString drops the last byte",
+        "Buffers are immutable"
+      ],
+      "answer": 1,
+      "explain": "Use `setEncoding('utf8')` or `StringDecoder`, which hold back incomplete characters until the next chunk."
+    },
+    {
+      "id": "buffers-alloc",
+      "topic": "buffers",
+      "prompt": "What is the risk of `Buffer.allocUnsafe(n)`?",
+      "choices": [
+        "It throws for large n",
+        "It may contain old memory, which can leak data if sent before being overwritten",
+        "It is slower than alloc",
+        "It cannot be resized"
+      ],
+      "answer": 1,
+      "explain": "`allocUnsafe` skips zero-filling for speed. Fill it completely before use, or use `Buffer.alloc`."
+    },
+    {
+      "id": "fs-sync-server",
+      "topic": "fs",
+      "prompt": "Where is `fs.readFileSync` a problem?",
+      "choices": [
+        "In a CLI script",
+        "At server startup",
+        "Inside a request handler",
+        "In a build script"
+      ],
+      "answer": 2,
+      "explain": "In a request handler it blocks the loop for every user. At startup or in scripts it is fine."
+    },
+    {
+      "id": "fs-join",
+      "topic": "fs",
+      "prompt": "What does `path.join('/srv/files', '../etc/passwd')` return?",
+      "choices": [
+        "'/srv/files/../etc/passwd'",
+        "'/srv/etc/passwd'",
+        "'/etc/passwd'",
+        "It throws"
+      ],
+      "answer": 1,
+      "explain": "`join` normalises `..`, so user input can escape the folder. Resolve the path and check it still starts with the root."
+    },
+    {
+      "id": "fs-resolve",
+      "topic": "fs",
+      "prompt": "What does `path.resolve('a', '/b', 'c')` return on Linux?",
+      "choices": [
+        "'a/b/c'",
+        "'/b/c'",
+        "'<cwd>/a/b/c'",
+        "'/a/b/c'"
+      ],
+      "answer": 1,
+      "explain": "`resolve` works right to left until it builds an absolute path, so `/b` resets the start."
+    },
+    {
+      "id": "fs-exists-race",
+      "topic": "fs",
+      "prompt": "Why avoid checking `fs.existsSync` before opening a file?",
+      "choices": [
+        "It is deprecated",
+        "The file can change between the check and the open; just open it and handle ENOENT",
+        "It always returns true",
+        "It needs root"
+      ],
+      "answer": 1,
+      "explain": "Check-then-act is a race condition. Try the operation and handle the error code."
+    },
+    {
+      "id": "http-next",
+      "topic": "http",
+      "prompt": "What does the client see?",
+      "code": "app.use((req, res, next) => {\n  if (req.headers.authorization) next()\n})\napp.get('/', (req, res) => res.send('ok'))\n// request with no Authorization header",
+      "choices": [
+        "A 200 with \"ok\"",
+        "The request hangs",
+        "A 500 error",
+        "An empty 204"
+      ],
+      "answer": 1,
+      "explain": "The middleware neither ends the response nor calls `next()`, so nothing answers."
+    },
+    {
+      "id": "http-headers-sent",
+      "topic": "http",
+      "prompt": "Why does this throw \"headers already sent\"?",
+      "code": "if (!body.name) res.status(400).json({ error: 'name' })\nres.json(save(body))",
+      "choices": [
+        "The status is invalid",
+        "The code sends a second response after the first",
+        "JSON cannot be sent",
+        "The route is async"
+      ],
+      "answer": 1,
+      "explain": "After the first `res.json`, the function continues. Use `return res.status(400).json(…)`."
+    },
+    {
+      "id": "http-middleware-order",
+      "topic": "http",
+      "prompt": "Middleware order: logger, auth, router. Which runs for a request that fails auth?",
+      "choices": [
+        "Only the router",
+        "Logger and auth",
+        "Auth only",
+        "All three"
+      ],
+      "answer": 1,
+      "explain": "Middleware runs in the order added. Auth ends the response, so the router never runs."
+    },
+    {
+      "id": "http-body-stream",
+      "topic": "http",
+      "prompt": "In the core `http` module, how do you get a JSON request body?",
+      "choices": [
+        "`req.body`",
+        "Read the `req` stream, join the chunks, then `JSON.parse`",
+        "`req.json()` is built in",
+        "From `req.headers`"
+      ],
+      "answer": 1,
+      "explain": "`req` is a readable stream. Frameworks add body-parsing middleware that does this, with a size limit."
+    },
+    {
+      "id": "api-201",
+      "topic": "api",
+      "prompt": "Which response best fits creating a resource with POST?",
+      "choices": [
+        "200 with no body",
+        "201 with a Location header and the new resource",
+        "204",
+        "302 to the list"
+      ],
+      "answer": 1,
+      "explain": "201 Created tells the client a resource exists now; the Location header points to it."
+    },
+    {
+      "id": "api-401-403",
+      "topic": "api",
+      "prompt": "A logged-in user requests another tenant's invoice. Which status?",
+      "choices": [
+        "401",
+        "403 (or 404 to hide that it exists)",
+        "400",
+        "409"
+      ],
+      "answer": 1,
+      "explain": "401 means not authenticated. The user is authenticated but not allowed, so 403, or 404 if you do not want to reveal it."
+    },
+    {
+      "id": "api-idempotent",
+      "topic": "api",
+      "prompt": "Which method is idempotent?",
+      "choices": [
+        "POST",
+        "PATCH",
+        "PUT",
+        "None"
+      ],
+      "answer": 2,
+      "explain": "PUT replaces a resource, so repeating it gives the same state. POST usually creates a new item each time."
+    },
+    {
+      "id": "api-pagination",
+      "topic": "api",
+      "prompt": "Why prefer cursor pagination to offset pagination for a fast-changing feed?",
+      "choices": [
+        "Cursors are shorter",
+        "Offsets skip or repeat items when rows are inserted or deleted between pages",
+        "Offsets need SQL",
+        "Cursors allow random page jumps"
+      ],
+      "answer": 1,
+      "explain": "A cursor marks a position in a stable sort order, so new rows do not shift the next page."
+    },
+    {
+      "id": "api-422",
+      "topic": "api",
+      "prompt": "The JSON parses, but `email` is not a valid address. A common status is:",
+      "choices": [
+        "400 or 422 with field errors",
+        "500",
+        "404",
+        "201"
+      ],
+      "answer": 0,
+      "explain": "The request is well formed but invalid. Return 400 or 422 with a body listing each field error."
+    },
+    {
+      "id": "ops-env-validate",
+      "topic": "ops",
+      "prompt": "Where should you validate required environment variables?",
+      "choices": [
+        "Every time each one is read",
+        "Once at startup, failing fast with a clear message",
+        "Only in production",
+        "Never; use defaults"
+      ],
+      "answer": 1,
+      "explain": "Validating once means a missing variable stops the deploy instead of failing on the first request that needs it."
+    },
+    {
+      "id": "ops-sigterm",
+      "topic": "ops",
+      "prompt": "The orchestrator sends SIGTERM. What should the server do?",
+      "choices": [
+        "Exit immediately",
+        "Stop accepting connections, finish in-flight requests, close pools, then exit",
+        "Ignore it",
+        "Restart itself"
+      ],
+      "answer": 1,
+      "explain": "That is a graceful shutdown. Add a timeout that forces exit if requests hang."
+    },
+    {
+      "id": "ops-cpu-work",
+      "topic": "ops",
+      "prompt": "You need to resize large images per request. What keeps the server responsive?",
+      "choices": [
+        "async/await",
+        "A worker thread pool or a separate service",
+        "setImmediate around the call",
+        "A bigger highWaterMark"
+      ],
+      "answer": 1,
+      "explain": "async/await does not move CPU work off the thread. Worker threads or another process do."
+    },
+    {
+      "id": "ops-cluster",
+      "topic": "ops",
+      "prompt": "What does the `cluster` module do?",
+      "choices": [
+        "Runs threads that share memory",
+        "Forks worker processes that share one server port",
+        "Connects several machines",
+        "Caches modules"
+      ],
+      "answer": 1,
+      "explain": "Each worker is a separate process with its own loop, so a server can use every CPU core."
+    },
+    {
+      "id": "ops-exec-shell",
+      "topic": "ops",
+      "prompt": "Why prefer `execFile('convert', [input, output])` over `exec(`convert ${input} ${output}`)`?",
+      "choices": [
+        "It is shorter",
+        "No shell runs, so user input cannot inject commands",
+        "exec is deprecated",
+        "execFile is synchronous"
+      ],
+      "answer": 1,
+      "explain": "`exec` passes the string to a shell; an input like `a; rm -rf ~` runs a second command."
+    },
+    {
+      "id": "perf-memo-stampede",
+      "topic": "perf",
+      "prompt": "100 requests miss the cache for the same key at once. What stops 100 backend calls?",
+      "choices": [
+        "A longer TTL",
+        "Store the in-flight promise per key so later callers share it",
+        "More workers",
+        "Random sleeps"
+      ],
+      "answer": 1,
+      "explain": "Sharing one pending promise per key means one backend call; drop the entry if it rejects."
+    },
+    {
+      "id": "perf-leak-map",
+      "topic": "perf",
+      "prompt": "What is wrong with this cache?",
+      "code": "const cache = new Map<string, Result>()\nexport async function get(key: string) {\n  if (!cache.has(key)) cache.set(key, await load(key))\n  return cache.get(key)\n}",
+      "choices": [
+        "Nothing",
+        "It grows forever, which leaks memory",
+        "Map lookups are slow",
+        "It is not async"
+      ],
+      "answer": 1,
+      "explain": "Without a size limit or expiry, every new key stays in memory. Use an LRU with a maximum size and TTL."
+    },
+    {
+      "id": "perf-json-big",
+      "topic": "perf",
+      "prompt": "Why can `JSON.parse` on a 200 MB string hurt latency for every user?",
+      "choices": [
+        "It is async",
+        "It runs synchronously on the main thread",
+        "It uses the thread pool",
+        "It cannot handle 200 MB"
+      ],
+      "answer": 1,
+      "explain": "JSON parsing blocks the loop. Limit body sizes, stream-parse or move the work off the main thread."
+    },
+    {
+      "id": "perf-measure",
+      "topic": "perf",
+      "prompt": "An endpoint got slower. What should you do first?",
+      "choices": [
+        "Add caching everywhere",
+        "Measure: profile or trace to find where time goes",
+        "Rewrite in another language",
+        "Raise the timeout"
+      ],
+      "answer": 1,
+      "explain": "Measure before optimising: use a CPU profile, tracing or timings per step to find the real bottleneck."
+    },
+    {
+      "id": "sec-proto",
+      "topic": "security",
+      "prompt": "What can `merge({}, JSON.parse(body))` do when body is `{\"__proto__\": {\"admin\": true}}` and merge copies keys recursively?",
+      "choices": [
+        "Nothing",
+        "Every object may now have `admin === true`",
+        "Throw a syntax error",
+        "Delete the body"
+      ],
+      "answer": 1,
+      "explain": "This is prototype pollution. Skip `__proto__`, `constructor` and `prototype` keys and validate input."
+    },
+    {
+      "id": "sec-sql",
+      "topic": "security",
+      "prompt": "Which query is safe from SQL injection?",
+      "choices": [
+        "`db.query('SELECT * FROM users WHERE id = ' + id)`",
+        "`db.query(`SELECT * FROM users WHERE id = ${id}`)`",
+        "`db.query('SELECT * FROM users WHERE id = $1', [id])`",
+        "`db.query('SELECT * FROM users WHERE id = \"' + id + '\"')`"
+      ],
+      "answer": 2,
+      "explain": "Parameterised queries send the value separately from the SQL text, so it is never parsed as SQL."
+    },
+    {
+      "id": "sec-secrets",
+      "topic": "security",
+      "prompt": "Where should an API key for a payment service live?",
+      "choices": [
+        "In the repo, in config.json",
+        "In an environment variable or secret store, injected at run time",
+        "In the client bundle",
+        "In a code comment"
+      ],
+      "answer": 1,
+      "explain": "Keep secrets out of source control and client code; rotate them if they leak."
+    },
+    {
+      "id": "sec-rate-limit",
+      "topic": "security",
+      "prompt": "What does a token bucket rate limiter allow?",
+      "choices": [
+        "Exactly N requests per fixed minute",
+        "Short bursts up to the bucket size, then a steady refill rate",
+        "Unlimited requests",
+        "One request at a time"
+      ],
+      "answer": 1,
+      "explain": "Tokens refill at a steady rate up to a cap; each request takes one. Return 429 with Retry-After when it is empty."
+    },
+    {
+      "id": "tool-fake-timers",
+      "topic": "tooling",
+      "prompt": "How do you test a function that retries after 30 seconds without waiting 30 seconds?",
+      "choices": [
+        "Raise the test timeout",
+        "Use fake timers or inject a clock, then advance time",
+        "Skip the test",
+        "Mock setTimeout to throw"
+      ],
+      "answer": 1,
+      "explain": "Fake timers make time-based code fast and deterministic."
+    },
+    {
+      "id": "tool-caret",
+      "topic": "tooling",
+      "prompt": "Which version does `\"^1.4.2\"` allow?",
+      "choices": [
+        "2.0.0",
+        "1.9.0",
+        "1.4.1",
+        "0.9.0"
+      ],
+      "answer": 1,
+      "explain": "Caret allows changes that do not touch the left-most non-zero number: `>=1.4.2 <2.0.0`."
+    },
+    {
+      "id": "tool-npm-ci",
+      "topic": "tooling",
+      "prompt": "Why use `npm ci` in a CI pipeline?",
+      "choices": [
+        "It updates the lockfile",
+        "It installs exactly the lockfile and fails if package.json disagrees",
+        "It skips devDependencies by default",
+        "It is the only way to run tests"
+      ],
+      "answer": 1,
+      "explain": "Reproducible installs: it deletes node_modules and follows the lockfile exactly."
+    },
+    {
+      "id": "tool-dev-deps",
+      "topic": "tooling",
+      "prompt": "Where does a test framework belong in package.json?",
+      "choices": [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "bundledDependencies"
+      ],
+      "answer": 1,
+      "explain": "It is only needed to build and test, not at run time in production."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-promise-pool",
+      "title": "Coding task: concurrency-limited task runner",
+      "module": "node",
+      "exercise": "promise-pool"
+    },
+    {
+      "id": "task-middleware",
+      "title": "Coding task: compose async middleware",
+      "module": "node",
+      "exercise": "middleware-compose"
+    }
+  ]
+}

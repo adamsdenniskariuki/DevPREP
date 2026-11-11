@@ -1,0 +1,46 @@
+{
+  "id": "node-http",
+  "title": "HTTP servers and middleware",
+  "minutes": 40,
+  "summary": "The built-in http module, the request and response objects, and how middleware chains such as Express and Koa work underneath.",
+  "sections": [
+    {
+      "title": "The http module",
+      "body": "`http.createServer((req, res) => ...)` calls your handler for every request. `req` is a readable stream with `method`, `url` and lower-cased `headers`; the body must be read from the stream. `res` is a writable stream: set `res.statusCode` and headers, then `res.end(body)`.\n\nEvery request must end with exactly one response. Forgetting `res.end()` leaves the client hanging until a timeout; writing headers after the body has started throws `ERR_HTTP_HEADERS_SENT`.",
+      "code": "import { createServer } from 'node:http'\n\ncreateServer(async (req, res) => {\n  if (req.method === 'GET' && req.url === '/health') {\n    res.writeHead(200, { 'content-type': 'application/json' })\n    return res.end(JSON.stringify({ ok: true }))\n  }\n  res.statusCode = 404\n  res.end()\n}).listen(3000)"
+    },
+    {
+      "title": "Middleware",
+      "body": "Frameworks split a handler into **middleware**: small functions that each do one job (logging, auth, body parsing, rate limiting) and then pass control on. Express middleware has the shape `(req, res, next)`; calling `next()` runs the next one, `next(err)` jumps to the error handlers.\n\nKoa-style middleware is `async (ctx, next) => {}` and `await next()` returns after everything downstream has finished. That gives an \"onion\": code before `await next()` runs on the way in, code after it runs on the way out, which is ideal for timing and error handling.",
+      "code": "app.use(async (ctx, next) => {\n  const start = performance.now()\n  await next()\n  ctx.set('server-timing', `app;dur=${performance.now() - start}`)\n})"
+    },
+    {
+      "title": "Order matters",
+      "body": "Middleware runs in the order you register it. Put request ids and logging first, then security headers, body parsing with a size limit, authentication, validation, the route, and finally a single error handler.\n\nA middleware must either respond or call `next` exactly once. Calling `next()` twice runs the rest of the chain twice; calling neither hangs the request."
+    },
+    {
+      "title": "Timeouts and shutdown",
+      "body": "Set server timeouts (`requestTimeout`, `headersTimeout`, `keepAliveTimeout`) so slow clients cannot hold connections forever. On `SIGTERM`, stop accepting connections with `server.close()`, let in-flight requests finish within a deadline, close database pools, then exit. Containers and orchestrators rely on this graceful shutdown."
+    }
+  ],
+  "pitfalls": [
+    "Forgetting to end the response on an error path.",
+    "Calling `next()` and also sending a response, or calling `next()` twice.",
+    "Parsing request bodies without a size limit.",
+    "Registering the error handler before the routes."
+  ],
+  "gotchas": [
+    {
+      "question": "How does Express know a middleware is an error handler?",
+      "answer": "By its arity: a function declared with four parameters `(err, req, res, next)` is treated as an error handler and skipped for normal requests. Dropping the unused `next` parameter silently turns it back into a normal middleware."
+    },
+    {
+      "question": "Why might `await next()` in a Koa middleware not catch an error from an Express-style callback?",
+      "answer": "Errors thrown later in a callback (for example inside `setTimeout` or an emitter listener) are not part of the promise that `next()` returns. Only errors thrown synchronously or as rejections of awaited promises flow back up the chain."
+    },
+    {
+      "question": "What is the difference between `res.write` and `res.end`?",
+      "answer": "`write` sends a chunk and keeps the response open (chunked transfer). `end` optionally sends a final chunk and finishes the response. Headers are sent with the first `write` or with `end`."
+    }
+  ]
+}

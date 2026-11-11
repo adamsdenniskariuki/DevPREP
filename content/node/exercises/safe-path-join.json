@@ -1,0 +1,13 @@
+{
+  "id": "safe-path-join",
+  "title": "Normalise paths and block traversal",
+  "lesson": "node-fs-path",
+  "summary": "Implement POSIX path normalisation and a join that refuses to leave its root folder.",
+  "prompt": "Finish two POSIX-style helpers (forward slashes only):\n- `normalize(path)` collapses repeated slashes, removes `.` segments and resolves `..` against the previous segment. It keeps a leading `/`; for an absolute path, `..` at the root stays at the root. A relative path keeps leading `..` segments it cannot resolve. An empty result is `'.'` (or `'/'` when absolute).\n- `safeJoin(root, userPath)` joins an absolute `root` and an untrusted relative path, normalises the result and returns it. Throw an `Error` containing `outside root` if the result is not `root` itself or inside it, if `userPath` is absolute, or if it contains a null byte.",
+  "hints": [
+    "Split on `/`, then walk the segments with a stack.",
+    "For `..`: pop when the top is a normal segment; otherwise push `..` only for relative paths.",
+    "In `safeJoin`, compare against `root` and `root + '/'` after normalising both, so `/data/app-evil` is not inside `/data/app`."
+  ],
+  "minutes": 20
+}

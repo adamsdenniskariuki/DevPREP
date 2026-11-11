@@ -271,12 +271,13 @@ function CodingTask({ task, number, code, status, onCode, onStatus }: {
   const source = code ?? exercise.starter
 
   const run = async () => {
-    if (busy || !preview.current) return
+    const host = exercise.preview ? preview.current : document.createElement('div')
+    if (busy || !host) return
     setDone(0)
     setTotal(undefined)
     setReport(undefined)
     try {
-      const result = await TASK_MODULES[task.module].run(source, exercise, { host: preview.current, title: `Live preview of task ${number}`, onPhase: setPhase, onTotal: setTotal, onProgress: setDone })
+      const result = await TASK_MODULES[task.module].run(source, exercise, { host, title: `Live preview of task ${number}`, onPhase: setPhase, onTotal: setTotal, onProgress: setDone })
       setReport(result)
       onStatus(reportPassed(result) ? 'passed' : 'failed')
     } finally {
@@ -290,7 +291,7 @@ function CodingTask({ task, number, code, status, onCode, onStatus }: {
       <div className="skill-task-prompt">{exercise.prompt.split(/\n\n+/).map((block, index) => <p key={index}>{inline(block)}</p>)}</div>
     </div>
     <TaskWorkspace id={`skill-editor-${task.id}`} lang={exercise.lang} file={exercise.file} testFile={exercise.testFile} code={source} onChange={onCode}
-      tests={exercise.tests} phase={phase} done={done} total={total} limitMs={exercise.limitMs} report={report} preview={preview} headingLevel={3} label={`Task ${number} code`}
+      tests={exercise.tests} phase={phase} done={done} total={total} limitMs={exercise.limitMs} report={report} preview={exercise.preview ? preview : undefined} headingLevel={3} label={`Task ${number} code`}
       onRun={() => { void run() }} onReset={code === undefined || code === exercise.starter ? undefined : () => { onCode(exercise.starter); setReport(undefined) }} />
   </article>
 }

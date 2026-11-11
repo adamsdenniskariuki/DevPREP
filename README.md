@@ -20,7 +20,8 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
 | **React** (`#react`, `#react/<lesson-or-exercise>`) | 17 lessons from JSX to React 19, with 20 TSX exercises run against tests in a sandboxed frame beside a live preview |
-| **Skill tests** (`#skilltest`, `#skilltest/<id>`) | Timed tests of multiple-choice questions and coding tasks, scored by topic, starting with React |
+| **Node.js** (`#node`, `#node/<lesson-or-exercise>`) | 16 lessons from the event loop to security and production, with 23 TypeScript exercises run against tests |
+| **Skill tests** (`#skilltest`, `#skilltest/<id>`) | Timed tests of multiple-choice questions and coding tasks, scored by topic, for React and Node.js |
 | **Codebase interviews** (`#codebase`, `#codebase/<repo>/<task>`) | A guide to working in an unfamiliar repo, plus six small Python and TypeScript repos with a bug to fix and a feature to add in each, run against the repo's own tests, with hidden review tests, a walkthrough and a scorecard after submitting |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
 | **Study plan** (`#plan`) | Day-by-day plan up to your interview date |
@@ -33,7 +34,7 @@ Old links still work: `#today` → Today, `#roadmap` → Tracks, `#review` → P
 
 ### Navigation
 
-Routes are grouped into five sections: **Learn** (Tracks, Patterns, React, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards, Playground), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Codebase interviews, Skill tests, Story bank) and **Me** (Today, Plan, Study plans, Progress, Settings, What’s new, Site map).
+Routes are grouped into five sections: **Learn** (Tracks, Patterns, React, Node.js, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards, Playground), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Codebase interviews, Skill tests, Story bank) and **Me** (Today, Plan, Study plans, Progress, Settings, What’s new, Site map).
 
 - **Desktop (1024px and wider)**: a sticky sidebar holds an ARIA tree of the sections. Branches go down to tracks, pattern pages, Field Guide topics, coding/SQL topics and problems, design cases, companies, mock loops and study plans, with done ticks and due counts. One row is in the Tab order; arrows move, Left/Right collapse and expand, Home/End jump, `*` expands siblings and typing a few letters finds a row. The chevron toggles a branch without navigating. **Hide menu** collapses the sidebar to a rail. Expanded branches and the collapsed state are saved in `devprep.nav.v1` (not in backups).
 - **Phones and tablets (below 1024px)**: a bottom bar with the five sections. Each opens a modal sheet with that section's tree and a link to its hub; the sheet traps focus and closes with Escape, its backdrop, Close or a link, returning focus to its button.
@@ -94,6 +95,15 @@ Routes are grouped into five sections: **Learn** (Tracks, Patterns, React, Field
 - **Skill tests:** `#skilltest` lists the timed tests and `#skilltest/<id>` runs one. The React test draws 30 of its 60 questions and adds two coding tasks, with 40 minutes on the clock. Answers and code survive a reload (`devprep.skilltests.attempt.v1`, on this device only); at the end you see a score by topic, topics under 70% linked to their lessons, and every answer with its explanation. Results are saved in `devprep.skilltests.v1` and included in backups as `skilltests` (the last 20 per test, up to 50 KB).
 - **Adding a skill test:** write `content/skill-tests/<id>.json` (title, minutes, how many questions to pick, topics with review links, questions, and tasks that point at exercises in a task module such as `react`) and add its id to `content/skill-tests/index.json`. `npm run content` checks it and builds `src/generated/skill-tests.json` (lazy). Another kind of coding task needs an entry in `TASK_MODULES` (`src/skill-test-tasks.ts`).
 - **Adding an exercise:** add `content/react/exercises/<id>.json` with its `.starter.tsx`, `.solution.tsx` and `.test.tsx`, and list it in `content/react/index.json`. `src/react-exercises.test.ts` checks in jsdom that every solution passes and every starter fails.
+
+## Node.js
+
+`#node` (Learn → Node.js) lists 16 lessons (event loop, modules, async patterns, streams, buffers, errors, HTTP, configuration, testing, security and more) and 23 exercises. `#node/<id>` opens a lesson or an exercise.
+
+- **Exercises:** write `index.ts` and run its tests (`index.test.ts`, shown read-only) with the same TypeScript compiler and sandbox as the other TypeScript tasks. The sandbox has no real Node APIs, so exercises model Node behaviour (the event loop, streams, caches, routers) with plain functions; there is no live preview.
+- **Saving:** drafts stay on this device in `devprep.node.drafts.v1` (not in backups). Which exercises have passed is saved in `devprep.node.v1` and included in backups as `node` (up to 20 KB).
+- **Skill test:** `#skilltest/node` draws 30 of 63 questions across 14 topics and adds two Node.js coding tasks, with 40 minutes on the clock. A 2-week plan (`#plans/node-skill-test-2wk`) and a Node.js flashcard deck help you prepare.
+- **Adding an exercise:** add `content/node/exercises/<id>.json` with its `.starter.ts`, `.solution.ts` and `.test.ts`, and list it in `content/node/index.json`. `src/node-exercises.test.ts` checks that every solution passes and every starter fails.
 ## Patterns
 
 A course on recognising algorithm patterns. It covers **arrays & hashing, prefix sums, two pointers, sliding window, stack** (sub-patterns: basic stack, monotonic stack), **binary search** (sub-pattern: search on the answer), **linked lists** (sub-patterns: fast & slow pointers, in-place reversal), **intervals, cyclic sort, trees** (sub-patterns: DFS traversals, BFS / level-order), **tries, heaps** (sub-patterns: top-K, K-way merge, two heaps), **matrix traversal, quickselect & divide and conquer, graphs** (sub-patterns: BFS / shortest steps, DFS / flood fill, topological sort, Union-Find, Dijkstra), **backtracking, dynamic programming** (sub-patterns: 1-D DP, 2-D grid DP, knapsack, LCS / edit distance, interval DP), **greedy, bit manipulation and design** (an LRU cache). Segment trees and Fenwick trees, KMP and geometry are out of scope for now. Sub-pattern pages sit under their parent on the course home and cheat sheet, and problems can name one with an optional `subpattern` field (a page id). Each page has the same 8 sections: recognise it (signals), picture it, **watch it run**, template (Python, JavaScript, TypeScript), try it (an exercise with tests), complexity, common mistakes, and a quick check.

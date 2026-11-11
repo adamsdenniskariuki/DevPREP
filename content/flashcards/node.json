@@ -1,0 +1,246 @@
+{
+  "track": "node",
+  "title": "Node.js essentials",
+  "cards": [
+    {
+      "id": "node-single-thread",
+      "front": "Is Node.js single-threaded?",
+      "back": "Your JavaScript runs on one main thread with one event loop. libuv keeps a small thread pool for some work (file system, DNS lookup, crypto, zlib), and the OS handles network I/O. Worker threads add more JS threads when you ask for them.",
+      "level": "se"
+    },
+    {
+      "id": "node-loop-phases",
+      "front": "Name the main event loop phases in order.",
+      "back": "Timers (setTimeout/setInterval), pending callbacks, poll (wait for I/O and run its callbacks), check (setImmediate) and close callbacks. Microtasks run after each callback.",
+      "level": "sse"
+    },
+    {
+      "id": "node-nexttick-vs-promise",
+      "front": "Which runs first: `process.nextTick` callbacks or resolved promise callbacks?",
+      "back": "The nextTick queue drains first, then the promise microtask queue, both before the loop moves on. Recursive nextTick calls can starve I/O.",
+      "level": "sse"
+    },
+    {
+      "id": "node-immediate-vs-timeout",
+      "front": "Inside an I/O callback, does `setImmediate` or `setTimeout(fn, 0)` run first?",
+      "back": "`setImmediate`, because the check phase comes right after poll. From the main module the order of the two is not guaranteed.",
+      "level": "sse"
+    },
+    {
+      "id": "node-blocking-loop",
+      "front": "What happens when a request handler runs a 2-second synchronous loop?",
+      "back": "Every other request, timer and callback waits 2 seconds, because the single JS thread is busy. Move CPU-heavy work to a worker thread or another process, or split it into chunks.",
+      "level": "se"
+    },
+    {
+      "id": "node-cjs-vs-esm",
+      "front": "Key differences between CommonJS and ES modules?",
+      "back": "CommonJS: `require`/`module.exports`, loaded synchronously, `__dirname` available. ESM: `import`/`export`, static and asynchronous, top-level await, live bindings, `import.meta.url` instead of `__dirname`.",
+      "level": "se"
+    },
+    {
+      "id": "node-module-type",
+      "front": "How does Node decide whether a `.js` file is CommonJS or ESM?",
+      "back": "The nearest package.json `\"type\"` field: `\"module\"` means ESM, otherwise CommonJS. `.mjs` is always ESM and `.cjs` is always CommonJS.",
+      "level": "se"
+    },
+    {
+      "id": "node-require-cache",
+      "front": "What happens when two files `require` the same module?",
+      "back": "The module runs once; the second call gets the cached `module.exports` object. That is why modules act like singletons.",
+      "level": "se"
+    },
+    {
+      "id": "node-error-first",
+      "front": "What is the error-first callback convention?",
+      "back": "The callback is `(err, result)`: `err` is null on success. Check and return on `err` first, and call the callback exactly once.",
+      "level": "se"
+    },
+    {
+      "id": "node-promise-all-settled",
+      "front": "`Promise.all` vs `Promise.allSettled`?",
+      "back": "`all` rejects as soon as one promise rejects (the others keep running). `allSettled` waits for all and reports `{status, value|reason}` for each.",
+      "level": "se"
+    },
+    {
+      "id": "node-await-in-loop",
+      "front": "Why can `await` inside a `for` loop be slow?",
+      "back": "Each iteration waits for the previous one, so independent calls run one after another. Start them together with `Promise.all`, or use a concurrency limit for large lists.",
+      "level": "se"
+    },
+    {
+      "id": "node-unhandled-rejection",
+      "front": "What does modern Node do with an unhandled promise rejection?",
+      "back": "It prints the error and exits the process with a non-zero code (the default since Node 15). Always await or `.catch` promises.",
+      "level": "se"
+    },
+    {
+      "id": "node-operational-errors",
+      "front": "Operational errors vs programmer errors?",
+      "back": "Operational: expected runtime failures (timeouts, bad input, missing file) that you handle. Programmer errors: bugs (undefined property, wrong type); log them and restart rather than carry on in an unknown state.",
+      "level": "sse"
+    },
+    {
+      "id": "node-uncaught-exception",
+      "front": "What should an `uncaughtException` handler do?",
+      "back": "Log the error, flush what it can and exit. The process state is unknown, so let a supervisor or orchestrator restart it.",
+      "level": "sse"
+    },
+    {
+      "id": "node-emitter-error",
+      "front": "What happens when an EventEmitter emits `error` with no listener?",
+      "back": "The error is thrown, which usually crashes the process. Always listen for `error` on emitters and streams.",
+      "level": "se"
+    },
+    {
+      "id": "node-emitter-sync",
+      "front": "Are EventEmitter listeners called synchronously or asynchronously?",
+      "back": "Synchronously, in the order they were added, during the `emit` call. Use `once` for one-off listeners and remove listeners you no longer need to avoid leaks.",
+      "level": "se"
+    },
+    {
+      "id": "node-stream-types",
+      "front": "Name the four stream types.",
+      "back": "Readable (source), Writable (sink), Duplex (both, independent, like a socket) and Transform (a duplex whose output is computed from its input, like gzip).",
+      "level": "se"
+    },
+    {
+      "id": "node-backpressure",
+      "front": "What is backpressure in streams?",
+      "back": "A slow consumer signalling a fast producer to pause. `write()` returns false when the buffer passes `highWaterMark`; wait for `drain` before writing more. `pipeline` handles this for you.",
+      "level": "sse"
+    },
+    {
+      "id": "node-pipeline",
+      "front": "Why prefer `stream.pipeline` over `.pipe()`?",
+      "back": "`pipeline` forwards errors from every stream, destroys all of them on failure and tells you when it finishes. `.pipe()` does not forward errors and can leak file handles.",
+      "level": "sse"
+    },
+    {
+      "id": "node-buffer",
+      "front": "What is a Buffer?",
+      "back": "A fixed-length sequence of bytes (a Uint8Array subclass) for binary data. Convert with `Buffer.from(text, 'utf8')` and `buf.toString('base64')`.",
+      "level": "se"
+    },
+    {
+      "id": "node-string-length-bytes",
+      "front": "Is `str.length` the number of bytes?",
+      "back": "No. It counts UTF-16 code units. Use `Buffer.byteLength(str)` for the UTF-8 byte size; \"é\" is 1 unit but 2 bytes.",
+      "level": "se"
+    },
+    {
+      "id": "node-sync-fs",
+      "front": "When is `fs.readFileSync` acceptable?",
+      "back": "At startup or in CLI scripts. In a server request path it blocks the event loop; use `fs/promises` or streams instead.",
+      "level": "se"
+    },
+    {
+      "id": "node-path-join",
+      "front": "Why use `path.join` instead of string concatenation?",
+      "back": "It uses the right separator for the OS and normalises `.` and `..`. Use `path.resolve` for an absolute path, and check the result stays inside the allowed folder.",
+      "level": "se"
+    },
+    {
+      "id": "node-path-traversal",
+      "front": "How do you stop path traversal when serving files?",
+      "back": "Resolve the requested path against the root, then check the result still starts with the root plus a separator. Never pass user input straight to `fs`.",
+      "level": "sse"
+    },
+    {
+      "id": "node-http-stream",
+      "front": "What are `req` and `res` in `http.createServer`?",
+      "back": "`req` is a readable stream of the request body; `res` is a writable stream. Set status and headers before writing, and always end the response.",
+      "level": "se"
+    },
+    {
+      "id": "node-middleware",
+      "front": "What is middleware?",
+      "back": "A function in a chain that gets the request, response (or context) and `next`. It can change them, end the response or call `next()` to pass control on. Order matters.",
+      "level": "se"
+    },
+    {
+      "id": "node-status-codes",
+      "front": "When do you use 400, 401, 403, 404, 409 and 422?",
+      "back": "400 malformed request, 401 not authenticated, 403 authenticated but not allowed, 404 not found, 409 conflict with current state, 422 well-formed but invalid data.",
+      "level": "se"
+    },
+    {
+      "id": "node-idempotent",
+      "front": "Which HTTP methods are idempotent?",
+      "back": "GET, HEAD, PUT, DELETE and OPTIONS: repeating them leaves the same state. POST and PATCH are not, so use idempotency keys for safe retries.",
+      "level": "se"
+    },
+    {
+      "id": "node-twelve-factor-config",
+      "front": "Where should configuration and secrets come from?",
+      "back": "The environment (env vars or a secret store), validated once at startup with a clear error. Never commit secrets or read env vars all over the code.",
+      "level": "se"
+    },
+    {
+      "id": "node-graceful-shutdown",
+      "front": "How do you shut a server down gracefully?",
+      "back": "On SIGTERM: stop accepting connections (`server.close`), let in-flight requests finish, close database pools, then exit. Add a timeout that forces exit.",
+      "level": "sse"
+    },
+    {
+      "id": "node-cluster-vs-workers",
+      "front": "`cluster` vs `worker_threads`?",
+      "back": "`cluster` forks processes that share a port to use every CPU for I/O-bound servers. `worker_threads` run CPU-heavy JS in threads in the same process and can share memory.",
+      "level": "sse"
+    },
+    {
+      "id": "node-child-process",
+      "front": "`exec` vs `spawn`?",
+      "back": "`exec` runs a command in a shell and buffers all output (risky with user input and large output). `spawn` streams output and takes an argument array without a shell.",
+      "level": "sse"
+    },
+    {
+      "id": "node-memory-leak",
+      "front": "Common causes of memory leaks in Node?",
+      "back": "Unbounded caches or maps, listeners that are never removed, timers that are never cleared and closures that hold large objects. Compare heap snapshots to find them.",
+      "level": "sse"
+    },
+    {
+      "id": "node-cache-stampede",
+      "front": "What is a cache stampede and how do you avoid it?",
+      "back": "Many requests miss the cache at once and all hit the backend. Share one in-flight promise per key, add jitter to expiry or refresh early.",
+      "level": "sse"
+    },
+    {
+      "id": "node-prototype-pollution",
+      "front": "What is prototype pollution?",
+      "back": "Merging untrusted JSON with keys like `__proto__` changes `Object.prototype`, so every object gains properties. Block those keys, use `Object.create(null)` or a Map, and validate input.",
+      "level": "sse"
+    },
+    {
+      "id": "node-injection",
+      "front": "How do you prevent SQL and command injection?",
+      "back": "Use parameterised queries, never string concatenation. Call `spawn`/`execFile` with an argument array, not a shell string. Validate input against an allow-list.",
+      "level": "se"
+    },
+    {
+      "id": "node-npm-ci",
+      "front": "`npm install` vs `npm ci`?",
+      "back": "`npm ci` installs exactly what the lockfile says, removes node_modules first and fails if package.json and the lockfile disagree. Use it in CI.",
+      "level": "se"
+    },
+    {
+      "id": "node-caret-tilde",
+      "front": "What do `^1.4.2` and `~1.4.2` allow?",
+      "back": "`^` allows minor and patch updates (`>=1.4.2 <2.0.0`); `~` allows patch updates only (`>=1.4.2 <1.5.0`). For 0.x versions `^` is stricter.",
+      "level": "se"
+    },
+    {
+      "id": "node-dev-deps",
+      "front": "`dependencies` vs `devDependencies`?",
+      "back": "`dependencies` are needed at run time. `devDependencies` are only for building and testing, and are skipped by `npm ci --omit=dev` in production images.",
+      "level": "se"
+    },
+    {
+      "id": "node-test-mocks",
+      "front": "How do you test code that uses timers or the clock?",
+      "back": "Inject the clock or use fake timers, then advance time in the test. Do not wait for real time; it makes tests slow and flaky.",
+      "level": "se"
+    }
+  ]
+}

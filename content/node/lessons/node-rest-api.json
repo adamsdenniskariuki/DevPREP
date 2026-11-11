@@ -1,0 +1,45 @@
+{
+  "id": "node-rest-api",
+  "title": "Building REST APIs",
+  "minutes": 40,
+  "summary": "Resource routes, status codes, validation, pagination, idempotency and consistent error bodies for JSON APIs.",
+  "sections": [
+    {
+      "title": "Resources and verbs",
+      "body": "Model nouns as resources and let the HTTP method say what happens: `GET /orders` lists, `POST /orders` creates, `GET /orders/:id` reads, `PATCH /orders/:id` updates part, `PUT` replaces, `DELETE` removes. Keep URLs plural and lower-case and nest only one level (`/orders/:id/items`).\n\n`GET`, `PUT` and `DELETE` are **idempotent**: repeating them leaves the same state. `POST` is not, so retries can create duplicates unless the client sends an idempotency key."
+    },
+    {
+      "title": "Status codes",
+      "body": "- `200 OK`, `201 Created` (with a `Location` header), `204 No Content`.\n- `400 Bad Request` for malformed input, `422` for well-formed but invalid, `401` when not authenticated, `403` when authenticated but not allowed, `404`, `409 Conflict` for version or uniqueness clashes, `429 Too Many Requests` with `Retry-After`.\n- `500` for bugs, `502`/`503`/`504` for upstream or availability problems.\n\nClients make retry decisions from these codes, so returning `200` with an error body breaks them."
+    },
+    {
+      "title": "Validate at the edge",
+      "body": "Treat every request as untrusted. Validate params, query and body against a schema before your handler uses them, coerce types explicitly (query strings are always strings), reject unknown fields, and cap sizes and array lengths. Libraries such as zod, valibot or JSON Schema validators also give you TypeScript types from the same schema.",
+      "code": "const CreateOrder = z.object({\n  sku: z.string().min(1),\n  quantity: z.number().int().min(1).max(100),\n}).strict()\n\napp.post('/orders', async (req, res) => {\n  const parsed = CreateOrder.safeParse(req.body)\n  if (!parsed.success) return res.status(422).json({ error: { code: 'invalid', issues: parsed.error.issues } })\n  const order = await orders.create(parsed.data)\n  res.status(201).location(`/orders/${order.id}`).json(order)\n})"
+    },
+    {
+      "title": "Pagination and filtering",
+      "body": "Never return an unbounded list. Offset pagination (`?limit=20&offset=40`) is simple but slow on deep pages and skips or repeats rows when data changes. **Cursor** pagination returns an opaque `nextCursor` (for example the last id and sort key, base64url-encoded) and is stable and fast. Always cap `limit` on the server."
+    }
+  ],
+  "pitfalls": [
+    "Returning 200 with `{ error }` in the body.",
+    "Trusting query strings to be numbers or booleans.",
+    "Unbounded list endpoints.",
+    "Leaking database ids or internal fields the client should not see."
+  ],
+  "gotchas": [
+    {
+      "question": "401 or 403?",
+      "answer": "401 Unauthorized means the request has no valid credentials: log in or refresh the token. 403 Forbidden means the caller is known but not allowed to do this. Some APIs return 404 instead of 403 to avoid revealing that a resource exists."
+    },
+    {
+      "question": "How does an idempotency key work?",
+      "answer": "The client sends a unique `Idempotency-Key` header with a `POST`. The server stores the key with the result of the first request; a retry with the same key returns the stored result instead of repeating the side effect. Keys expire after a window such as 24 hours."
+    },
+    {
+      "question": "PUT or PATCH?",
+      "answer": "`PUT` replaces the whole resource with the body you send, so missing fields are cleared. `PATCH` applies a partial change. `PUT` is idempotent by definition; a `PATCH` such as \"increment by 1\" is not."
+    }
+  ]
+}

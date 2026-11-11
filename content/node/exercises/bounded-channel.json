@@ -1,0 +1,13 @@
+{
+  "id": "bounded-channel",
+  "title": "A channel with backpressure",
+  "lesson": "node-streams",
+  "summary": "Build a bounded async queue whose producers wait when it is full, the same contract that keeps streams from exhausting memory.",
+  "prompt": "Finish `Channel<T>(capacity)`:\n- `send(value)` returns a promise. If fewer than `capacity` values are buffered (or a receiver is already waiting), it resolves at once. Otherwise it waits until a `receive` makes room: that is backpressure.\n- `receive()` returns a promise of the oldest value. If the buffer is empty it waits for the next `send`.\n- `size` is the number of buffered values.\n\nValues must come out in the order they were sent, including values whose senders were waiting.",
+  "hints": [
+    "Keep three FIFO arrays: buffered values, waiting receivers, and waiting senders as `{ value, resolve }`.",
+    "`send`: hand the value straight to a waiting receiver if there is one; else buffer it if there is room; else park the sender.",
+    "`receive`: take from the buffer and then move one parked sender's value into the buffer and resolve that sender."
+  ],
+  "minutes": 25
+}

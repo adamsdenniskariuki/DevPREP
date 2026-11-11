@@ -1,0 +1,40 @@
+{
+  "id": "node-config",
+  "title": "Configuration and environment",
+  "minutes": 20,
+  "summary": "Twelve-factor configuration with environment variables, validating config at start-up, and keeping secrets out of code.",
+  "sections": [
+    {
+      "title": "Config from the environment",
+      "body": "Code is the same in every environment; configuration changes. Read settings such as ports, URLs and feature flags from environment variables through `process.env`, which always holds **strings** (or `undefined`). Recent Node versions can load a `.env` file with `--env-file=.env` or `process.loadEnvFile()`; never commit real `.env` files."
+    },
+    {
+      "title": "Validate once, at start-up",
+      "body": "Parse `process.env` into a typed, frozen config object when the process starts. Fail fast with a clear message listing every missing or invalid variable, instead of crashing an hour later on the first request that reads it. The rest of the code imports the config object, never `process.env` directly.",
+      "code": "function loadConfig(env = process.env) {\n  const errors: string[] = []\n  const port = Number(env.PORT ?? 3000)\n  if (!Number.isInteger(port) || port < 1 || port > 65535) errors.push('PORT must be 1-65535')\n  if (!env.DATABASE_URL) errors.push('DATABASE_URL is required')\n  if (errors.length) throw new Error(`Invalid config:\\n${errors.join('\\n')}`)\n  return Object.freeze({ port, databaseUrl: env.DATABASE_URL!, debug: env.DEBUG === 'true' })\n}"
+    },
+    {
+      "title": "Secrets",
+      "body": "Secrets (API keys, database passwords, signing keys) come from a secret store or the platform at runtime, never from source control, images or logs. Rotate them, give each service its own, and redact them from error messages and log output."
+    }
+  ],
+  "pitfalls": [
+    "`if (process.env.DEBUG)` is true for the string \"false\".",
+    "Reading `process.env` all over the codebase instead of once.",
+    "Committing `.env` files or printing config with secrets at start-up."
+  ],
+  "gotchas": [
+    {
+      "question": "Why is `Number(process.env.PORT) || 3000` risky?",
+      "answer": "It hides mistakes: `PORT=abc` silently becomes 3000, and `PORT=0` (a valid \"pick any port\") is replaced too. Parse explicitly and report invalid values."
+    },
+    {
+      "question": "What does `NODE_ENV=production` change?",
+      "answer": "Node itself ignores it, but many libraries read it: frameworks turn off verbose errors and enable caching, and package managers may skip dev dependencies. Do not use it for your own environment names; use a separate variable such as `APP_ENV`."
+    },
+    {
+      "question": "How do you test code that reads configuration?",
+      "answer": "Make the loader take the environment as a parameter (`loadConfig(env = process.env)`), then call it with a plain object in tests instead of mutating the global `process.env`."
+    }
+  ]
+}

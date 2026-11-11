@@ -1,0 +1,41 @@
+{
+  "id": "node-buffers",
+  "title": "Buffers, bytes and encodings",
+  "minutes": 25,
+  "summary": "Buffer as Node's byte array, text encodings, base64, and slicing and copying without surprises.",
+  "sections": [
+    {
+      "title": "Bytes, not strings",
+      "body": "Network and file data arrive as **bytes**. Node represents them with `Buffer`, a subclass of `Uint8Array`. A string is converted with an **encoding**: `Buffer.from('héllo', 'utf8')` is 6 bytes because `é` takes two bytes in UTF-8, while `'héllo'.length` is 5 UTF-16 code units.\n\nCommon encodings: `utf8` (default), `base64` and `base64url`, `hex`, `latin1`. The browser-standard `TextEncoder` and `TextDecoder` work in Node too.",
+      "code": "const b = Buffer.from('héllo')\nb.length            // 6 bytes\nb.toString('hex')   // '68c3a96c6c6f'\nb.toString('base64') // 'aMOpbGxv'\nBuffer.byteLength('héllo') // 6"
+    },
+    {
+      "title": "Slices share memory",
+      "body": "`buf.subarray(start, end)` (and the older `slice`) returns a **view** of the same memory, so writing to the view changes the original. Use `Buffer.from(view)` or `Buffer.copyBytesFrom` when you need an independent copy.\n\n`Buffer.alloc(n)` gives zero-filled memory. `Buffer.allocUnsafe(n)` is faster but may contain old data from the pool; only use it when you overwrite every byte before reading."
+    },
+    {
+      "title": "Decoding chunked text",
+      "body": "A multi-byte character can be split across two chunks. Calling `chunk.toString()` on each chunk then produces replacement characters. Use `TextDecoder` with `{ stream: true }`, `StringDecoder`, or `setEncoding('utf8')` on a readable, which all keep the partial bytes for the next chunk.",
+      "code": "const decoder = new TextDecoder()\nlet text = ''\nfor await (const chunk of stream) text += decoder.decode(chunk, { stream: true })\ntext += decoder.decode()"
+    }
+  ],
+  "pitfalls": [
+    "Using `string.length` where the byte length matters, such as in a `Content-Length` header.",
+    "Decoding each chunk separately and corrupting multi-byte characters.",
+    "Mutating a `subarray` view and accidentally changing the original buffer."
+  ],
+  "gotchas": [
+    {
+      "question": "How much bigger is base64 than the original bytes?",
+      "answer": "About 4/3: every 3 bytes become 4 characters, plus `=` padding to a multiple of 4. 1 MB of binary becomes about 1.33 MB of base64."
+    },
+    {
+      "question": "What is the difference between `base64` and `base64url`?",
+      "answer": "`base64url` replaces `+` with `-` and `/` with `_` and usually drops the `=` padding, so the result is safe in URLs and file names. JWT segments use it."
+    },
+    {
+      "question": "Why is comparing secrets with `===` risky?",
+      "answer": "String comparison can return as soon as one character differs, so response timing leaks how much of a guess was right. Use `crypto.timingSafeEqual` on two buffers of equal length."
+    }
+  ]
+}

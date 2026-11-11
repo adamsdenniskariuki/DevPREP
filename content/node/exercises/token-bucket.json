@@ -1,0 +1,13 @@
+{
+  "id": "token-bucket",
+  "title": "Rate-limit with a token bucket",
+  "lesson": "node-security",
+  "summary": "Limit requests per client with a token bucket that refills continuously, and report when to retry.",
+  "prompt": "Finish `createLimiter({ capacity, refillPerSecond, now })`. It returns `take(clientId)`, which returns `{ allowed: true, remaining }` or `{ allowed: false, retryAfterMs }`.\n\n- Each client starts with a full bucket of `capacity` tokens.\n- Tokens refill continuously at `refillPerSecond`, never above `capacity`.\n- A request costs one token. When fewer than one token is left, refuse it and report how many milliseconds until one full token is available, rounded **up** to a whole number.\n- `remaining` is the number of whole tokens left after the request.\n- Clients are independent.",
+  "hints": [
+    "Store `{ tokens, at }` per client in a `Map`.",
+    "Refill with `tokens = Math.min(capacity, tokens + (now - at) / 1000 * refillPerSecond)` and update `at`.",
+    "Retry time is `Math.ceil((1 - tokens) / refillPerSecond * 1000)`."
+  ],
+  "minutes": 20
+}

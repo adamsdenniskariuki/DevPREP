@@ -49,7 +49,7 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase', '#react', '#skilltest'])
+const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase', '#react', '#skilltest', '#node'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
@@ -107,6 +107,17 @@ describe('route compatibility', () => {
     expect(hrefFor({ route: 'skilltest', skillTestId: 'react' })).toBe('#skilltest/react')
     for (const hash of ['#react/nope', '#react/counter/x', '#skilltest/nope', '#skilltest/react/x', '#React']) expect(parseHash(hash, withIds), hash).toEqual({ route: 'unknown' })
     expect(parseHash('#react/any-id', ids)).toEqual({ route: 'react', reactId: 'any-id' })
+  })
+
+  it('adds the Node.js module with an optional lesson or exercise id', () => {
+    const withIds: RouteIds = { ...ids, node: new Set(['node-event-loop', 'promise-pool']), skillTests: new Set(['node']) }
+    expect(parseHash('#node', withIds)).toEqual({ route: 'node' })
+    expect(parseHash('#node/node-event-loop', withIds)).toEqual({ route: 'node', nodeId: 'node-event-loop' })
+    expect(parseHash('#node/promise-pool', withIds)).toEqual({ route: 'node', nodeId: 'promise-pool' })
+    expect(parseHash('#skilltest/node', withIds)).toEqual({ route: 'skilltest', skillTestId: 'node' })
+    expect(hrefFor({ route: 'node', nodeId: 'promise-pool' })).toBe('#node/promise-pool')
+    for (const hash of ['#node/nope', '#node/promise-pool/x', '#Node']) expect(parseHash(hash, withIds), hash).toEqual({ route: 'unknown' })
+    expect(parseHash('#node/any-id', ids)).toEqual({ route: 'node', nodeId: 'any-id' })
   })
 
   it('keeps the old aliases pointing at the same screens', () => {

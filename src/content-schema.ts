@@ -200,7 +200,7 @@ export const CARD_FRONT_MAX = 200
 export const CARD_BACK_MAX = 600
 
 /** Decks that are not tied to a curriculum track (a module with its own screen). Must match EXTRA_DECKS in scripts/build-content.mjs. */
-export const EXTRA_DECK_IDS = ['react'] as const
+export const EXTRA_DECK_IDS = ['react', 'node'] as const
 export const DECK_IDS: readonly string[] = [...TRACK_IDS, ...EXTRA_DECK_IDS]
 /** A flashcard deck: one per curriculum track, plus the extra decks. */
 export type DeckId = Track | typeof EXTRA_DECK_IDS[number]

@@ -1,0 +1,46 @@
+{
+  "id": "node-security",
+  "title": "Security essentials",
+  "minutes": 35,
+  "summary": "Injection, secrets, dependency risk, safe headers, authentication tokens and denial of service in Node services.",
+  "sections": [
+    {
+      "title": "Injection",
+      "body": "Anything built from user input and then interpreted is a risk: SQL, shell commands, HTML, file paths, regular expressions. Use parameterised queries (`WHERE id = $1`), argument arrays for child processes, output escaping in templates, and validated paths. In MongoDB-style queries, reject objects where you expect strings, or `{\"$gt\": \"\"}` can match everything."
+    },
+    {
+      "title": "Prototype pollution",
+      "body": "Merging untrusted JSON into objects can set `__proto__` and change `Object.prototype` for the whole process, so every object suddenly has `isAdmin: true`. Validate input against a schema, skip `__proto__`, `constructor` and `prototype` keys in merge helpers, and use `Object.create(null)` or `Map` for dictionaries keyed by user data.",
+      "code": "function safeAssign(target: Record<string, unknown>, source: Record<string, unknown>) {\n  for (const key of Object.keys(source)) {\n    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue\n    target[key] = source[key]\n  }\n  return target\n}"
+    },
+    {
+      "title": "Auth tokens and sessions",
+      "body": "Hash passwords with a slow algorithm (`scrypt`, `argon2` or `bcrypt`), never a plain hash. Signed tokens such as JWTs must be verified with a pinned algorithm, checked for expiry and audience, and kept short-lived. Cookies carrying sessions should be `HttpOnly`, `Secure` and `SameSite`. Compare secrets with `crypto.timingSafeEqual`."
+    },
+    {
+      "title": "Dependencies and denial of service",
+      "body": "Most of your code is dependencies. Commit the lockfile, install with `npm ci`, run `npm audit` in CI, review new packages and avoid running install scripts you do not need.\n\nDenial of service is easy in a single-threaded server: cap body sizes, set timeouts, rate-limit, and beware regular expressions with nested quantifiers like `(a+)+$`, which can take exponential time on crafted input (ReDoS)."
+    }
+  ],
+  "pitfalls": [
+    "Building SQL or shell commands with template strings.",
+    "Deep-merging request bodies into config or user objects.",
+    "Accepting the algorithm named in a JWT header, including `none`.",
+    "No body size limit or request timeout."
+  ],
+  "gotchas": [
+    {
+      "question": "Why is `JSON.parse` of untrusted input not enough to be safe?",
+      "answer": "Parsing is safe, but the result can contain keys such as `__proto__` and unexpected types such as objects where you expected strings. What you do next (merging, querying, rendering) is where the attack happens, so validate the parsed value against a schema."
+    },
+    {
+      "question": "What security headers would you set on a JSON API?",
+      "answer": "`Strict-Transport-Security` to force HTTPS, `X-Content-Type-Options: nosniff`, a restrictive `Content-Security-Policy` if any HTML is served, CORS headers that list exact allowed origins, and no `X-Powered-By`. Middleware such as helmet sets sensible defaults."
+    },
+    {
+      "question": "What is ReDoS?",
+      "answer": "Regular expression denial of service: a pattern with ambiguous nested repetition backtracks exponentially on certain inputs, freezing the event loop. Simplify the pattern, limit input length, or use a linear-time regex engine.",
+      "code": "/^(a+)+$/.test('a'.repeat(30) + '!') // takes seconds"
+    }
+  ]
+}

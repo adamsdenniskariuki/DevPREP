@@ -1,0 +1,13 @@
+{
+  "id": "retry-backoff",
+  "title": "Retry with exponential backoff",
+  "lesson": "node-async",
+  "summary": "Retry a failing async operation with growing delays, a retry budget and a predicate for which errors are worth retrying.",
+  "prompt": "Finish `retry(fn, options)`. Call `fn(attempt)` (attempt starts at 1). If it resolves, return its value. If it rejects:\n- stop and rethrow when `shouldRetry(error)` returns false (default: always retry) or when `retries` retries have already been made;\n- otherwise wait `baseMs * factor ** (attempt - 1)` milliseconds, capped at `maxMs`, using `options.sleep(ms)`, and try again.\n\nDefaults: `retries` 3, `baseMs` 100, `factor` 2, `maxMs` Infinity. The tests pass a fake `sleep` that records delays.",
+  "hints": [
+    "A `for (let attempt = 1; ; attempt++)` loop with `try { return await fn(attempt) } catch (error) { ... }` reads well.",
+    "The total number of calls is `retries + 1`.",
+    "Compute the delay with `Math.min(maxMs, baseMs * factor ** (attempt - 1))`."
+  ],
+  "minutes": 20
+}

@@ -7,10 +7,13 @@ import { lessons } from './curriculum'
 const root = 'content'
 const read = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as unknown
 
+// Importing the build script is slow while the runner suites saturate the CPU.
+const BUILD_TIMEOUT_MS = 30_000
+
 describe('content schema', () => {
   it('has a directory for every track and no stray directories', () => {
     const dirs = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
-    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase', 'react', 'skill-tests'].sort())
+    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase', 'react', 'skill-tests', 'node'].sort())
   })
 
   for (const track of TRACK_IDS) {
@@ -66,7 +69,7 @@ describe('content schema', () => {
       expect(JSON.parse(readFileSync('src/generated/flashcards.json', 'utf8'))).toEqual(built.decks)
       expect(JSON.parse(readFileSync('src/generated/flashcard-index.json', 'utf8'))).toEqual(built.index)
     for (const deck of built.decks) expect(validateDeck(deck, `generated ${deck.track} deck`)).toEqual([])
-    })
+    }, BUILD_TIMEOUT_MS)
   })
 
   it('rejects malformed lessons with readable errors', () => {
@@ -84,7 +87,7 @@ describe('content schema', () => {
     const { labs, ...curriculum } = buildCurriculum()
     expect(JSON.parse(readFileSync('src/generated/curriculum.json', 'utf8'))).toEqual(curriculum)
     expect(JSON.parse(readFileSync('src/generated/labs.json', 'utf8'))).toEqual(labs)
-  })
+  }, BUILD_TIMEOUT_MS)
 
   it('loads every lesson file into the bundled curriculum in track order', () => {
     expect(lessons.map(lesson => lesson.track)).toEqual([...lessons.map(lesson => lesson.track)].sort((a, b) => TRACK_IDS.indexOf(a) - TRACK_IDS.indexOf(b)))
@@ -96,5 +99,5 @@ describe('content schema', () => {
     const dsa = buildFlashcards().decks.find((deck: { track: string }) => deck.track === 'dsa')
     const ids = dsa.cards.map((card: { id: string }) => card.id)
     for (const problem of buildProblems().problems as { id: string }[]) expect(ids).toContain(`dsa-p-${problem.id}`)
-  })
+  }, BUILD_TIMEOUT_MS)
 })

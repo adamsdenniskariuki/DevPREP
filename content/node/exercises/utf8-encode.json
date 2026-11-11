@@ -1,0 +1,13 @@
+{
+  "id": "utf8-encode",
+  "title": "Encode a string as UTF-8 bytes",
+  "lesson": "node-buffers",
+  "summary": "Turn a JavaScript string into UTF-8 bytes by hand, including surrogate pairs, and count bytes without allocating.",
+  "prompt": "Finish two functions without using `TextEncoder` or `Buffer`:\n- `utf8Encode(text)` returns a `Uint8Array` of the UTF-8 bytes.\n- `byteLength(text)` returns how many bytes that would be.\n\nCode points below `0x80` take 1 byte, below `0x800` 2 bytes, below `0x10000` 3 bytes, and the rest 4 bytes. Iterate by **code point** (`for...of` or `codePointAt`), so a surrogate pair such as an emoji becomes one 4-byte sequence. A lone surrogate is encoded as U+FFFD (`EF BF BD`).",
+  "hints": [
+    "`for (const ch of text)` yields whole code points; `ch.codePointAt(0)!` gives the number.",
+    "2 bytes: `0xc0 | (cp >> 6)`, `0x80 | (cp & 0x3f)`. Each extra byte takes the next 6 bits.",
+    "A lone surrogate is a code point between `0xd800` and `0xdfff`; replace it with `0xfffd` first."
+  ],
+  "minutes": 20
+}

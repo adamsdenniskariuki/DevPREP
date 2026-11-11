@@ -1,0 +1,42 @@
+{
+  "id": "node-fs-path",
+  "title": "Files and paths",
+  "minutes": 25,
+  "summary": "The promise-based fs API, safe path handling across platforms, and avoiding path traversal.",
+  "sections": [
+    {
+      "title": "fs/promises",
+      "body": "`node:fs/promises` gives promise versions of the file APIs: `readFile`, `writeFile`, `readdir`, `stat`, `mkdir({ recursive: true })`, `rm({ recursive: true, force: true })`. Use them in servers; the `*Sync` versions block the event loop and belong in start-up scripts and CLIs.\n\nFor large files use streams (`createReadStream`) or a `FileHandle` so you do not load everything at once. To replace a file safely, write to a temporary file and `rename` it over the old one; a rename on the same disk is atomic.",
+      "code": "import { readFile, writeFile, rename } from 'node:fs/promises'\n\nconst config = JSON.parse(await readFile('config.json', 'utf8'))\nawait writeFile('state.json.tmp', JSON.stringify(state))\nawait rename('state.json.tmp', 'state.json')"
+    },
+    {
+      "title": "Paths",
+      "body": "Never build paths with string concatenation. `path.join('a', '../b', 'c')` normalises to `b/c` using the platform separator. `path.resolve` turns segments into an absolute path from the current directory. `path.basename`, `dirname` and `extname` pick a path apart, and `path.posix`/`path.win32` give fixed-platform versions.\n\nRelative paths are resolved against `process.cwd()`, which depends on where the process was started, not where the file lives. Anchor to the module with `import.meta.dirname` or `__dirname`."
+    },
+    {
+      "title": "Path traversal",
+      "body": "If a user controls part of a path, `../../etc/passwd` can escape your folder. Resolve the full path, then check that it is still inside the root before opening it. Also reject null bytes and decide whether symbolic links are allowed.",
+      "code": "const root = path.resolve('uploads')\nconst target = path.resolve(root, userPath)\nif (target !== root && !target.startsWith(root + path.sep)) {\n  throw new ForbiddenError('path outside uploads')\n}"
+    }
+  ],
+  "pitfalls": [
+    "Concatenating paths with `/` and breaking on Windows.",
+    "Using `readFileSync` inside a request handler.",
+    "Trusting a user-supplied file name without a traversal check.",
+    "Checking `exists` and then opening the file, which races with other processes."
+  ],
+  "gotchas": [
+    {
+      "question": "Why avoid `fs.exists` before `open`?",
+      "answer": "The file can be created or deleted between the check and the open (a time-of-check to time-of-use race). Open it directly and handle the `ENOENT` error instead."
+    },
+    {
+      "question": "What does `path.join('/data', '/etc')` return, and how does `resolve` differ?",
+      "answer": "`join` returns `/data/etc`: it just concatenates and normalises. `path.resolve('/data', '/etc')` returns `/etc`, because an absolute segment restarts resolution."
+    },
+    {
+      "question": "How does `fs.watch` behave across platforms?",
+      "answer": "It uses OS notifications and is inconsistent: events can fire twice, file names may be missing, and recursive watching was not supported everywhere until recently. Debounce events and re-read state rather than trusting each event."
+    }
+  ]
+}

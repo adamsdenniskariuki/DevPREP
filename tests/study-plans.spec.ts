@@ -209,6 +209,7 @@ const FDE = 'forward-deployed-engineer-8wk'
 const MATH_TITLE = '6-week Math for AI and ML plan'
 const FDE_TITLE = '8-week Forward Deployed Engineer plan'
 const REACT_TITLE = '2-week React skill test plan'
+const NODE_TITLE = '2-week Node.js skill test plan'
 const storedFde = (page: Page) => page.evaluate(([key, id]) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], [KEY, FDE])
 
 async function startFde(page: Page) {
@@ -220,7 +221,7 @@ async function startFde(page: Page) {
 
 test('the Forward Deployed Engineer plan opens from the list, ticks persist and its track swaps weeks 6–7', async ({ page }) => {
   await page.goto('./#plans')
-  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE, MATH_TITLE, REACT_TITLE])
+  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE, MATH_TITLE, REACT_TITLE, NODE_TITLE])
   await page.getByRole('link', { name: FDE_TITLE }).click()
   await expect(page).toHaveURL(new RegExp(`#plans/${FDE}$`))
   await expect(h1(page)).toBeFocused()

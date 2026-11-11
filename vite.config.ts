@@ -230,6 +230,7 @@ export default defineConfig({
           if (path.endsWith('/src/generated/changelog.json')) return 'changelog'
           if (path.endsWith('/src/generated/codebase.json')) return 'codebase'
           if (path.endsWith('/src/generated/react.json')) return 'react-module'
+          if (path.endsWith('/src/generated/node.json')) return 'node-module'
           if (path.endsWith('/src/generated/skill-tests.json')) return 'skill-tests'
           if ((path.includes('/content/') || path.includes('/src/generated/')) && path.endsWith('.json')) return 'curriculum'
         },

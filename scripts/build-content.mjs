@@ -196,7 +196,7 @@ export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
 /** Decks that are not curriculum tracks, shown after the track decks. Same as EXTRA_DECK_IDS in src/content-schema.ts. */
-export const EXTRA_DECKS = ['react']
+export const EXTRA_DECKS = ['react', 'node']
 
 export function buildFlashcards(root = 'content') {
   const dir = join(root, 'flashcards')
@@ -238,6 +238,7 @@ export function buildNavIndex(root = 'content') {
     companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
     codebase: buildCodebase(root).repos.map(repo => [repo.id, repo.title, repo.lang, repo.tasks.map(task => [task.id, task.title, task.kind])]),
     react: Object.entries(buildReact(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
+    node: Object.entries(buildNode(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
     skillTests: buildSkillTests(root).map(test => [test.id, test.title]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
     antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
@@ -250,7 +251,7 @@ export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
 export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
-export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase', '#react', '#skilltest']
+export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase', '#react', '#node', '#skilltest']
 
 /**
  * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
@@ -273,6 +274,7 @@ export function buildPlans(root = 'content') {
     plans: new Set(order),
     codebase: new Set(buildCodebase(root).repos.flatMap(repo => [repo.id, ...repo.tasks.map(task => `${repo.id}/${task.id}`)])),
         react: new Set(Object.values(buildReact(root)).flat().map(item => item.id)),
+        node: new Set(Object.values(buildNode(root)).flat().map(item => item.id)),
         skilltest: new Set(buildSkillTests(root).map(test => test.id)),
   }
   const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
@@ -604,7 +606,29 @@ const REACT_EXERCISE_KEYS = 'hints,id,lesson,minutes,prompt,summary,title'
  * exercises. Starters, solutions and tests are checked by running them in src/react-exercises.test.ts.
  */
 export function buildReact(root = 'content') {
-  const dir = join(root, 'react')
+  return buildLearnModule(root, 'react', 'tsx', (starter, solution, fail) => {
+    if (!/export default function App\b/.test(starter) || !/export default function App\b/.test(solution)) fail('starter and solution must export default function App')
+  })
+}
+
+export const NODE_OUTPUT = 'src/generated/node.json'
+/** Lesson and exercise ids, so routes, plans and backups can check them without loading the module. */
+export const NODE_IDS_OUTPUT = 'src/generated/node-ids.json'
+
+/**
+ * The Node.js module for #node: lessons in the same shape as React's and runnable TypeScript exercises that
+ * model Node behaviour as pure logic (no fs, process or network). Checked in src/node-exercises.test.ts.
+ */
+export function buildNode(root = 'content') {
+  return buildLearnModule(root, 'node', 'ts', (starter, solution, fail, tests) => {
+    if (!/\bexport\b/.test(starter) || !/\bexport\b/.test(solution)) fail('starter and solution must export what the tests import')
+    if (!/export (async )?function test/.test(tests)) fail('tests must export at least one test function')
+  })
+}
+
+/** A learn module (content/<module>): ordered lessons plus exercises with .json, starter, solution and test files. */
+function buildLearnModule(root, module, ext, checkCode) {
+  const dir = join(root, module)
   if (!existsSync(join(dir, 'index.json'))) return { lessons: [], exercises: [] }
   const { lessons: lessonOrder, exercises: exerciseOrder } = read(join(dir, 'index.json'))
   const ids = new Set()
@@ -615,7 +639,7 @@ export function buildReact(root = 'content') {
   }
   const lessonFiles = new Set(readdirSync(join(dir, 'lessons')).filter(name => name.endsWith('.json')))
   const lessons = lessonOrder.map(id => {
-    const where = `content/react/lessons/${id}.json`
+    const where = `content/${module}/lessons/${id}.json`
     const fail = message => { throw new Error(`${where}: ${message}`) }
     if (!lessonFiles.delete(`${id}.json`)) fail('is listed in index.json but missing')
     const lesson = read(join(dir, 'lessons', `${id}.json`))
@@ -637,13 +661,13 @@ export function buildReact(root = 'content') {
     }
     return lesson
   })
-  if (lessonFiles.size) throw new Error(`content/react/lessons has lessons not listed in index.json: ${[...lessonFiles].join(', ')}`)
+  if (lessonFiles.size) throw new Error(`content/${module}/lessons has lessons not listed in index.json: ${[...lessonFiles].join(', ')}`)
   const lessonIds = new Set(lessonOrder)
   const exerciseFiles = new Set(readdirSync(join(dir, 'exercises')))
   const exercises = exerciseOrder.map(id => {
-    const where = `content/react/exercises/${id}`
+    const where = `content/${module}/exercises/${id}`
     const fail = message => { throw new Error(`${where}: ${message}`) }
-    const names = [`${id}.json`, `${id}.starter.tsx`, `${id}.solution.tsx`, `${id}.test.tsx`]
+    const names = [`${id}.json`, `${id}.starter.${ext}`, `${id}.solution.${ext}`, `${id}.test.${ext}`]
     for (const name of names) if (!exerciseFiles.delete(name)) fail(`${name} is missing`)
     const meta = read(join(dir, 'exercises', `${id}.json`))
     if (Object.keys(meta).sort().join() !== REACT_EXERCISE_KEYS) fail(`json must have exactly ${REACT_EXERCISE_KEYS}`)
@@ -655,10 +679,10 @@ export function buildReact(root = 'content') {
     if (!Array.isArray(meta.hints) || !meta.hints.length || meta.hints.some(hint => !text(hint, 300))) fail('needs at least one hint')
     const [starter, solution, tests] = names.slice(1).map(name => readFileSync(join(dir, 'exercises', name), 'utf8').replace(/\r\n/g, '\n'))
     if (starter === solution) fail('starter and solution are identical')
-    if (!/export default function App\b/.test(starter) || !/export default function App\b/.test(solution)) fail('starter and solution must export default function App')
+    checkCode(starter, solution, fail, tests)
     return { ...meta, starter, solution, tests }
   })
-  if (exerciseFiles.size) throw new Error(`content/react/exercises has files not listed in index.json: ${[...exerciseFiles].join(', ')}`)
+  if (exerciseFiles.size) throw new Error(`content/${module}/exercises has files not listed in index.json: ${[...exerciseFiles].join(', ')}`)
   return { lessons, exercises }
 }
 
@@ -669,7 +693,11 @@ const SKILL_TEST_KEYS = 'id,minutes,pick,questions,summary,tasks,title,topics'
 /** Modules whose exercises a skill test may use as coding tasks, with their exercise and lesson ids. */
 const skillTestModules = root => {
   const react = buildReact(root)
-  return { react: { exercises: new Set(react.exercises.map(item => item.id)), reviews: new Set(react.lessons.map(item => `#react/${item.id}`)) } }
+  const node = buildNode(root)
+  return {
+    react: { exercises: new Set(react.exercises.map(item => item.id)), reviews: new Set(react.lessons.map(item => `#react/${item.id}`)) },
+    node: { exercises: new Set(node.exercises.map(item => item.id)), reviews: new Set(node.lessons.map(item => `#node/${item.id}`)) },
+  }
 }
 
 /**
@@ -771,6 +799,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const react = buildReact()
   writeIfChanged(REACT_OUTPUT, react)
   writeIfChanged(REACT_IDS_OUTPUT, { lessons: react.lessons.map(item => item.id), exercises: react.exercises.map(item => item.id) })
+  const node = buildNode()
+  writeIfChanged(NODE_OUTPUT, node)
+  writeIfChanged(NODE_IDS_OUTPUT, { lessons: node.lessons.map(item => item.id), exercises: node.exercises.map(item => item.id) })
   const skillTests = buildSkillTests()
   writeIfChanged(SKILL_TESTS_OUTPUT, skillTests)
   writeIfChanged(SKILL_TEST_IDS_OUTPUT, skillTests.map(test => ({ id: test.id, title: test.title, questions: test.questions.map(item => item.id), tasks: test.tasks.map(item => item.id) })))
