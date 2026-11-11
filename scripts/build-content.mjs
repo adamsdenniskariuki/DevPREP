@@ -233,6 +233,7 @@ export function buildNavIndex(root = 'content') {
     guides: guides.index.map(entry => [entry.id, entry.title, entry.topic, entry.kind]),
     cases: buildCases(root).index.map(item => [item.id, item.title]),
     companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
+    codebase: buildCodebase(root).repos.map(repo => [repo.id, repo.title, repo.lang, repo.tasks.map(task => [task.id, task.title, task.kind])]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
     antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
     plans: buildPlans(root).plans.map(plan => [plan.id, plan.title, plan.tracks.map(track => [track.id, track.title]), plan.weeks.map(week => [week.n, week.title, week.track ?? '', week.days.flatMap(day => day.items.map(item => item.id))])]),
@@ -244,7 +245,7 @@ export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
 export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
-export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan']
+export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase']
 
 /**
  * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
@@ -265,6 +266,7 @@ export function buildPlans(root = 'content') {
     company: new Set(buildCompanies(root).ids),
     mock: new Set(buildCompanies(root).ids),
     plans: new Set(order),
+    codebase: new Set(buildCodebase(root).repos.flatMap(repo => [repo.id, ...repo.tasks.map(task => `${repo.id}/${task.id}`)])),
   }
   const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
   const labs = { [MATH_LAB_PLAN]: new Set(buildMathLabs(root).map(lab => lab.id)) }
@@ -342,7 +344,8 @@ export function validatePlan(plan, file, { targets, lessons, labs = {} }) {
         if (item.href !== undefined) {
           const [route, sub, ...rest] = String(item.href).replace(/^#/, '').split('/')
           const lab = route === 'plans' && rest.length === 1 && !!labs[sub]?.has(rest[0])
-          const ok = item.href.startsWith('#') && (lab || (!rest.length && (sub === undefined ? PLAN_PAGES.includes(item.href) : !!targets[route]?.has(sub))))
+          const task = route === 'codebase' && rest.length === 1 && !!targets.codebase?.has(`${sub}/${rest[0]}`)
+          const ok = item.href.startsWith('#') && (lab || task || (!rest.length && (sub === undefined ? PLAN_PAGES.includes(item.href) : !!targets[route]?.has(sub))))
           if (!ok) fail(`${where}: link ${item.href} does not resolve`)
         }
       }
@@ -394,6 +397,146 @@ export function buildMathLabs(root = 'content') {
   })
   if (files.size) throw new Error(`content/math has labs not listed in index.json: ${[...files].join(', ')}`)
   return labs
+}
+
+export const CODEBASE_OUTPUT = 'src/generated/codebase.json'
+/** Just the "repo/task" ids, so routes and backups can check them without loading the codebases. */
+export const CODEBASE_IDS_OUTPUT = 'src/generated/codebase-ids.json'
+export const CODEBASE_LANGS = { py: { ext: '.py', test: /^tests\/test_[a-z0-9_]+\.py$/ }, ts: { ext: '.ts', test: /^tests\/[a-z0-9-]+\.test\.ts$/ } }
+export const CODEBASE_STEPS = ['clarify', 'orient', 'reproduce', 'trace', 'change', 'verify', 'wrap-up']
+const CODEBASE_TASK_KEYS = 'brief,done,id,kind,minutes,title,walkthrough'
+const CODEBASE_WALKTHROUGH_KEYS = 'failingTest,orient,questions,trace,wrapUp'
+
+/** Every file under `dir`, keyed by its forward-slash path relative to `dir`. */
+function readTree(dir) {
+  const out = {}
+  if (!existsSync(dir)) return out
+  const walk = sub => {
+    for (const entry of readdirSync(join(dir, sub), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const rel = sub ? `${sub}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walk(rel)
+      else out[rel] = readFileSync(join(dir, rel), 'utf8').replace(/\r\n/g, '\n')
+    }
+  }
+  walk('')
+  return out
+}
+
+/** Line diff (LCS) as unified-style hunks with `context` lines around each change. */
+export function unifiedDiff(before, after, context = 3) {
+  const a = before.split('\n')
+  const b = after.split('\n')
+  const table = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+    table[i][j] = a[i] === b[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1])
+  }
+  const ops = []
+  let i = 0
+  let j = 0
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) { ops.push([' ', a[i], i, j]); i++; j++ }
+    else if (i < a.length && (j === b.length || table[i + 1][j] >= table[i][j + 1])) { ops.push(['-', a[i], i, j]); i++ }
+    else { ops.push(['+', b[j], i, j]); j++ }
+  }
+  const hunks = []
+  let current = null
+  let lastChange = -Infinity
+  ops.forEach((op, index) => {
+    if (op[0] === ' ') return
+    if (current && index - lastChange <= context * 2 + 1) {
+      current.end = index
+    } else {
+      if (current) hunks.push(current)
+      current = { start: Math.max(0, index - context), end: index }
+    }
+    lastChange = index
+  })
+  if (current) hunks.push(current)
+  return hunks.map(hunk => {
+    const slice = ops.slice(hunk.start, Math.min(ops.length, hunk.end + context + 1))
+    const first = slice[0]
+    return [`@@ -${first[2] + 1} +${first[3] + 1} @@`, ...slice.map(([mark, line]) => `${mark}${line}`)].join('\n')
+  }).join('\n')
+}
+
+/**
+ * Practice codebases for #codebase, plus the guide and rubric. Each repo has 4–7 files and exactly one bug and one
+ * feature task. Starters, solutions and hidden tests are checked by running them in src/codebase.test.ts.
+ */
+export function buildCodebase(root = 'content') {
+  const dir = join(root, 'codebase')
+  if (!existsSync(join(dir, 'guide.json'))) return { guide: null, repos: [] }
+  const guide = read(join(dir, 'guide.json'))
+  const gfail = message => { throw new Error(`content/codebase/guide.json: ${message}`) }
+  if (!text(guide.title, 80) || !text(guide.summary, 600)) gfail('needs a title and summary')
+  if (!Array.isArray(guide.steps) || guide.steps.map(step => step?.id).join() !== CODEBASE_STEPS.join()) gfail(`steps must be ${CODEBASE_STEPS.join(', ')} in order`)
+  for (const step of guide.steps) {
+    if (!text(step.title, 60) || !text(step.minutes, 20) || !Array.isArray(step.body) || !step.body.length || step.body.some(para => !text(para, 600))) gfail(`step ${step.id} needs a title, minutes and body`)
+    if (!Array.isArray(step.checklist) || !step.checklist.length || step.checklist.some(item => !text(item, 120))) gfail(`step ${step.id} needs a checklist`)
+  }
+  if (!Array.isArray(guide.throughout) || !guide.throughout.length || guide.throughout.some(tip => !text(tip, 300))) gfail('throughout needs short tips')
+  if (!Array.isArray(guide.rubric) || guide.rubric.length !== 4) gfail('rubric needs exactly 4 areas')
+  for (const area of guide.rubric) {
+    if (!KEBAB.test(area?.id ?? '') || !text(area.title, 40)) gfail('rubric areas need an id and title')
+    if (!Array.isArray(area.steps) || !area.steps.length || area.steps.some(step => !CODEBASE_STEPS.includes(step))) gfail(`rubric ${area.id} must map to guide steps`)
+    if (!Array.isArray(area.levels) || area.levels.length !== 4 || area.levels.some(level => !text(level, 200))) gfail(`rubric ${area.id} needs 4 level descriptions`)
+  }
+  const covered = new Set(guide.rubric.flatMap(area => area.steps))
+  const uncovered = CODEBASE_STEPS.filter(step => !covered.has(step))
+  if (uncovered.length) gfail(`rubric does not cover ${uncovered.join(', ')}`)
+
+  const { repos: order } = read(join(dir, 'index.json'))
+  const present = new Set(readdirSync(dir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name))
+  const repos = order.map(id => {
+    const fail = message => { throw new Error(`content/codebase/${id}: ${message}`) }
+    if (!present.delete(id)) fail('is listed in index.json but missing')
+    const meta = read(join(dir, id, 'repo.json'))
+    if (Object.keys(meta).sort().join() !== 'id,lang,summary,tasks,title') fail('repo.json must have exactly id, title, lang, summary and tasks')
+    if (meta.id !== id || !KEBAB.test(id)) fail('id must be kebab-case and match the folder')
+    if (!text(meta.title, 40) || !text(meta.summary, 200)) fail('title (≤40) and summary (≤200) are required')
+    const lang = CODEBASE_LANGS[meta.lang]
+    if (!lang) fail('lang must be py or ts')
+    const files = readTree(join(dir, id, 'files'))
+    const paths = Object.keys(files)
+    if (paths.length < 4 || paths.length > 7) fail(`must have 4–7 files (has ${paths.length})`)
+    if (!files['README.md']) fail('needs a README.md')
+    if (paths.some(path => !/^[a-zA-Z0-9_./-]+$/.test(path) || (path !== 'README.md' && !path.endsWith(lang.ext)))) fail(`files must be README.md or ${lang.ext}`)
+    if (!paths.some(path => lang.test.test(path))) fail('needs at least one visible test file')
+    if (!Array.isArray(meta.tasks) || meta.tasks.length !== 2 || meta.tasks.map(task => task?.kind).sort().join() !== 'bug,feature') fail('needs exactly one bug task and one feature task')
+    const taskDirs = new Set(readdirSync(join(dir, id, 'tasks')))
+    const tasks = meta.tasks.map(task => {
+      const at = `task ${task?.id}`
+      if (Object.keys(task).sort().join() !== CODEBASE_TASK_KEYS) fail(`${at} must have exactly ${CODEBASE_TASK_KEYS}`)
+      if (!KEBAB.test(task.id) || !taskDirs.delete(task.id)) fail(`${at} needs a kebab-case id and a tasks/${task.id} folder`)
+      if (!text(task.title, 60)) fail(`${at} title must be 1–60 characters`)
+      if (!Number.isInteger(task.minutes) || task.minutes < 45 || task.minutes > 60) fail(`${at} minutes must be 45–60`)
+      if (!Array.isArray(task.brief) || !task.brief.length || task.brief.some(para => !text(para, 600))) fail(`${at} needs a brief`)
+      if (!Array.isArray(task.done) || !task.done.length || task.done.some(item => !text(item, 200))) fail(`${at} needs done criteria`)
+      const walk = task.walkthrough ?? {}
+      if (Object.keys(walk).sort().join() !== CODEBASE_WALKTHROUGH_KEYS) fail(`${at} walkthrough must have exactly ${CODEBASE_WALKTHROUGH_KEYS}`)
+      for (const key of ['questions', 'orient', 'trace', 'wrapUp']) if (!Array.isArray(walk[key]) || !walk[key].length || walk[key].some(item => !text(item, 400))) fail(`${at} walkthrough.${key} needs short items`)
+      if (!text(walk.failingTest, 1500)) fail(`${at} walkthrough.failingTest is required`)
+      const tdir = join(dir, id, 'tasks', task.id)
+      const starter = readTree(join(tdir, 'starter'))
+      const solution = readTree(join(tdir, 'solution'))
+      const hidden = readTree(join(tdir, 'hidden'))
+      if (task.kind === 'bug' && !Object.keys(starter).length) fail(`${at} is a bug task, so it needs starter overrides`)
+      if (task.kind === 'feature' && Object.keys(starter).length) fail(`${at} is a feature task; it starts from files/`)
+      if (Object.keys(starter).some(path => !(path in files))) fail(`${at} starter may only override existing files`)
+      if (!Object.keys(solution).some(path => !lang.test.test(path))) fail(`${at} solution must change source code`)
+      if (!Object.keys(solution).some(path => lang.test.test(path))) fail(`${at} solution must add a regression test to a visible test file`)
+      const hiddenPaths = Object.keys(hidden)
+      if (!hiddenPaths.length || hiddenPaths.some(path => !lang.test.test(path) || path in files)) fail(`${at} needs hidden test files with new names under tests/`)
+      const start = { ...files, ...starter }
+      const end = { ...start, ...solution }
+      const diff = Object.keys(end).filter(path => start[path] !== end[path]).map(path => ({ path, diff: unifiedDiff(start[path] ?? '', end[path]) }))
+      return { ...task, starter, solution, hidden, diff }
+    })
+    if (taskDirs.size) fail(`has task folders not listed in repo.json: ${[...taskDirs].join(', ')}`)
+    return { id, title: meta.title, lang: meta.lang, summary: meta.summary, files, tasks }
+  })
+  if (present.size) throw new Error(`content/codebase has repos not listed in index.json: ${[...present].join(', ')}`)
+  return { guide, repos }
 }
 
 export const CHANGELOG_OUTPUT = 'src/generated/changelog.json'
@@ -480,6 +623,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   writeIfChanged(PLANS_OUTPUT, planSet.plans)
   writeIfChanged(PLAN_IDS_OUTPUT, planSet.ids)
   writeIfChanged(MATH_LABS_OUTPUT, buildMathLabs())
+  const codebase = buildCodebase()
+  writeIfChanged(CODEBASE_OUTPUT, codebase)
+  writeIfChanged(CODEBASE_IDS_OUTPUT, codebase.repos.flatMap(repo => repo.tasks.map(task => `${repo.id}/${task.id}`)))
   writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
   writeIfChanged(CHANGELOG_OUTPUT, buildChangelog())
 }

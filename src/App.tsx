@@ -31,6 +31,7 @@ import TracksScreen from './screens/TracksScreen'
 import Study from './screens/Study'
 import { companyIds } from './companies'
 import planIds from './generated/plan-ids.json' with { type: 'json' }
+import codebaseIds from './generated/codebase-ids.json' with { type: 'json' }
 import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
 import { parseHash as parseRoute } from './routes'
@@ -63,6 +64,7 @@ const UpdateNotice = lazy(() => import('./components/UpdateNotice'))
 const PwaPanel = lazy(() => import('./components/PwaPanel'))
 const PlaygroundScreen = lazy(() => import('./screens/PlaygroundScreen'))
 const PlansScreen = lazy(() => import('./screens/PlansScreen'))
+const CodebaseScreen = lazy(() => import('./screens/CodebaseScreen'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 const MAC = /Mac|iP(hone|ad)/.test(navigator.platform)
 /** Backup files, whiteboards included, are handled in a lazy chunk so they add nothing to the main bundle. */
@@ -70,7 +72,7 @@ const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
 const Recovery = lazy(() => backupFlow().then(flow => ({ default: flow.Recovery })))
 
-const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds) }
+const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds), codebase: new Set(codebaseIds) }
 const parseHash = () => parseRoute(window.location.hash, routeIds)
 
 function tourSeen() {
@@ -96,6 +98,7 @@ export default function App() {
   const [snippetId, setSnippetId] = useState(() => parseHash().snippetId)
   const [planId, setPlanId] = useState(() => parseHash().planId)
   const [labId, setLabId] = useState(() => parseHash().labId)
+  const [codebaseTask, setCodebaseTask] = useState(() => parseHash().codebaseTask)
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
   const [notice, setNotice] = useState('')
@@ -155,6 +158,7 @@ export default function App() {
       setSnippetId(parsed.snippetId)
       setPlanId(parsed.planId)
       setLabId(parsed.labId)
+      setCodebaseTask(parsed.codebaseTask)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
     apply()
@@ -162,7 +166,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId, labId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId, labId, codebaseTask])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -192,6 +196,7 @@ export default function App() {
     setCompanyId(undefined)
     setPlanId(undefined)
     setLabId(undefined)
+    setCodebaseTask(undefined)
   }
 
   const latest = useRef(progress)
@@ -454,6 +459,7 @@ export default function App() {
             {route === 'settings' && <Suspense fallback={<p role="status">Loading settings…</p>}><SettingsScreen app={app} appearance={look.appearance} setAppearance={look.update} appearanceError={look.error} accent={accent.accent} chooseAccent={accent.choose} /></Suspense>}
             {route === 'playground' && <Suspense fallback={<p role="status">Loading the Playground…</p>}><PlaygroundScreen app={app} snippetId={snippetId} /></Suspense>}
             {route === 'plans' && <Suspense fallback={<p role="status">Loading study plans…</p>}><PlansScreen app={app} planId={planId} labId={labId} /></Suspense>}
+            {route === 'codebase' && <Suspense fallback={<p role="status">Loading codebase practice…</p>}><CodebaseScreen app={app} taskKey={codebaseTask} /></Suspense>}
       {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
             {route === 'changelog' && <Suspense fallback={<p role="status">Loading the changelog…</p>}><ChangelogScreen app={app} /></Suspense>}
             {route === 'study' && (progress.session && activeLesson ? <Study key={activeLesson.id} lesson={activeLesson} session={progress.session} edit={editSession} finish={finish} heading={heading} path={selectedPath} openLesson={lesson => start(lesson, progress.records[lesson.id] ? 'review' : 'learn')} /> : <section className="card empty-state"><h1 ref={heading} tabIndex={-1}>A fresh page.</h1><p>No unfinished session. Pick a lesson to begin.</p><button className="primary" onClick={() => navigate('home')}>Go to Home</button></section>)}

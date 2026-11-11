@@ -1,7 +1,7 @@
 import { fuzzyScore } from './fuzzy'
 import type { NavIndex } from './nav-model'
 
-export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'plan' | 'snippet'
+export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'plan' | 'codebase' | 'snippet'
 
 export interface PaletteEntry {
   /** Unique: used for the option's DOM id and for recents. */
@@ -19,7 +19,7 @@ export interface PaletteGroup { kind: PaletteKind | 'recent' | 'suggested'; labe
 
 export const KIND_LABELS: Record<PaletteKind, string> = {
   page: 'Pages', track: 'Tracks', lesson: 'Lessons', pattern: 'Patterns', guide: 'Field Guide', antipattern: 'Anti-patterns',
-  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', plan: 'Study plans', snippet: 'Playground snippets',
+  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', plan: 'Study plans', codebase: 'Codebase tasks', snippet: 'Playground snippets',
 }
 const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 
@@ -48,6 +48,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['board', 'Whiteboard', '#board', 'draw diagram excalidraw sketch'],
   ['company', 'Company prep', '#company', 'employers companies'],
   ['mock', 'Mock interviews', '#mock', 'practice interview timer loop'],
+  ['codebase', 'Codebase interviews', '#codebase', 'codebase interview existing code repo debugging bug fix feature change multi-file pair programming fde forward deployed'],
   ['stories', 'Story bank', '#stories', 'behavioural behavioral star stories'],
 ].map(([id, title, href, keywords]) => ({ id: `page:${id}`, kind: 'page' as const, title, href, keywords }))
 
@@ -83,6 +84,8 @@ export function buildPaletteIndex(nav: NavIndex, lessons: readonly LessonInfo[] 
         ...weeks.map(([n, week, track]): PaletteEntry => ({ id: `plan:${id}:w${n}${track ? `:${track}` : ''}`, kind: 'plan', title: `Week ${n}: ${week}`, href: `#plans/${id}`, detail: [title, trackTitle.get(track)].filter(Boolean).join(' · ') })),
       ]
     }),
+    ...(nav.codebase ?? []).flatMap(([repo, repoTitle, lang, tasks]) => tasks.map(([task, title, kind]): PaletteEntry =>
+      ({ id: `codebase:${repo}/${task}`, kind: 'codebase', title, href: `#codebase/${repo}/${task}`, detail: `Codebase task · ${repoTitle} (${lang === 'py' ? 'Python' : 'TypeScript'})`, keywords: `codebase ${kind}` }))),
   ]
 }
 

@@ -3,6 +3,7 @@ import { TOPIC_LABELS } from './guide-types'
 import type { GuideTopic } from './guide-types'
 import type { DeepSections, NavIndex, NavNode, NavProgress } from './nav-model'
 import { readPlans, type PlansState } from './study-plans'
+import { readCodebaseProgress, type CodebaseProgress } from './codebase'
 
 /* Loaded with the nav index so the deep levels of the tree stay out of the main chunk. */
 
@@ -22,7 +23,7 @@ const leaf = (route: string, done: (id: string) => boolean) => ([id, title]: rea
   ({ id: `${route}/${id}`, label: title, href: `#${route}/${id}`, done: done(id) })
 
 /** The children and counts of every section whose items come from the nav index, keyed by section id. */
-export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans()): DeepSections {
+export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans(), codebaseState: CodebaseProgress = readCodebaseProgress()): DeepSections {
   const tracks = nav.tracks.map(([id, title, lessonIds]): NavNode => {
     const done = lessonIds.filter(lesson => progress.records[lesson]).length
     return { id: `tracks/${id}`, label: title, href: `#tracks/${id}`, count: { done, total: lessonIds.length }, done: lessonIds.length > 0 && done === lessonIds.length }
@@ -59,6 +60,10 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
     return { id: `plans/${id}`, label: title, href: `#plans/${id}`, count: { done, total: items.length }, done: items.length > 0 && done === items.length }
   })
 
+  // Codebase practice progress also lives in its own storage key.
+  const codebaseTasks = (nav.codebase ?? []).flatMap(([repo, repoTitle, , tasks]) => tasks.map(([task, title]): NavNode =>
+    ({ id: `codebase/${repo}/${task}`, label: `${repoTitle}: ${title}`, href: `#codebase/${repo}/${task}`, done: !!codebaseState[`${repo}/${task}`]?.completed })))
+
   return {
     tracks: { children: tracks, count: { done: lessons.filter(lesson => progress.records[lesson]).length, total: lessons.length } },
     patterns: { children: patterns, count: { done: nav.patterns.filter(([id]) => patternDone(id)).length, total: nav.patterns.length } },
@@ -68,6 +73,7 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
     cases: { children: cases, count: tally(cases) },
     company: { children: companies, count: tally(companies) },
     mock: { children: mocks },
+    codebase: { children: codebaseTasks, count: tally(codebaseTasks) },
     plans: { children: plans, count: plans.reduce((sum, plan) => ({ done: sum.done + plan.count!.done, total: sum.total + plan.count!.total }), { done: 0, total: 0 }) },
   }
 }

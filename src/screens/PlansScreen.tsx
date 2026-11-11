@@ -122,7 +122,7 @@ function ErrorLog({ entry, today, save }: { entry: PlanProgress; today: string; 
 
 interface ScoreDraft { kind: ScoreKind; title: string; scores: Scorecard['scores']; notes: string }
 const blankScore = (): ScoreDraft => ({ kind: 'dsa', title: '', scores: [2, 2, 2, 2], notes: '' })
-const SCORE_PLACEHOLDERS: Record<ScoreKind, string> = { dsa: 'e.g. Course schedule', design: 'e.g. Document Q&A copilot', case: 'e.g. AI for a support inbox' }
+const SCORE_PLACEHOLDERS: Record<ScoreKind, string> = { dsa: 'e.g. Course schedule', design: 'e.g. Document Q&A copilot', case: 'e.g. AI for a support inbox', codebase: 'e.g. Checkout: adding an item twice' }
 
 function Scorecards({ entry, today, save }: { entry: PlanProgress; today: string; save: (change: (entry: PlanProgress) => PlanProgress) => void }) {
   const [draft, setDraft] = useState<ScoreDraft>(blankScore)

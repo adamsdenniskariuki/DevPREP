@@ -1,0 +1,78 @@
+{
+  "id": "rate-limiter",
+  "title": "Throttle",
+  "lang": "py",
+  "summary": "A token-bucket rate limiter with one bucket per API caller.",
+  "tasks": [
+    {
+      "id": "idle-burst",
+      "kind": "bug",
+      "title": "Huge bursts after a quiet spell",
+      "minutes": 45,
+      "brief": [
+        "A caller who had been quiet overnight sent several hundred requests in one second and the gateway let them all through, even though buckets hold 20 tokens.",
+        "Find out why the limit did not hold and fix it."
+      ],
+      "done": [
+        "A bucket never holds more than its capacity, however long it sits idle.",
+        "Partial refills still work as before."
+      ],
+      "walkthrough": {
+        "questions": [
+          "After a long idle spell, should the caller get exactly one full burst? (Yes, up to capacity.)",
+          "Is the fake clock how production time is modelled in tests? (Yes; the real clock has the same now().)"
+        ],
+        "orient": [
+          "README states the invariant: “never holds more than capacity”.",
+          "Registry only creates and looks up buckets, so the arithmetic must be in bucket.py.",
+          "Baseline: all tests pass; none of them leave a bucket idle for long."
+        ],
+        "failingTest": "def test_idle_time_does_not_overfill():\n    clock = FakeClock()\n    bucket = TokenBucket(3, 1, clock)\n    clock.advance(60)\n    assert [bucket.allow() for _ in range(4)] == [True, True, True, False]  # fails: all True",
+        "trace": [
+          "Printed bucket.tokens() after advance(60): 63.0. So the bucket over-fills.",
+          "_refill adds elapsed × rate with no upper bound. The invariant is never enforced."
+        ],
+        "wrapUp": [
+          "Cause: _refill added elapsed time × rate without capping at capacity.",
+          "Fix: wrap the sum in min(capacity, …). One line, plus a regression test.",
+          "Checked by hand: half-second refills still give fractional tokens; capacity 1 still works.",
+          "With more time: a property-based test that tokens() stays within [0, capacity] for random clocks."
+        ]
+      }
+    },
+    {
+      "id": "retry-after",
+      "kind": "feature",
+      "title": "Tell callers when to retry",
+      "minutes": 50,
+      "brief": [
+        "Rejected callers should get a Retry-After hint. Add TokenBucket.retry_after(cost=1): how many seconds until allow(cost) would succeed, or 0 if it would succeed now.",
+        "It must not spend tokens. Asking about a cost bigger than the bucket can ever hold is a programming mistake: raise ValueError."
+      ],
+      "done": [
+        "retry_after returns 0 when allowed now, otherwise the exact wait in seconds.",
+        "Waiting that long and calling allow(cost) succeeds.",
+        "No tokens are spent; impossible costs raise ValueError."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Seconds as a float or rounded up? (A float; the HTTP layer rounds.)",
+          "What if cost exceeds capacity? (Raise ValueError; it can never succeed.)"
+        ],
+        "orient": [
+          "tokens() already refills before reading, so the new method can reuse it rather than touch _refill.",
+          "The existing methods validate arguments with ValueError; matched that."
+        ],
+        "failingTest": "def test_retry_after_says_when_to_come_back():\n    bucket = TokenBucket(2, 4, FakeClock())\n    bucket.allow(2)\n    assert bucket.retry_after() == 0.25",
+        "trace": [
+          "missing = cost − tokens; tokens arrive at rate per second, so the wait is missing / rate, clamped at 0."
+        ],
+        "wrapUp": [
+          "Added retry_after built on tokens(), so the refill logic stays in one place.",
+          "Verified that waiting the returned time and then calling allow succeeds, which is the property callers rely on.",
+          "Noticed but not changed: Registry has no retry_after pass-through yet; the gateway would want one."
+        ]
+      }
+    }
+  ]
+}

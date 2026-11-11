@@ -1,0 +1,75 @@
+{
+  "id": "cart",
+  "title": "Checkout",
+  "lang": "ts",
+  "summary": "A shopping cart with discount codes, totals in whole cents and a printable receipt.",
+  "tasks": [
+    {
+      "id": "repeat-add",
+      "kind": "bug",
+      "title": "Adding an item twice",
+      "minutes": 45,
+      "brief": [
+        "Customers say that tapping “Add to basket” a second time leaves the quantity unchanged, and sometimes lowers it. Adding 2 teas then 1 more tea leaves 1 tea.",
+        "Find the cause, fix it and add a regression test."
+      ],
+      "done": [
+        "Adding a SKU already in the cart adds to its quantity.",
+        "The cart still has one line per SKU, so the receipt shows a single combined row."
+      ],
+      "walkthrough": {
+        "questions": [
+          "If the same SKU is added with a different price, which wins? (Out of scope; keep the first price, but mention it.)",
+          "Should the merged line stay in its original position on the receipt? (Yes.)"
+        ],
+        "orient": [
+          "README rule: “adding a SKU that is already in the cart increases its quantity”.",
+          "Searched for “qty” to find every place quantity changes: only Cart.add writes it.",
+          "Baseline: all tests pass; none add the same SKU twice."
+        ],
+        "failingTest": "export function testAddingTheSameSkuAgainAddsUp() {\n  const cart = new Cart();\n  cart.add('tea', 'Tea', 450, 2);\n  cart.add('tea', 'Tea', 450, 3);\n  assertEqual(cart.items()[0].qty, 5); // fails: 3\n}",
+        "trace": [
+          "Cart.add finds the existing line, then assigns qty instead of adding to it."
+        ],
+        "wrapUp": [
+          "Cause: the merge branch in Cart.add replaced the quantity rather than increasing it.",
+          "Fix: `existing.qty += qty`, plus a regression test.",
+          "Noticed but not changed: a repeat add with a different unit price silently keeps the old price. Worth a product decision."
+        ]
+      }
+    },
+    {
+      "id": "shipping",
+      "kind": "feature",
+      "title": "Shipping and grand total",
+      "minutes": 50,
+      "brief": [
+        "Add shipping. Orders under $50.00 after discounts pay a flat $4.99; orders of $50.00 or more ship free. An empty cart has no shipping.",
+        "Add Cart.shipping() and Cart.grandTotal() (total plus shipping). Leave total() as it is, because the payments team reads it."
+      ],
+      "done": [
+        "shipping() is 499 for non-empty carts under 5000 cents after discount, else 0.",
+        "grandTotal() is total() + shipping(); total() is unchanged."
+      ],
+      "walkthrough": {
+        "questions": [
+          "Is the $50 threshold before or after discount? (After.)",
+          "Is exactly $50.00 free? (Yes, “$50.00 or more”.)",
+          "Should the receipt show shipping? (Not in this task; note it.)"
+        ],
+        "orient": [
+          "All amounts are integer cents; matched that with named constants SHIPPING_CENTS and FREE_SHIPPING_FROM.",
+          "total() already applies the discount and floors at zero, so shipping builds on it."
+        ],
+        "failingTest": "export function testShippingUnderThreshold() {\n  const cart = new Cart();\n  cart.add('tea', 'Tea', 450);\n  assertEqual(cart.shipping(), 499);\n  assertEqual(cart.grandTotal(), 949);\n}",
+        "trace": [
+          "Checked the edge cases on paper: empty cart, exactly 5000, and a discount that drops a 5200 cart to 4680."
+        ],
+        "wrapUp": [
+          "Added shipping() and grandTotal() on top of total(), with the two numbers as named constants.",
+          "With more time: add a shipping row to the receipt, and move pricing rules into one module."
+        ]
+      }
+    }
+  ]
+}

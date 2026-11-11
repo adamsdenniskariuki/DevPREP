@@ -2,12 +2,14 @@ import type { PyodideAPI } from 'pyodide'
 import { OUTPUT_LIMIT, PY_HARNESS, runPython, type ProgressMessage, type RunRequest } from './core'
 import { isPyPackage } from './pyodide-version'
 import { blockNetwork, FREE_OUTPUT_LIMIT, PY_FREE_HARNESS, runPythonFree, type FreeRunRequest } from './free'
+import { PY_PROJECT_HARNESS, runPythonProject, type ProjectRunRequest } from './project'
 
-export type PyWorkerMessage = { type: 'init'; indexURL: string; packages?: string[] } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest)
+export type PyWorkerMessage = { type: 'init'; indexURL: string; packages?: string[] } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest) | ({ type: 'project' } & ProjectRunRequest)
 
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let runtime: Promise<PyodideAPI> | undefined
 let freeReady = false
+let projectReady = false
 let output = ''
 
 const append = (line: string) => { if (output.length <= Math.max(OUTPUT_LIMIT, FREE_OUTPUT_LIMIT)) output += `${line}\n` }
@@ -51,6 +53,15 @@ scope.onmessage = async (event: MessageEvent<PyWorkerMessage>) => {
       freeReady = true
     }
     scope.postMessage({ type: 'result', result: runPythonFree(py, message, flush) })
+    return
+  }
+  const progress = (done: number) => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage)
+  if (message.type === 'project') {
+    if (!projectReady) {
+      py.runPython(PY_PROJECT_HARNESS)
+      projectReady = true
+    }
+    scope.postMessage({ type: 'result', result: runPythonProject(py, message, flush, progress) })
     return
   }
   scope.postMessage({ type: 'result', result: runPython(py, message, flush, done => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage)) })

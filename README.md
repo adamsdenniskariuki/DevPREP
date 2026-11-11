@@ -19,6 +19,7 @@ A little practice. A stronger interview. DevPREP is a local-first interview prep
 | **Whiteboards** (`#board`, `#board/<id>`) | Excalidraw boards with system-design stencils, saved on this device |
 | **Flashcards** (`#cards`) | Spaced-repetition concept cards across all tracks, plus a recall card per coding and SQL problem |
 | **Mock interviews** (`#mock`) | Timed mocks per track with model answers and rubric self-scoring |
+| **Codebase interviews** (`#codebase`, `#codebase/<repo>/<task>`) | A guide to working in an unfamiliar repo, plus six small Python and TypeScript repos with a bug to fix and a feature to add in each, run against the repo's own tests, with hidden review tests, a walkthrough and a scorecard after submitting |
 | **Story bank** (`#stories`) | STAR stories mapped to 10 behavioral competencies |
 | **Study plan** (`#plan`) | Day-by-day plan up to your interview date |
 | **Study plans** (`#plans`, `#plans/<id>`) | Fixed week-by-week plans with daily checklists, phase checks, an error log and mock scorecards |
@@ -30,7 +31,7 @@ Old links still work: `#today` → Today, `#roadmap` → Tracks, `#review` → P
 
 ### Navigation
 
-Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards, Playground), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Story bank) and **Me** (Today, Plan, Study plans, Progress, Settings, What’s new, Site map).
+Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide), **Practise** (Coding problems, SQL problems, Flashcards, Playground), **Design** (Design cases, Whiteboard), **Interview** (Company prep, Mock interviews, Codebase interviews, Story bank) and **Me** (Today, Plan, Study plans, Progress, Settings, What’s new, Site map).
 
 - **Desktop (1024px and wider)**: a sticky sidebar holds an ARIA tree of the sections. Branches go down to tracks, pattern pages, Field Guide topics, coding/SQL topics and problems, design cases, companies, mock loops and study plans, with done ticks and due counts. One row is in the Tab order; arrows move, Left/Right collapse and expand, Home/End jump, `*` expands siblings and typing a few letters finds a row. The chevron toggles a branch without navigating. **Hide menu** collapses the sidebar to a rail. Expanded branches and the collapsed state are saved in `devprep.nav.v1` (not in backups).
 - **Phones and tablets (below 1024px)**: a bottom bar with the five sections. Each opens a modal sheet with that section's tree and a link to its hub; the sheet traps focus and closes with Escape, its backdrop, Close or a link, returning focus to its button.
@@ -73,6 +74,15 @@ Routes are grouped into five sections: **Learn** (Tracks, Patterns, Field Guide)
 - **Snippets:** up to 50 (20,000 characters each, 2 MB in total) saved in `devprep.playground.v1`, with new, rename, duplicate and delete. They appear in search (Ctrl+K) and are included in backups as `playground`. **Open in Playground** on a coding or SQL problem copies your current code into a new snippet.
 - Works offline: JavaScript straight away, and TypeScript, Python and SQL after each has loaded once.
 
+## Codebase interviews
+
+`#codebase` (Interview → Codebase interviews) opens a guide to codebase interviews: clarify, orient, reproduce, trace, change, verify and wrap up, with a checklist per step and a four-area rubric. `#codebase/<repo>/<task>` opens one task.
+
+- **Repos:** six small multi-file repos (`content/codebase/<repo>/`): Stockroom, Logscan and Throttle in Python, Checkout, Signals and Finder in TypeScript. Each has a README, source files and tests, and two tasks: a bug to fix and a feature to add (12 in all).
+- **Working:** a file tree and editor over the whole repo, with a timer. **Run tests** runs the visible tests in the browser (Pyodide's pytest-style runner or the TypeScript worker) with the same progress bar as other runners. **Submit** adds hidden review tests (named only "Hidden review test N"), then shows the walkthrough, a model diff and a scorecard you fill in against the rubric.
+- **Saving:** edits, the timer and the submitted state are drafts kept on this device in `devprep.codebase.drafts.v1` (not in backups). Attempts, best scores and completion are saved in `devprep.codebase.v1` and included in backups as `codebase` (up to 50 KB). Scorecards also appear with the mock scorecards on the study plan page.
+- **Offline:** every task works offline once the app (and, for Python, Pyodide) has loaded once.
+- **Adding a repo:** write `content/codebase/<repo>/repo.json` and its files, add the id to `content/codebase/index.json`, then `npm run content` rebuilds `src/generated/codebase.json` (lazy) and `codebase-ids.json` after checking its structure; `src/codebase.test.ts` checks that each model answer passes every visible and hidden test and each starter fails at least one.
 ## Patterns
 
 A course on recognising algorithm patterns. It covers **arrays & hashing, prefix sums, two pointers, sliding window, stack** (sub-patterns: basic stack, monotonic stack), **binary search** (sub-pattern: search on the answer), **linked lists** (sub-patterns: fast & slow pointers, in-place reversal), **intervals, cyclic sort, trees** (sub-patterns: DFS traversals, BFS / level-order), **tries, heaps** (sub-patterns: top-K, K-way merge, two heaps), **matrix traversal, quickselect & divide and conquer, graphs** (sub-patterns: BFS / shortest steps, DFS / flood fill, topological sort, Union-Find, Dijkstra), **backtracking, dynamic programming** (sub-patterns: 1-D DP, 2-D grid DP, knapsack, LCS / edit distance, interval DP), **greedy, bit manipulation and design** (an LRU cache). Segment trees and Fenwick trees, KMP and geometry are out of scope for now. Sub-pattern pages sit under their parent on the course home and cheat sheet, and problems can name one with an optional `subpattern` field (a page id). Each page has the same 8 sections: recognise it (signals), picture it, **watch it run**, template (Python, JavaScript, TypeScript), try it (an exercise with tests), complexity, common mistakes, and a quick check.
