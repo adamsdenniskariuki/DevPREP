@@ -33,6 +33,8 @@ export interface NavIndex {
   codebase?: [id: string, title: string, lang: string, tasks: [id: string, title: string, kind: string][]][]
   /** React module lessons and exercises, in course order. */
   react?: [id: string, title: string, kind: 'lesson' | 'exercise'][]
+  /** Node.js module lessons and exercises, in course order. */
+  node?: [id: string, title: string, kind: 'lesson' | 'exercise'][]
   /** Timed skill tests. */
   skillTests?: [id: string, title: string][]
   decks: [track: string, title: string, cards: number][]
@@ -73,7 +75,7 @@ export const GROUPS: readonly { id: GroupId; label: string; icon: string; href?:
 ]
 
 const ROUTE_GROUP: Record<string, GroupId> = {
-  tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn',
+  tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn', node: 'learn',
   practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
   company: 'interview', mock: 'interview', codebase: 'interview', skilltest: 'interview', stories: 'interview',
@@ -105,6 +107,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
       branch({ id: 'patterns', label: 'Patterns', href: '#patterns' }),
       branch({ id: 'guide', label: 'Field Guide', href: '#guide' }),
       branch({ id: 'react', label: 'React', href: '#react' }),
+      branch({ id: 'node', label: 'Node.js', href: '#node' }),
     ]),
     { ...group('practise', [
       branch({ id: 'code', label: 'Coding problems', href: '#code' }),

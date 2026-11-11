@@ -1,0 +1,13 @@
+{
+  "id": "middleware-compose",
+  "title": "Compose async middleware",
+  "lesson": "node-http",
+  "summary": "Chain middleware functions that each receive a context and a next() function, with code that runs on the way in and out.",
+  "prompt": "Finish `compose(middleware)`. It returns `(ctx) => Promise<void>` that runs the list in order. Each middleware is `(ctx, next) => Promise<void> | void`; calling `await next()` runs the rest of the chain and resumes afterwards, so code after it runs on the way back out.\n\nRules:\n- A middleware that does not call `next` ends the chain there.\n- Calling `next()` twice in one middleware rejects with an `Error` containing `next() called multiple times`.\n- A thrown error or rejection anywhere rejects the returned promise, and an earlier middleware can catch it with `try { await next() } catch {}`.",
+  "hints": [
+    "Write a recursive `dispatch(i)` that calls `middleware[i](ctx, () => dispatch(i + 1))`.",
+    "Track the highest index dispatched so far; if `i <= index`, `next` was called twice.",
+    "Wrap the call in `Promise.resolve(...)` inside `try`, and return `Promise.reject(error)` from `catch`, so sync throws become rejections."
+  ],
+  "minutes": 25
+}

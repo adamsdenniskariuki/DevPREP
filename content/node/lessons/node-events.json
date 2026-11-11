@@ -1,0 +1,45 @@
+{
+  "id": "node-events",
+  "title": "EventEmitter",
+  "minutes": 25,
+  "summary": "The observer pattern Node is built on: on, once, emit, error events, listener limits and turning events into promises.",
+  "sections": [
+    {
+      "title": "Emitting and listening",
+      "body": "`EventEmitter` from `node:events` is the base of streams, servers, sockets and child processes. `on(name, fn)` registers a listener, `once` registers one that removes itself after the first call, `off` removes one, and `emit(name, ...args)` calls every listener for that event **synchronously**, in registration order, and returns whether any existed.\n\nBecause `emit` is synchronous, a slow listener delays the emitter, and an exception thrown by a listener propagates out of `emit`.",
+      "code": "import { EventEmitter } from 'node:events'\n\nconst jobs = new EventEmitter()\njobs.on('done', (id: string) => console.log('done', id))\njobs.once('done', () => console.log('first job finished'))\njobs.emit('done', 'a1') // both listeners\njobs.emit('done', 'a2') // only the on() listener"
+    },
+    {
+      "title": "The error event",
+      "body": "`'error'` is special. If you emit `'error'` and nobody is listening, the emitter throws the error, which crashes the process unless something above catches it. Every long-lived emitter you create or receive (sockets, streams, child processes) needs an `'error'` listener."
+    },
+    {
+      "title": "Leaks and limits",
+      "body": "Listeners keep their closures alive. Adding a listener per request to a shared emitter and never removing it is a classic memory leak. Node warns with `MaxListenersExceededWarning` when one event has more than 10 listeners; treat the warning as a bug report rather than raising the limit.\n\nRemove listeners when the owner goes away, or pass `{ signal }` to `events.on`/`once` so an `AbortSignal` removes them for you."
+    },
+    {
+      "title": "Events as promises",
+      "body": "`events.once(emitter, name)` returns a promise of the next event's arguments and rejects if `'error'` fires first. `events.on(emitter, name)` returns an async iterator, so you can `for await` over events. Both accept an `AbortSignal`.",
+      "code": "import { once } from 'node:events'\n\nserver.listen(0)\nawait once(server, 'listening')\nconsole.log('ready on', server.address())"
+    }
+  ],
+  "pitfalls": [
+    "No `'error'` listener on a stream, socket or custom emitter.",
+    "Adding listeners per request to a shared emitter and never removing them.",
+    "Assuming listeners run asynchronously after `emit` returns."
+  ],
+  "gotchas": [
+    {
+      "question": "What does `emit` return?",
+      "answer": "`true` if the event had at least one listener, otherwise `false`. It does not return listener results; listeners' return values are ignored."
+    },
+    {
+      "question": "A listener removes another listener for the same event during `emit`. Does the removed one still run?",
+      "answer": "Yes, for the current `emit`. Node copies the listener array before calling it, so changes during an emit only affect later emits. Your own implementations should do the same."
+    },
+    {
+      "question": "How would you wait for one event with a timeout?",
+      "answer": "Use `once(emitter, name, { signal: AbortSignal.timeout(ms) })`. The promise rejects with an `AbortError` if the event does not arrive in time, and the listener is removed either way."
+    }
+  ]
+}

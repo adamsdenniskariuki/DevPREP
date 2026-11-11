@@ -10,7 +10,8 @@ export function codeOf(editor: Locator) {
 }
 
 export async function expectCode(editor: Locator, expected: string | RegExp) {
-  if (typeof expected === 'string') await expect.poll(() => codeOf(editor)).toBe(expected)
+  // Fixtures read from a CRLF checkout (core.autocrlf) still match the editor's LF text.
+  if (typeof expected === 'string') await expect.poll(() => codeOf(editor)).toBe(expected.replace(/\r\n/g, '\n'))
   else await expect.poll(() => codeOf(editor)).toMatch(expected)
 }
 

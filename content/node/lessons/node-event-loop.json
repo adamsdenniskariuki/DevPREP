@@ -1,0 +1,47 @@
+{
+  "id": "node-event-loop",
+  "title": "The event loop",
+  "minutes": 35,
+  "summary": "How a single JavaScript thread serves many connections: the call stack, the microtask queue, the event loop phases, and why blocking code hurts every request.",
+  "sections": [
+    {
+      "title": "One thread, many waits",
+      "body": "Node runs your JavaScript on **one thread**. It stays fast because most server work is waiting: for a socket, a disk read or a database reply. Node hands that waiting to the operating system (and a small thread pool, libuv, for file system, DNS lookups, compression and crypto) and keeps the JavaScript thread free.\n\nWhen a wait finishes, a callback is queued. The **event loop** takes queued callbacks one at a time and runs each one to completion on the call stack. Nothing interrupts a running callback, so you never need locks around plain variables, but a callback that runs for 200 ms delays every other request by 200 ms.",
+      "code": "const server = http.createServer((req, res) => {\n  // Runs on the single JS thread: keep it short.\n  res.end('ok')\n})"
+    },
+    {
+      "title": "Phases of the loop",
+      "body": "Each turn of the loop walks through phases in order:\n\n1. **timers**: callbacks from `setTimeout` and `setInterval` whose time has passed.\n2. **pending callbacks**: some deferred system errors.\n3. **poll**: wait for and run I/O callbacks (sockets, files). The loop may block here when nothing else is due.\n4. **check**: `setImmediate` callbacks.\n5. **close callbacks**: for example a socket's `'close'` event.\n\nA timer's delay is a **minimum**, not a promise: `setTimeout(fn, 0)` runs on a later turn, after the current callback and all microtasks."
+    },
+    {
+      "title": "Microtasks run first",
+      "body": "Between every callback, Node drains two queues before moving on: first the `process.nextTick` queue, then the **microtask** queue (promise reactions and `queueMicrotask`). Both are drained completely, including anything added while draining.\n\nSo the order for code started from the main script is: synchronous code, then `nextTick` callbacks, then promise callbacks, then timers and `setImmediate` on later phases. A recursive `nextTick` or a promise chain that never ends starves I/O, because the loop never gets back to the poll phase.",
+      "code": "setTimeout(() => console.log('timeout'), 0)\nPromise.resolve().then(() => console.log('promise'))\nqueueMicrotask(() => console.log('microtask'))\nconsole.log('sync')\n// sync, promise, microtask, timeout"
+    },
+    {
+      "title": "Keeping the loop healthy",
+      "body": "Signs of a blocked loop: latency rises for **all** routes at once, health checks time out, and CPU sits at 100% on one core. Common causes are large `JSON.parse`/`JSON.stringify` calls, synchronous APIs such as `readFileSync` inside a request, catastrophic regular expressions and tight loops over large arrays.\n\nFixes: stream or paginate large payloads, move CPU-heavy work to `worker_threads` or another service, split long loops into chunks with `setImmediate` between them, and measure event loop delay with `perf_hooks.monitorEventLoopDelay()`."
+    }
+  ],
+  "pitfalls": [
+    "Calling synchronous file or crypto APIs inside a request handler.",
+    "Assuming `setTimeout(fn, 0)` runs before a resolved promise callback.",
+    "Recursive `process.nextTick` or microtask loops that starve I/O.",
+    "Believing `async` makes CPU-bound code run in parallel; it still runs on the one thread."
+  ],
+  "gotchas": [
+    {
+      "question": "What does this print?",
+      "answer": "A, D, C, B. Synchronous code runs first (A, D), then the microtask queue (C), then the timer on a later loop turn (B).",
+      "code": "console.log('A')\nsetTimeout(() => console.log('B'), 0)\nPromise.resolve().then(() => console.log('C'))\nconsole.log('D')"
+    },
+    {
+      "question": "Is Node single-threaded?",
+      "answer": "Your JavaScript runs on one thread per process (or per worker). libuv keeps a thread pool, four threads by default, for file system work, DNS lookups, zlib and some crypto, and the OS handles network I/O asynchronously. So \"single-threaded\" describes your code, not the whole runtime."
+    },
+    {
+      "question": "`setImmediate` or `setTimeout(fn, 0)`: which runs first?",
+      "answer": "From the main module the order is not guaranteed; it depends on how long process start-up took. Inside an I/O callback, `setImmediate` always runs first, because the check phase comes right after the poll phase."
+    }
+  ]
+}

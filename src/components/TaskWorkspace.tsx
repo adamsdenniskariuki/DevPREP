@@ -21,8 +21,8 @@ interface Props {
   total?: number
   limitMs: number
   report?: ProjectReport
-  /** Element the runner renders the live preview into. */
-  preview: RefObject<HTMLDivElement | null>
+  /** Element the runner renders the live preview into. Leave out for code with no UI (the Node.js module): the editor then spans the full width. */
+  preview?: RefObject<HTMLDivElement | null>
   onRun: () => void
   onReset?: () => void
   helper?: string
@@ -33,13 +33,13 @@ interface Props {
 
 /**
  * One runnable file with read-only tests: editor, Run, progress, results and a live preview pane.
- * Shared by module exercises (the React module) and the coding tasks of the timed skill tests.
+ * Shared by module exercises (the React and Node.js modules) and the coding tasks of the timed skill tests.
  */
 export default function TaskWorkspace({ id, lang, file, testFile, code, onChange, tests, phase, done, total, limitMs, report, preview, onRun, onReset, helper = '', headingLevel = 2, label }: Props) {
   const busy = phase !== 'idle'
   const Heading = headingLevel === 2 ? 'h2' : 'h3'
   const Sub = headingLevel === 2 ? 'h3' : 'h4'
-  return <section className="card task-workspace" aria-labelledby={label ? undefined : `${id}-heading`} aria-label={label}>
+  return <section className={preview ? 'card task-workspace' : 'card task-workspace no-preview'} aria-labelledby={label ? undefined : `${id}-heading`} aria-label={label}>
     <div className="task-editor-pane">
       <div className="code-toolbar">
         <Heading id={`${id}-heading`} className="task-small-heading"><code>{file}</code></Heading>
@@ -58,10 +58,10 @@ export default function TaskWorkspace({ id, lang, file, testFile, code, onChange
         <pre className="task-code" tabIndex={0} aria-label={testFile}><code>{tests}</code></pre>
       </details>
     </div>
-    <div className="task-preview-pane">
+    {preview && <div className="task-preview-pane">
       <Sub className="task-small-heading">Live preview</Sub>
       <div ref={preview} className="task-preview">{!report && !busy && <p className="muted">Run the tests to see your component here.</p>}</div>
-    </div>
+    </div>}
   </section>
 }
 

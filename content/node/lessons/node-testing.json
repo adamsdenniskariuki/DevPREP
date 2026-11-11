@@ -1,0 +1,41 @@
+{
+  "id": "node-testing",
+  "title": "Testing Node code",
+  "minutes": 30,
+  "summary": "The built-in test runner, test doubles, testing async code and timers, and integration tests for HTTP handlers.",
+  "sections": [
+    {
+      "title": "node:test",
+      "body": "Node ships a test runner: `import { test, describe } from 'node:test'` and `import assert from 'node:assert/strict'`, run with `node --test`. It supports subtests, hooks (`before`, `afterEach`), mocking, coverage and watch mode. Vitest and Jest offer the same ideas with more conveniences.\n\nPrefer `assert.deepStrictEqual` for structures and `await assert.rejects(promise, /message/)` for async failures.",
+      "code": "import { test } from 'node:test'\nimport assert from 'node:assert/strict'\nimport { slugify } from './slugify.js'\n\ntest('slugify lower-cases and joins with dashes', () => {\n  assert.equal(slugify('Hello World'), 'hello-world')\n})"
+    },
+    {
+      "title": "Test doubles",
+      "body": "A **stub** returns canned answers, a **spy** records calls, a **mock** combines both with expectations, and a **fake** is a light working implementation such as an in-memory repository. Inject dependencies (pass the clock, the HTTP client or the repository in) so tests can swap them without patching modules.\n\nFake timers (`mock.timers.enable()` in `node:test`, `vi.useFakeTimers()` in Vitest) let you test retries and timeouts without waiting."
+    },
+    {
+      "title": "Testing HTTP",
+      "body": "For handlers, start the app on port 0 (a random free port) in a `before` hook and use `fetch`, or use a helper like supertest that calls the app without a real port. Test the contract: status codes, headers and body shape, including error paths. Use a real database in a container for integration tests and reset it between tests."
+    }
+  ],
+  "pitfalls": [
+    "Forgetting to `await` an async assertion, so the test passes before it runs.",
+    "Tests that depend on each other or on execution order.",
+    "Real timers and sleeps that make the suite slow and flaky.",
+    "Mocking so much that the test only checks the mocks."
+  ],
+  "gotchas": [
+    {
+      "question": "Why can `assert.rejects(fn())` without `await` pass when it should fail?",
+      "answer": "`assert.rejects` returns a promise. If the test does not await it, the test function finishes first and reports success; the failure surfaces later or not at all. Always `await` it."
+    },
+    {
+      "question": "How do you test code that calls `Date.now()`?",
+      "answer": "Inject a clock (`now: () => number`) and pass a fake in tests, or use the test runner's fake timers and set the system time. Avoid tests that compare against the real current time."
+    },
+    {
+      "question": "Unit, integration or end-to-end?",
+      "answer": "Unit tests cover pure logic quickly; integration tests check that your code works with real infrastructure such as a database; end-to-end tests drive the whole system the way a user does. A healthy suite has many unit tests, a solid set of integration tests and a few end-to-end tests."
+    }
+  ]
+}

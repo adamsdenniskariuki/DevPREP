@@ -1,0 +1,46 @@
+{
+  "id": "node-errors",
+  "title": "Error handling",
+  "minutes": 35,
+  "summary": "Operational versus programmer errors, custom error classes and causes, unhandled rejections, and turning failures into clear responses.",
+  "sections": [
+    {
+      "title": "Two kinds of error",
+      "body": "**Operational errors** are expected failures of a correct program: a file is missing, a network call times out, the input is invalid. Handle them: retry, return a 4xx, fall back.\n\n**Programmer errors** are bugs: reading a property of `undefined`, passing a string where a number was expected. You cannot reliably recover from these in-process, because state may already be corrupt. Log them, return a 500, and let the process crash and restart under a supervisor when the error is truly unexpected."
+    },
+    {
+      "title": "Custom errors and causes",
+      "body": "Subclass `Error` to give failures a name and machine-readable fields such as an HTTP status or an error code. Wrap lower-level errors with the `cause` option so the original stack is kept while you add context.\n\nCheck error types with `instanceof` or a `code` field, never by matching message text, which may change.",
+      "code": "class NotFoundError extends Error {\n  readonly status = 404\n  constructor(what: string, options?: ErrorOptions) {\n    super(`${what} not found`, options)\n    this.name = 'NotFoundError'\n  }\n}\n\ntry {\n  await repo.get(id)\n} catch (err) {\n  throw new NotFoundError(`order ${id}`, { cause: err })\n}"
+    },
+    {
+      "title": "Where errors go",
+      "body": "- Synchronous code: `throw` and `try`/`catch`.\n- Promises and async functions: rejections, caught by `await` inside `try` or by `.catch`.\n- Callbacks: the first argument.\n- Event emitters and streams: an `'error'` event. With no listener, the emitter **throws**, which usually crashes the process.\n\nA rejected promise with no handler triggers `unhandledRejection`; since Node 15 the default is to crash. Register `process.on('unhandledRejection')` and `process.on('uncaughtException')` only to log and exit cleanly, not to keep running."
+    },
+    {
+      "title": "Errors at the HTTP boundary",
+      "body": "Keep a single place that maps errors to responses: known errors carry their status, everything else becomes a 500 with a generic message and a correlation id. Never send stack traces or internal messages to clients; log them instead.\n\nUse a consistent body shape such as `{ \"error\": { \"code\": \"not_found\", \"message\": \"Order 42 not found\" } }` (or RFC 9457 problem details) so clients can rely on it."
+    }
+  ],
+  "pitfalls": [
+    "Throwing strings or plain objects instead of `Error` instances, which lose the stack.",
+    "An `EventEmitter` or stream with no `'error'` listener.",
+    "Catching an error, logging it and continuing as if nothing failed.",
+    "Leaking stack traces or SQL messages in API responses."
+  ],
+  "gotchas": [
+    {
+      "question": "Why does `instanceof` sometimes fail for custom errors compiled to ES5?",
+      "answer": "When TypeScript targets ES5, extending built-ins like `Error` breaks the prototype chain, so `instanceof MyError` returns false. Target ES2015 or later, or call `Object.setPrototypeOf(this, new.target.prototype)` in the constructor."
+    },
+    {
+      "question": "Should you keep the process running after `uncaughtException`?",
+      "answer": "No. After an unexpected exception the program state is unknown: half-finished writes, held locks, leaked resources. Log the error, stop accepting new work, and exit with a non-zero code so a supervisor restarts a clean process."
+    },
+    {
+      "question": "How do you catch an error thrown inside `setTimeout`?",
+      "answer": "A `try` around `setTimeout` does not help: the callback runs later on its own stack. Put the `try`/`catch` inside the callback, or wrap the timer in a promise and `await` it.",
+      "code": "try {\n  setTimeout(() => { throw new Error('boom') }, 10)\n} catch {\n  // never reached\n}"
+    }
+  ]
+}

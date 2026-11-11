@@ -1,0 +1,45 @@
+{
+  "id": "node-performance",
+  "title": "Performance and caching",
+  "minutes": 35,
+  "summary": "Measuring before optimising, memory leaks and the garbage collector, caching strategies, and protecting services with rate limits.",
+  "sections": [
+    {
+      "title": "Measure first",
+      "body": "Start with numbers: request latency percentiles (p50, p95, p99), throughput, event loop delay, CPU and heap. Profile with `node --cpu-prof` or the inspector (`--inspect`) and read the flame graph for the widest frames. `performance.now()` and `perf_hooks` give precise timings in code.\n\nTypical wins are boring: add a database index, remove an N+1 query, stream instead of buffering, cache a hot read, and avoid `JSON.stringify` on huge objects."
+    },
+    {
+      "title": "Memory and leaks",
+      "body": "V8 frees objects that are no longer reachable. A leak is memory that stays reachable by mistake: a module-level `Map` used as a cache with no limit, listeners never removed, closures holding big objects, timers never cleared. Watch `heapUsed` over time and compare heap snapshots to find what keeps growing.\n\nEvery cache needs a bound: a maximum size with an eviction policy such as LRU, a TTL, or both. `WeakMap` and `WeakRef` help when the key's lifetime should decide the entry's lifetime."
+    },
+    {
+      "title": "Caching",
+      "body": "Cache where it pays: in-process (fast, per instance, lost on restart), shared (Redis), or HTTP (`Cache-Control`, `ETag` and a CDN). With **cache-aside**, read from the cache, fall back to the source and store the result.\n\nTwo traps: **stampedes**, where many requests miss at once and all hit the database (fix: share one in-flight promise per key), and **stale data** (fix: TTLs plus invalidation on writes).",
+      "code": "const inFlight = new Map<string, Promise<User>>()\nfunction getUser(id: string) {\n  let p = inFlight.get(id)\n  if (!p) {\n    p = db.loadUser(id).finally(() => inFlight.delete(id))\n    inFlight.set(id, p)\n  }\n  return p\n}"
+    },
+    {
+      "title": "Rate limiting",
+      "body": "Protect your service and its dependencies with limits per client: a **token bucket** refills at a fixed rate and allows short bursts up to its capacity; a **sliding window** counts requests in the last N seconds. Return `429` with `Retry-After`. In a multi-instance deployment the counters must live in a shared store."
+    }
+  ],
+  "pitfalls": [
+    "Optimising without a profile or a benchmark.",
+    "An unbounded in-memory cache that grows until the process is killed.",
+    "Caching without a plan for invalidation.",
+    "Per-instance rate limits behind a load balancer."
+  ],
+  "gotchas": [
+    {
+      "question": "What is a cache stampede and how do you prevent it?",
+      "answer": "When a popular key expires, many concurrent requests miss and all recompute it, overloading the source. Prevent it by sharing one in-flight promise per key, refreshing slightly before expiry, or adding jitter to TTLs."
+    },
+    {
+      "question": "Why does a Map keep growing even after requests finish?",
+      "answer": "Because the Map is reachable from module scope, so everything stored in it stays reachable. The garbage collector only frees unreachable objects. Bound it or delete entries explicitly."
+    },
+    {
+      "question": "How do you implement an LRU cache in JavaScript?",
+      "answer": "A `Map` remembers insertion order. On `get`, delete and re-insert the key to mark it most recent. On `set`, if the size exceeds the limit, delete `map.keys().next().value`, the oldest key."
+    }
+  ]
+}

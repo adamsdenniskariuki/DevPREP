@@ -1,0 +1,13 @@
+{
+  "id": "round-robin-pool",
+  "title": "Dispatch jobs to a worker pool",
+  "lesson": "node-processes",
+  "summary": "Schedule jobs across a fixed set of workers, giving each job to the next idle worker and queueing the rest, like a cluster or thread pool.",
+  "prompt": "Finish `WorkerPool`. It is built with an array of workers; each worker is an async function `(job) => Promise<result>` that handles one job at a time.\n\n- `run(job)` returns a promise of the result. If a worker is idle, give the job to the idle worker that comes next in round-robin order after the last one used. Otherwise queue the job (first in, first out) until a worker becomes free.\n- A failing job rejects only its own promise; the worker becomes idle again.\n- `stats()` returns `{ busy, queued }`.",
+  "hints": [
+    "Track `busy: boolean[]` and a `cursor` for round-robin.",
+    "To pick a worker, check indexes `cursor, cursor + 1, ...` modulo the length and take the first idle one.",
+    "When a job settles (use `finally`), mark the worker idle and start the next queued job."
+  ],
+  "minutes": 25
+}

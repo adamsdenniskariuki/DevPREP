@@ -1,0 +1,13 @@
+{
+  "id": "memoize-async",
+  "title": "Deduplicate concurrent async calls",
+  "lesson": "node-performance",
+  "summary": "Cache async results by key and share one in-flight promise between concurrent callers, without caching failures.",
+  "prompt": "Finish `memoizeAsync(fn, key?)`. It returns a function with the same arguments that:\n- calls `fn` once per cache key and returns the cached promise to later callers, **including callers that arrive while the first call is still running**;\n- removes the entry when the promise rejects, so the next call tries again;\n- exposes `clear()` to empty the cache.\n\nThe cache key defaults to `JSON.stringify(args)`.",
+  "hints": [
+    "Cache the **promise**, not the resolved value; that is what deduplicates concurrent calls.",
+    "Attach `.catch(() => cache.delete(k))` to the stored promise but return the original promise so callers still see the rejection.",
+    "Only delete if the cache still holds that same promise."
+  ],
+  "minutes": 20
+}

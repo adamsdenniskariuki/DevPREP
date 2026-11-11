@@ -1,0 +1,45 @@
+{
+  "id": "node-processes",
+  "title": "Processes, workers and scaling",
+  "minutes": 35,
+  "summary": "child_process, worker_threads and cluster, signals and exit codes, and when each tool fits.",
+  "sections": [
+    {
+      "title": "The process object",
+      "body": "`process` describes the running program: `argv`, `env`, `cwd()`, `pid`, `memoryUsage()`, `exitCode`. It is also an emitter for signals (`SIGTERM`, `SIGINT`) and lifecycle events (`exit`, `beforeExit`, `unhandledRejection`).\n\nPrefer setting `process.exitCode = 1` and letting the loop drain over calling `process.exit(1)`, which stops immediately and can cut off pending log writes."
+    },
+    {
+      "title": "Child processes",
+      "body": "`child_process.spawn(cmd, args)` runs another program with streams for stdin, stdout and stderr; `execFile` collects the output for you. Avoid `exec` with user input: it runs through a shell, so `; rm -rf` in an argument becomes a command. Pass arguments as an array and do not enable `shell`.",
+      "code": "import { execFile } from 'node:child_process'\nimport { promisify } from 'node:util'\nconst run = promisify(execFile)\n\nconst { stdout } = await run('git', ['log', '-1', '--format=%H'])"
+    },
+    {
+      "title": "Worker threads",
+      "body": "`worker_threads` run JavaScript on extra threads, each with its own event loop and heap. Use them for CPU-bound work (image resizing, parsing, hashing) so the main loop keeps serving requests. They communicate with `postMessage`, which copies data via structured clone; `ArrayBuffer`s can be transferred and `SharedArrayBuffer`s shared. Keep a pool of workers instead of starting one per task."
+    },
+    {
+      "title": "Scaling across cores",
+      "body": "One Node process uses one core for JavaScript. To use more, run several processes: the `cluster` module forks workers that share a listening port, or, more commonly today, run one process per container and let the orchestrator and load balancer scale them. Either way, keep processes **stateless**: sessions, caches and rate-limit counters that must be shared live in Redis or a database."
+    }
+  ],
+  "pitfalls": [
+    "Passing user input to `exec` or `spawn` with `shell: true`.",
+    "Calling `process.exit()` while logs or responses are still being written.",
+    "Using worker threads for I/O-bound work that the event loop already handles.",
+    "Keeping per-process in-memory state that should be shared across instances."
+  ],
+  "gotchas": [
+    {
+      "question": "Worker threads or child processes?",
+      "answer": "Worker threads share one process, start faster and can share memory, so they suit CPU-heavy JavaScript. Child processes are fully isolated and can run any program, so they suit running other tools or untrusted, crash-prone work."
+    },
+    {
+      "question": "What exit code does a process get when killed by SIGTERM?",
+      "answer": "Conventionally 128 + the signal number, so 143 for SIGTERM (15) and 130 for SIGINT (2). If you handle the signal yourself, you choose the code, usually 0 after a clean shutdown."
+    },
+    {
+      "question": "Why can `cluster` break in-memory sessions?",
+      "answer": "Each worker is a separate process with its own memory. A login stored in worker A is unknown to worker B, so the next request may appear logged out. Store sessions externally or use stateless tokens."
+    }
+  ]
+}

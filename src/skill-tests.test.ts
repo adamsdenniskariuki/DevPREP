@@ -7,6 +7,9 @@ import {
   parseReactProgress, REACT_EXERCISE_IDS, reactCompletedCount, readReactDraft, readReactProgress, recordReactRun, writeReactDraft, writeReactProgress,
 } from './react-module'
 import {
+  NODE_EXERCISE_IDS, nodeCompletedCount, parseNodeProgress, readNodeDraft, readNodeProgress, recordNodeRun, writeNodeDraft, writeNodeProgress,
+} from './node-module'
+import {
   MAX_RESULTS, newAttempt, parseSkillTests, pickQuestions, readAttempt, readSkillTests, recordResult, scoreAttempt, writeAttempt, writeSkillTests,
   type SkillTest,
 } from './skill-tests'
@@ -126,5 +129,39 @@ describe('React and skill test backups', () => {
     expect(bad({ skilltests: { react: [{ ...skillState.react[0], extra: 1 }] } })).toThrow('unexpected or missing fields')
     expect(() => parseReactProgress([])).toThrow('Invalid backup: React progress must be an object.')
     expect(() => parseSkillTests(null)).toThrow('Invalid backup: skill test results must be an object.')
+  })
+})
+
+describe('Node.js progress and backups', () => {
+  const [id] = NODE_EXERCISE_IDS
+  const nodeState = { [id]: { attempts: 2, completed: '2026-11-12' } }
+
+  it('tracks Node.js exercise runs and drafts', () => {
+    memoryStorage()
+    const passed = recordNodeRun(recordNodeRun(undefined, false, '2026-11-11'), true, '2026-11-12')
+    expect(passed).toEqual(nodeState[id])
+    expect(writeNodeProgress(nodeState)).toBe(true)
+    expect(readNodeProgress()).toEqual(nodeState)
+    expect(nodeCompletedCount(readNodeProgress())).toBe(1)
+    writeNodeDraft(id, 'code')
+    expect(readNodeDraft(id)).toBe('code')
+    writeNodeDraft(id, undefined)
+    expect(readNodeDraft(id)).toBeUndefined()
+  })
+
+  it('omits empty Node.js progress and round-trips it alongside React', () => {
+    const progress = emptyProgress()
+    expect(serializeFullBackup(progress, undefined, [], {}, {}, { node: {} })).toBe(serializeBackup(progress))
+    const text = serializeFullBackup(progress, undefined, [], {}, {}, { react: { [REACT_EXERCISE_IDS[0]]: { attempts: 1 } }, node: nodeState })
+    expect(parseFullBackup(text)).toMatchObject({ react: { [REACT_EXERCISE_IDS[0]]: { attempts: 1 } }, node: nodeState })
+    expect(parseFullBackup(serializeFullBackup(progress, undefined, [], {}, {}, { node: nodeState }))).toEqual({ progress, node: nodeState })
+  })
+
+  it('rejects bad Node.js entries', () => {
+    const base = JSON.parse(serializeBackup(emptyProgress()))
+    const bad = (extra: object) => () => parseFullBackup(JSON.stringify({ ...base, ...extra }))
+    expect(bad({ node: { nope: { attempts: 1 } } })).toThrow('Invalid backup: unknown Node.js exercise nope.')
+    expect(bad({ node: { [id]: { attempts: 1, completed: 'soon' } } })).toThrow('invalid completion date')
+    expect(() => parseNodeProgress([])).toThrow('Invalid backup: Node.js progress must be an object.')
   })
 })

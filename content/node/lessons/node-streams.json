@@ -1,0 +1,48 @@
+{
+  "id": "node-streams",
+  "title": "Streams and backpressure",
+  "minutes": 45,
+  "summary": "Readable, writable, duplex and transform streams, why backpressure matters, and composing them safely with pipeline.",
+  "sections": [
+    {
+      "title": "Why streams",
+      "body": "Reading a 2 GB log with `readFile` loads 2 GB into memory. A **stream** processes it in chunks (64 KB by default for files), so memory stays flat and the first bytes can be sent before the last are read. HTTP requests and responses, sockets, files, compression and child process pipes are all streams.\n\nFour types: **Readable** (source), **Writable** (sink), **Duplex** (both, such as a socket) and **Transform** (a duplex whose output is computed from its input, such as gzip)."
+    },
+    {
+      "title": "Backpressure",
+      "body": "If the source is faster than the sink, chunks pile up in memory. Streams solve this with **backpressure**: `writable.write(chunk)` returns `false` once its internal buffer reaches `highWaterMark`. The producer should then stop and wait for the `'drain'` event before writing more.\n\n`pipe` and `pipeline` handle this automatically. Code that ignores the return value of `write` works in tests and then runs out of memory in production when a client reads slowly.",
+      "code": "function writeAll(out: Writable, lines: string[], done: () => void) {\n  let i = 0\n  const next = () => {\n    while (i < lines.length) {\n      if (!out.write(lines[i++] + '\\n')) return out.once('drain', next)\n    }\n    done()\n  }\n  next()\n}"
+    },
+    {
+      "title": "pipeline, not pipe",
+      "body": "`a.pipe(b)` does not forward errors and does not destroy the other streams when one fails, which leaks file descriptors. `pipeline(a, b, c)` from `node:stream/promises` wires everything up, propagates errors, cleans up all streams and returns a promise.\n\nReadable streams are also **async iterables**, so `for await (const chunk of readable)` is a simple way to consume one with backpressure built in.",
+      "code": "import { pipeline } from 'node:stream/promises'\nimport { createReadStream, createWriteStream } from 'node:fs'\nimport { createGzip } from 'node:zlib'\n\nawait pipeline(\n  createReadStream('access.log'),\n  createGzip(),\n  createWriteStream('access.log.gz'),\n)"
+    },
+    {
+      "title": "Writing a transform",
+      "body": "A transform receives chunks that do not respect your record boundaries: a chunk can end in the middle of a line or, for text, in the middle of a multi-byte character. Keep the incomplete tail in a buffer, emit complete records, and flush the remainder in `flush`.\n\nObject mode (`objectMode: true`) lets streams carry JavaScript objects instead of bytes; `highWaterMark` then counts objects.",
+      "code": "const lines = new Transform({\n  readableObjectMode: true,\n  transform(chunk, _enc, cb) {\n    this.tail = (this.tail ?? '') + chunk\n    const parts = this.tail.split('\\n')\n    this.tail = parts.pop()\n    for (const p of parts) this.push(p)\n    cb()\n  },\n  flush(cb) { if (this.tail) this.push(this.tail); cb() },\n})"
+    }
+  ],
+  "pitfalls": [
+    "Ignoring the boolean returned by `write()`.",
+    "Using `.pipe()` without error handling, leaking streams on failure.",
+    "Assuming a chunk contains whole lines or whole characters.",
+    "Buffering a whole upload in memory before processing it."
+  ],
+  "gotchas": [
+    {
+      "question": "What does `highWaterMark` control?",
+      "answer": "The buffer size, in bytes (or objects in object mode), at which a stream signals backpressure. It is a threshold, not a hard limit: `write` still accepts data past it but returns `false` to ask the producer to pause."
+    },
+    {
+      "question": "How do you stream a file to an HTTP response safely?",
+      "answer": "Use `pipeline(createReadStream(path), res)`, and handle the rejection. If the client disconnects, `pipeline` destroys the file stream so the descriptor is closed.",
+      "code": "try {\n  await pipeline(createReadStream(file), res)\n} catch (err) {\n  log.warn({ err }, 'download aborted')\n}"
+    },
+    {
+      "question": "What is the difference between paused and flowing mode?",
+      "answer": "A readable starts **paused**: data waits until you call `read()`. Adding a `'data'` listener, calling `resume()` or piping switches it to **flowing**, where chunks are pushed to you as fast as they arrive. Async iteration manages this for you."
+    }
+  ]
+}

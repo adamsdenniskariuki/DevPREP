@@ -853,6 +853,29 @@ test('a React exercise and the React skill test open offline, and the exercise r
   await expect(offline.getByRole('button', { name: 'Start the test' })).toBeVisible()
 })
 
+test('a Node.js exercise and the Node.js skill test open offline, and the exercise runs offline after one online run', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  const solution = await readFile('content/node/exercises/event-loop-order.solution.ts', 'utf8')
+  const passed = /^All \d+ tests passed\.$/
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await page.evaluate(code => localStorage.setItem('devprep.node.drafts.v1', JSON.stringify({ 'event-loop-order': code })), solution)
+  await page.goto('/DevPREP/#node/event-loop-order')
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toHaveText(passed, { timeout: 120_000 })
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto('/DevPREP/#node')
+  await expect(offline.getByRole('heading', { level: 1 })).toHaveText('Node.js')
+  await offline.goto('/DevPREP/#node/event-loop-order')
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-summary')).toHaveText(passed, { timeout: 60_000 })
+  await offline.goto('/DevPREP/#skilltest/node')
+  await expect(offline.getByRole('button', { name: 'Start the test' })).toBeVisible()
+})
+
 test('SQL labs run offline after Postgres\'s first online load', async ({ page, context }) => {
   test.setTimeout(240_000)
   const track = JSON.parse(await readFile('content/sql/track.json', 'utf8'))
