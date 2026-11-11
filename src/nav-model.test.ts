@@ -8,6 +8,9 @@ import { guideIndex } from './guides'
 import { patternIndex } from './patterns'
 import { companyIds } from './companies'
 import { CODEBASE_TASK_IDS } from './codebase'
+import { REACT_EXERCISE_IDS, REACT_LESSON_IDS } from './react-module'
+import { SKILL_TESTS } from './skill-tests'
+import { EXTRA_DECK_IDS } from './content-schema'
 import { emptyProgress } from './progress'
 import { ROUTES, parseHash } from './routes'
 import type { RouteIds } from './routes'
@@ -43,7 +46,7 @@ describe('nav index', () => {
     expect(index.guides).toEqual(guideIndex.map(item => [item.id, item.title, item.topic, item.kind]))
     expect(index.patterns).toEqual(patternIndex.map(item => [item.id, item.title, item.parent ?? '']))
     expect(index.companies.map(([id]) => id)).toEqual(companyIds)
-    expect(index.decks.map(([track]) => track)).toEqual(tracks.map(item => item.id))
+    expect(index.decks.map(([track]) => track)).toEqual([...tracks.map(item => item.id), ...EXTRA_DECK_IDS])
     expect(index.antipatterns.length).toBe(guideIndex.reduce((sum, item) => sum + item.antipatterns, 0))
     for (const [guide, title] of index.antipatterns) {
       expect(guideIds.has(guide), guide).toBe(true)
@@ -58,10 +61,10 @@ describe('buildNavTree', () => {
   it('has the five goal groups in order, each with its sections', () => {
     expect(tree.map(node => node.label)).toEqual(GROUPS.map(group => group.label))
     expect(tree.map(node => node.children!.map(child => child.label))).toEqual([
-      ['Tracks', 'Patterns', 'Field Guide'],
+      ['Tracks', 'Patterns', 'Field Guide', 'React'],
       ['Coding problems', 'SQL problems', 'Flashcards', 'Playground'],
       ['Design cases', 'Whiteboard'],
-      ['Company prep', 'Mock interviews', 'Codebase interviews', 'Story bank'],
+      ['Company prep', 'Mock interviews', 'Codebase interviews', 'Skill tests', 'Story bank'],
       ['Today', 'Plan', 'Study plans', 'Progress', 'Settings', 'What’s new', 'Site map'],
     ])
     expect(tree.find(node => node.id === 'practise')!.href).toBe('#practice')
@@ -80,6 +83,10 @@ describe('buildNavTree', () => {
     expect(guide.children!.slice(0, -1).flatMap(child => child.children!.map(item => item.href)).sort()).toEqual(guideIndex.map(item => `#guide/${item.id}`).sort())
     expect(find(tree, 'cases')!.children!.map(item => item.href)).toEqual(caseIndex.map(item => `#design/${item.id}`))
     expect(find(tree, 'codebase')!.children!.map(item => item.href)).toEqual(CODEBASE_TASK_IDS.map(id => `#codebase/${id}`))
+    const react = find(tree, 'react')!
+    expect(react.children!.map(child => child.label)).toEqual(['Lessons', 'Exercises'])
+    expect(react.children!.flatMap(child => child.children!.map(item => item.href))).toEqual([...REACT_LESSON_IDS, ...REACT_EXERCISE_IDS].map(id => `#react/${id}`))
+    expect(find(tree, 'skilltest')!.children!.map(item => item.href)).toEqual(SKILL_TESTS.map(({ id }) => `#skilltest/${id}`))
     expect(find(tree, 'company')!.children!.map(item => item.href)).toEqual(companyIds.map(id => `#company/${id}`))
     expect(find(tree, 'mock')!.children!.map(item => item.href)).toEqual(companyIds.map(id => `#mock/${id}`))
   })
@@ -131,9 +138,9 @@ describe('buildNavTree', () => {
 describe('groupFor', () => {
   it('puts every route in one of the five groups', () => {
     const expected: Record<string, string> = {
-      tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
+      tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn',
       practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
-      design: 'design', board: 'design', company: 'interview', mock: 'interview', codebase: 'interview', stories: 'interview',
+      design: 'design', board: 'design', company: 'interview', mock: 'interview', codebase: 'interview', skilltest: 'interview', stories: 'interview',
       home: 'me', plan: 'me', plans: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
     }
     for (const route of ROUTES) expect(groupFor({ route }), route).toBe(expected[route])

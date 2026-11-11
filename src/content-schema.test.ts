@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { validateDeck, validateLesson, validateTrack, TRACK_IDS } from './content-schema'
+import { validateDeck, validateLesson, validateTrack, DECK_IDS, TRACK_IDS } from './content-schema'
 import { lessons } from './curriculum'
 
 const root = 'content'
@@ -10,7 +10,7 @@ const read = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as unknown
 describe('content schema', () => {
   it('has a directory for every track and no stray directories', () => {
     const dirs = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
-    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase'].sort())
+    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase', 'react', 'skill-tests'].sort())
   })
 
   for (const track of TRACK_IDS) {
@@ -36,9 +36,9 @@ describe('content schema', () => {
   describe('flashcards', () => {
     it('has exactly one valid deck per track, with globally unique card ids', () => {
       const files = readdirSync(join(root, 'flashcards')).sort()
-      expect(files).toEqual(TRACK_IDS.map(track => `${track}.json`).sort())
+      expect(files).toEqual(DECK_IDS.map(track => `${track}.json`).sort())
       const ids = new Set<string>()
-      for (const track of TRACK_IDS) {
+      for (const track of DECK_IDS) {
         const deck = read(join(root, 'flashcards', `${track}.json`)) as { track: string; cards: { id: string }[] }
         expect(validateDeck(deck, `flashcards/${track}.json`)).toEqual([])
         expect(deck.track).toBe(track)

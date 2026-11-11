@@ -1,0 +1,49 @@
+import type { ProjectReport, RunPhase } from './runner/runner'
+
+/** What a skill test needs to show and check one coding task. */
+export interface TaskExercise {
+  title: string
+  prompt: string
+  starter: string
+  /** Read-only tests the run checks against. */
+  tests: string
+  /** Editor language. */
+  lang: 'tsx'
+  /** File the learner edits and the read-only test file, as shown in the workspace. */
+  file: string
+  testFile: string
+  /** Time limit of one run, for the progress bar. */
+  limitMs: number
+}
+
+export interface TaskRunOptions {
+  host: HTMLElement
+  title: string
+  onPhase: (phase: RunPhase) => void
+  onTotal: (total: number) => void
+  onProgress: (done: number) => void
+}
+
+/** A module whose exercises a skill test can reuse as timed coding tasks. */
+export interface TaskModule {
+  load(exerciseId: string): Promise<TaskExercise | undefined>
+  run(code: string, exercise: TaskExercise, options: TaskRunOptions): Promise<ProjectReport>
+}
+
+/**
+ * Task runners by module id (SkillTask.module). Add an entry here when a new module (Node, React Native,
+ * TypeScript…) offers runnable exercises; everything else in the simulator stays the same.
+ */
+export const TASK_MODULES: Record<string, TaskModule> = {
+  react: {
+    async load(exerciseId) {
+      const [{ loadReact }, { REACT_TIMEOUT_MS, REACT_APP_FILE, REACT_TEST_FILE }] = await Promise.all([import('./react-module'), import('./runner/react-core')])
+      const exercise = (await loadReact()).exercises.find(item => item.id === exerciseId)
+      return exercise && { title: exercise.title, prompt: exercise.prompt, starter: exercise.starter, tests: exercise.tests, lang: 'tsx', file: REACT_APP_FILE, testFile: REACT_TEST_FILE, limitMs: REACT_TIMEOUT_MS }
+    },
+    async run(code, exercise, options) {
+      const { runReact } = await import('./runner/react-runner')
+      return runReact(code, exercise.tests, options)
+    },
+  },
+}

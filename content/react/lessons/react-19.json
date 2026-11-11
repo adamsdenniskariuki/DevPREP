@@ -1,0 +1,52 @@
+{
+  "id": "react-19",
+  "title": "React 19: actions, useActionState, useOptimistic, use and ref as a prop",
+  "minutes": 45,
+  "summary": "Async transitions and actions, form actions, useActionState, useFormStatus, useOptimistic, the use API, ref as a prop, context as a provider, ref cleanup and document metadata.",
+  "sections": [
+    {
+      "title": "Actions and transitions",
+      "body": "In React 19, `startTransition` accepts an **async** function. Functions used this way are called **actions**: React tracks the pending state for you, so `const [isPending, startTransition] = useTransition()` stays `true` until the async work finishes. Updates inside a transition are non-urgent and do not block typing.\n\nErrors thrown in an action propagate to the nearest error boundary; handle expected errors yourself and return them as state.",
+      "code": "const [isPending, startTransition] = useTransition()\nfunction save() {\n  startTransition(async () => {\n    const error = await updateName(name)\n    if (error) { setError(error); return }\n    redirect(\"/profile\")\n  })\n}"
+    },
+    {
+      "title": "Form actions and useActionState",
+      "body": "`<form action={fn}>` calls `fn(formData)` when submitted, inside a transition, and for uncontrolled forms resets the fields after a successful action. `<button formAction={fn}>` sets the action per button.\n\n`const [state, formAction, isPending] = useActionState(action, initialState)` wraps an action whose result becomes state. Your action receives `(previousState, formData)` and returns the next state, typically `{ error }` or `{ ok }`. Pass `formAction` to `<form action>`.\n\n`useFormStatus()` from **react-dom** gives `{ pending, data, method, action }` for the **parent** form; call it in a component rendered inside the `<form>`, such as a submit button.",
+      "code": "async function subscribe(prev: State, formData: FormData): Promise<State> {\n  const email = String(formData.get(\"email\"))\n  if (!email.includes(\"@\")) return { error: \"Enter a valid email\" }\n  await api.subscribe(email)\n  return { error: null, done: true }\n}\nfunction Signup() {\n  const [state, formAction, isPending] = useActionState(subscribe, { error: null })\n  return <form action={formAction}>\n    <input name=\"email\" aria-label=\"Email\" />\n    <button disabled={isPending}>Subscribe</button>\n    {state.error && <p role=\"alert\">{state.error}</p>}\n  </form>\n}"
+    },
+    {
+      "title": "useOptimistic",
+      "body": "`const [optimistic, addOptimistic] = useOptimistic(state, (current, update) => next)` shows a temporary value while an action runs. Call `addOptimistic(update)` **inside an action or transition**; when the transition finishes, React drops the optimistic value and shows `state` again. If the action failed and you did not update `state`, the UI reverts automatically.",
+      "code": "const [optimisticLikes, addLike] = useOptimistic(likes, (n, delta: number) => n + delta)\nfunction like() {\n  startTransition(async () => {\n    addLike(1)\n    try { setLikes(await api.like()) } catch { setError(\"Could not like\") }\n  })\n}"
+    },
+    {
+      "title": "use",
+      "body": "`use(resource)` reads a **promise** or a **context**. With a promise, the component **suspends** until it resolves (the nearest `<Suspense>` shows its fallback) and throws to the nearest error boundary if it rejects. Unlike other hooks, `use` can be called inside conditions and loops.\n\nDo not create the promise during render: a new promise every render suspends forever. Create it in a parent, a loader or a cache and pass it down.",
+      "code": "function Comments({ commentsPromise }: { commentsPromise: Promise<Comment[]> }) {\n  const comments = use(commentsPromise)\n  return <ul>{comments.map(c => <li key={c.id}>{c.text}</li>)}</ul>\n}\n<Suspense fallback={<p>Loading…</p>}><Comments commentsPromise={promise} /></Suspense>"
+    },
+    {
+      "title": "Smaller changes",
+      "body": "- **ref as a prop**: function components receive `ref` like any prop; `forwardRef` is no longer needed.\n- **Context as a provider**: `<ThemeContext value=\"dark\">` replaces `<ThemeContext.Provider>`.\n- **Ref cleanup**: a ref callback can return a cleanup function.\n- **Document metadata**: `<title>`, `<meta>` and `<link>` rendered anywhere are hoisted into `<head>`.\n- `useDeferredValue(value, initialValue)` accepts an initial value.\n- Removed long-deprecated APIs such as `propTypes` and `defaultProps` checks on function components, string refs and legacy context; `ReactDOM.render` is gone in favour of `createRoot`."
+    }
+  ],
+  "pitfalls": [
+    "Calling `addOptimistic` outside a transition or action (React warns and the value is not shown correctly).",
+    "Calling `useFormStatus` in the same component that renders the `<form>`; it reads the parent form only.",
+    "Creating the promise passed to `use` inside the component render.",
+    "Forgetting that `useActionState` passes the previous state as the first argument to your action."
+  ],
+  "gotchas": [
+    {
+      "question": "What are the three values returned by `useActionState`?",
+      "answer": "`[state, formAction, isPending]`: the latest result, a function to pass to `<form action>` (or call in a transition), and whether it is running."
+    },
+    {
+      "question": "A like button uses `useOptimistic`. The request rejects and you do not change the real state. What does the user see?",
+      "answer": "The count goes up immediately, then returns to the real value when the action finishes, because the optimistic value only lasts for the transition."
+    },
+    {
+      "question": "Where can `use(SomeContext)` be called that `useContext(SomeContext)` cannot?",
+      "answer": "Inside a condition or loop, such as after an early return."
+    }
+  ]
+}

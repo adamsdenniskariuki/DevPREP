@@ -195,10 +195,13 @@ export function patternCards(page) {
 export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
+/** Decks that are not curriculum tracks, shown after the track decks. Same as EXTRA_DECK_IDS in src/content-schema.ts. */
+export const EXTRA_DECKS = ['react']
+
 export function buildFlashcards(root = 'content') {
   const dir = join(root, 'flashcards')
   const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json')))
-  const decks = TRACK_ORDER.map(id => {
+  const decks = [...TRACK_ORDER, ...EXTRA_DECKS].map(id => {
     if (!files.delete(`${id}.json`)) throw new Error(`content/flashcards/${id}.json is missing`)
     return read(join(dir, `${id}.json`))
   })
@@ -234,6 +237,8 @@ export function buildNavIndex(root = 'content') {
     cases: buildCases(root).index.map(item => [item.id, item.title]),
     companies: buildCompanies(root).companies.map(company => [company.id, company.name]),
     codebase: buildCodebase(root).repos.map(repo => [repo.id, repo.title, repo.lang, repo.tasks.map(task => [task.id, task.title, task.kind])]),
+    react: Object.entries(buildReact(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
+    skillTests: buildSkillTests(root).map(test => [test.id, test.title]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
     antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
     plans: buildPlans(root).plans.map(plan => [plan.id, plan.title, plan.tracks.map(track => [track.id, track.title]), plan.weeks.map(week => [week.n, week.title, week.track ?? '', week.days.flatMap(day => day.items.map(item => item.id))])]),
@@ -245,7 +250,7 @@ export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
 export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
-export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase']
+export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase', '#react', '#skilltest']
 
 /**
  * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
@@ -267,6 +272,8 @@ export function buildPlans(root = 'content') {
     mock: new Set(buildCompanies(root).ids),
     plans: new Set(order),
     codebase: new Set(buildCodebase(root).repos.flatMap(repo => [repo.id, ...repo.tasks.map(task => `${repo.id}/${task.id}`)])),
+        react: new Set(Object.values(buildReact(root)).flat().map(item => item.id)),
+        skilltest: new Set(buildSkillTests(root).map(test => test.id)),
   }
   const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
   const labs = { [MATH_LAB_PLAN]: new Set(buildMathLabs(root).map(lab => lab.id)) }
@@ -585,6 +592,141 @@ export function validateChangelog({ releases } = {}) {
   })
   return releases
 }
+
+export const REACT_OUTPUT = 'src/generated/react.json'
+/** Lesson and exercise ids, so routes, plans and backups can check them without loading the module. */
+export const REACT_IDS_OUTPUT = 'src/generated/react-ids.json'
+const REACT_LESSON_KEYS = 'gotchas,id,minutes,pitfalls,sections,summary,title'
+const REACT_EXERCISE_KEYS = 'hints,id,lesson,minutes,prompt,summary,title'
+
+/**
+ * The React module for #react: lessons (explanation, examples, pitfalls, test-style gotchas) and runnable TSX
+ * exercises. Starters, solutions and tests are checked by running them in src/react-exercises.test.ts.
+ */
+export function buildReact(root = 'content') {
+  const dir = join(root, 'react')
+  if (!existsSync(join(dir, 'index.json'))) return { lessons: [], exercises: [] }
+  const { lessons: lessonOrder, exercises: exerciseOrder } = read(join(dir, 'index.json'))
+  const ids = new Set()
+  const unique = (id, where) => {
+    if (!KEBAB.test(id ?? '')) throw new Error(`${where}: id must be kebab-case`)
+    if (ids.has(id)) throw new Error(`${where}: duplicate id ${id}`)
+    ids.add(id)
+  }
+  const lessonFiles = new Set(readdirSync(join(dir, 'lessons')).filter(name => name.endsWith('.json')))
+  const lessons = lessonOrder.map(id => {
+    const where = `content/react/lessons/${id}.json`
+    const fail = message => { throw new Error(`${where}: ${message}`) }
+    if (!lessonFiles.delete(`${id}.json`)) fail('is listed in index.json but missing')
+    const lesson = read(join(dir, 'lessons', `${id}.json`))
+    if (Object.keys(lesson).sort().join() !== REACT_LESSON_KEYS) fail(`must have exactly ${REACT_LESSON_KEYS}`)
+    if (lesson.id !== id) fail('id must match the file name')
+    unique(id, where)
+    if (!text(lesson.title, 100) || !text(lesson.summary, 400)) fail('needs a title (≤100) and summary (≤400)')
+    if (!Number.isInteger(lesson.minutes) || lesson.minutes < 5 || lesson.minutes > 90) fail('minutes must be 5–90')
+    if (!Array.isArray(lesson.sections) || lesson.sections.length < 2) fail('needs at least two sections')
+    for (const section of lesson.sections) {
+      if (!text(section.title, 80) || !text(section.body, 3000)) fail('each section needs a title and body')
+      if (Object.keys(section).some(key => !['title', 'body', 'code'].includes(key))) fail('sections have only title, body and code')
+      if (section.code !== undefined && !text(section.code, 2000)) fail(`section "${section.title}" has empty or long code`)
+    }
+    if (!Array.isArray(lesson.pitfalls) || lesson.pitfalls.length < 2 || lesson.pitfalls.some(item => !text(item, 300))) fail('needs at least two pitfalls')
+    if (!Array.isArray(lesson.gotchas) || lesson.gotchas.length < 2) fail('needs at least two gotchas')
+    for (const gotcha of lesson.gotchas) {
+      if (!text(gotcha.question, 300) || !text(gotcha.answer, 600) || (gotcha.code !== undefined && !text(gotcha.code, 1000))) fail('each gotcha needs a question and answer')
+    }
+    return lesson
+  })
+  if (lessonFiles.size) throw new Error(`content/react/lessons has lessons not listed in index.json: ${[...lessonFiles].join(', ')}`)
+  const lessonIds = new Set(lessonOrder)
+  const exerciseFiles = new Set(readdirSync(join(dir, 'exercises')))
+  const exercises = exerciseOrder.map(id => {
+    const where = `content/react/exercises/${id}`
+    const fail = message => { throw new Error(`${where}: ${message}`) }
+    const names = [`${id}.json`, `${id}.starter.tsx`, `${id}.solution.tsx`, `${id}.test.tsx`]
+    for (const name of names) if (!exerciseFiles.delete(name)) fail(`${name} is missing`)
+    const meta = read(join(dir, 'exercises', `${id}.json`))
+    if (Object.keys(meta).sort().join() !== REACT_EXERCISE_KEYS) fail(`json must have exactly ${REACT_EXERCISE_KEYS}`)
+    if (meta.id !== id) fail('id must match the file name')
+    unique(id, where)
+    if (!text(meta.title, 60) || !text(meta.summary, 200) || !text(meta.prompt, 1200)) fail('needs a title (≤60), summary (≤200) and prompt (≤1200)')
+    if (!lessonIds.has(meta.lesson)) fail(`unknown lesson ${meta.lesson}`)
+    if (!Number.isInteger(meta.minutes) || meta.minutes < 5 || meta.minutes > 60) fail('minutes must be 5–60')
+    if (!Array.isArray(meta.hints) || !meta.hints.length || meta.hints.some(hint => !text(hint, 300))) fail('needs at least one hint')
+    const [starter, solution, tests] = names.slice(1).map(name => readFileSync(join(dir, 'exercises', name), 'utf8').replace(/\r\n/g, '\n'))
+    if (starter === solution) fail('starter and solution are identical')
+    if (!/export default function App\b/.test(starter) || !/export default function App\b/.test(solution)) fail('starter and solution must export default function App')
+    return { ...meta, starter, solution, tests }
+  })
+  if (exerciseFiles.size) throw new Error(`content/react/exercises has files not listed in index.json: ${[...exerciseFiles].join(', ')}`)
+  return { lessons, exercises }
+}
+
+export const SKILL_TESTS_OUTPUT = 'src/generated/skill-tests.json'
+/** Test ids, question ids and task ids, so routes and backups can check them without loading the tests. */
+export const SKILL_TEST_IDS_OUTPUT = 'src/generated/skill-test-ids.json'
+const SKILL_TEST_KEYS = 'id,minutes,pick,questions,summary,tasks,title,topics'
+/** Modules whose exercises a skill test may use as coding tasks, with their exercise and lesson ids. */
+const skillTestModules = root => {
+  const react = buildReact(root)
+  return { react: { exercises: new Set(react.exercises.map(item => item.id)), reviews: new Set(react.lessons.map(item => `#react/${item.id}`)) } }
+}
+
+/**
+ * Timed skill tests for #skilltest, one per content/skill-tests/<id>.json. Each test picks `pick` questions
+ * spread across its topics. Fails on unknown topics, modules, exercises or review links, and on duplicate ids.
+ */
+export function buildSkillTests(root = 'content') {
+  const dir = join(root, 'skill-tests')
+  if (!existsSync(join(dir, 'index.json'))) return []
+  const { tests: order } = read(join(dir, 'index.json'))
+  const files = new Set(readdirSync(dir).filter(name => name.endsWith('.json') && name !== 'index.json'))
+  const modules = skillTestModules(root)
+  return order.map(id => {
+    const fail = message => { throw new Error(`content/skill-tests/${id}.json: ${message}`) }
+    if (!files.delete(`${id}.json`)) fail('is listed in index.json but missing')
+    const test = read(join(dir, `${id}.json`))
+    if (Object.keys(test).sort().join() !== SKILL_TEST_KEYS) fail(`must have exactly ${SKILL_TEST_KEYS}`)
+    if (test.id !== id || !KEBAB.test(id)) fail('id must be kebab-case and match the file name')
+    if (!text(test.title, 80) || !text(test.summary, 400)) fail('needs a title (≤80) and summary (≤400)')
+    if (!Number.isInteger(test.minutes) || test.minutes < 10 || test.minutes > 90) fail('minutes must be 10–90')
+    const seen = new Set()
+    const unique = (value, what) => {
+      if (!KEBAB.test(value ?? '')) fail(`${what} ids must be kebab-case`)
+      if (seen.has(value)) fail(`duplicate id ${value}`)
+      seen.add(value)
+    }
+    if (!Array.isArray(test.topics) || test.topics.length < 2) fail('needs at least two topics')
+    for (const topic of test.topics) {
+      unique(topic.id, 'topic')
+      if (!text(topic.title, 60)) fail(`topic ${topic.id} needs a title`)
+      if (!Object.values(modules).some(module => module.reviews.has(topic.review))) fail(`topic ${topic.id} review link ${topic.review} does not resolve`)
+    }
+    const topicIds = new Set(test.topics.map(topic => topic.id))
+    if (!Array.isArray(test.questions) || !test.questions.length) fail('needs questions')
+    for (const question of test.questions) {
+      unique(question.id, 'question')
+      const where = `question ${question.id}`
+      if (Object.keys(question).some(key => !['id', 'topic', 'prompt', 'code', 'choices', 'answer', 'explain'].includes(key))) fail(`${where} has unknown keys`)
+      if (!topicIds.has(question.topic)) fail(`${where} has unknown topic ${question.topic}`)
+      if (!text(question.prompt, 400) || !text(question.explain, 600) || (question.code !== undefined && !text(question.code, 1200))) fail(`${where} needs a prompt and explanation`)
+      if (!Array.isArray(question.choices) || question.choices.length !== 4 || question.choices.some(choice => !text(choice, 200)) || new Set(question.choices).size !== 4) fail(`${where} needs 4 distinct choices`)
+      if (!Number.isInteger(question.answer) || question.answer < 0 || question.answer > 3) fail(`${where} answer must be 0–3`)
+    }
+    const counts = test.topics.map(topic => test.questions.filter(question => question.topic === topic.id).length)
+    if (counts.some(count => count === 0)) fail('every topic needs at least one question')
+    if (!Number.isInteger(test.pick) || test.pick < test.topics.length || test.pick > test.questions.length) fail('pick must cover every topic and be at most the number of questions')
+    if (!Array.isArray(test.tasks)) fail('tasks must be an array')
+    for (const task of test.tasks) {
+      unique(task.id, 'task')
+      if (Object.keys(task).sort().join() !== 'exercise,id,module,title') fail(`task ${task.id} must have exactly id, title, module and exercise`)
+      if (!text(task.title, 80)) fail(`task ${task.id} needs a title`)
+      if (!modules[task.module]) fail(`task ${task.id} has unknown module ${task.module}`)
+      if (!modules[task.module].exercises.has(task.exercise)) fail(`task ${task.id} has unknown exercise ${task.exercise}`)
+    }
+    return test
+  }).concat(files.size ? (() => { throw new Error(`content/skill-tests has tests not listed in index.json: ${[...files].join(', ')}`) })() : [])
+}
 
 function writeIfChanged(path, value) {
   const text = JSON.stringify(value) + '\n'
@@ -626,6 +768,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const codebase = buildCodebase()
   writeIfChanged(CODEBASE_OUTPUT, codebase)
   writeIfChanged(CODEBASE_IDS_OUTPUT, codebase.repos.flatMap(repo => repo.tasks.map(task => `${repo.id}/${task.id}`)))
+  const react = buildReact()
+  writeIfChanged(REACT_OUTPUT, react)
+  writeIfChanged(REACT_IDS_OUTPUT, { lessons: react.lessons.map(item => item.id), exercises: react.exercises.map(item => item.id) })
+  const skillTests = buildSkillTests()
+  writeIfChanged(SKILL_TESTS_OUTPUT, skillTests)
+  writeIfChanged(SKILL_TEST_IDS_OUTPUT, skillTests.map(test => ({ id: test.id, title: test.title, questions: test.questions.map(item => item.id), tasks: test.tasks.map(item => item.id) })))
   writeIfChanged(NAV_INDEX_OUTPUT, buildNavIndex())
   writeIfChanged(CHANGELOG_OUTPUT, buildChangelog())
 }

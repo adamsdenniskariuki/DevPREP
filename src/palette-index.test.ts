@@ -7,21 +7,24 @@ import { caseIndex } from './cases'
 import { guideIndex, guideIds } from './guides'
 import { patternIndex, patternIds } from './patterns'
 import { companyIds } from './companies'
+import { EXTRA_DECK_IDS } from './content-schema'
 import { problemIds } from './problems'
 import { sqlProblemIds } from './sql-problems'
 import { caseIds } from './cases'
 import type { NavIndex } from './nav-model'
+import { reactItemIds } from './react-module'
+import { skillTestIdSet } from './skill-tests'
 import { buildPaletteIndex, KIND_LABELS, PAGES, scoreEntry, searchPalette, snippetEntries, SUGGESTED } from './palette-index'
 import { ROUTES, parseHash } from './routes'
 import type { RouteIds } from './routes'
 
 const index = navIndex as unknown as NavIndex
 const entries = buildPaletteIndex(index, lessons)
-const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds }
+const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, react: reactItemIds, skillTests: skillTestIdSet }
 const ofKind = (kind: string) => entries.filter(entry => entry.kind === kind)
 
 describe('buildPaletteIndex', () => {
-  it('covers pages, tracks, lessons, patterns, guides, anti-patterns, problems, SQL, decks, cases and companies', () => {
+  it('covers pages, tracks, lessons, patterns, guides, anti-patterns, problems, SQL, decks, cases, companies, React and skill tests', () => {
     expect(ofKind('track').map(entry => entry.href)).toEqual(tracks.map(track => `#tracks/${track.id}`))
     expect(ofKind('lesson')).toHaveLength(lessons.length)
     expect(ofKind('pattern').map(entry => entry.href)).toEqual(patternIndex.map(item => `#patterns/${item.id}`))
@@ -30,9 +33,11 @@ describe('buildPaletteIndex', () => {
     expect(ofKind('problem').map(entry => entry.title)).toEqual(problemIndex.map(item => item.title))
     expect(ofKind('problem')[0].detail).toBe(problemIndex[0].pattern)
     expect(ofKind('sql').map(entry => entry.href)).toEqual(sqlProblemIndex.map(item => `#sql/${item.id}`))
-    expect(ofKind('deck')).toHaveLength(tracks.length)
+    expect(ofKind('deck')).toHaveLength(tracks.length + EXTRA_DECK_IDS.length)
     expect(ofKind('case').map(entry => entry.href)).toEqual(caseIndex.map(item => `#design/${item.id}`))
     expect(ofKind('company').map(entry => entry.href)).toEqual(companyIds.flatMap(id => [`#company/${id}`, `#mock/${id}`]))
+    expect(ofKind('react').map(entry => entry.href).sort()).toEqual([...reactItemIds].map(id => `#react/${id}`).sort())
+    expect(ofKind('skilltest').map(entry => entry.href)).toEqual([...skillTestIdSet].map(id => `#skilltest/${id}`))
     const sub = patternIndex.find(item => item.parent)!
     expect(entries.find(entry => entry.id === `pattern:${sub.id}`)!.detail).toBe(patternIndex.find(item => item.id === sub.parent)!.title)
   })

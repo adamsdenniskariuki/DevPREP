@@ -4,6 +4,7 @@ import legacyBackup from '../tests/fixtures/v1-progress.json' with { type: 'json
 import knownItemIds from '../tests/fixtures/plan-item-ids.json' with { type: 'json' }
 import knownFdeItemIds from '../tests/fixtures/fde-plan-item-ids.json' with { type: 'json' }
 import knownMathItemIds from '../tests/fixtures/math-plan-item-ids.json' with { type: 'json' }
+import knownReactItemIds from '../tests/fixtures/react-plan-item-ids.json' with { type: 'json' }
 import plansJson from './generated/plans.json' with { type: 'json' }
 import navIndex from './generated/nav-index.json' with { type: 'json' }
 // @ts-expect-error plain JS build script
@@ -68,7 +69,7 @@ describe('study plan content', () => {
   })
 
   it('lists every plan, Applied AI first', () => {
-    expect(plans.map(item => item.id)).toEqual(['applied-ai-ml-10wk', 'forward-deployed-engineer-8wk', 'math-for-ml-6wk'])
+    expect(plans.map(item => item.id)).toEqual(['applied-ai-ml-10wk', 'forward-deployed-engineer-8wk', 'math-for-ml-6wk', 'react-skill-test-2wk'])
     expect([...PLAN_IDS]).toEqual(plans.map(item => item.id))
   })
 
@@ -189,7 +190,7 @@ describe('study plan content', () => {
   })
 })
 
-describe.each([['applied-ai-ml-10wk', knownItemIds], ['forward-deployed-engineer-8wk', knownFdeItemIds], ['math-for-ml-6wk', knownMathItemIds]] as const)('plan item id registry for %s', (id, known) => {
+describe.each([['applied-ai-ml-10wk', knownItemIds], ['forward-deployed-engineer-8wk', knownFdeItemIds], ['math-for-ml-6wk', knownMathItemIds], ['react-skill-test-2wk', knownReactItemIds]] as const)('plan item id registry for %s', (id, known) => {
   const current = new Set(plans.find(item => item.id === id)!.weeks.flatMap(weekItems).map(item => item.id))
   it('keeps every item id that has ever shipped', () => expect(known.filter(itemId => !current.has(itemId))).toEqual([]))
   it('records every current item id', () => expect([...current].filter(itemId => !(known as readonly string[]).includes(itemId))).toEqual([]))

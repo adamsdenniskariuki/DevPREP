@@ -38,7 +38,7 @@ async function language(lang: EditorLanguage): Promise<Extension> {
     const { PostgreSQL, sql } = await import('@codemirror/lang-sql')
     return sql({ dialect: PostgreSQL, upperCaseKeywords: true })
   }
-  return (await import('@codemirror/lang-javascript')).javascript({ typescript: lang === 'ts' })
+  return (await import('@codemirror/lang-javascript')).javascript({ typescript: lang === 'ts' || lang === 'tsx', jsx: lang === 'tsx' })
 }
 
 /** Tab indents; Escape then Tab leaves the editor (no time limit), matching the Plain editor. */

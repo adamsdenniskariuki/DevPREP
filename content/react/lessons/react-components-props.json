@@ -1,0 +1,47 @@
+{
+  "id": "react-components-props",
+  "title": "Components and props",
+  "minutes": 30,
+  "summary": "Function components, passing and destructuring props, defaults, children, composition over configuration, and why props are read-only.",
+  "sections": [
+    {
+      "title": "Components are functions of props",
+      "body": "A component receives one argument, the **props object**, and returns what to render. Destructure it in the parameter list and give defaults there: `function Avatar({ size = 40, name })`. A default applies only when the prop is `undefined`, not when it is `null`.\n\nProps flow **one way**, from parent to child. A child must never change its props; to change something, the parent passes down a callback such as `onChange` and owns the state.",
+      "code": "function Avatar({ name, size = 40 }: { name: string; size?: number }) {\n  return <img alt={name} width={size} height={size} src={`/avatars/${name}.png`} />\n}\n\n<Avatar name=\"ada\" />          // size 40\n<Avatar name=\"ada\" size={64} /> // size 64"
+    },
+    {
+      "title": "children and composition",
+      "body": "Whatever you nest between a component's tags arrives as the `children` prop. Prefer **composition** (passing children or elements as props) over growing a list of boolean flags. A `Card` that renders `children` can hold anything; a `Card` with `showHeader`, `headerIcon` and `headerTitle` props cannot.\n\nYou can also pass elements in named props, sometimes called slots: `<Layout sidebar={<Nav />}>…</Layout>`.",
+      "code": "function Card({ title, children }: { title: string; children: React.ReactNode }) {\n  return <section className=\"card\"><h2>{title}</h2>{children}</section>\n}\n\n<Card title=\"Profile\"><p>Hello</p></Card>"
+    },
+    {
+      "title": "Spreading and forwarding props",
+      "body": "`<input {...rest} />` forwards the remaining props, which is handy for wrapper components. Spread first and set your own values after if yours must win: later attributes override earlier ones. Avoid spreading unknown props onto DOM elements, because React warns about attributes the DOM does not understand.\n\n`key` is not a prop: React uses it and does not pass it to your component. In React 19, `ref` **is** passed to function components as an ordinary prop."
+    },
+    {
+      "title": "Pure components",
+      "body": "Given the same props, state and context, a component must return the same output, and rendering must not change anything that existed before the render. React may call your component more than once (StrictMode deliberately calls it twice in development to surface impurity), and may discard a render.\n\nMutating a local variable created during the render is fine; mutating a prop, a module-level variable or an object from the parent is not."
+    }
+  ],
+  "pitfalls": [
+    "Mutating a prop, such as sorting a `props.items` array in place.",
+    "Copying a prop into state and expecting it to update when the prop changes.",
+    "Defining a component inside another component, which creates a new component type every render and resets its state.",
+    "Expecting a default parameter to replace a `null` prop."
+  ],
+  "gotchas": [
+    {
+      "question": "Does `function Box({ size = 10 })` use 10 when rendered as `<Box size={null} />`?",
+      "answer": "No. Defaults apply only to `undefined`, so `size` is `null`."
+    },
+    {
+      "question": "A parent renders `<Child key={id} />`. What does `Child` see in `props.key`?",
+      "answer": "`undefined`. `key` is reserved for React. Pass the value again under another name if the child needs it."
+    },
+    {
+      "question": "Why does the input inside `Inner` lose focus on every keystroke?",
+      "code": "function Outer() {\n  const [text, setText] = useState(\"\")\n  function Inner() { return <input value={text} onChange={e => setText(e.target.value)} /> }\n  return <Inner />\n}",
+      "answer": "`Inner` is a new function on every render of `Outer`, so React sees a different component type, unmounts the old input and mounts a new one. Define components at the top level."
+    }
+  ]
+}

@@ -1,6 +1,8 @@
-import type { Track } from './curriculum-types'
 import type { CardState, Progress } from './progress'
 import index from './generated/flashcard-index.json' with { type: 'json' }
+import type { DeckId } from './content-schema'
+
+export type { DeckId }
 
 export interface Flashcard {
   id: string
@@ -9,12 +11,12 @@ export interface Flashcard {
   level: 'se' | 'sse'
 }
 export interface Deck {
-  track: Track
+  track: DeckId
   title: string
   cards: Flashcard[]
 }
 export interface DeckSummary {
-  track: Track
+  track: DeckId
   title: string
   cards: string[]
 }
@@ -59,11 +61,11 @@ export function sessionQueue(progress: Pick<Progress, 'cards'>, ids: string[], t
   return [...due, ...fresh]
 }
 
-export function dueCount(progress: Pick<Progress, 'cards'>, today: string, track?: Track): number {
+export function dueCount(progress: Pick<Progress, 'cards'>, today: string, track?: DeckId): number {
   return Object.entries(progress.cards ?? {}).filter(([id, card]) => card.due <= today && (!track || cardTrack.get(id) === track)).length
 }
 
 /** Cards in box 4 or higher (a review interval of two weeks or more). */
-export function masteredCount(progress: Pick<Progress, 'cards'>, track?: Track): number {
+export function masteredCount(progress: Pick<Progress, 'cards'>, track?: DeckId): number {
   return Object.entries(progress.cards ?? {}).filter(([id, card]) => card.box >= 4 && (!track || cardTrack.get(id) === track)).length
 }

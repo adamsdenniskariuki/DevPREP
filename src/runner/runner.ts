@@ -10,13 +10,14 @@ import type { FreeRunRequest, FreeRunResult } from './free'
 import { PROJECT_TIMEOUT_MS, type ProjectResponse, type ProjectRunRequest } from './project'
 import type { JsWorkerMessage } from './js.worker'
 import type { SqlWorkerMessage } from './sql.worker'
+import type { ReactCompileResult } from './react-core'
 
 export type RunReport =
   | RunResponse
   | { kind: 'timeout'; ms: number }
   | { kind: 'load-error'; error: string }
 
-export type RunPhase = 'loading-python' | 'loading-numpy' | 'loading-typescript' | 'loading-sql' | 'running'
+export type RunPhase = 'loading-python' | 'loading-numpy' | 'loading-typescript' | 'loading-sql' | 'loading-react' | 'running'
 /** Languages the runner executes: problem languages plus TypeScript (labs only). */
 export type RunLanguage = CodeLanguage | 'ts'
 /** TypeScript runs as JavaScript after type-checking; the extra second covers compiling. */
@@ -455,6 +456,32 @@ export function runPlaygroundSql(sql: string, onPhase: (phase: RunPhase) => void
 /** Empties the Playground database (drops every table, view and schema you made). */
 export function resetPlaygroundDb(onPhase: (phase: RunPhase) => void = () => {}): Promise<SqlFreeReport> {
   const next = queue.then(() => sqlFreeOnce({ type: 'play-reset' }, onPhase))
+  queue = next.catch(() => undefined)
+  return next
+}
+const REACT_COMPILE_TIMEOUT_MS = 10_000
+
+/** Compiles a React exercise's TSX files in the TypeScript worker, sharing the one-at-a-time queue. */
+export function compileReactFiles(files: Record<string, string>, onPhase: (phase: RunPhase) => void = ignore): Promise<ReactCompileResult | { kind: 'load-error'; error: string }> {
+  const next = queue.then(async () => {
+    onPhase('loading-typescript')
+    try {
+      await prepareTypeScript()
+    } catch (error) {
+      return loadError(error)
+    }
+    const pending = reply(tsWorker!, REACT_COMPILE_TIMEOUT_MS, data => {
+      const message = data as { type: string; result?: ReactCompileResult }
+      return message.type === 'result' ? message.result : undefined
+    })
+    tsWorker!.postMessage({ type: 'react', files } satisfies TsWorkerMessage)
+    const result = await pending
+    if (result === 'timeout') {
+      resetTypeScript()
+      return loadError(new Error('Compiling took too long. Try again.'))
+    }
+    return result
+  })
   queue = next.catch(() => undefined)
   return next
 }

@@ -1,0 +1,44 @@
+{
+  "id": "react-events",
+  "title": "Events",
+  "minutes": 25,
+  "summary": "Event handler props, passing functions instead of calling them, the synthetic event object, propagation and default behaviour, and naming handler props.",
+  "sections": [
+    {
+      "title": "Pass a function, do not call it",
+      "body": "`onClick={handleClick}` passes the function. `onClick={handleClick()}` **calls it during render** and passes its return value, which usually means it fires on every render, and if it sets state it loops. To pass arguments, wrap it: `onClick={() => remove(id)}`.",
+      "code": "<button onClick={save}>Save</button>             // right\n<button onClick={() => remove(item.id)}>×</button> // right, with an argument\n<button onClick={save()}>Save</button>           // wrong: runs while rendering"
+    },
+    {
+      "title": "The event object",
+      "body": "Handlers receive a React event that wraps the native one with the same interface: `e.target`, `e.currentTarget`, `e.preventDefault()`, `e.stopPropagation()`; the native event is `e.nativeEvent`. `e.target` is where the event started; `e.currentTarget` is the element whose handler is running.\n\nReact attaches listeners at the root and simulates bubbling through your component tree, so events also bubble through **portals** to their React parents. `onScroll` is the exception: it does not bubble."
+    },
+    {
+      "title": "Propagation and defaults",
+      "body": "Events bubble from the target up through ancestors. Call `e.stopPropagation()` to stop parent handlers from running. Use `onClickCapture` to run a handler on the way down, before children.\n\n`e.preventDefault()` stops browser behaviour such as a form submit reloading the page or a link navigating. It is separate from propagation: preventing the default does not stop bubbling, and stopping bubbling does not prevent the default.",
+      "code": "<form onSubmit={e => { e.preventDefault(); save(new FormData(e.currentTarget)) }}>\n  <button>Save</button>\n</form>"
+    },
+    {
+      "title": "Naming and owning handlers",
+      "body": "By convention, handler **props** are named `onSomething` (`onSelect`, `onClose`) and the functions you write are named `handleSomething`. The component that owns the state defines the handler and passes it down; children just call `onSelect(id)`.\n\nEvent handlers are the main place for side effects, because they run in response to a user action and not during rendering. Unlike rendering code, they do not need to be pure."
+    }
+  ],
+  "pitfalls": [
+    "`onClick={doThing()}` instead of `onClick={doThing}`.",
+    "Using `e.target` when you meant the element with the handler (`e.currentTarget`).",
+    "Forgetting `preventDefault()` on form submit and getting a full page reload.",
+    "Assuming `stopPropagation` also prevents the default action."
+  ],
+  "gotchas": [
+    {
+      "question": "What logs when the button is clicked?",
+      "code": "<div onClick={() => console.log(\"div\")}>\n  <button onClick={() => console.log(\"button\")}>Go</button>\n</div>",
+      "answer": "\"button\" then \"div\". The click bubbles from the button to the div."
+    },
+    {
+      "question": "What logs when the button is clicked?",
+      "code": "<div onClickCapture={() => console.log(\"capture\")} onClick={() => console.log(\"div\")}>\n  <button onClick={e => { e.stopPropagation(); console.log(\"button\") }}>Go</button>\n</div>",
+      "answer": "\"capture\" then \"button\". Capture handlers run first on the way down; `stopPropagation` then stops the bubble before it reaches the div's `onClick`."
+    }
+  ]
+}

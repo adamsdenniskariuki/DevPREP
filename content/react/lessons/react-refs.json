@@ -1,0 +1,39 @@
+{
+  "id": "react-refs",
+  "title": "useRef and DOM refs",
+  "minutes": 30,
+  "summary": "Refs as mutable boxes that do not trigger renders, DOM refs for focus and measurement, ref callbacks, passing refs to your own components, and when not to use a ref.",
+  "sections": [
+    {
+      "title": "A box that survives renders",
+      "body": "`const ref = useRef(initial)` returns the same `{ current }` object on every render. Changing `ref.current` **does not re-render**. Use refs for values that the render output does not depend on: timer ids, the previous value, a flag for an in-flight request, an imperative library instance.\n\nDo not read or write `ref.current` during rendering (except to lazily initialise it); React cannot track it, so the screen can go stale. Read and write refs in handlers and effects.",
+      "code": "const intervalRef = useRef<number | null>(null)\nfunction start() { intervalRef.current = window.setInterval(tick, 1000) }\nfunction stop() { if (intervalRef.current !== null) clearInterval(intervalRef.current) }"
+    },
+    {
+      "title": "DOM refs",
+      "body": "Pass a ref to a DOM element with `ref={inputRef}`; React sets `inputRef.current` to the node after mounting and back to `null` on unmount. Use it for **imperative** work React has no prop for: focus, selection, scrolling, measuring, playing media.\n\nA **ref callback** `ref={node => …}` runs with the node when it attaches. In React 19 it can return a cleanup function, which React calls when the node detaches.",
+      "code": "function Search() {\n  const inputRef = useRef<HTMLInputElement>(null)\n  return <>\n    <input ref={inputRef} aria-label=\"Search\" />\n    <button onClick={() => inputRef.current?.focus()}>Focus search</button>\n  </>\n}"
+    },
+    {
+      "title": "Refs to your own components",
+      "body": "In React 19, function components receive `ref` as a normal prop, so you can pass it straight to a DOM element: `function TextInput({ ref, ...props }) { return <input ref={ref} {...props} /> }`. Before React 19 this needed `forwardRef`, which still works but is no longer necessary.\n\n`useImperativeHandle(ref, () => ({ focus, clear }))` exposes a small custom API instead of the whole DOM node."
+    }
+  ],
+  "pitfalls": [
+    "Expecting the screen to update after changing `ref.current`.",
+    "Reading `ref.current` during render, or in the first render before the DOM node exists.",
+    "Using refs to control things React can do declaratively, such as showing or hiding an element.",
+    "Calling `focus()` on a ref to a component that never attaches the ref to a DOM element."
+  ],
+  "gotchas": [
+    {
+      "question": "What does the button show after three clicks?",
+      "code": "const clicks = useRef(0)\n<button onClick={() => { clicks.current++ }}>{clicks.current}</button>",
+      "answer": "0. Changing a ref does not re-render, so the label never updates (until something else causes a render)."
+    },
+    {
+      "question": "What is `inputRef.current` while the component first renders?",
+      "answer": "`null` (the initial value). React sets it after the DOM node is created, before layout effects and effects run."
+    }
+  ]
+}

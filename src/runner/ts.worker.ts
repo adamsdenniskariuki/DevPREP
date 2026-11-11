@@ -3,8 +3,9 @@ import { checkWithTypeChecks, createTsCompiler, formatDiagnostic, TS_ENTRY_LIB, 
 import { runJsAsync, type ProgressMessage, type RunRequest, type RunResponse, type TypeCheckOutcome } from './core'
 import { blockNetwork, runTypeScriptFree, type FreeRunRequest } from './free'
 import { createProjectChecker, runTypeScriptProject, type ProjectDiagnostic, type ProjectRunRequest } from './project'
+import { compileReact } from './react-core'
 
-export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest) | ({ type: 'project' } & ProjectRunRequest)
+export type TsWorkerMessage = { type: 'init'; baseURL: string } | ({ type: 'run' } & RunRequest) | ({ type: 'free' } & FreeRunRequest) | ({ type: 'project' } & ProjectRunRequest) | { type: 'react'; files: Record<string, string> }
 
 const scope = self as unknown as DedicatedWorkerGlobalScope
 let compiler: Promise<ReturnType<typeof createTsCompiler>> | undefined
@@ -47,6 +48,14 @@ scope.onmessage = async (event: MessageEvent<TsWorkerMessage>) => {
   if (message.type === 'free') {
     blockNetwork(scope)
     scope.postMessage({ type: 'result', result: await runTypeScriptFree(instance, message) })
+    return
+  }
+  if (message.type === 'react') {
+    try {
+      scope.postMessage({ type: 'result', result: compileReact(project!.ts, message.files) })
+    } catch (error) {
+      scope.postMessage({ type: 'result', result: { modules: {}, diagnostics: [{ file: 'App.tsx', line: 1, column: 1, message: error instanceof Error ? error.message : String(error) }] } })
+    }
     return
   }
   if (message.type === 'project') {

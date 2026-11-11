@@ -12,6 +12,7 @@ import { recordSolve } from './progress'
 import { loadCases } from './cases'
 import { interviewLessons as lessons, loadLabs, tracks } from './curriculum'
 import { selectPath } from './learning-paths'
+import { EXTRA_DECK_IDS } from './content-schema'
 import { COMPETENCY_IDS, newStoryId } from './stories'
 
 const now = new Date('2025-03-10T09:00:00.000Z')
@@ -21,7 +22,7 @@ describe('flashcard id registry', () => {
   it('keeps every card id that has ever shipped', () => expect(knownCards.filter(id => !cardIds.has(id))).toEqual([]))
   it('records every current card id', () => expect([...cardIds].filter(id => !knownCards.includes(id))).toEqual([]))
   it('has a deck for every track and loads card text lazily', async () => {
-    expect(deckIndex.map(deck => deck.track)).toEqual(tracks.map(track => track.id))
+    expect(deckIndex.map(deck => deck.track)).toEqual([...tracks.map(track => track.id), ...EXTRA_DECK_IDS])
     const decks = await loadDecks()
     expect(decks.flatMap(deck => deck.cards.map(card => card.id))).toEqual(deckIndex.flatMap(deck => deck.cards))
   })

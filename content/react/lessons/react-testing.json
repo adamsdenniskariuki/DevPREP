@@ -1,0 +1,46 @@
+{
+  "id": "react-testing",
+  "title": "Testing with React Testing Library concepts",
+  "minutes": 40,
+  "summary": "Testing behaviour instead of implementation, render and screen, query priority, getBy versus queryBy versus findBy, user events, async updates, act and mocking.",
+  "sections": [
+    {
+      "title": "Test what the user sees",
+      "body": "React Testing Library (RTL) renders a component into a real DOM (usually jsdom) and asks you to interact with it the way a user would: find elements by **role and accessible name**, click and type, then assert on the visible result. Avoid testing implementation details such as state variable names, internal methods or component instances; those tests break on harmless refactors."
+    },
+    {
+      "title": "Queries",
+      "body": "Prefer queries in this order: `getByRole` (with `{ name }`), `getByLabelText`, `getByPlaceholderText`, `getByText`, `getByDisplayValue`, then `getByAltText` and `getByTitle`; `getByTestId` is the last resort.\n\n- `getBy…` returns one element or **throws** if there are none or several.\n- `queryBy…` returns the element or **null**; use it to assert something is **absent**.\n- `findBy…` returns a **promise** that retries until the element appears (default 1 second); use it for async UI.\n- `getAllBy…`, `queryAllBy…` and `findAllBy…` return arrays.",
+      "code": "render(<Login />)\nawait user.type(screen.getByLabelText(\"Email\"), \"ada@example.com\")\nawait user.click(screen.getByRole(\"button\", { name: \"Sign in\" }))\nexpect(await screen.findByText(\"Welcome, Ada\")).toBeInTheDocument()\nexpect(screen.queryByRole(\"alert\")).not.toBeInTheDocument()"
+    },
+    {
+      "title": "Events and async updates",
+      "body": "`@testing-library/user-event` (`const user = userEvent.setup()`) simulates full interactions: `await user.click(el)`, `await user.type(el, \"text\")`, `await user.keyboard(\"{Enter}\")`. It is closer to real behaviour than `fireEvent`, which dispatches a single event.\n\nState updates after promises or timers happen later; wait for them with `findBy…` or `waitFor(() => expect(…))`. RTL wraps `render` and its events in `act`, so you rarely call `act` yourself; the warning \"An update … was not wrapped in act(...)\" usually means a test finished before an async update. Use fake timers (`vi.useFakeTimers()` or `jest.useFakeTimers()`) for timer logic."
+    },
+    {
+      "title": "Mocks",
+      "body": "Pass dependencies in as props or context so tests can supply fakes, or mock modules (`vi.mock`, `jest.mock`). Use mock functions (`vi.fn()`, `jest.fn()`) for callbacks and assert `toHaveBeenCalledWith(...)`. For network calls, Mock Service Worker intercepts requests at the network layer. Restore mocks between tests."
+    }
+  ],
+  "pitfalls": [
+    "`getBy…` to assert absence (it throws); use `queryBy…`.",
+    "`getBy…` for something that appears after a promise; use `findBy…`.",
+    "Forgetting `await` on `findBy…` or `user.click`.",
+    "Selecting by class name or test id when a role and name would work.",
+    "Asserting on internal state instead of the rendered output."
+  ],
+  "gotchas": [
+    {
+      "question": "Which query returns `null` instead of throwing when nothing matches?",
+      "answer": "`queryBy…`. `getBy…` throws and `findBy…` rejects."
+    },
+    {
+      "question": "A message appears after a fetch resolves. Which query should you use?",
+      "answer": "`await screen.findByText(...)`, which retries until it appears or times out."
+    },
+    {
+      "question": "Which query does RTL recommend first?",
+      "answer": "`getByRole`, usually with `{ name }`, because it matches how assistive technology finds elements."
+    }
+  ]
+}

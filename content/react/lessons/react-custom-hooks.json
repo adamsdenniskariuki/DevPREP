@@ -1,0 +1,38 @@
+{
+  "id": "react-custom-hooks",
+  "title": "Custom hooks and the rules of hooks",
+  "minutes": 30,
+  "summary": "The rules of hooks and why they exist, extracting reusable stateful logic into use-functions, what custom hooks share and what they do not, and good hook design.",
+  "sections": [
+    {
+      "title": "The rules of hooks",
+      "body": "- Call hooks only at the **top level** of a component or custom hook: not inside conditions, loops, nested functions or after an early `return`.\n- Call them only from **React functions**: components and custom hooks, not plain functions or class components.\n\nReact identifies each hook by its **call order** in a render. If a condition skips a `useState` call, every later hook reads the wrong slot. The one exception is `use`, which may be called conditionally.",
+      "code": "// Wrong: hook order changes when `show` changes\nif (show) { const [x, setX] = useState(0) }\n// Wrong: hook after an early return\nif (!user) return null\nconst [tab, setTab] = useState(\"posts\")"
+    },
+    {
+      "title": "Extracting a custom hook",
+      "body": "A custom hook is a function whose name starts with `use` and that calls other hooks. It lets several components reuse **stateful logic**, such as subscribing to online status, debouncing a value or reading a media query, while keeping the component focused on what to render.\n\nEach call to a custom hook gets its **own independent state**. Two components calling `useCounter()` do not share a counter; to share state, lift it up or use context.",
+      "code": "function useDebouncedValue<T>(value: T, delayMs: number): T {\n  const [debounced, setDebounced] = useState(value)\n  useEffect(() => {\n    const t = setTimeout(() => setDebounced(value), delayMs)\n    return () => clearTimeout(t)\n  }, [value, delayMs])\n  return debounced\n}"
+    },
+    {
+      "title": "Designing hooks well",
+      "body": "Name hooks after **what they do**, `useOnlineStatus`, `useChatRoom`, not after lifecycle (`useMount`). Return what callers need: a value, a tuple like `useState`, or an object for many values. Keep inputs reactive: the hook re-runs on every render with the latest arguments, so list them in the inner effect's dependencies.\n\nIf a function does not call any hooks, do not name it `use…`; make it a plain helper. Prefer built-in solutions where they exist, such as `useSyncExternalStore` for subscribing to an external store."
+    }
+  ],
+  "pitfalls": [
+    "Calling a hook conditionally or after an early return.",
+    "Expecting two components using the same custom hook to share state.",
+    "Naming a plain helper with a `use` prefix, or a hook without one.",
+    "Leaving hook arguments out of the inner effect's dependency array."
+  ],
+  "gotchas": [
+    {
+      "question": "Two sibling components both call `const [n, setN] = useCounter()`. One increments. Does the other change?",
+      "answer": "No. Each call has its own state. Custom hooks share logic, not state."
+    },
+    {
+      "question": "Which hook may be called inside an `if`?",
+      "answer": "`use`. All other hooks must run in the same order on every render."
+    }
+  ]
+}

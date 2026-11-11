@@ -1,0 +1,38 @@
+{
+  "id": "react-data-fetching",
+  "title": "Data fetching and race conditions",
+  "minutes": 40,
+  "summary": "Fetching in effects with loading and error states, race conditions and the ignore flag, AbortController, request waterfalls, and why data libraries and frameworks exist.",
+  "sections": [
+    {
+      "title": "Fetching in an effect",
+      "body": "The basic pattern: keep `data`, `error` and a loading flag in state, start the request in an effect that depends on the inputs (such as `userId`), and handle success and failure. Define the async function **inside** the effect and call it; the effect callback itself must not be `async`.",
+      "code": "useEffect(() => {\n  let ignore = false\n  setStatus(\"loading\")\n  fetchUser(userId).then(\n    user => { if (!ignore) { setUser(user); setStatus(\"done\") } },\n    err => { if (!ignore) { setError(err); setStatus(\"error\") } },\n  )\n  return () => { ignore = true }\n}, [userId])"
+    },
+    {
+      "title": "Race conditions",
+      "body": "If `userId` changes from 1 to 2 quickly, both requests are in flight. If request 1 finishes **last**, it overwrites user 2 with user 1. The cleanup fixes it: when `userId` changes, React runs the old effect's cleanup, which sets that effect's `ignore` to `true`, so its late response is dropped.\n\n`AbortController` does the same and also cancels the network request: create one in the effect, pass `signal` to `fetch`, call `abort()` in cleanup, and ignore the resulting `AbortError`. Under StrictMode the development double-run also exercises this cleanup."
+    },
+    {
+      "title": "Waterfalls and better tools",
+      "body": "Fetching in effects has costs: nothing loads until the component renders, children wait for parents (a **waterfall**), there is no cache, and every component reimplements loading, errors and retries. Start independent requests in parallel with `Promise.all`, or hoist them to a parent or route loader.\n\nIn production apps, prefer a framework's data loading or a library such as TanStack Query or SWR, which add caching, deduplication, retries and race safety. In React 19 you can also pass a promise created outside the render to `use` inside `<Suspense>`."
+    }
+  ],
+  "pitfalls": [
+    "No cleanup, so stale responses overwrite newer ones.",
+    "An `async` effect callback, which returns a promise instead of a cleanup.",
+    "Missing the error path, leaving a spinner forever.",
+    "Putting the fetched object's identity in dependencies and refetching in a loop.",
+    "Fetching data that is derivable from props."
+  ],
+  "gotchas": [
+    {
+      "question": "Why is `useEffect(async () => { … }, [])` wrong?",
+      "answer": "An async function returns a promise, but React expects the effect to return nothing or a cleanup function. Define an async function inside the effect and call it."
+    },
+    {
+      "question": "The user picks profile 1 then profile 2. Request 1 resolves after request 2. Without cleanup, which profile shows?",
+      "answer": "Profile 1, the wrong one, because its late `setUser` overwrites profile 2."
+    }
+  ]
+}

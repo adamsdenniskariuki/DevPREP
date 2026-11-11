@@ -1,6 +1,6 @@
 import type { CodeLanguage } from './problem-types'
 
-export type EditorLanguage = CodeLanguage | 'sql' | 'ts'
+export type EditorLanguage = CodeLanguage | 'sql' | 'ts' | 'tsx'
 export type EditorKind = 'rich' | 'plain'
 export interface EditorPrefs {
   /** Rich is CodeMirror; Plain is the textarea editor, also used when CodeMirror fails to load. */

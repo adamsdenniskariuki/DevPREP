@@ -3,6 +3,8 @@ import type { BoardKind, BoardRecord } from './boards'
 import { caseIds } from './cases'
 import { parseCodebaseProgress, type CodebaseProgress } from './codebase'
 import { cleanBoard } from './design-drafts'
+import { parseReactProgress, type ReactProgress } from './react-module'
+import { parseSkillTests, type SkillTestsState } from './skill-tests'
 import { parsePractice } from './practice'
 import { problemIds } from './problems'
 import { parseSnippets, type Snippet } from './playground'
@@ -28,6 +30,16 @@ export interface FullBackup {
   plans?: PlansState
   /** Present only when the backup carries codebase practice progress. It then replaces that progress on this device. */
   codebase?: CodebaseProgress
+  /** Present only when the backup carries React exercise progress. It then replaces that progress on this device. */
+  react?: ReactProgress
+  /** Present only when the backup carries skill test results. They then replace the results on this device. */
+  skilltests?: SkillTestsState
+}
+
+/** Module progress added after codebase practice; each key is optional and left out when empty. */
+export interface ModuleBackup {
+  react?: ReactProgress
+  skilltests?: SkillTestsState
 }
 
 const isRec = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -98,8 +110,8 @@ export function parseFullBackup(text: string): FullBackup {
   if (encoder.encode(text).length > MAX_FULL_BACKUP_BYTES) invalid(`file is larger than ${formatBytes(MAX_FULL_BACKUP_BYTES)}.`)
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { progress: parseBackup(text) } }
-  if (!isRec(parsed) || (!Object.hasOwn(parsed, 'boards') && !Object.hasOwn(parsed, 'playground') && !Object.hasOwn(parsed, 'plans') && !Object.hasOwn(parsed, 'codebase'))) return { progress: parseBackup(text) }
-  const { boards, playground, plans, codebase, ...rest } = parsed
+  if (!isRec(parsed) || (!Object.hasOwn(parsed, 'boards') && !Object.hasOwn(parsed, 'playground') && !Object.hasOwn(parsed, 'plans') && !Object.hasOwn(parsed, 'codebase') && !Object.hasOwn(parsed, 'react') && !Object.hasOwn(parsed, 'skilltests'))) return { progress: parseBackup(text) }
+  const { boards, playground, plans, codebase, react, skilltests, ...rest } = parsed
   const progress = parseBackup(JSON.stringify(rest))
   if (Object.hasOwn(parsed, 'playground') && jsonBytes(playground) > MAX_SNIPPETS_BYTES) invalid(`Playground snippets add up to more than ${formatBytes(MAX_SNIPPETS_BYTES)}.`)
   return {
@@ -108,6 +120,8 @@ export function parseFullBackup(text: string): FullBackup {
     ...Object.hasOwn(parsed, 'playground') ? { playground: parseSnippets(playground) } : {},
     ...Object.hasOwn(parsed, 'plans') ? { plans: parsePlans(plans) } : {},
     ...Object.hasOwn(parsed, 'codebase') ? { codebase: parseCodebaseProgress(codebase) } : {},
+    ...Object.hasOwn(parsed, 'react') ? { react: parseReactProgress(react) } : {},
+    ...Object.hasOwn(parsed, 'skilltests') ? { skilltests: parseSkillTests(skilltests) } : {},
   }
 }
 
@@ -116,15 +130,20 @@ function forBackup(board: BoardRecord): BoardRecord {
   return { id, title, kind, ...caseId ? { caseId } : {}, ...problemId ? { problemId } : {}, elements, appState, files, createdAt, updatedAt, ...fallback ? { fallback } : {}, ...practice ? { practice } : {} }
 }
 
-/** Builds backup JSON. Without boards, snippets, plan or codebase progress it matches the old format exactly. Throws a clear message over the caps. */
-export function serializeFullBackup(progress: Progress, boards?: BoardRecord[], snippets?: Snippet[], plans?: PlansState, codebase?: CodebaseProgress): string {
+/** Builds backup JSON. Without boards, snippets, plan, codebase or module progress it matches the old format exactly. Throws a clear message over the caps. */
+export function serializeFullBackup(progress: Progress, boards?: BoardRecord[], snippets?: Snippet[], plans?: PlansState, codebase?: CodebaseProgress, modules: ModuleBackup = {}): string {
   const base = serializeBackup(progress)
   const playground = snippets?.length ? snippets.map(({ id, name, lang, code, stdin, createdAt, updatedAt }) => ({ id, name, lang, code, ...stdin !== undefined ? { stdin } : {}, createdAt, updatedAt })) : undefined
   const planState = plans && Object.keys(plans).length ? plans : undefined
   if (planState && jsonBytes(planState) > MAX_PLANS_BYTES) throw new Error('Your study plan progress is larger than 500 KB. Delete some error-log entries or scorecards.')
   const codebaseState = codebase && Object.keys(codebase).length ? codebase : undefined
-  const extra = { ...playground ? { playground } : {}, ...planState ? { plans: planState } : {}, ...codebaseState ? { codebase: codebaseState } : {} }
-  if (!boards && !playground && !planState && !codebaseState) return base
+  const reactState = modules.react && Object.keys(modules.react).length ? modules.react : undefined
+  const skillState = modules.skilltests && Object.keys(modules.skilltests).length ? modules.skilltests : undefined
+  const extra = {
+    ...playground ? { playground } : {}, ...planState ? { plans: planState } : {}, ...codebaseState ? { codebase: codebaseState } : {},
+    ...reactState ? { react: reactState } : {}, ...skillState ? { skilltests: skillState } : {},
+  }
+  if (!boards && !Object.keys(extra).length) return base
   if (!boards) {
     const text = JSON.stringify({ ...JSON.parse(base), ...extra })
     parseFullBackup(text)

@@ -2,7 +2,7 @@ import { useRef, type CSSProperties, type KeyboardEvent } from 'react'
 import { MAX_CODE_LENGTH } from '../code-drafts'
 import type { EditorLanguage, EditorProps } from '../editor-prefs'
 
-export const INDENT: Record<EditorLanguage, string> = { js: '  ', ts: '  ', py: '    ', sql: '  ' }
+export const INDENT: Record<EditorLanguage, string> = { js: '  ', ts: '  ', tsx: '  ', py: '    ', sql: '  ' }
 
 function insert(area: HTMLTextAreaElement, text: string, onChange: (value: string) => void) {
   area.focus()

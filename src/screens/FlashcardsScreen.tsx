@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import type { AppModel } from '../app-model'
 import Icon from '../components/Icon'
 import { tracks } from '../curriculum'
-import type { Track } from '../curriculum-types'
 import { BOX_DAYS, deckIndex, dueCount, gradeCard, loadDecks, masteredCount, sessionQueue } from '../flashcards'
-import type { Deck, Flashcard, Grade } from '../flashcards'
+import type { Deck, DeckId, Flashcard, Grade } from '../flashcards'
+
+/** Track decks use the track's name; extra decks (React) use their own title. */
+const DECK_CHOICES: { id: DeckId; title: string }[] = deckIndex.map(item => ({ id: item.track, title: tracks.find(track => track.id === item.track)?.title ?? item.title }))
 
 const GRADES: { grade: Grade; label: string; key: string }[] = [
   { grade: 'again', label: 'Again', key: '1' }, { grade: 'hard', label: 'Hard', key: '2' },
@@ -18,7 +20,7 @@ function interval(days: number) {
 export default function FlashcardsScreen({ app }: { app: AppModel }) {
   const [decks, setDecks] = useState<Deck[]>()
   const [error, setError] = useState('')
-  const [deck, setDeck] = useState<Track | 'all'>('all')
+  const [deck, setDeck] = useState<DeckId | 'all'>('all')
   const [session, setSession] = useState<{ queue: string[]; at: number; requeued: string[]; reviewed: number; xp: number }>()
   const [revealed, setRevealed] = useState(false)
   useEffect(() => { app.heading.current?.focus() }, [app.heading, session === undefined])
@@ -64,7 +66,7 @@ export default function FlashcardsScreen({ app }: { app: AppModel }) {
     const previous = current ? app.progress.cards?.[current.id] : undefined
     return <>
       <button type="button" className="back-link text-button" onClick={() => setSession(undefined)}><Icon name="back" size={16} /> Decks</button>
-      <div className="page-heading"><div><div className="eyebrow">FLASHCARDS · {deck === 'all' ? 'ALL TRACKS' : tracks.find(item => item.id === deck)?.title.toUpperCase()}</div><h1 ref={app.heading} tabIndex={-1}>{current ? `Card ${session.at + 1} of ${session.queue.length}` : 'Session complete'}</h1></div>{current && <span className="pill">{current.level === 'sse' ? 'SSE' : 'SE'}</span>}</div>
+      <div className="page-heading"><div><div className="eyebrow">FLASHCARDS · {deck === 'all' ? 'ALL TRACKS' : DECK_CHOICES.find(item => item.id === deck)?.title.toUpperCase()}</div><h1 ref={app.heading} tabIndex={-1}>{current ? `Card ${session.at + 1} of ${session.queue.length}` : 'Session complete'}</h1></div>{current && <span className="pill">{current.level === 'sse' ? 'SSE' : 'SE'}</span>}</div>
       {current ? <section className="card flashcard" aria-live="polite">
         <p className="flashcard-front">{current.front}</p>
         {revealed ? <>
@@ -86,7 +88,7 @@ export default function FlashcardsScreen({ app }: { app: AppModel }) {
     <div className="page-heading"><div><div className="eyebrow">PRACTICE · FLASHCARDS</div><h1 ref={app.heading} tabIndex={-1}>Flashcards</h1><p>Recall, then grade yourself. Good cards wait longer.</p></div><span className="pill">{dueCount(app.progress, app.today)} due</span></div>
     {error && <p className="alert" role="alert">{error}</p>}
     <fieldset className="field"><legend>Deck</legend><div className="chip-group">
-      {[{ id: 'all' as const, title: 'All tracks' }, ...tracks].map(item => <label key={item.id} className="chip"><input type="radio" name="deck" checked={deck === item.id} onChange={() => setDeck(item.id)} />{item.title}</label>)}
+      {[{ id: 'all' as const, title: 'All tracks' }, ...DECK_CHOICES].map(item => <label key={item.id} className="chip"><input type="radio" name="deck" checked={deck === item.id} onChange={() => setDeck(item.id)} />{item.title}</label>)}
     </div></fieldset>
     <section className="card deck-card">
       <div className="mini-stats"><div><strong>{due}</strong><span>due</span></div><div><strong>{fresh}</strong><span>new</span></div><div><strong>{masteredCount(app.progress, deck === 'all' ? undefined : deck)}</strong><span>mastered</span></div><div><strong>{ids.length}</strong><span>cards</span></div></div>
