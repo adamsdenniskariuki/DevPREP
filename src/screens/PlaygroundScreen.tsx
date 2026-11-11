@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 're
 import type { AppModel } from '../app-model'
 import Editor from '../components/Editor'
 import Icon from '../components/Icon'
+import RunProgress, { BUSY_LABEL } from '../components/RunProgress'
 import { ResultTable } from '../components/SqlLab'
 import { MAX_CODE_LENGTH } from '../code-drafts'
 import {
@@ -14,7 +15,6 @@ import { SAMPLE_SQL } from '../playground-sample'
 import '../playground.css'
 import { useSaveCheck } from '../relaunch-guard'
 
-const PHASE_LABEL: Record<RunPhase, string> = { 'loading-python': 'Loading Python…', 'loading-numpy': 'Loading Python and NumPy…', 'loading-typescript': 'Loading TypeScript…', 'loading-sql': 'Starting Postgres…', running: 'Running…' }
 const DOWNLOAD_NOTE: Record<SnippetLang, string> = {
   js: '',
   ts: ' TypeScript’s first run downloads the compiler (about 3 MB compressed), then works offline.',
@@ -47,6 +47,7 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
   const [saveState, setSaveState] = useState<'saved' | 'pending' | 'failed'>('saved')
   const [newLang, setNewLang] = useState<SnippetLang>('js')
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [limitMs, setLimitMs] = useState(FREE_TIMEOUT_MS.js)
   const [result, setResult] = useState<Result>()
   const [notice, setNotice] = useState('')
   const [nameDraft, setNameDraft] = useState<string>()
@@ -146,6 +147,7 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
     save()
     setResult(undefined)
     setNotice('')
+    setLimitMs(FREE_TIMEOUT_MS[current.lang])
     if (current.lang === 'sql') {
       const report = await runPlaygroundSql(current.code, setPhase)
       if (!live.current) return
@@ -164,6 +166,7 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
     if (phase !== 'idle') return
     if (kind === 'reset' && !window.confirm('Delete every table in the Playground database? This can’t be undone.')) return
     setResult(undefined)
+    setLimitMs(FREE_TIMEOUT_MS.sql)
     const report = kind === 'reset' ? await resetPlaygroundDb(setPhase) : await runPlaygroundSql(SAMPLE_SQL, setPhase)
     if (!live.current) return
     setPhase('idle')
@@ -245,13 +248,14 @@ export default function PlaygroundScreen({ app, snippetId }: { app: AppModel; sn
           <p id="playground-stdin-help" className="helper">{current.lang === 'py' ? 'input() reads one line at a time.' : 'readline() or input() return the next line, or null when there are none; stdin holds all of it.'}</p>
         </div>}
         <div className="button-row playground-run">
-          <button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run' : PHASE_LABEL[phase]}</button>
+          <button type="button" className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run' : BUSY_LABEL[phase]}</button>
           {current.lang === 'sql' && <>
             <button type="button" onClick={() => { void sqlAction('sample') }} disabled={busy}>Load sample data</button>
             <button type="button" className="danger-outline" onClick={() => { void sqlAction('reset') }} disabled={busy}>Reset database</button>
           </>}
           <span className="playground-save muted" aria-live="polite">{saveState === 'failed' ? 'Not saved' : saveState === 'pending' ? 'Saving…' : 'Saved on this device'}</span>
         </div>
+        <RunProgress phase={phase} limitMs={limitMs} name="Run progress" />
         <div className="run-results playground-output" role="status" aria-live="polite" aria-label="Output">
           {result && (result.lang === 'sql' ? <SqlOutput report={result.report} note={result.note} /> : <FreeOutput report={result.report} lang={result.lang} />)}
         </div>

@@ -1,5 +1,5 @@
 import type { PyodideAPI } from 'pyodide'
-import { OUTPUT_LIMIT, PY_HARNESS, runPython, type RunRequest } from './core'
+import { OUTPUT_LIMIT, PY_HARNESS, runPython, type ProgressMessage, type RunRequest } from './core'
 import { isPyPackage } from './pyodide-version'
 import { blockNetwork, FREE_OUTPUT_LIMIT, PY_FREE_HARNESS, runPythonFree, type FreeRunRequest } from './free'
 
@@ -53,5 +53,5 @@ scope.onmessage = async (event: MessageEvent<PyWorkerMessage>) => {
     scope.postMessage({ type: 'result', result: runPythonFree(py, message, flush) })
     return
   }
-  scope.postMessage({ type: 'result', result: runPython(py, message, flush) })
+  scope.postMessage({ type: 'result', result: runPython(py, message, flush, done => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage)) })
 }

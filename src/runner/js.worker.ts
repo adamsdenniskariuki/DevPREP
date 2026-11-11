@@ -1,4 +1,4 @@
-import { runJs, type RunRequest } from './core'
+import { runJs, type ProgressMessage, type RunRequest } from './core'
 import { blockNetwork, runJsFree, type FreeRunRequest } from './free'
 
 /** Problems post a RunRequest; the Playground posts a free run, which also turns off network access. */
@@ -22,5 +22,5 @@ scope.onmessage = async (event: MessageEvent<JsWorkerMessage>) => {
     scope.postMessage(await runJsFree(message, { syntaxLine }))
     return
   }
-  scope.postMessage(runJs(message as RunRequest))
+  scope.postMessage(runJs(message as RunRequest, done => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage)))
 }

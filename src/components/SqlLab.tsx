@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import Editor from './Editor'
 import Icon from './Icon'
+import RunProgress, { BUSY_LABEL } from './RunProgress'
 import type { SqlExercise, SqlLabTest } from '../curriculum-types'
 import type { RunPhase, SqlReport } from '../runner/runner'
 import { runSqlCode } from '../runner/runner'
@@ -68,6 +69,7 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
   label: string
 }) {
   const [phase, setPhase] = useState<RunPhase | 'idle'>('idle')
+  const [done, setDone] = useState(0)
   const [result, setResult] = useState<{ report: SqlReport; message?: string }>()
   const live = useRef(true)
   useEffect(() => {
@@ -75,9 +77,11 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
     return () => { live.current = false }
   }, [])
   const id = `lab-${exercise.id}`
+  const cases = [...exercise.tests, ...exercise.hiddenTests]
   async function run() {
     setResult(undefined)
-    const report = await runSqlCode({ code: value, schema: exercise.schema, check: exercise.check, ordered: exercise.ordered, cases: [...exercise.tests, ...exercise.hiddenTests] }, setPhase)
+    setDone(0)
+    const report = await runSqlCode({ code: value, schema: exercise.schema, check: exercise.check, ordered: exercise.ordered, cases }, setPhase, setDone)
     if (!live.current) return
     setPhase('idle')
     const passed = report.kind === 'done' && report.outcomes.every(outcome => outcome.pass)
@@ -98,7 +102,8 @@ export default function SqlLabRunner({ exercise, value, onChange, onPass, label 
     <Editor id={id} lang="sql" value={value} onChange={onChange} describedBy={`${id}-help`} />
     <p id={`${id}-help`} className="helper">Each test starts from a fresh database with the tables below{exercise.check ? '; a check query then reads the result' : ''}. Tab indents; press Esc, then Tab, to leave the editor. Postgres’s first run downloads about 6 MB compressed, then works offline.</p>
     <details className="sql-schema"><summary>Tables and test data</summary><pre><code>{exercise.schema}</code></pre>{exercise.tests.filter(test => test.seed.trim()).map(test => <div key={test.name}><p className="muted">Test data: {test.name}</p><pre><code>{test.seed}</code></pre></div>)}</details>
-    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : phase === 'loading-sql' ? 'Starting Postgres…' : 'Running…'}</button></div>
+    <div className="button-row"><button type="button" className="primary" onClick={() => { void run() }} disabled={busy} aria-busy={busy}><Icon name="bolt" size={16} />{phase === 'idle' ? 'Run tests' : BUSY_LABEL[phase]}</button></div>
+    <RunProgress phase={phase} total={cases.length} done={done} limitMs={SQL_TIMEOUT_MS} />
     <div className="run-results" role="status" aria-live="polite">
       {result && <SqlResults exercise={exercise} report={result.report} message={result.message} />}
     </div>

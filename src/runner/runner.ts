@@ -1,5 +1,5 @@
 import type { CodeLanguage } from '../problem-types'
-import { TIMEOUT_MS, type RunRequest, type RunResponse } from './core'
+import { isProgressMessage, TIMEOUT_MS, type RunRequest, type RunResponse } from './core'
 import { isPyPackage, packagesImported, PYODIDE_VERSION, type PyPackage } from './pyodide-version'
 import type { PyWorkerMessage } from './py.worker'
 import { TYPESCRIPT_VERSION } from './ts-version'
@@ -20,6 +20,11 @@ export type RunPhase = 'loading-python' | 'loading-numpy' | 'loading-typescript'
 export type RunLanguage = CodeLanguage | 'ts'
 /** TypeScript runs as JavaScript after type-checking; the extra second covers compiling. */
 export const TS_TIMEOUT_MS = TIMEOUT_MS.js + 1000
+/** How long tests may run in each language before the runner stops them. */
+export const RUN_TIMEOUT_MS: Record<RunLanguage, number> = { js: TIMEOUT_MS.js, py: TIMEOUT_MS.py, ts: TS_TIMEOUT_MS }
+/** Hears how many test cases have finished, as the worker reports them. */
+export type RunProgress = (done: number) => void
+const ignore = () => {}
 
 const PYTHON_LOAD_TIMEOUT_MS = 180_000
 const TYPESCRIPT_LOAD_TIMEOUT_MS = 120_000
@@ -64,6 +69,17 @@ function reply<T>(worker: Worker, ms: number, accept: (data: unknown) => T | und
     worker.addEventListener('message', onMessage)
     worker.addEventListener('error', onError)
   })
+}
+
+/** Wraps a reply filter so per-case progress messages go to `onProgress` instead of ending the wait. */
+export function withProgress<T>(accept: (data: unknown) => T | undefined, onProgress: RunProgress): (data: unknown) => T | undefined {
+  return data => {
+    if (isProgressMessage(data)) {
+      onProgress(data.done)
+      return undefined
+    }
+    return accept(data)
+  }
 }
 
 function resetPython() {
@@ -133,7 +149,7 @@ export function prepareTypeScript(): Promise<void> {
   return tsReady
 }
 
-async function runTypeScript(request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {
+async function runTypeScript(request: RunRequest, onPhase: (phase: RunPhase) => void, onProgress: RunProgress): Promise<RunReport> {
   onPhase('loading-typescript')
   try {
     await prepareTypeScript()
@@ -143,10 +159,10 @@ async function runTypeScript(request: RunRequest, onPhase: (phase: RunPhase) => 
   const worker = tsWorker!
   onPhase('running')
   const started = performance.now()
-  const pending = reply(worker, TS_TIMEOUT_MS, data => {
+  const pending = reply(worker, TS_TIMEOUT_MS, withProgress(data => {
     const message = data as { type: string; result?: RunResponse }
     return message.type === 'result' ? message.result : undefined
-  })
+  }, onProgress))
   worker.postMessage({ type: 'run', ...request } satisfies TsWorkerMessage)
   try {
     const result = await pending
@@ -189,7 +205,7 @@ export function prepareSql(): Promise<void> {
 
 export type SqlReport = SqlRunResponse | { kind: 'timeout'; ms: number } | { kind: 'load-error'; error: string }
 
-async function runSqlOnce(request: SqlRunRequest, onPhase: (phase: RunPhase) => void): Promise<SqlReport> {
+async function runSqlOnce(request: SqlRunRequest, onPhase: (phase: RunPhase) => void, onProgress: RunProgress): Promise<SqlReport> {
   onPhase('loading-sql')
   try {
     await prepareSql()
@@ -199,10 +215,10 @@ async function runSqlOnce(request: SqlRunRequest, onPhase: (phase: RunPhase) => 
   const worker = sqlWorker!
   onPhase('running')
   const started = performance.now()
-  const pending = reply(worker, SQL_TIMEOUT_MS, data => {
+  const pending = reply(worker, SQL_TIMEOUT_MS, withProgress(data => {
     const message = data as { type: string; fatal?: boolean; result?: SqlRunResponse }
     return message.type === 'result' ? message : undefined
-  })
+  }, onProgress))
   worker.postMessage({ type: 'run', ...request } satisfies SqlWorkerMessage)
   try {
     const message = await pending
@@ -221,20 +237,20 @@ async function runSqlOnce(request: SqlRunRequest, onPhase: (phase: RunPhase) => 
 }
 
 /** Runs SQL test cases on in-browser Postgres, sharing the one-at-a-time queue with the code runner. */
-export function runSqlCode(request: SqlRunRequest, onPhase: (phase: RunPhase) => void = () => {}): Promise<SqlReport> {
-  const next = queue.then(() => runSqlOnce(request, onPhase))
+export function runSqlCode(request: SqlRunRequest, onPhase: (phase: RunPhase) => void = ignore, onProgress: RunProgress = ignore): Promise<SqlReport> {
+  const next = queue.then(() => runSqlOnce(request, onPhase, onProgress))
   queue = next.catch(() => undefined)
   return next
 }
 
-async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void): Promise<RunReport> {
-  if (lang === 'ts') return runTypeScript(request, onPhase)
+async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void, onProgress: RunProgress): Promise<RunReport> {
+  if (lang === 'ts') return runTypeScript(request, onPhase, onProgress)
   const started = performance.now()
   if (lang === 'js') {
     jsWorker ??= new Worker(new URL('./js.worker.ts', import.meta.url), { type: 'module', name: 'devprep-javascript' })
     const worker = jsWorker
     onPhase('running')
-    const pending = reply(worker, TIMEOUT_MS.js, data => data as RunResponse)
+    const pending = reply(worker, TIMEOUT_MS.js, withProgress(data => data as RunResponse, onProgress))
     worker.postMessage(request)
     try {
       const result = await pending
@@ -256,10 +272,10 @@ async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: 
   const worker = pyWorker!
   onPhase('running')
   const runStarted = performance.now()
-  const pending = reply(worker, TIMEOUT_MS.py, data => {
+  const pending = reply(worker, TIMEOUT_MS.py, withProgress(data => {
     const message = data as { type: string; result?: RunResponse }
     return message.type === 'result' ? message.result : undefined
-  })
+  }, onProgress))
   worker.postMessage({ type: 'run', ...request } satisfies PyWorkerMessage)
   try {
     const result = await pending
@@ -274,8 +290,8 @@ async function runOnce(lang: RunLanguage, request: RunRequest, onPhase: (phase: 
 }
 
 /** Runs code against test cases in a sandboxed worker, one run at a time, with a time limit. */
-export function runCode(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void = () => {}): Promise<RunReport> {
-  const next = queue.then(() => runOnce(lang, request, onPhase))
+export function runCode(lang: RunLanguage, request: RunRequest, onPhase: (phase: RunPhase) => void = ignore, onProgress: RunProgress = ignore): Promise<RunReport> {
+  const next = queue.then(() => runOnce(lang, request, onPhase, onProgress))
   queue = next.catch(() => undefined)
   return next
 }

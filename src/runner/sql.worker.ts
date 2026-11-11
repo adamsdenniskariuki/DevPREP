@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite'
+import type { ProgressMessage } from './core'
 import { resetDb, resetFreeDb, runFreeSql, runSql, startFreeSession, type SqlDb, type SqlRunRequest } from './sql-core'
 
 export type SqlWorkerMessage =
@@ -81,7 +82,7 @@ scope.onmessage = async (event: MessageEvent<SqlWorkerMessage>) => {
   const { type: _type, ...request } = message
   try {
     const db = await database!
-    scope.postMessage({ type: 'result', result: await runSql(db as unknown as SqlDb, request) })
+    scope.postMessage({ type: 'result', result: await runSql(db as unknown as SqlDb, request, done => scope.postMessage({ type: 'progress', done } satisfies ProgressMessage)) })
   } catch (error) {
     // The database could not be reset, so ask the page to restart this worker.
     scope.postMessage({ type: 'result', fatal: true, result: { kind: 'error', error: errorMessage(error) } })
