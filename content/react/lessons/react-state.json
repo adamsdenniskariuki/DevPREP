@@ -1,0 +1,51 @@
+{
+  "id": "react-state",
+  "title": "State and immutability",
+  "minutes": 40,
+  "summary": "useState, why state is a snapshot, batching and updater functions, replacing objects and arrays instead of mutating them, and where state should live.",
+  "sections": [
+    {
+      "title": "State is a snapshot",
+      "body": "`const [count, setCount] = useState(0)` gives you the value **for this render** and a setter. Calling the setter does not change `count` in the current function call; it asks React to render again with the new value. So code after `setCount(count + 1)` still sees the old `count`.\n\nThe initial value is used only on the first render. To compute an expensive initial value once, pass a function: `useState(() => parse(raw))`, not `useState(parse(raw))`, which would run `parse` on every render.",
+      "code": "function Counter() {\n  const [count, setCount] = useState(0)\n  function handleClick() {\n    setCount(count + 1)\n    console.log(count) // still the old value\n  }\n  return <button onClick={handleClick}>{count}</button>\n}"
+    },
+    {
+      "title": "Batching and updater functions",
+      "body": "React **batches** state updates: every setter call in the same event (and, since React 18, in timeouts, promises and native handlers too) produces one re-render. Because each call reads the same snapshot, `setCount(count + 1)` three times adds 1, not 3.\n\nPass an **updater function** when the next value depends on the previous one: `setCount(c => c + 1)` three times adds 3, because React queues the functions and runs them in order.",
+      "code": "setCount(count + 1); setCount(count + 1); setCount(count + 1) // +1\nsetCount(c => c + 1); setCount(c => c + 1); setCount(c => c + 1) // +3"
+    },
+    {
+      "title": "Replace, never mutate",
+      "body": "React compares state with `Object.is`. If you mutate an object or array and set the same reference, React may skip the render, and memoised children and effects will not see a change. Always create a new value:\n\n- Objects: `setUser({ ...user, name })`; nested: `{ ...user, address: { ...user.address, city } }`.\n- Add: `[...items, item]`. Remove: `items.filter(i => i.id !== id)`. Update: `items.map(i => i.id === id ? { ...i, done: !i.done } : i)`.\n- Sort or reverse a copy: `items.toSorted(compare)` or `[...items].sort(compare)`.\n\nSpread is **shallow**: nested objects are still shared, so copy every level you change.",
+      "code": "// Wrong: mutates, same reference\nitems.push(next); setItems(items)\n// Right: new array\nsetItems([...items, next])\nsetItems(items.map(t => t.id === id ? { ...t, done: !t.done } : t))"
+    },
+    {
+      "title": "Where state lives",
+      "body": "Keep state as **minimal** as possible and derive the rest during render: store `items` and `filter`, compute `visibleItems` instead of storing it. Duplicated or derived state drifts out of sync.\n\nWhen two components need the same state, **lift it up** to their closest common parent and pass it down with callbacks. State is tied to a component's **position in the tree**: the same component at the same position keeps its state; changing its `key` or rendering a different type at that position resets it."
+    }
+  ],
+  "pitfalls": [
+    "Reading state right after setting it and expecting the new value.",
+    "Using `count + 1` three times instead of an updater.",
+    "`push`, `splice`, `sort` or assigning a property on state.",
+    "Storing values you could compute from props or other state.",
+    "Calling a setter unconditionally during render, which loops forever (\"Too many re-renders\")."
+  ],
+  "gotchas": [
+    {
+      "question": "What does the button show after one click?",
+      "code": "const [n, setN] = useState(0)\n<button onClick={() => { setN(n + 5); setN(m => m + 1) }}>{n}</button>",
+      "answer": "6. The first call queues \"replace with 5\"; the updater then runs on 5 and gives 6."
+    },
+    {
+      "question": "What logs after one click?",
+      "code": "const [n, setN] = useState(0)\nfunction onClick() { setN(n + 1); setTimeout(() => console.log(n), 1000) }",
+      "answer": "0. The timeout closes over the `n` of the render in which the click happened."
+    },
+    {
+      "question": "Why does this list not update on screen?",
+      "code": "function add() { todos.push({ id: Date.now(), text }); setTodos(todos) }",
+      "answer": "The array was mutated and the same reference was set, so `Object.is` says nothing changed and React bails out. Use `setTodos([...todos, newTodo])`."
+    }
+  ]
+}

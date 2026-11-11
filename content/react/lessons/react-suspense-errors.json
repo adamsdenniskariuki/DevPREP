@@ -1,0 +1,43 @@
+{
+  "id": "react-suspense-errors",
+  "title": "Suspense, lazy loading and error boundaries",
+  "minutes": 35,
+  "summary": "Suspense fallbacks, lazy components and code splitting, error boundaries with getDerivedStateFromError and componentDidCatch, what they cannot catch, and resetting them.",
+  "sections": [
+    {
+      "title": "Suspense",
+      "body": "`<Suspense fallback={<Spinner />}>` shows the fallback while anything inside it is **suspended**: a `lazy` component loading its code, a component reading a pending promise with `use`, or a Suspense-enabled data library. When everything is ready, React swaps in the content.\n\nSuspense boundaries can be nested to reveal content in stages. Updates wrapped in a transition keep showing the old content instead of falling back again."
+    },
+    {
+      "title": "lazy and code splitting",
+      "body": "`const Settings = lazy(() => import(\"./Settings\"))` loads the component's code the first time it renders. The imported module must have a **default export** that is a component. Declare lazy components at the **top level** of a module, never inside another component, or their state resets on every render.",
+      "code": "const Settings = lazy(() => import(\"./Settings\"))\nfunction App() {\n  return <Suspense fallback={<p>Loading settings…</p>}><Settings /></Suspense>\n}"
+    },
+    {
+      "title": "Error boundaries",
+      "body": "An error boundary catches errors thrown while **rendering**, in lifecycle methods and in constructors of its descendants, and shows a fallback instead of unmounting the whole app. It must be a **class component** with `static getDerivedStateFromError(error)` (returns state to show the fallback) and optionally `componentDidCatch(error, info)` (for logging).\n\nError boundaries do **not** catch errors in event handlers, in asynchronous code such as `setTimeout` or promise callbacks, in server rendering, or in the boundary itself. Handle those with `try`/`catch` and state, or rethrow them during render.",
+      "code": "class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {\n  state = { error: null as Error | null }\n  static getDerivedStateFromError(error: Error) { return { error } }\n  componentDidCatch(error: Error, info: ErrorInfo) { log(error, info.componentStack) }\n  render() {\n    if (this.state.error) return <p role=\"alert\">Something went wrong.</p>\n    return this.props.children\n  }\n}"
+    },
+    {
+      "title": "Recovering",
+      "body": "To let the user retry, add a button in the fallback that clears the error state, ideally after fixing the cause, or give the boundary a `key` that changes (for example the route), which remounts it with fresh state. Libraries such as react-error-boundary wrap this pattern with `resetKeys` and `onReset`."
+    }
+  ],
+  "pitfalls": [
+    "Writing an error boundary as a function component; there is no hook for it.",
+    "Expecting a boundary to catch a click handler error.",
+    "Declaring `lazy` inside a component.",
+    "A lazy module without a default export.",
+    "One boundary around the whole app only, so a small widget error blanks the page."
+  ],
+  "gotchas": [
+    {
+      "question": "An `onClick` handler throws. Does the nearest error boundary show its fallback?",
+      "answer": "No. Error boundaries only catch errors thrown during rendering, lifecycle methods and constructors. The handler error goes to `window.onerror` and the UI stays as it was."
+    },
+    {
+      "question": "Which static method switches an error boundary to its fallback?",
+      "answer": "`static getDerivedStateFromError(error)`, which returns the new state. `componentDidCatch` is for side effects such as logging."
+    }
+  ]
+}

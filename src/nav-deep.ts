@@ -4,6 +4,8 @@ import type { GuideTopic } from './guide-types'
 import type { DeepSections, NavIndex, NavNode, NavProgress } from './nav-model'
 import { readPlans, type PlansState } from './study-plans'
 import { readCodebaseProgress, type CodebaseProgress } from './codebase'
+import { readReactProgress, type ReactProgress } from './react-module'
+import { readSkillTests, type SkillTestsState } from './skill-tests'
 
 /* Loaded with the nav index so the deep levels of the tree stay out of the main chunk. */
 
@@ -23,7 +25,7 @@ const leaf = (route: string, done: (id: string) => boolean) => ([id, title]: rea
   ({ id: `${route}/${id}`, label: title, href: `#${route}/${id}`, done: done(id) })
 
 /** The children and counts of every section whose items come from the nav index, keyed by section id. */
-export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans(), codebaseState: CodebaseProgress = readCodebaseProgress()): DeepSections {
+export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans(), codebaseState: CodebaseProgress = readCodebaseProgress(), reactState: ReactProgress = readReactProgress(), skillState: SkillTestsState = readSkillTests()): DeepSections {
   const tracks = nav.tracks.map(([id, title, lessonIds]): NavNode => {
     const done = lessonIds.filter(lesson => progress.records[lesson]).length
     return { id: `tracks/${id}`, label: title, href: `#tracks/${id}`, count: { done, total: lessonIds.length }, done: lessonIds.length > 0 && done === lessonIds.length }
@@ -64,6 +66,15 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
   const codebaseTasks = (nav.codebase ?? []).flatMap(([repo, repoTitle, , tasks]) => tasks.map(([task, title]): NavNode =>
     ({ id: `codebase/${repo}/${task}`, label: `${repoTitle}: ${title}`, href: `#codebase/${repo}/${task}`, done: !!codebaseState[`${repo}/${task}`]?.completed })))
 
+  // The React module and skill tests keep their progress in their own keys too.
+  const reactLessons = (nav.react ?? []).filter(([, , kind]) => kind === 'lesson').map(leaf('react', () => false)).map(({ done: _, ...node }) => node)
+  const reactExercises = (nav.react ?? []).filter(([, , kind]) => kind === 'exercise').map(leaf('react', id => !!reactState[id]?.completed))
+  const react: NavNode[] = [
+    { id: 'react:lessons', label: 'Lessons', children: reactLessons },
+    { id: 'react:exercises', label: 'Exercises', count: tally(reactExercises), children: reactExercises },
+  ]
+  const skillTests = (nav.skillTests ?? []).map(leaf('skilltest', id => !!skillState[id]?.length))
+
   return {
     tracks: { children: tracks, count: { done: lessons.filter(lesson => progress.records[lesson]).length, total: lessons.length } },
     patterns: { children: patterns, count: { done: nav.patterns.filter(([id]) => patternDone(id)).length, total: nav.patterns.length } },
@@ -74,6 +85,8 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
     company: { children: companies, count: tally(companies) },
     mock: { children: mocks },
     codebase: { children: codebaseTasks, count: tally(codebaseTasks) },
+    react: { children: react, count: tally(reactExercises) },
+    skilltest: { children: skillTests, count: tally(skillTests) },
     plans: { children: plans, count: plans.reduce((sum, plan) => ({ done: sum.done + plan.count!.done, total: sum.total + plan.count!.total }), { done: 0, total: 0 }) },
   }
 }

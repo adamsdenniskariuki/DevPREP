@@ -830,6 +830,29 @@ test('a TypeScript codebase task opens and submits offline after one online load
   await expect(offline.locator('.run-summary')).toHaveText(passed, { timeout: 60_000 })
 })
 
+test('a React exercise and the React skill test open offline, and the exercise runs offline after one online run', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  const solution = await readFile('content/react/exercises/jsx-profile-card.solution.tsx', 'utf8')
+  const passed = /^All \d+ tests passed\.$/
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await page.evaluate(code => localStorage.setItem('devprep.react.drafts.v1', JSON.stringify({ 'jsx-profile-card': code })), solution)
+  await page.goto('/DevPREP/#react/jsx-profile-card')
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toHaveText(passed, { timeout: 120_000 })
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto('/DevPREP/#react')
+  await expect(offline.getByRole('heading', { level: 1 })).toHaveText('React')
+  await offline.goto('/DevPREP/#react/jsx-profile-card')
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-summary')).toHaveText(passed, { timeout: 60_000 })
+  await offline.goto('/DevPREP/#skilltest/react')
+  await expect(offline.getByRole('button', { name: 'Start the test' })).toBeVisible()
+})
+
 test('SQL labs run offline after Postgres\'s first online load', async ({ page, context }) => {
   test.setTimeout(240_000)
   const track = JSON.parse(await readFile('content/sql/track.json', 'utf8'))

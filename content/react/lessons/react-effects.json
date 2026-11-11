@@ -1,0 +1,50 @@
+{
+  "id": "react-effects",
+  "title": "useEffect: dependencies, cleanup and StrictMode",
+  "minutes": 45,
+  "summary": "What effects are for, when they run, the dependency array, cleanup, StrictMode's extra setup and cleanup in development, and the effects you should not write.",
+  "sections": [
+    {
+      "title": "Effects synchronise with outside systems",
+      "body": "`useEffect(setup, deps)` runs `setup` **after** React commits to the screen. Use it to synchronise with something outside React: a subscription, a timer, a non-React widget, a network connection, `document.title`. Return a **cleanup** function to undo it.\n\nEffects do not run during server rendering, and they run after paint, so they never block the browser from showing the update (use `useLayoutEffect` only to measure layout before paint).",
+      "code": "useEffect(() => {\n  const id = setInterval(() => setSeconds(s => s + 1), 1000)\n  return () => clearInterval(id)\n}, [])"
+    },
+    {
+      "title": "The dependency array",
+      "body": "- **No array**: runs after every render.\n- `[]`: runs after the first render (mount); cleanup on unmount.\n- `[a, b]`: runs after mount and again after any render where `a` or `b` changed (compared with `Object.is`).\n\nList **every** reactive value the effect reads: props, state and anything computed from them during render. Leaving one out gives a **stale closure** that keeps using an old value. If a dependency changes too often, remove the reason it changes (move a function or object inside the effect, use an updater function) rather than lying to the linter.\n\nBefore re-running, React calls the previous cleanup, so the order on a change is: cleanup(old values) then setup(new values)."
+    },
+    {
+      "title": "StrictMode runs setup twice in development",
+      "body": "Under `<StrictMode>` in development, React mounts each component, immediately runs every effect's cleanup, and runs the setup again: setup → cleanup → setup. It also calls component functions and state updaters twice. This does not happen in production.\n\nThe point is to prove your cleanup really undoes your setup. If a double run causes a bug (two subscriptions, a duplicate request that overwrites state, an analytics event sent twice), the fix is a correct cleanup, not a ref that skips the second run."
+    },
+    {
+      "title": "You might not need an effect",
+      "body": "Effects are an escape hatch. Do not use one to:\n\n- **Derive data**: compute `fullName` from `first` and `last` during render instead of syncing it into state.\n- **React to an event**: put the logic in the event handler; \"the user clicked buy\" is not \"the component rendered\".\n- **Reset state when a prop changes**: use a `key`.\n- **Chain state updates**: compute the next state in the handler.\n\nEach unnecessary effect costs an extra render and makes the data flow harder to follow.",
+      "code": "// Unnecessary effect + extra render:\nconst [fullName, setFullName] = useState(\"\")\nuseEffect(() => setFullName(first + \" \" + last), [first, last])\n// Just compute it:\nconst fullName = first + \" \" + last"
+    }
+  ],
+  "pitfalls": [
+    "Missing dependencies, giving stale values.",
+    "Objects or functions created during render as dependencies, so the effect runs every render.",
+    "Setting state in an effect that depends on that state, causing a loop.",
+    "No cleanup for timers, listeners and subscriptions.",
+    "Making the effect function itself `async`; it must return nothing or a cleanup function, so define an async function inside and call it."
+  ],
+  "gotchas": [
+    {
+      "question": "In development with StrictMode, what logs on mount?",
+      "code": "useEffect(() => {\n  console.log(\"setup\")\n  return () => console.log(\"cleanup\")\n}, [])",
+      "answer": "\"setup\", \"cleanup\", \"setup\". Production logs only \"setup\"."
+    },
+    {
+      "question": "What logs when `id` changes from 1 to 2?",
+      "code": "useEffect(() => {\n  console.log(\"subscribe\", id)\n  return () => console.log(\"unsubscribe\", id)\n}, [id])",
+      "answer": "\"unsubscribe 1\" then \"subscribe 2\". The cleanup closes over the old `id`."
+    },
+    {
+      "question": "Why does this counter stop at 1?",
+      "code": "useEffect(() => {\n  const t = setInterval(() => setCount(count + 1), 1000)\n  return () => clearInterval(t)\n}, [])",
+      "answer": "The interval closes over `count` from the first render (0), so it keeps setting 1. Use `setCount(c => c + 1)`."
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import type { Track } from './curriculum'
 import type { Route } from './app-model'
 
-export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans', 'codebase']
+export const ROUTES: readonly Route[] = ['home', 'tracks', 'practice', 'progress', 'settings', 'study', 'code', 'design', 'board', 'cards', 'mock', 'stories', 'plan', 'guide', 'antipatterns', 'sql', 'patterns', 'company', 'map', 'playground', 'changelog', 'plans', 'codebase', 'react', 'skilltest']
 /** Hashes from earlier releases keep working as bookmarks. */
 export const ALIASES: Readonly<Record<string, Route>> = { today: 'home', roadmap: 'tracks', review: 'practice' }
 /** Pattern course views other than a page id. */
@@ -29,6 +29,10 @@ export interface ParsedRoute {
   labId?: string
   /** A codebase practice task, as "repo/task" (#codebase/<repo>/<task>). */
   codebaseTask?: string
+  /** A React lesson or exercise (#react/<id>). */
+  reactId?: string
+  /** A timed skill test (#skilltest/<id>). */
+  skillTestId?: string
 }
 
 /** The ids each sub-route accepts. Passed in so this module stays free of content imports. */
@@ -44,6 +48,10 @@ export interface RouteIds {
   plans?: ReadonlySet<string>
   /** Codebase practice tasks as "repo/task". Without them any well-formed pair parses, and the screen reports an unknown task. */
   codebase?: ReadonlySet<string>
+  /** React lesson and exercise ids. Without them any well-formed id parses, and the screen reports an unknown item. */
+  react?: ReadonlySet<string>
+  /** Skill test ids, with the same fallback. */
+  skillTests?: ReadonlySet<string>
 }
 
 /** Parses a location hash (with or without the leading '#') into a route and its sub-id. */
@@ -63,6 +71,8 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
     const task = `${sub}/${rest[0]}`
     return rest.length && (ids.codebase ? ids.codebase.has(task) : BOARD_ID.test(sub) && BOARD_ID.test(rest[0])) ? { route, codebaseTask: task } : { route: 'unknown' }
   }
+  if (route === 'react') return (ids.react ? ids.react.has(sub) : BOARD_ID.test(sub)) ? { route, reactId: sub } : { route: 'unknown' }
+  if (route === 'skilltest') return (ids.skillTests ? ids.skillTests.has(sub) : BOARD_ID.test(sub)) ? { route, skillTestId: sub } : { route: 'unknown' }
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = ids.tracks.find(item => item === sub) as Track | undefined
@@ -72,6 +82,6 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
 /** The canonical hash for a parsed route: aliases resolve to their target, sub-ids are kept. */
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
-  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask
+  const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask ?? parsed.reactId ?? parsed.skillTestId
   return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}`
 }

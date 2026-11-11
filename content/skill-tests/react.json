@@ -1,0 +1,902 @@
+{
+  "id": "react",
+  "title": "React skill test",
+  "summary": "A timed practice assessment: multiple-choice questions on React 19, hooks, testing and TypeScript, plus two short coding tasks.",
+  "minutes": 40,
+  "pick": 30,
+  "topics": [
+    {
+      "id": "jsx",
+      "title": "JSX and components",
+      "review": "#react/react-jsx"
+    },
+    {
+      "id": "state",
+      "title": "State and immutability",
+      "review": "#react/react-state"
+    },
+    {
+      "id": "forms",
+      "title": "Events and forms",
+      "review": "#react/react-forms"
+    },
+    {
+      "id": "lists",
+      "title": "Conditional rendering, lists and keys",
+      "review": "#react/react-conditional-lists"
+    },
+    {
+      "id": "effects",
+      "title": "Effects and refs",
+      "review": "#react/react-effects"
+    },
+    {
+      "id": "data",
+      "title": "Data fetching",
+      "review": "#react/react-data-fetching"
+    },
+    {
+      "id": "context",
+      "title": "Context and reducers",
+      "review": "#react/react-context-reducer"
+    },
+    {
+      "id": "hooks",
+      "title": "Custom hooks and the rules of hooks",
+      "review": "#react/react-custom-hooks"
+    },
+    {
+      "id": "memo",
+      "title": "Memoisation and re-renders",
+      "review": "#react/react-memo"
+    },
+    {
+      "id": "react19",
+      "title": "React 19",
+      "review": "#react/react-19"
+    },
+    {
+      "id": "suspense",
+      "title": "Suspense and error boundaries",
+      "review": "#react/react-suspense-errors"
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "review": "#react/react-testing"
+    },
+    {
+      "id": "typescript",
+      "title": "TypeScript with React",
+      "review": "#react/react-typescript"
+    },
+    {
+      "id": "a11y",
+      "title": "Accessibility",
+      "review": "#react/react-a11y"
+    }
+  ],
+  "questions": [
+    {
+      "id": "jsx-and-zero",
+      "topic": "jsx",
+      "prompt": "What does this render when `count` is 0?",
+      "code": "function Badge({ count }: { count: number }) {\n  return <div>{count && <p>New messages</p>}</div>\n}",
+      "choices": [
+        "Nothing",
+        "The text \"0\"",
+        "The text \"false\"",
+        "It throws an error"
+      ],
+      "answer": 1,
+      "explain": "`count && …` evaluates to `0` when `count` is 0, and React renders numbers. Use `count > 0 && …` or a ternary."
+    },
+    {
+      "id": "jsx-adjacent",
+      "topic": "jsx",
+      "prompt": "What happens with this component?",
+      "code": "function Title() {\n  return (\n    <h1>Hello</h1>\n    <p>World</p>\n  )\n}",
+      "choices": [
+        "It renders both elements",
+        "It renders only the <h1>",
+        "It does not compile: adjacent JSX elements must be wrapped",
+        "It renders only the <p>"
+      ],
+      "answer": 2,
+      "explain": "A component returns one JSX expression. Wrap siblings in a fragment (`<>…</>`) or another element."
+    },
+    {
+      "id": "jsx-lowercase",
+      "topic": "jsx",
+      "prompt": "What does `<card />` render here?",
+      "code": "function card() {\n  return <div className=\"card\">Hi</div>\n}\n\nexport default function App() {\n  return <card />\n}",
+      "choices": [
+        "The Card component",
+        "An unknown HTML element named \"card\"",
+        "Nothing",
+        "A compile error about the name"
+      ],
+      "answer": 1,
+      "explain": "Lowercase JSX tags are treated as built-in HTML elements. Component names must start with a capital letter."
+    },
+    {
+      "id": "jsx-renders-what",
+      "topic": "jsx",
+      "prompt": "Which of these values renders visible text inside `<div>{value}</div>`?",
+      "choices": [
+        "true",
+        "null",
+        "undefined",
+        "0"
+      ],
+      "answer": 3,
+      "explain": "`true`, `false`, `null` and `undefined` render nothing. Numbers, including 0, render as text."
+    },
+    {
+      "id": "jsx-object-child",
+      "topic": "jsx",
+      "prompt": "What happens when this renders?",
+      "code": "const user = { name: 'Ada' }\nreturn <p>{user}</p>",
+      "choices": [
+        "It shows \"[object Object]\"",
+        "It shows \"{\"name\":\"Ada\"}\"",
+        "React throws \"Objects are not valid as a React child\"",
+        "It renders nothing"
+      ],
+      "answer": 2,
+      "explain": "Plain objects are not valid React children. Render a field such as `{user.name}` instead."
+    },
+    {
+      "id": "state-batched",
+      "topic": "state",
+      "prompt": "After one click, what does the button show?",
+      "code": "const [count, setCount] = useState(0)\nfunction handleClick() {\n  setCount(count + 1)\n  setCount(count + 1)\n  setCount(count + 1)\n}\nreturn <button onClick={handleClick}>{count}</button>",
+      "choices": [
+        "1",
+        "2",
+        "3",
+        "0"
+      ],
+      "answer": 0,
+      "explain": "Each call uses the `count` from this render's snapshot (0), so all three set it to 1. Use `setCount(c => c + 1)` to queue updates."
+    },
+    {
+      "id": "state-updater",
+      "topic": "state",
+      "prompt": "After one click, what does the button show?",
+      "code": "const [count, setCount] = useState(0)\nfunction handleClick() {\n  setCount(c => c + 1)\n  setCount(c => c + 1)\n  setCount(c => c + 1)\n}\nreturn <button onClick={handleClick}>{count}</button>",
+      "choices": [
+        "1",
+        "2",
+        "3",
+        "0"
+      ],
+      "answer": 2,
+      "explain": "Updater functions are queued and each receives the latest pending state, so the count goes 0 → 1 → 2 → 3."
+    },
+    {
+      "id": "state-log-after-set",
+      "topic": "state",
+      "prompt": "What does the first click log?",
+      "code": "const [count, setCount] = useState(0)\nfunction handleClick() {\n  setCount(count + 1)\n  console.log(count)\n}",
+      "choices": [
+        "0",
+        "1",
+        "undefined",
+        "It logs twice"
+      ],
+      "answer": 0,
+      "explain": "Setting state does not change the variable in the running handler; it schedules a new render. The handler still sees the snapshot value 0."
+    },
+    {
+      "id": "state-mutate-array",
+      "topic": "state",
+      "prompt": "Clicking \"Add\" does not update the list. Why?",
+      "code": "function add(item: string) {\n  items.push(item)\n  setItems(items)\n}",
+      "choices": [
+        "setItems is asynchronous",
+        "The same array is mutated and passed back, so React sees no change",
+        "Arrays cannot be stored in state",
+        "push returns the new length"
+      ],
+      "answer": 1,
+      "explain": "React compares the new state with `Object.is`. Mutating and passing the same array can skip the re-render. Create a new array: `setItems([...items, item])`."
+    },
+    {
+      "id": "state-lazy-init",
+      "topic": "state",
+      "prompt": "What is the difference between these two lines?",
+      "code": "const [rows] = useState(createRows())\nconst [rows] = useState(() => createRows())",
+      "choices": [
+        "None",
+        "The first calls createRows() on every render; the second only on the first render",
+        "The second calls createRows() on every render",
+        "The second stores the function itself in state"
+      ],
+      "answer": 1,
+      "explain": "Passing a function makes it an initialiser that React calls only once. `useState(createRows())` evaluates the call on every render and ignores the result after the first."
+    },
+    {
+      "id": "forms-value-no-change",
+      "topic": "forms",
+      "prompt": "What happens when the user types into this input?",
+      "code": "<input value={name} />",
+      "choices": [
+        "The text updates normally",
+        "Nothing changes: the input is read-only because value is fixed and there is no onChange",
+        "React throws an error",
+        "The value resets on blur"
+      ],
+      "answer": 1,
+      "explain": "A `value` without `onChange` makes a controlled input that cannot change. React warns; add `onChange`, use `readOnly`, or use `defaultValue`."
+    },
+    {
+      "id": "forms-call-in-render",
+      "topic": "forms",
+      "prompt": "What is wrong with this button?",
+      "code": "<button onClick={remove(id)}>Delete</button>",
+      "choices": [
+        "Nothing",
+        "remove(id) runs during every render instead of on click",
+        "onClick must be lowercase",
+        "Arrow functions are not allowed in JSX"
+      ],
+      "answer": 1,
+      "explain": "`onClick={remove(id)}` calls the function while rendering and passes its result. Pass a function: `onClick={() => remove(id)}`."
+    },
+    {
+      "id": "forms-default-value",
+      "topic": "forms",
+      "prompt": "Which prop sets the initial value of an uncontrolled text input?",
+      "choices": [
+        "value",
+        "initialValue",
+        "defaultValue",
+        "placeholder"
+      ],
+      "answer": 2,
+      "explain": "`defaultValue` (and `defaultChecked`) set the initial value and leave later changes to the DOM."
+    },
+    {
+      "id": "forms-prevent-default",
+      "topic": "forms",
+      "prompt": "This form reloads the page when submitted. What is the usual fix?",
+      "code": "<form onSubmit={handleSubmit}>\n  <input name=\"q\" />\n  <button>Search</button>\n</form>",
+      "choices": [
+        "Return false from handleSubmit",
+        "Call event.preventDefault() in handleSubmit",
+        "Add type=\"button\" to the form",
+        "Use onClick instead of onSubmit"
+      ],
+      "answer": 1,
+      "explain": "The browser's default submit navigates. Call `event.preventDefault()` in an `onSubmit` handler (React 19 function actions also prevent it for you)."
+    },
+    {
+      "id": "forms-bubbling",
+      "topic": "forms",
+      "prompt": "What does clicking the button log?",
+      "code": "<div onClick={() => console.log('div')}>\n  <button onClick={() => console.log('button')}>Go</button>\n</div>",
+      "choices": [
+        "\"button\" only",
+        "\"div\" only",
+        "\"button\" then \"div\"",
+        "\"div\" then \"button\""
+      ],
+      "answer": 2,
+      "explain": "React events bubble like DOM events: the button handler runs first, then the parent's. Call `e.stopPropagation()` to stop it."
+    },
+    {
+      "id": "lists-index-key",
+      "topic": "lists",
+      "prompt": "Why is `key={index}` risky for a list whose items can be inserted or reordered?",
+      "choices": [
+        "Keys must be strings",
+        "State and DOM can stay attached to the wrong item when positions change",
+        "It is slower to compute",
+        "React forbids numbers as keys"
+      ],
+      "answer": 1,
+      "explain": "React matches items by key. When positions shift, an index key points at a different item, so inputs and state can end up on the wrong row. Use a stable id."
+    },
+    {
+      "id": "lists-key-scope",
+      "topic": "lists",
+      "prompt": "Keys must be unique…",
+      "choices": [
+        "across the whole app",
+        "among siblings in the same list",
+        "within the same component file",
+        "per render only, and may change each render"
+      ],
+      "answer": 1,
+      "explain": "Keys only need to be unique among siblings. They should also be stable between renders."
+    },
+    {
+      "id": "lists-key-reset",
+      "topic": "lists",
+      "prompt": "What happens to `<Profile>` state when `userId` changes?",
+      "code": "<Profile key={userId} userId={userId} />",
+      "choices": [
+        "It is kept",
+        "It is reset, because a new key mounts a new instance",
+        "React throws a key warning",
+        "Only the props update"
+      ],
+      "answer": 1,
+      "explain": "Changing `key` tells React it is a different component, so it unmounts the old one and mounts a fresh one with new state."
+    },
+    {
+      "id": "lists-key-prop",
+      "topic": "lists",
+      "prompt": "What does `Row` read from `props.key`?",
+      "code": "items.map(item => <Row key={item.id} label={item.label} />)",
+      "choices": [
+        "The item id",
+        "undefined",
+        "The index",
+        "null"
+      ],
+      "answer": 1,
+      "explain": "`key` is used by React and is not passed to the component. Pass the value under another prop name if the child needs it."
+    },
+    {
+      "id": "effects-strict-mode",
+      "topic": "effects",
+      "prompt": "In development with StrictMode, what does mounting this component log?",
+      "code": "useEffect(() => {\n  console.log('connect')\n  return () => console.log('disconnect')\n}, [])",
+      "choices": [
+        "connect",
+        "connect, disconnect",
+        "connect, disconnect, connect",
+        "Nothing until the next render"
+      ],
+      "answer": 2,
+      "explain": "In development StrictMode runs an extra setup + cleanup cycle on mount to reveal missing cleanups. Production logs \"connect\" once."
+    },
+    {
+      "id": "effects-cleanup-timing",
+      "topic": "effects",
+      "prompt": "When does an effect's cleanup function run?",
+      "choices": [
+        "Only on unmount",
+        "Before the effect runs again with changed dependencies, and on unmount",
+        "Before every render",
+        "Right after the effect runs"
+      ],
+      "answer": 1,
+      "explain": "React runs cleanup with the old values before re-running the effect, and once more when the component unmounts."
+    },
+    {
+      "id": "effects-ref-no-render",
+      "topic": "effects",
+      "prompt": "What does the screen show after three clicks?",
+      "code": "const clicks = useRef(0)\nreturn <button onClick={() => { clicks.current++ }}>Clicks: {clicks.current}</button>",
+      "choices": [
+        "Clicks: 3",
+        "Clicks: 0",
+        "Clicks: 1",
+        "It throws an error"
+      ],
+      "answer": 1,
+      "explain": "Changing `ref.current` does not trigger a re-render, so the screen keeps showing the value from the last render. Use state for values you display."
+    },
+    {
+      "id": "effects-ref-null",
+      "topic": "effects",
+      "prompt": "What does this log on the first render?",
+      "code": "const inputRef = useRef<HTMLInputElement>(null)\nconsole.log(inputRef.current)\nreturn <input ref={inputRef} />",
+      "choices": [
+        "The <input> element",
+        "null",
+        "undefined",
+        "An empty object"
+      ],
+      "answer": 1,
+      "explain": "React sets DOM refs after it commits the DOM. During the first render `ref.current` is still the initial value, `null`. Read refs in effects or handlers."
+    },
+    {
+      "id": "data-ignore-flag",
+      "topic": "data",
+      "prompt": "Which pattern stops an older response from overwriting a newer one?",
+      "code": "useEffect(() => {\n  let ignore = false\n  fetchUser(id).then(user => { if (!ignore) setUser(user) })\n  return () => { ignore = true }\n}, [id])",
+      "choices": [
+        "Add the response to the dependency array",
+        "Set an ignore flag in the effect cleanup and skip setState when it is set",
+        "Make the effect callback async",
+        "Fetch in useMemo instead"
+      ],
+      "answer": 1,
+      "explain": "When dependencies change, cleanup runs for the old effect. Setting `ignore = true` there means the old request's result is dropped."
+    },
+    {
+      "id": "data-async-effect",
+      "topic": "data",
+      "prompt": "Why not write `useEffect(async () => { … })`?",
+      "choices": [
+        "async functions are not allowed in components",
+        "It returns a promise, but React expects the effect to return a cleanup function or nothing",
+        "It runs twice",
+        "await is not supported in effects"
+      ],
+      "answer": 1,
+      "explain": "An async function always returns a promise. Define an async function inside the effect and call it instead."
+    },
+    {
+      "id": "data-abort",
+      "topic": "data",
+      "prompt": "The cleanup calls `controller.abort()` while a fetch is pending. What happens to the fetch?",
+      "choices": [
+        "It resolves with null",
+        "It rejects with an AbortError, which you should ignore",
+        "It keeps running and resolves normally",
+        "React cancels the promise silently"
+      ],
+      "answer": 1,
+      "explain": "Aborting makes the fetch promise reject with a DOMException named \"AbortError\". Catch it and skip it so it is not shown as a real error."
+    },
+    {
+      "id": "data-derive",
+      "topic": "data",
+      "prompt": "What is the best way to show `fullName` from `first` and `last` state?",
+      "choices": [
+        "Store fullName in state and update it in an effect",
+        "Compute it during render: const fullName = first + \" \" + last",
+        "Use a ref",
+        "Use useLayoutEffect"
+      ],
+      "answer": 1,
+      "explain": "Values you can compute from props or state should be computed during render. An effect adds an extra render and can get out of sync."
+    },
+    {
+      "id": "context-default",
+      "topic": "context",
+      "prompt": "What does `useContext(ThemeContext)` return in a component with no provider above it?",
+      "choices": [
+        "undefined",
+        "The default value passed to createContext",
+        "It throws an error",
+        "null"
+      ],
+      "answer": 1,
+      "explain": "Without a matching provider above, `useContext` returns the default value given to `createContext`."
+    },
+    {
+      "id": "context-memo",
+      "topic": "context",
+      "prompt": "A component wrapped in `memo` reads a context with `useContext`. The context value changes. Does it re-render?",
+      "choices": [
+        "No, memo prevents it",
+        "Yes, context changes re-render consumers even inside memo",
+        "Only if its props changed too",
+        "Only in development"
+      ],
+      "answer": 1,
+      "explain": "`memo` only skips re-renders caused by the parent with equal props. A changed context value always re-renders the components that read it."
+    },
+    {
+      "id": "context-new-object",
+      "topic": "context",
+      "prompt": "Why might every consumer re-render whenever `App` re-renders?",
+      "code": "<UserContext.Provider value={{ user, setUser }}>\n  <Page />\n</UserContext.Provider>",
+      "choices": [
+        "Context always re-renders everything",
+        "The value is a new object on every render",
+        "setUser is not stable",
+        "Providers cannot hold functions"
+      ],
+      "answer": 1,
+      "explain": "An object literal is a new value each render, so consumers see a change. Wrap it in `useMemo` (and functions in `useCallback`)."
+    },
+    {
+      "id": "context-reducer-mutate",
+      "topic": "context",
+      "prompt": "Dispatching \"add\" does not update the screen. Why?",
+      "code": "function reducer(state, action) {\n  if (action.type === 'add') {\n    state.items.push(action.item)\n    return state\n  }\n  return state\n}",
+      "choices": [
+        "Reducers must be async",
+        "The reducer mutates and returns the same state object",
+        "useReducer ignores arrays",
+        "dispatch must be called twice"
+      ],
+      "answer": 1,
+      "explain": "Reducers must be pure and return new objects. Returning the same reference lets React skip the update. Return `{ ...state, items: [...state.items, action.item] }`."
+    },
+    {
+      "id": "hooks-conditional",
+      "topic": "hooks",
+      "prompt": "What is wrong with this code?",
+      "code": "function Profile({ user }) {\n  if (!user) return null\n  const [tab, setTab] = useState('posts')\n  …\n}",
+      "choices": [
+        "Nothing",
+        "Hooks must be called in the same order every render, so they cannot be called conditionally",
+        "useState needs a type argument",
+        "Hooks must be called inside effects"
+      ],
+      "answer": 1,
+      "explain": "React matches hook calls by order. A conditional hook changes the order between renders. Call hooks at the top level and put the condition inside."
+    },
+    {
+      "id": "hooks-shared-state",
+      "topic": "hooks",
+      "prompt": "Two components each call `useCounter()`. What do they share?",
+      "choices": [
+        "The same count",
+        "Only the logic; each call has its own state",
+        "The state until one unmounts",
+        "Nothing, custom hooks cannot use state"
+      ],
+      "answer": 1,
+      "explain": "Custom hooks reuse stateful logic, not state. Each call gets its own independent state. Share state with context or by lifting it up."
+    },
+    {
+      "id": "hooks-use-prefix",
+      "topic": "hooks",
+      "prompt": "Why should a custom hook name start with \"use\"?",
+      "choices": [
+        "React will not run it otherwise",
+        "It lets React and the linter know the function calls hooks, so the rules of hooks can be checked",
+        "It makes it memoised",
+        "It is only a style preference with no effect"
+      ],
+      "answer": 1,
+      "explain": "The `use` prefix tells readers and the hooks linter that the function calls hooks, so the rules of hooks are enforced inside and around it."
+    },
+    {
+      "id": "hooks-in-handler",
+      "topic": "hooks",
+      "prompt": "Where may you call `useState`?",
+      "choices": [
+        "Anywhere in the component file",
+        "At the top level of a component or custom hook",
+        "Inside event handlers",
+        "Inside useEffect"
+      ],
+      "answer": 1,
+      "explain": "Hooks may only be called at the top level of function components and custom hooks, never in handlers, loops, conditions or effects."
+    },
+    {
+      "id": "memo-inline-fn",
+      "topic": "memo",
+      "prompt": "`Row` is wrapped in `memo`. Why does it still re-render whenever the parent does?",
+      "code": "<Row item={item} onSelect={() => select(item.id)} />",
+      "choices": [
+        "memo does not work with function components",
+        "onSelect is a new function on every render, so the props are not equal",
+        "Keys force re-renders",
+        "memo compares deeply"
+      ],
+      "answer": 1,
+      "explain": "`memo` compares props with `Object.is`. A new arrow function each render is a different value. Wrap it in `useCallback`."
+    },
+    {
+      "id": "memo-usecallback",
+      "topic": "memo",
+      "prompt": "`useCallback(fn, deps)` is equivalent to…",
+      "choices": [
+        "useMemo(fn, deps)",
+        "useMemo(() => fn, deps)",
+        "useRef(fn)",
+        "useEffect(fn, deps)"
+      ],
+      "answer": 1,
+      "explain": "`useCallback` caches the function itself. `useMemo` caches the result of calling its function, so you wrap `fn` in another function."
+    },
+    {
+      "id": "memo-children-rerender",
+      "topic": "memo",
+      "prompt": "By default, when a parent re-renders, which children re-render?",
+      "choices": [
+        "Only children whose props changed",
+        "All of its children, recursively",
+        "Only children that use state",
+        "None"
+      ],
+      "answer": 1,
+      "explain": "Re-rendering a component re-renders everything it renders, unless a child is memoised and its props are equal."
+    },
+    {
+      "id": "memo-children-prop",
+      "topic": "memo",
+      "prompt": "`Panel`'s own `open` state changes. Does `<Chart />` re-render?",
+      "code": "function Panel({ children }) {\n  const [open, setOpen] = useState(true)\n  return <section>{open && children}<button onClick={() => setOpen(o => !o)}>Toggle</button></section>\n}\n\nfunction App() {\n  return <Panel><Chart /></Panel>\n}",
+      "choices": [
+        "Yes, always",
+        "No: the Chart element was created by App and passed as children, so it is the same element",
+        "Only if Chart uses memo",
+        "Only in StrictMode"
+      ],
+      "answer": 1,
+      "explain": "Elements passed as `children` were created by the parent that rendered them. When only `Panel` re-renders, `children` is the same element, so React skips it."
+    },
+    {
+      "id": "r19-action-state",
+      "topic": "react19",
+      "prompt": "What does `useActionState(action, initialState)` return?",
+      "choices": [
+        "[state, setState]",
+        "[state, formAction, isPending]",
+        "[formAction, error]",
+        "A promise"
+      ],
+      "answer": 1,
+      "explain": "It returns the current state, a wrapped action to pass to `<form action>` or call in a transition, and a pending flag."
+    },
+    {
+      "id": "r19-optimistic",
+      "topic": "react19",
+      "prompt": "When does a `useOptimistic` value go back to the real state?",
+      "choices": [
+        "Never, you must reset it",
+        "When the action or transition that set it finishes",
+        "After one second",
+        "On the next keystroke"
+      ],
+      "answer": 1,
+      "explain": "The optimistic value is shown while the async action is pending, then React shows the real state again, whether the action succeeded or failed."
+    },
+    {
+      "id": "r19-use",
+      "topic": "react19",
+      "prompt": "Which statement about `use(promise)` is true?",
+      "choices": [
+        "It must be called at the top level, like other hooks",
+        "It can be called inside conditions and loops, and suspends until the promise resolves",
+        "It only works in class components",
+        "It creates the promise for you"
+      ],
+      "answer": 1,
+      "explain": "`use` is an API that can be called conditionally. Pass a cached or parent-created promise; a promise created during render would be recreated each time."
+    },
+    {
+      "id": "r19-ref-prop",
+      "topic": "react19",
+      "prompt": "In React 19, how does a function component receive a `ref` from its parent?",
+      "choices": [
+        "Only through forwardRef",
+        "As a regular prop named ref",
+        "Through context",
+        "Function components cannot take refs"
+      ],
+      "answer": 1,
+      "explain": "React 19 passes `ref` as a normal prop to function components. `forwardRef` still works but is no longer needed."
+    },
+    {
+      "id": "r19-form-action",
+      "topic": "react19",
+      "prompt": "What does `save` receive when this form is submitted?",
+      "code": "<form action={save}>\n  <input name=\"title\" />\n  <button>Save</button>\n</form>",
+      "choices": [
+        "The submit event",
+        "A FormData object",
+        "The input values as an object",
+        "Nothing"
+      ],
+      "answer": 1,
+      "explain": "When `action` is a function, React calls it with the form's `FormData`. After it succeeds, React resets uncontrolled fields."
+    },
+    {
+      "id": "suspense-class",
+      "topic": "suspense",
+      "prompt": "How do you write an error boundary today?",
+      "choices": [
+        "With a useErrorBoundary hook",
+        "As a class component with static getDerivedStateFromError and/or componentDidCatch",
+        "With try/catch around JSX",
+        "With <Suspense onError>"
+      ],
+      "answer": 1,
+      "explain": "React has no hook for error boundaries. Write a class (or use a small library that wraps one)."
+    },
+    {
+      "id": "suspense-event-errors",
+      "topic": "suspense",
+      "prompt": "Which error does an error boundary catch?",
+      "choices": [
+        "An error thrown in an onClick handler",
+        "An error thrown in a setTimeout callback",
+        "An error thrown while a child renders",
+        "A rejected fetch in an event handler"
+      ],
+      "answer": 2,
+      "explain": "Boundaries catch errors during rendering, in lifecycle methods and effects of the tree below. Errors in event handlers and async callbacks need try/catch."
+    },
+    {
+      "id": "suspense-lazy-inside",
+      "topic": "suspense",
+      "prompt": "What goes wrong when `lazy()` is called inside a component body?",
+      "code": "function Page() {\n  const Chart = lazy(() => import('./Chart'))\n  return <Suspense fallback={<Spinner />}><Chart /></Suspense>\n}",
+      "choices": [
+        "Nothing",
+        "It creates a new component type every render, so its state resets",
+        "It loads synchronously",
+        "It cannot be inside Suspense"
+      ],
+      "answer": 1,
+      "explain": "Declare lazy components at the top level of a module. Calling `lazy` during render returns a new type each time, which remounts the subtree."
+    },
+    {
+      "id": "suspense-transition",
+      "topic": "suspense",
+      "prompt": "Already-visible content suspends during an update wrapped in `startTransition`. What does the user see?",
+      "choices": [
+        "The nearest Suspense fallback",
+        "The previous content until the new content is ready",
+        "A blank screen",
+        "An error boundary"
+      ],
+      "answer": 1,
+      "explain": "Transitions are non-urgent, so React keeps already-revealed content on screen instead of replacing it with a fallback."
+    },
+    {
+      "id": "testing-absence",
+      "topic": "testing",
+      "prompt": "Which query should you use to assert that an element is NOT on screen?",
+      "choices": [
+        "getByText",
+        "queryByText",
+        "findByText",
+        "getAllByText"
+      ],
+      "answer": 1,
+      "explain": "`queryBy*` returns `null` when nothing matches. `getBy*` throws, and `findBy*` waits and then rejects."
+    },
+    {
+      "id": "testing-findby",
+      "topic": "testing",
+      "prompt": "A heading appears after a mocked fetch resolves. Which query fits best?",
+      "choices": [
+        "getByRole",
+        "queryByRole",
+        "await findByRole",
+        "container.querySelector"
+      ],
+      "answer": 2,
+      "explain": "`findBy*` returns a promise that retries until the element appears or the timeout passes."
+    },
+    {
+      "id": "testing-priority",
+      "topic": "testing",
+      "prompt": "Which query does Testing Library recommend first?",
+      "choices": [
+        "getByTestId",
+        "getByRole",
+        "getByClassName",
+        "container.querySelector"
+      ],
+      "answer": 1,
+      "explain": "Role queries (with an accessible name) match how users and assistive tech find elements. Test ids are a last resort."
+    },
+    {
+      "id": "testing-user-event",
+      "topic": "testing",
+      "prompt": "Why prefer `userEvent` over `fireEvent` for typing?",
+      "choices": [
+        "It is synchronous",
+        "It simulates the full interaction (focus, key events, input) like a real user",
+        "It skips React",
+        "It only works in browsers"
+      ],
+      "answer": 1,
+      "explain": "`fireEvent` dispatches one event. `userEvent` fires the sequence a browser would, so tests catch more real bugs."
+    },
+    {
+      "id": "ts-children",
+      "topic": "typescript",
+      "prompt": "Which type accepts anything React can render as `children`?",
+      "choices": [
+        "JSX.Element",
+        "React.ReactNode",
+        "string",
+        "React.Component"
+      ],
+      "answer": 1,
+      "explain": "`ReactNode` covers elements, strings, numbers, fragments, arrays, null and so on. `JSX.Element` only allows a single element."
+    },
+    {
+      "id": "ts-change-event",
+      "topic": "typescript",
+      "prompt": "What is the type of `e` in an input's onChange handler?",
+      "choices": [
+        "Event",
+        "React.ChangeEvent<HTMLInputElement>",
+        "React.MouseEvent<HTMLInputElement>",
+        "InputEvent"
+      ],
+      "answer": 1,
+      "explain": "React passes synthetic events. `ChangeEvent<HTMLInputElement>` gives `e.target.value` the right type."
+    },
+    {
+      "id": "ts-state-null",
+      "topic": "typescript",
+      "prompt": "Why write `useState<User | null>(null)`?",
+      "choices": [
+        "It is required for all state",
+        "Otherwise the type is inferred from null and you cannot set a User later",
+        "It makes the state immutable",
+        "It enables Suspense"
+      ],
+      "answer": 1,
+      "explain": "TypeScript infers state from the initial value. With only `null`, the type would be `null`, so give the generic explicitly."
+    },
+    {
+      "id": "ts-dom-ref",
+      "topic": "typescript",
+      "prompt": "What is the type of `inputRef.current`?",
+      "code": "const inputRef = useRef<HTMLInputElement>(null)",
+      "choices": [
+        "HTMLInputElement",
+        "HTMLInputElement | null",
+        "HTMLInputElement | undefined",
+        "any"
+      ],
+      "answer": 1,
+      "explain": "A DOM ref starts as `null` and is `null` again after unmount, so the type includes `null`."
+    },
+    {
+      "id": "a11y-div-button",
+      "topic": "a11y",
+      "prompt": "What is the main problem with `<div onClick={save}>Save</div>`?",
+      "choices": [
+        "Divs cannot have handlers",
+        "It is not focusable or keyboard-operable and has no button role",
+        "It renders twice",
+        "It cannot hold text"
+      ],
+      "answer": 1,
+      "explain": "Use a real `<button>`: it is focusable, works with Enter and Space, and is announced as a button."
+    },
+    {
+      "id": "a11y-htmlfor",
+      "topic": "a11y",
+      "prompt": "How do you link a `<label>` to an input by id in JSX?",
+      "choices": [
+        "for=\"email\"",
+        "htmlFor=\"email\"",
+        "labelFor=\"email\"",
+        "aria-for=\"email\""
+      ],
+      "answer": 1,
+      "explain": "`for` is a reserved word in JavaScript, so JSX uses `htmlFor`. You can also wrap the input inside the label."
+    },
+    {
+      "id": "a11y-live",
+      "topic": "a11y",
+      "prompt": "How do you make \"Saved!\" get announced by screen readers when it appears?",
+      "choices": [
+        "Add tabIndex={0}",
+        "Render it in an element with role=\"status\" (a polite live region) that is already on the page",
+        "Use a title attribute",
+        "Use bold text"
+      ],
+      "answer": 1,
+      "explain": "Live regions announce changes to their content. Keep the region mounted and change its text."
+    },
+    {
+      "id": "a11y-decorative-img",
+      "topic": "a11y",
+      "prompt": "What `alt` should a purely decorative image have?",
+      "choices": [
+        "alt=\"image\"",
+        "An empty alt: alt=\"\"",
+        "No alt attribute",
+        "The file name"
+      ],
+      "answer": 1,
+      "explain": "An empty `alt` tells assistive tech to skip the image. A missing `alt` can make screen readers read the file name."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-reducer-cart",
+      "title": "Coding task: cart reducer",
+      "module": "react",
+      "exercise": "reducer-cart"
+    },
+    {
+      "id": "task-fetch-race",
+      "title": "Coding task: fetch without races",
+      "module": "react",
+      "exercise": "effect-fetch-race"
+    }
+  ]
+}

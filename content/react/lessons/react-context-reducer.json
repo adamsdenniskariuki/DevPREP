@@ -1,0 +1,43 @@
+{
+  "id": "react-context-reducer",
+  "title": "Context and useReducer",
+  "minutes": 40,
+  "summary": "Passing data deeply with context, providers and defaults, re-render costs, reducers as pure functions of state and action, and combining the two for app-level state.",
+  "sections": [
+    {
+      "title": "Context passes data through the tree",
+      "body": "Create a context with a default, provide a value high in the tree and read it anywhere below with `useContext` (or `use`). The **default** is used only when there is **no provider above** the reader.\n\nIn React 19 you can render the context itself as the provider: `<ThemeContext value=\"dark\">`. `<ThemeContext.Provider value=\"dark\">` still works.",
+      "code": "const ThemeContext = createContext<\"light\" | \"dark\">(\"light\")\n\nfunction App() {\n  return <ThemeContext value=\"dark\"><Toolbar /></ThemeContext>\n}\nfunction Toolbar() {\n  const theme = useContext(ThemeContext) // \"dark\"\n  return <div className={theme}>…</div>\n}"
+    },
+    {
+      "title": "Context and re-renders",
+      "body": "When a provider's `value` changes (by `Object.is`), **every** component reading that context re-renders, even if it is wrapped in `memo`. Passing a new object literal each render, `value={{ user, setUser }}`, changes the value every time the provider's parent renders. Memoise it with `useMemo`, or split rarely changing and often changing data into separate contexts.\n\nUse context for truly widely needed data (theme, current user, locale, a store). For passing props two or three levels, plain props or composition with `children` are often clearer."
+    },
+    {
+      "title": "useReducer",
+      "body": "`const [state, dispatch] = useReducer(reducer, initialState)` moves update logic into a **pure** function `reducer(state, action) => nextState`. Handlers describe what happened, `dispatch({ type: \"added\", item })`, and the reducer decides how state changes. Reducers are easy to unit test because they are plain functions.\n\nA reducer must not mutate state or have side effects (in StrictMode development React calls it twice). Return a new object for changes, and return the same `state` for unknown actions or throw.",
+      "code": "type Action = { type: \"added\"; text: string } | { type: \"removed\"; id: number }\nfunction todos(state: Todo[], action: Action): Todo[] {\n  switch (action.type) {\n    case \"added\": return [...state, { id: state.length + 1, text: action.text }]\n    case \"removed\": return state.filter(t => t.id !== action.id)\n  }\n}"
+    },
+    {
+      "title": "Reducer plus context",
+      "body": "A common pattern for app-level state: keep state in `useReducer` at the top, put `state` in one context and `dispatch` in another. `dispatch` is stable for the component's lifetime, so components that only dispatch do not re-render when state changes. Wrap the pair in a provider component and export small hooks such as `useTodos()` that throw a clear error when used outside the provider."
+    }
+  ],
+  "pitfalls": [
+    "Expecting the default value when a provider exists but passes `undefined`; the provider wins.",
+    "Creating a new value object every render and re-rendering every consumer.",
+    "Mutating state inside a reducer (`state.items.push`).",
+    "Side effects (fetching, logging analytics) inside a reducer."
+  ],
+  "gotchas": [
+    {
+      "question": "What does `Label` render?",
+      "code": "const Ctx = createContext(\"default\")\nfunction Label() { return <span>{useContext(Ctx)}</span> }\n<><Label /><Ctx value=\"provided\"><Label /></Ctx></>",
+      "answer": "\"default\" then \"provided\". The first `Label` has no provider above it."
+    },
+    {
+      "question": "Does `memo` stop a component re-rendering when a context it reads changes?",
+      "answer": "No. `memo` compares props only; a context change always re-renders its readers."
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "id": "react-a11y",
+  "title": "Accessibility basics in React",
+  "minutes": 30,
+  "summary": "Semantic HTML first, labels and accessible names, keyboard support and focus, ARIA attributes in JSX, live regions, and checking accessibility in tests.",
+  "sections": [
+    {
+      "title": "Semantic HTML first",
+      "body": "Use the element that already has the behaviour: `<button>` for actions (focusable, Enter and Space work, announced as a button), `<a href>` for navigation, `<label>` for form fields, headings in order, lists for lists. A `<div onClick>` is not focusable and not announced; making it accessible needs `role`, `tabIndex` and key handlers, so use a button instead.\n\nIn JSX, write `htmlFor` on labels; `aria-*` attributes keep their dashes and lower case: `aria-label`, `aria-expanded`, `aria-describedby`.",
+      "code": "<label htmlFor=\"email\">Email</label>\n<input id=\"email\" type=\"email\" aria-describedby=\"email-hint\" aria-invalid={!!error} />\n<p id=\"email-hint\">We never share it.</p>"
+    },
+    {
+      "title": "Names, states and IDs",
+      "body": "Every control needs an **accessible name**: visible label text, `aria-label`, or `aria-labelledby`. Icon-only buttons need `aria-label`. Images need `alt`; decorative images use `alt=\"\"`.\n\nExpose state with ARIA: `aria-expanded` on disclosure buttons, `aria-pressed` on toggle buttons, `aria-selected` on tabs, `aria-current=\"page\"` on the current link. Use `useId()` to generate unique ids for linking labels and descriptions, so a component can be rendered several times without clashes."
+    },
+    {
+      "title": "Keyboard and focus",
+      "body": "Everything clickable must work with the keyboard and show a visible focus outline. Composite widgets such as tabs and menus follow the ARIA Authoring Practices: the tab list is one Tab stop, arrow keys move between tabs (roving `tabIndex`: 0 on the selected tab, -1 on others), and the selected tab controls a `role=\"tabpanel\"`.\n\nManage focus when content changes: move focus into a dialog when it opens and back to the trigger when it closes, and move focus to the new heading after client-side navigation. Use refs for this."
+    },
+    {
+      "title": "Announcements and testing",
+      "body": "Status messages that appear without a focus change should be in a **live region**: `role=\"status\"` (polite) or `role=\"alert\"` (assertive, for errors). The region should exist before its text changes.\n\nTesting by role and name (`getByRole(\"button\", { name: \"Save\" })`) fails when names are missing, so accessible tests catch many a11y bugs. Add automated checks such as axe, and test with a keyboard and a screen reader."
+    }
+  ],
+  "pitfalls": [
+    "Clickable `div`s and `span`s instead of buttons.",
+    "Inputs without labels, or placeholders used as labels.",
+    "Icon buttons without `aria-label`.",
+    "Hard-coded ids that clash when a component renders twice; use `useId`.",
+    "Removing focus outlines without a replacement."
+  ],
+  "gotchas": [
+    {
+      "question": "How do you write the HTML `for` attribute in JSX?",
+      "answer": "`htmlFor`, because `for` is a reserved word in JavaScript."
+    },
+    {
+      "question": "Which role should a message that appears after a failed save use?",
+      "answer": "`role=\"alert\"`, which announces assertively. Use `role=\"status\"` for non-urgent updates."
+    },
+    {
+      "question": "Why use `useId` instead of `id=\"name-input\"`?",
+      "answer": "A hard-coded id is duplicated if the component renders twice, breaking label associations. `useId` produces a unique, stable id per instance (and matches between server and client)."
+    }
+  ]
+}

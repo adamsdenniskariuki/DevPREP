@@ -1,0 +1,38 @@
+{
+  "id": "react-forms",
+  "title": "Forms: controlled and uncontrolled",
+  "minutes": 35,
+  "summary": "Controlled inputs with value and onChange, uncontrolled inputs with defaultValue and refs or FormData, checkboxes and selects, validation, and the controlled/uncontrolled warning.",
+  "sections": [
+    {
+      "title": "Controlled inputs",
+      "body": "A **controlled** input takes its value from state and reports changes: `<input value={name} onChange={e => setName(e.target.value)} />`. React keeps the DOM in sync with state, so you can validate, format or disable the submit button as the user types.\n\nCheckboxes and radios use `checked` and `e.target.checked`. A `<select>` and a `<textarea>` take `value` too (no `selected` attribute on options, no children text in the textarea). `value` without `onChange` makes a read-only input, and React warns.",
+      "code": "const [form, setForm] = useState({ email: \"\", agree: false })\n<input value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />\n<input type=\"checkbox\" checked={form.agree} onChange={e => setForm({ ...form, agree: e.target.checked })} />"
+    },
+    {
+      "title": "Uncontrolled inputs",
+      "body": "An **uncontrolled** input keeps its own value in the DOM. Give it `defaultValue` (or `defaultChecked`) and read it when you need it: on submit with `new FormData(e.currentTarget)` and `name` attributes, or through a ref. This is less code for simple forms and works well with React 19 form actions.\n\nDo not switch an input between controlled and uncontrolled: `value={user.name}` when `user.name` starts `undefined` triggers \"A component is changing an uncontrolled input to be controlled\". Start with `\"\"`.",
+      "code": "function Search({ onSearch }: { onSearch: (q: string) => void }) {\n  return <form onSubmit={e => {\n    e.preventDefault()\n    onSearch(String(new FormData(e.currentTarget).get(\"q\") ?? \"\"))\n  }}>\n    <input name=\"q\" defaultValue=\"\" aria-label=\"Search\" />\n  </form>\n}"
+    },
+    {
+      "title": "Submitting and validating",
+      "body": "Handle `onSubmit` on the `<form>`, not `onClick` on the button, so Enter in a field submits too. Call `e.preventDefault()` to stop the page reload. A `<button>` inside a form defaults to `type=\"submit\"`; give other buttons `type=\"button\"`.\n\nValidate on submit (and optionally on blur), show messages next to the field, link them with `aria-describedby`, and set `aria-invalid` on bad fields. Keep errors in state alongside the values, or derive them from the values."
+    }
+  ],
+  "pitfalls": [
+    "`value` without `onChange` (read-only input) or with an `undefined` initial value (controlled/uncontrolled switch).",
+    "Reading `e.target.value` for a checkbox instead of `e.target.checked`.",
+    "Handling submit with `onClick` on the button, so Enter does not work, or forgetting `preventDefault`.",
+    "Extra buttons inside a form without `type=\"button\"`, which submit the form."
+  ],
+  "gotchas": [
+    {
+      "question": "What does typing into `<input value=\"hi\" />` do?",
+      "answer": "Nothing: the value is fixed at \"hi\", because it is controlled with no `onChange`. React warns and suggests `defaultValue` or `readOnly`."
+    },
+    {
+      "question": "Which is controlled: `<input defaultValue={name} />` or `<input value={name} onChange={…} />`?",
+      "answer": "The second. `defaultValue` only sets the initial DOM value; later changes to `name` do not update the input."
+    }
+  ]
+}

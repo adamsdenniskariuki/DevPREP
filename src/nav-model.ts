@@ -31,6 +31,10 @@ export interface NavIndex {
   companies: [id: string, name: string][]
   /** Codebase practice repos with their tasks. */
   codebase?: [id: string, title: string, lang: string, tasks: [id: string, title: string, kind: string][]][]
+  /** React module lessons and exercises, in course order. */
+  react?: [id: string, title: string, kind: 'lesson' | 'exercise'][]
+  /** Timed skill tests. */
+  skillTests?: [id: string, title: string][]
   decks: [track: string, title: string, cards: number][]
   /** Anti-pattern titles with the guide they appear in, for the command palette. */
   antipatterns: [guide: string, title: string][]
@@ -69,10 +73,10 @@ export const GROUPS: readonly { id: GroupId; label: string; icon: string; href?:
 ]
 
 const ROUTE_GROUP: Record<string, GroupId> = {
-  tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn',
+  tracks: 'learn', study: 'learn', patterns: 'learn', guide: 'learn', antipatterns: 'learn', react: 'learn',
   practice: 'practise', code: 'practise', sql: 'practise', cards: 'practise', playground: 'practise',
   design: 'design', board: 'design',
-  company: 'interview', mock: 'interview', codebase: 'interview', stories: 'interview',
+  company: 'interview', mock: 'interview', codebase: 'interview', skilltest: 'interview', stories: 'interview',
   home: 'me', plan: 'me', plans: 'me', progress: 'me', settings: 'me', map: 'me', changelog: 'me',
 }
 
@@ -100,6 +104,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
       branch({ id: 'tracks', label: 'Tracks', href: '#tracks' }),
       branch({ id: 'patterns', label: 'Patterns', href: '#patterns' }),
       branch({ id: 'guide', label: 'Field Guide', href: '#guide' }),
+      branch({ id: 'react', label: 'React', href: '#react' }),
     ]),
     { ...group('practise', [
       branch({ id: 'code', label: 'Coding problems', href: '#code' }),
@@ -115,6 +120,7 @@ export function buildNavTree(deep: DeepSections | undefined, due = 0): NavNode[]
       branch({ id: 'company', label: 'Company prep', href: '#company' }),
       branch({ id: 'mock', label: 'Mock interviews', href: '#mock' }),
       branch({ id: 'codebase', label: 'Codebase interviews', href: '#codebase' }),
+      branch({ id: 'skilltest', label: 'Skill tests', href: '#skilltest' }),
       { id: 'stories', label: 'Story bank', href: '#stories' },
     ]),
     group('me', [

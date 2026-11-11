@@ -1,0 +1,47 @@
+{
+  "id": "react-memo",
+  "title": "Memoisation and re-render rules",
+  "minutes": 40,
+  "summary": "When components re-render, memo and its shallow prop comparison, useMemo for expensive values, useCallback for stable functions, and when memoisation does not help.",
+  "sections": [
+    {
+      "title": "Why a component re-renders",
+      "body": "A component re-renders when (1) its own state changes, (2) its parent re-renders, or (3) a context it reads changes. Changing props alone is not a trigger: props change because the parent re-rendered. Setting state to the **same value** (by `Object.is`) usually skips the render.\n\nRe-rendering is normally cheap. Optimise only when you measure a slow interaction, for example with the React DevTools Profiler."
+    },
+    {
+      "title": "memo",
+      "body": "`const Row = memo(function Row(props) {…})` skips re-rendering `Row` when its parent re-renders with props that are **shallowly equal** to last time: each prop compared with `Object.is`. A new object, array or function created in the parent's render is a different reference every time, so it defeats `memo`.\n\n`memo` does not stop re-renders caused by the component's own state or by a context it reads.",
+      "code": "const Row = memo(function Row({ item, onSelect }: RowProps) {\n  return <li onClick={() => onSelect(item.id)}>{item.name}</li>\n})\n// Defeats memo: a new function every render of the parent\n<Row item={item} onSelect={id => setSelected(id)} />"
+    },
+    {
+      "title": "useMemo and useCallback",
+      "body": "`useMemo(() => compute(a, b), [a, b])` caches a **value** until a dependency changes. Use it for expensive calculations, or to keep an object or array reference stable for a memoised child or an effect dependency.\n\n`useCallback(fn, deps)` caches a **function**; it is the same as `useMemo(() => fn, deps)`. It only helps when the function is passed to a `memo` component or used as a dependency. Wrapping every handler in `useCallback` adds cost and noise without benefit.",
+      "code": "const visible = useMemo(() => items.filter(i => i.name.includes(query)), [items, query])\nconst handleSelect = useCallback((id: number) => setSelected(id), [])\n<Row item={item} onSelect={handleSelect} /> // now memo can skip"
+    },
+    {
+      "title": "Better than memoising",
+      "body": "Before reaching for memoisation, try structural fixes:\n\n- **Move state down** into the component that uses it, so fewer components re-render.\n- **Lift content up** and pass it as `children`: children created by a parent do not re-render when a wrapper's state changes.\n- Avoid unnecessary effects that set state.\n\nThe React Compiler can apply memoisation automatically at build time; when it is enabled, manual `useMemo`, `useCallback` and `memo` are rarely needed."
+    }
+  ],
+  "pitfalls": [
+    "Passing inline objects or arrow functions to a `memo` child.",
+    "Expecting `memo` to block a context change or the component's own state change.",
+    "Wrapping cheap calculations in `useMemo`.",
+    "Missing dependencies in `useMemo` or `useCallback`, which return stale values."
+  ],
+  "gotchas": [
+    {
+      "question": "The parent re-renders. Does the memoised child re-render?",
+      "code": "const Child = memo(({ style }: { style: object }) => <div style={style} />)\nfunction Parent() { const [n, setN] = useState(0); return <Child style={{ color: \"red\" }} /> }",
+      "answer": "Yes. `{ color: \"red\" }` is a new object each render, so the shallow comparison fails."
+    },
+    {
+      "question": "What is the difference between `useMemo(() => fn, [])` and `useCallback(fn, [])`?",
+      "answer": "None in result: both return the same `fn` reference across renders. `useCallback` is shorthand for memoising a function."
+    },
+    {
+      "question": "A component calls `setCount(5)` when `count` is already 5. Does it re-render?",
+      "answer": "Usually not. React bails out when the new state is `Object.is`-equal to the current state (it may still call the component once before bailing out, but children and effects do not run)."
+    }
+  ]
+}

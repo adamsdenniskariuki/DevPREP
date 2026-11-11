@@ -7,6 +7,7 @@ const LOADING_STEP: Record<Exclude<RunPhase, 'running'>, string> = {
   'loading-numpy': 'Loading Python and NumPy (first run downloads them; cached after)…',
   'loading-typescript': 'Loading TypeScript (first run downloads it; cached after)…',
   'loading-sql': 'Loading SQL (first run downloads Postgres; cached after)…',
+  'loading-react': 'Loading React (first run downloads it; cached after)…',
 }
 
 /** Short run-button labels while a run is busy. */
@@ -15,6 +16,7 @@ export const BUSY_LABEL: Record<RunPhase, string> = {
   'loading-numpy': 'Loading Python and NumPy…',
   'loading-typescript': 'Loading TypeScript…',
   'loading-sql': 'Starting Postgres…',
+  'loading-react': 'Loading React…',
   running: 'Running…',
 }
 

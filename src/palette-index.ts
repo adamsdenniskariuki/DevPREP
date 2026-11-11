@@ -1,7 +1,7 @@
 import { fuzzyScore } from './fuzzy'
 import type { NavIndex } from './nav-model'
 
-export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'plan' | 'codebase' | 'snippet'
+export type PaletteKind = 'page' | 'track' | 'lesson' | 'pattern' | 'guide' | 'antipattern' | 'problem' | 'sql' | 'deck' | 'case' | 'company' | 'plan' | 'codebase' | 'react' | 'skilltest' | 'snippet'
 
 export interface PaletteEntry {
   /** Unique: used for the option's DOM id and for recents. */
@@ -19,7 +19,7 @@ export interface PaletteGroup { kind: PaletteKind | 'recent' | 'suggested'; labe
 
 export const KIND_LABELS: Record<PaletteKind, string> = {
   page: 'Pages', track: 'Tracks', lesson: 'Lessons', pattern: 'Patterns', guide: 'Field Guide', antipattern: 'Anti-patterns',
-  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', plan: 'Study plans', codebase: 'Codebase tasks', snippet: 'Playground snippets',
+  problem: 'Coding problems', sql: 'SQL problems', deck: 'Flashcard decks', case: 'Design cases', company: 'Companies', plan: 'Study plans', codebase: 'Codebase tasks', react: 'React', skilltest: 'Skill tests', snippet: 'Playground snippets',
 }
 const KIND_ORDER = Object.keys(KIND_LABELS) as PaletteKind[]
 
@@ -40,6 +40,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['cheatsheet', 'Cheat sheet', '#patterns/cheatsheet', 'patterns summary reference'],
   ['guide', 'Field Guide', '#guide', 'guides articles'],
   ['antipatterns', 'Anti-pattern gallery', '#antipatterns', 'bad better mistakes'],
+  ['react', 'React', '#react', 'react module reactjs jsx tsx hooks components state effects lessons exercises frontend'],
   ['code', 'Coding problems', '#code', 'leetcode exercises algorithms'],
   ['sql', 'SQL problems', '#sql', 'queries database postgres'],
   ['cards', 'Flashcards', '#cards', 'spaced repetition decks review'],
@@ -49,6 +50,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['company', 'Company prep', '#company', 'employers companies'],
   ['mock', 'Mock interviews', '#mock', 'practice interview timer loop'],
   ['codebase', 'Codebase interviews', '#codebase', 'codebase interview existing code repo debugging bug fix feature change multi-file pair programming fde forward deployed'],
+  ['skilltest', 'Skill tests', '#skilltest', 'skill test assessment timed quiz exam react certification score'],
   ['stories', 'Story bank', '#stories', 'behavioural behavioral star stories'],
 ].map(([id, title, href, keywords]) => ({ id: `page:${id}`, kind: 'page' as const, title, href, keywords }))
 
@@ -86,6 +88,9 @@ export function buildPaletteIndex(nav: NavIndex, lessons: readonly LessonInfo[] 
     }),
     ...(nav.codebase ?? []).flatMap(([repo, repoTitle, lang, tasks]) => tasks.map(([task, title, kind]): PaletteEntry =>
       ({ id: `codebase:${repo}/${task}`, kind: 'codebase', title, href: `#codebase/${repo}/${task}`, detail: `Codebase task · ${repoTitle} (${lang === 'py' ? 'Python' : 'TypeScript'})`, keywords: `codebase ${kind}` }))),
+    ...(nav.react ?? []).map(([id, title, kind]): PaletteEntry =>
+      ({ id: `react:${id}`, kind: 'react', title, href: `#react/${id}`, detail: kind === 'lesson' ? 'React lesson' : 'React exercise', keywords: 'react' })),
+    ...(nav.skillTests ?? []).map(([id, title]): PaletteEntry => ({ id: `skilltest:${id}`, kind: 'skilltest', title, href: `#skilltest/${id}`, detail: 'Timed skill test', keywords: 'skill test quiz exam' })),
   ]
 }
 

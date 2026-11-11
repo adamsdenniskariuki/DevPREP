@@ -1,0 +1,47 @@
+{
+  "id": "react-conditional-lists",
+  "title": "Conditional rendering, lists and keys",
+  "minutes": 35,
+  "summary": "if, ternaries, && and early returns; rendering arrays with map; what keys are for, why index keys break reordering, and using keys to reset state.",
+  "sections": [
+    {
+      "title": "Choosing what to render",
+      "body": "Use plain JavaScript. An early `return` or an `if` that assigns to a variable works for big branches; a ternary `cond ? <A /> : <B />` works inline; `cond && <A />` renders A or nothing. Return `null` to render nothing at all.\n\nMake sure the left side of `&&` is a boolean. `0`, `NaN` and `\"\"` are falsy but `0` and `NaN` are rendered as text (an empty string renders nothing).",
+      "code": "if (status === \"loading\") return <Spinner />\nreturn (\n  <>\n    {error ? <Alert error={error} /> : <Results items={items} />}\n    {items.length > 0 && <Summary items={items} />}\n  </>\n)"
+    },
+    {
+      "title": "Lists with map",
+      "body": "Render arrays with `map` and give each item a stable `key`: `items.map(item => <Row key={item.id} item={item} />)`. Filter and sort **before** mapping, using copies (`toSorted`, `filter`) so you never mutate props or state.\n\nKeys must be unique **among siblings** only, not globally, and must be stable across renders. Put the key on the outermost element returned by the `map` callback; use `<Fragment key={…}>` if you return several elements."
+    },
+    {
+      "title": "Why keys matter",
+      "body": "React matches the children of one render to the next by key (or by position when there are no keys). With a stable id, React moves the existing DOM node and its **state** along with the item. With the **array index** as key, inserting at the top or reordering means index 0 is now a different item but keeps item 0's state, so inputs, checkboxes and animations attach to the wrong row.\n\nIndex keys are acceptable only for static lists that never reorder, insert or delete. `key={Math.random()}` is worse: every render creates new keys, so every row remounts and loses state and focus.",
+      "code": "// Each row has an uncontrolled <input>. Prepending a todo with index keys\n// leaves the typed text on the wrong row. Stable ids fix it:\ntodos.map(todo => <TodoRow key={todo.id} todo={todo} />)"
+    },
+    {
+      "title": "Keys reset state",
+      "body": "A key change tells React \"this is a different thing\", so it unmounts the old component and mounts a fresh one with new state. This is the clean way to reset a form when the selected record changes: `<EditForm key={user.id} user={user} />`, instead of an effect that copies props into state."
+    }
+  ],
+  "pitfalls": [
+    "`{list.length && <List />}` rendering 0.",
+    "Index keys on lists that reorder, filter or insert.",
+    "Generating keys with `Math.random()` or `crypto.randomUUID()` during render.",
+    "Sorting `props.items` in place before mapping.",
+    "Putting the key on an inner element instead of the element returned by `map`."
+  ],
+  "gotchas": [
+    {
+      "question": "Do keys need to be unique across the whole page?",
+      "answer": "No. They must be unique among siblings in the same array. Two different lists can reuse the same ids."
+    },
+    {
+      "question": "What happens to a typed-in input when you prepend an item to a list keyed by index?",
+      "answer": "The typed text stays at index 0, which now shows the new item, so the text appears on the wrong row. React reuses the component at each key, and index keys shift meaning."
+    },
+    {
+      "question": "How do you reset all state in `<Profile user={user} />` when `user` changes?",
+      "answer": "Give it a key: `<Profile key={user.id} user={user} />`. A new key mounts a new instance with fresh state."
+    }
+  ]
+}

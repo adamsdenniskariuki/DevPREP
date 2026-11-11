@@ -1,0 +1,48 @@
+{
+  "id": "react-jsx",
+  "title": "JSX and rendering",
+  "minutes": 30,
+  "summary": "What JSX compiles to, the expression rules inside braces, fragments, what React renders for each kind of value, and how a render becomes a DOM update.",
+  "sections": [
+    {
+      "title": "JSX is function calls",
+      "body": "JSX is syntax for creating **React elements**: plain objects that describe what to show. With the automatic runtime (React 17+), `<h1 className=\"title\">Hi</h1>` compiles to a call like `jsx(\"h1\", { className: \"title\", children: \"Hi\" })`, imported from `react/jsx-runtime` for you.\n\nAn element is a cheap description, not a DOM node. A **component** is a function that returns elements. React calls your component, compares the result with the previous one and updates only the DOM that changed.",
+      "code": "const element = <h1 className=\"title\">Hello</h1>\n// compiles (roughly) to:\nimport { jsx } from \"react/jsx-runtime\"\nconst element = jsx(\"h1\", { className: \"title\", children: \"Hello\" })"
+    },
+    {
+      "title": "The rules of JSX",
+      "body": "- Return **one root**. Wrap siblings in a fragment `<>…</>`, or `<Fragment key={id}>` when you need a key.\n- **Close every tag**, including `<img />` and `<br />`.\n- Attributes are **camelCase** DOM properties: `className`, `htmlFor`, `onClick`, `tabIndex`. `aria-*` and `data-*` keep their dashes.\n- `style` takes an **object**: `style={{ marginTop: 8 }}`; numbers become pixels for most properties.\n- Braces hold **expressions**, not statements. Use a ternary, `&&` or a variable instead of `if` or `for` inside JSX.\n- Lower-case tags are DOM elements; capitalised tags are components. `<button>` is the DOM button; `<Button>` is your component."
+    },
+    {
+      "title": "What renders for each value",
+      "body": "Strings and numbers render as text. `null`, `undefined`, `true` and `false` render **nothing**. Arrays render each item (each needs a `key`). Plain objects throw \"Objects are not valid as a React child\".\n\nThe classic trap: `0` and `NaN` are numbers, so `{count && <Badge />}` renders the text `0` when `count` is 0. Compare explicitly: `{count > 0 && <Badge />}`.",
+      "code": "<p>{null}{undefined}{false}{true}</p>  // <p></p>\n<p>{0 && \"items\"}</p>                    // <p>0</p>\n<p>{[\"a\", \"b\"]}</p>                    // <p>ab</p> (warns: missing keys)\n<p>{{ a: 1 }}</p>                      // throws: objects are not valid as a React child"
+    },
+    {
+      "title": "Render, then commit",
+      "body": "React work happens in two phases. In the **render** phase React calls your components to compute the new element tree; this must be pure (no DOM writes, no subscriptions, same output for the same props and state). In the **commit** phase React applies the minimal DOM changes, then runs effects.\n\nA component re-renders when its state changes, when its parent re-renders (unless it is memoised and its props are unchanged), or when a context it reads changes. Re-rendering is not the same as touching the DOM: if the output is the same, the DOM is left alone."
+    }
+  ],
+  "pitfalls": [
+    "Writing `class` instead of `className`, or `for` instead of `htmlFor`.",
+    "Rendering an object (for example a `Date`) directly; format it into a string first.",
+    "Using `{count && …}` with a number that can be 0.",
+    "Forgetting that a component name must start with a capital letter, or JSX treats it as an HTML tag.",
+    "Doing side effects (fetching, writing to the DOM, mutating outside variables) while rendering."
+  ],
+  "gotchas": [
+    {
+      "question": "What does this render?",
+      "code": "function Cart({ items }) {\n  return <p>{items.length && `${items.length} items`}</p>\n}\n<Cart items={[]} />",
+      "answer": "`<p>0</p>`. `items.length` is 0, a number, and React renders numbers. Use `items.length > 0 && …`."
+    },
+    {
+      "question": "Why does `<myButton />` not use your `myButton` component?",
+      "answer": "Lower-case JSX tags are treated as built-in elements, so React creates an unknown `<mybutton>` DOM element. Components must be capitalised."
+    },
+    {
+      "question": "What does `<div>{[1, 2, 3].map(n => n * 2)}</div>` show?",
+      "answer": "The text `246`: numbers in an array render side by side. React also warns that each child in a list should have a key."
+    }
+  ]
+}

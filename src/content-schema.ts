@@ -199,12 +199,18 @@ export function validateTrack(value: unknown, where = 'track'): string[] {
 export const CARD_FRONT_MAX = 200
 export const CARD_BACK_MAX = 600
 
+/** Decks that are not tied to a curriculum track (a module with its own screen). Must match EXTRA_DECKS in scripts/build-content.mjs. */
+export const EXTRA_DECK_IDS = ['react'] as const
+export const DECK_IDS: readonly string[] = [...TRACK_IDS, ...EXTRA_DECK_IDS]
+/** A flashcard deck: one per curriculum track, plus the extra decks. */
+export type DeckId = Track | typeof EXTRA_DECK_IDS[number]
+
 /** Validates a content/flashcards/<track>.json deck. Card ids must start with the track prefix. */
 export function validateDeck(value: unknown, where = 'deck'): string[] {
   const check = new Checker(where)
   if (!isRec(value)) { check.fail('', 'expected object'); return check.errors }
   check.keys(value, '', ['track', 'title', 'cards'])
-  if (!TRACK_IDS.includes(value.track as Track)) check.fail('track', 'unknown track')
+  if (!DECK_IDS.includes(value.track as string)) check.fail('track', 'unknown track')
   check.text(value.title, 'title')
   if (!Array.isArray(value.cards) || value.cards.length < 10) { check.fail('cards', 'expected at least 10 cards'); return check.errors }
   const ids = new Set<string>()

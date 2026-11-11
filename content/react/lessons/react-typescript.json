@@ -1,0 +1,43 @@
+{
+  "id": "react-typescript",
+  "title": "TypeScript with React",
+  "minutes": 35,
+  "summary": "Typing props, children and defaults, state and refs, event handlers, generic components, discriminated unions for props, and typing context and reducers.",
+  "sections": [
+    {
+      "title": "Props",
+      "body": "Type props with a `type` or `interface` and destructure in the parameter: `function Button({ label, onClick }: ButtonProps)`. Optional props use `?` and get defaults in the destructuring. Use `React.ReactNode` for anything renderable, including `children`; `React.ReactElement` (or `JSX.Element`) only when you need an element specifically.\n\nTo accept all the props of a DOM element, extend `React.ComponentProps<\"button\">` (or `ComponentPropsWithoutRef`) and spread the rest.",
+      "code": "type ButtonProps = React.ComponentProps<\"button\"> & { variant?: \"primary\" | \"ghost\" }\nfunction Button({ variant = \"primary\", ...rest }: ButtonProps) {\n  return <button className={variant} {...rest} />\n}"
+    },
+    {
+      "title": "State, refs and events",
+      "body": "`useState` infers from the initial value; give a type when it starts empty or nullable: `useState<User | null>(null)`, `useState<string[]>([])`.\n\nDOM refs: `useRef<HTMLInputElement>(null)` gives a `RefObject<HTMLInputElement | null>`; check for `null` before use. Mutable value refs: `useRef<number | null>(null)`.\n\nEvents: `React.ChangeEvent<HTMLInputElement>`, `React.FormEvent<HTMLFormElement>`, `React.MouseEvent<HTMLButtonElement>`, `React.KeyboardEvent`. Inline handlers infer the type, so annotate only when the handler is defined separately.",
+      "code": "const [user, setUser] = useState<User | null>(null)\nconst inputRef = useRef<HTMLInputElement>(null)\nfunction handleChange(e: React.ChangeEvent<HTMLInputElement>) { setQuery(e.target.value) }"
+    },
+    {
+      "title": "Generic components",
+      "body": "A component can be generic, like a function: `function List<T>({ items, render }: { items: T[]; render: (item: T) => React.ReactNode })`. TypeScript infers `T` from `items` at the call site. In a `.tsx` file an arrow function needs `<T,>` so the parser does not read `<T>` as a JSX tag.",
+      "code": "function List<T>({ items, getKey, render }: {\n  items: T[]\n  getKey: (item: T) => string\n  render: (item: T) => React.ReactNode\n}) {\n  return <ul>{items.map(item => <li key={getKey(item)}>{render(item)}</li>)}</ul>\n}"
+    },
+    {
+      "title": "Unions for props and actions",
+      "body": "A **discriminated union** makes impossible prop combinations impossible: `type Props = { status: \"loading\" } | { status: \"error\"; error: string } | { status: \"ok\"; data: Item[] }`. After checking `status`, TypeScript narrows to the right shape. The same pattern types reducer actions and makes `switch` exhaustive.\n\nType a context with its value or `null`, and export a hook that throws when the provider is missing, so callers get a non-null type."
+    }
+  ],
+  "pitfalls": [
+    "`useState(null)` without a type, which infers `null` forever.",
+    "Using `React.FC` and expecting implicit `children` (removed from `FC` in React 18 types).",
+    "Typing `children` as `JSX.Element`, which rejects strings and arrays.",
+    "Writing `<T>() =>` in a `.tsx` file instead of `<T,>() =>`."
+  ],
+  "gotchas": [
+    {
+      "question": "What type should `children` usually have?",
+      "answer": "`React.ReactNode`, which covers elements, strings, numbers, arrays, `null` and booleans."
+    },
+    {
+      "question": "What does `useState(null)` infer without a type argument?",
+      "answer": "`null`, so you cannot later set an object. Write `useState<User | null>(null)`."
+    }
+  ]
+}

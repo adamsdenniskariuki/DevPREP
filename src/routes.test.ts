@@ -49,7 +49,7 @@ const hashes = [
   '#home/extra', '#practice/x', '#settings/a/b', '#code/two-sum/extra', '#search', '#Home', '#practise', '#nope',
 ]
 /** Routes added by the redesign, which the legacy parser did not know. */
-const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase'])
+const ADDED = new Set(['#map', '#playground', '#changelog', '#plans', '#codebase', '#react', '#skilltest'])
 
 describe('route compatibility', () => {
   it('parses every existing route, alias and sub-id exactly as before the redesign', () => {
@@ -95,6 +95,18 @@ describe('route compatibility', () => {
     expect(parseHash('#codebase/inventory/fix-restock', withTasks)).toEqual({ route: 'codebase', codebaseTask: 'inventory/fix-restock' })
     expect(hrefFor({ route: 'codebase', codebaseTask: 'inventory/fix-restock' })).toBe('#codebase/inventory/fix-restock')
     for (const hash of ['#codebase/inventory', '#codebase/inventory/nope', '#codebase/a/b/c', '#Codebase']) expect(parseHash(hash, withTasks), hash).toEqual({ route: 'unknown' })
+  })
+
+  it('adds the React module and skill tests, each with an optional id', () => {
+    const withIds: RouteIds = { ...ids, react: new Set(['react-state', 'counter']), skillTests: new Set(['react']) }
+    expect(parseHash('#react', withIds)).toEqual({ route: 'react' })
+    expect(parseHash('#react/react-state', withIds)).toEqual({ route: 'react', reactId: 'react-state' })
+    expect(parseHash('#skilltest', withIds)).toEqual({ route: 'skilltest' })
+    expect(parseHash('#skilltest/react', withIds)).toEqual({ route: 'skilltest', skillTestId: 'react' })
+    expect(hrefFor({ route: 'react', reactId: 'counter' })).toBe('#react/counter')
+    expect(hrefFor({ route: 'skilltest', skillTestId: 'react' })).toBe('#skilltest/react')
+    for (const hash of ['#react/nope', '#react/counter/x', '#skilltest/nope', '#skilltest/react/x', '#React']) expect(parseHash(hash, withIds), hash).toEqual({ route: 'unknown' })
+    expect(parseHash('#react/any-id', ids)).toEqual({ route: 'react', reactId: 'any-id' })
   })
 
   it('keeps the old aliases pointing at the same screens', () => {
