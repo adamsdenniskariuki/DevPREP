@@ -130,6 +130,14 @@ describe('route compatibility', () => {
     expect(parseHash('#react-native/any-id', ids)).toEqual({ route: 'react-native', reactNativeId: 'any-id' })
   })
 
+  it('links straight to a lesson inside its own track', () => {
+    const withLessons: RouteIds = { ...ids, lessons: new Map([['ts-generics', 'typescript'], ['py-basics', 'python']]) }
+    expect(parseHash('#tracks/typescript/ts-generics', withLessons)).toEqual({ route: 'tracks', track: 'typescript', lessonId: 'ts-generics' })
+    expect(hrefFor({ route: 'tracks', track: 'typescript', lessonId: 'ts-generics' })).toBe('#tracks/typescript/ts-generics')
+    for (const hash of ['#tracks/typescript/nope', '#tracks/python/ts-generics', '#tracks/typescript/ts-generics/x', '#tracks/nope/ts-generics']) expect(parseHash(hash, withLessons), hash).toEqual({ route: 'unknown' })
+    expect(parseHash('#tracks/typescript/ts-generics', ids)).toEqual({ route: 'unknown' })
+  })
+
   it('keeps the old aliases pointing at the same screens', () => {
     expect(parseHash('#today', ids)).toEqual({ route: 'home' })
     expect(parseHash('#roadmap', ids)).toEqual({ route: 'tracks' })

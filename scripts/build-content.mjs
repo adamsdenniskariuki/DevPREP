@@ -704,6 +704,44 @@ function buildLearnModule(root, module, ext, checkCode) {
   return { lessons, exercises }
 }
 
+export const TYPESCRIPT_TASKS_OUTPUT = 'src/generated/typescript-tasks.json'
+
+/**
+ * Timed TypeScript coding tasks (content/typescript-tasks) for the TypeScript skill test: each has a .json, starter,
+ * solution and test file, and names the curriculum lesson it practises. Runs type-check as well as test, so a type
+ * error fails the task. Checked in src/typescript-tasks.test.ts.
+ */
+export function buildTypeScriptTasks(root = 'content') {
+  const dir = join(root, 'typescript-tasks')
+  if (!existsSync(join(dir, 'index.json'))) return []
+  const { exercises: order } = read(join(dir, 'index.json'))
+  const lessonIds = new Set(read(join(root, 'typescript', 'track.json')).lessons)
+  const files = new Set(readdirSync(dir).filter(name => name !== 'index.json'))
+  const seen = new Set()
+  const tasks = order.map(id => {
+    const where = `content/typescript-tasks/${id}`
+    const fail = message => { throw new Error(`${where}: ${message}`) }
+    if (!KEBAB.test(id ?? '') || seen.has(id)) fail('id must be kebab-case and unique')
+    seen.add(id)
+    const names = [`${id}.json`, `${id}.starter.ts`, `${id}.solution.ts`, `${id}.test.ts`]
+    for (const name of names) if (!files.delete(name)) fail(`${name} is missing`)
+    const meta = read(join(dir, `${id}.json`))
+    if (Object.keys(meta).sort().join() !== REACT_EXERCISE_KEYS) fail(`json must have exactly ${REACT_EXERCISE_KEYS}`)
+    if (meta.id !== id) fail('id must match the file name')
+    if (!text(meta.title, 60) || !text(meta.summary, 200) || !text(meta.prompt, 1200)) fail('needs a title (≤60), summary (≤200) and prompt (≤1200)')
+    if (!lessonIds.has(meta.lesson)) fail(`unknown TypeScript lesson ${meta.lesson}`)
+    if (!Number.isInteger(meta.minutes) || meta.minutes < 5 || meta.minutes > 60) fail('minutes must be 5–60')
+    if (!Array.isArray(meta.hints) || !meta.hints.length || meta.hints.some(hint => !text(hint, 300))) fail('needs at least one hint')
+    const [starter, solution, tests] = names.slice(1).map(name => readFileSync(join(dir, name), 'utf8').replace(/\r\n/g, '\n'))
+    if (starter === solution) fail('starter and solution are identical')
+    if (!/\bexport\b/.test(starter) || !/\bexport\b/.test(solution)) fail('starter and solution must export what the tests import')
+    if (!/export (async )?function test/.test(tests)) fail('tests must export at least one test function')
+    return { ...meta, starter, solution, tests }
+  })
+  if (files.size) throw new Error(`content/typescript-tasks has files not listed in index.json: ${[...files].join(', ')}`)
+  return tasks
+}
+
 export const SKILL_TESTS_OUTPUT = 'src/generated/skill-tests.json'
 /** Test ids, question ids and task ids, so routes and backups can check them without loading the tests. */
 export const SKILL_TEST_IDS_OUTPUT = 'src/generated/skill-test-ids.json'
@@ -713,10 +751,12 @@ const skillTestModules = root => {
   const react = buildReact(root)
   const node = buildNode(root)
   const reactNative = buildReactNative(root)
+  const tsLessons = read(join(root, 'typescript', 'track.json')).lessons
   return {
     react: { exercises: new Set(react.exercises.map(item => item.id)), reviews: new Set(react.lessons.map(item => `#react/${item.id}`)) },
     node: { exercises: new Set(node.exercises.map(item => item.id)), reviews: new Set(node.lessons.map(item => `#node/${item.id}`)) },
     'react-native': { exercises: new Set(reactNative.exercises.map(item => item.id)), reviews: new Set(reactNative.lessons.map(item => `#react-native/${item.id}`)) },
+    typescript: { exercises: new Set(buildTypeScriptTasks(root).map(item => item.id)), reviews: new Set(tsLessons.map(id => `#tracks/typescript/${id}`)) },
   }
 }
 
@@ -825,6 +865,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const reactNative = buildReactNative()
   writeIfChanged(REACT_NATIVE_OUTPUT, reactNative)
   writeIfChanged(REACT_NATIVE_IDS_OUTPUT, { lessons: reactNative.lessons.map(item => item.id), exercises: reactNative.exercises.map(item => item.id) })
+  writeIfChanged(TYPESCRIPT_TASKS_OUTPUT, buildTypeScriptTasks())
   const skillTests = buildSkillTests()
   writeIfChanged(SKILL_TESTS_OUTPUT, skillTests)
   writeIfChanged(SKILL_TEST_IDS_OUTPUT, skillTests.map(test => ({ id: test.id, title: test.title, questions: test.questions.map(item => item.id), tasks: test.tasks.map(item => item.id) })))

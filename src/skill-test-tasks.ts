@@ -71,4 +71,15 @@ export const TASK_MODULES: Record<string, TaskModule> = {
       return runReactNativeExercise(runProject, code, exercise.tests, options)
     },
   },
+  typescript: {
+    async load(exerciseId) {
+      const [{ loadTypeScriptTasks, TYPESCRIPT_TASK_FILE, TYPESCRIPT_TASK_TEST_FILE }, { PROJECT_TIMEOUT_MS }] = await Promise.all([import('./typescript-tasks'), import('./runner/project')])
+      const exercise = (await loadTypeScriptTasks()).find(item => item.id === exerciseId)
+      return exercise && { title: exercise.title, prompt: exercise.prompt, starter: exercise.starter, tests: exercise.tests, lang: 'ts', preview: false, file: TYPESCRIPT_TASK_FILE, testFile: TYPESCRIPT_TASK_TEST_FILE, limitMs: PROJECT_TIMEOUT_MS.ts }
+    },
+    async run(code, exercise, options) {
+      const [{ runTypeScriptTask }, { runProject }] = await Promise.all([import('./typescript-tasks'), import('./runner/runner')])
+      return runTypeScriptTask(runProject, code, exercise.tests, options)
+    },
+  },
 }

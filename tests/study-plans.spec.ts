@@ -147,6 +147,7 @@ test('switching to TypeScript changes the notes and opens problems and the Playg
   await page.getByLabel('Interview language').selectOption('typescript')
   await expect(page.getByRole('heading', { level: 3, name: 'TypeScript idioms' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Brush up on TypeScript in its track' })).toHaveAttribute('href', '#tracks/typescript')
+  await expect(page.getByRole('link', { name: 'timed TypeScript skill test' })).toHaveAttribute('href', '#skilltest/typescript')
   await expect(page.locator('.plans-tip').first()).toContainText('TypeScript tip:')
   await expect(page.locator('.plans-tip').first()).toContainText('counts.set(x')
   await expect.poll(async () => (await stored(page))?.lang).toBe('typescript')
@@ -211,6 +212,7 @@ const FDE_TITLE = '8-week Forward Deployed Engineer plan'
 const REACT_TITLE = '2-week React skill test plan'
 const NODE_TITLE = '2-week Node.js skill test plan'
 const REACT_NATIVE_TITLE = '2-week React Native skill test plan'
+const TYPESCRIPT_TITLE = '1-week TypeScript skill test plan'
 const storedFde = (page: Page) => page.evaluate(([key, id]) => JSON.parse(localStorage.getItem(key) ?? '{}')[id], [KEY, FDE])
 
 async function startFde(page: Page) {
@@ -222,7 +224,7 @@ async function startFde(page: Page) {
 
 test('the Forward Deployed Engineer plan opens from the list, ticks persist and its track swaps weeks 6–7', async ({ page }) => {
   await page.goto('./#plans')
-  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE, MATH_TITLE, REACT_TITLE, NODE_TITLE, REACT_NATIVE_TITLE])
+  await expect(page.locator('.plans-list h2')).toHaveText([TITLE, FDE_TITLE, MATH_TITLE, REACT_TITLE, NODE_TITLE, REACT_NATIVE_TITLE, TYPESCRIPT_TITLE])
   await page.getByRole('link', { name: FDE_TITLE }).click()
   await expect(page).toHaveURL(new RegExp(`#plans/${FDE}$`))
   await expect(h1(page)).toBeFocused()

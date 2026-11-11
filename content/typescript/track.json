@@ -17,7 +17,10 @@
     "ts-modules-errors",
     "ts-classes-patterns",
     "ts-testing-runtime",
-    "ts-gotchas-idioms"
+    "ts-gotchas-idioms",
+    "ts-enums-literals",
+    "ts-variance-compat",
+    "ts-declarations-config"
   ],
   "placement": [
     {
@@ -408,6 +411,47 @@
       "explain": "`fill` stores one shared row in every slot, and `map` skips the holes of `Array(2)`. `Array.from` with a factory calls it once per row.",
       "lessons": [
         "ts-gotchas-idioms"
+      ]
+    },
+    {
+      "question": "Under strictFunctionTypes, which assignment is rejected?",
+      "code": "type Animal = { name: string }\ntype Dog = Animal & { bark(): void }\ndeclare let onAnimal: (a: Animal) => void\ndeclare let onDog: (d: Dog) => void",
+      "choices": [
+        "`onDog = onAnimal`",
+        "`onAnimal = onDog`",
+        "Both are accepted"
+      ],
+      "answer": 1,
+      "explain": "Function-type parameters are contravariant: a handler for any animal can stand in for a dog handler, but a dog handler might call `bark` on a cat.",
+      "lessons": [
+        "ts-variance-compat"
+      ]
+    },
+    {
+      "question": "A file contains only `declare global { interface Window { cfg: string } }` and no imports or exports. What happens?",
+      "choices": [
+        "It augments Window as written",
+        "It is an error: global augmentation needs a module file",
+        "It declares a new global named global"
+      ],
+      "answer": 1,
+      "explain": "`declare global` is only allowed in a module. Add `export {}` to make the file a module, or drop the wrapper because a script file is already global.",
+      "lessons": [
+        "ts-declarations-config"
+      ]
+    },
+    {
+      "question": "What does this numeric enum print?",
+      "code": "enum Dir { Up, Down = 5, Left }\nconsole.log(Dir.Left, Dir[5]);",
+      "choices": [
+        "`2 Down`",
+        "`6 Down`",
+        "`6 undefined`"
+      ],
+      "answer": 1,
+      "explain": "Members count up from the previous value, so `Left` is 6, and numeric enums add a reverse mapping from 5 back to `'Down'`.",
+      "lessons": [
+        "ts-enums-literals"
       ]
     }
   ]

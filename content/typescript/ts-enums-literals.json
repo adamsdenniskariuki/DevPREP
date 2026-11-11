@@ -1,0 +1,501 @@
+{
+  "id": "ts-enums-literals",
+  "track": "typescript",
+  "title": "Enums, literal unions and as const objects",
+  "minutes": 40,
+  "level": "se",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "What enums compile to and when to use something else: numeric enums and their reverse mapping, string enums, const enums and why per-file compilers avoid them, literal unions, as const objects with a derived value type, and exhaustive switches with never.",
+  "prerequisites": [
+    "ts-types-basics",
+    "ts-narrowing-unions"
+  ],
+  "prerequisiteNotes": "ts-types-basics: literal types, as const and typeof, which the alternatives to enums are built from. ts-narrowing-unions: discriminated unions and never, used for exhaustive checks.",
+  "objectives": [
+    "Predict the runtime object a numeric or string enum compiles to, including reverse mappings.",
+    "Explain why const enums and other non-erasable syntax clash with per-file transpilers and type stripping.",
+    "Replace an enum with a literal union or an as const object and derive its value type.",
+    "Write an exhaustive switch over a union that fails to compile when a new member is added."
+  ],
+  "concepts": [
+    {
+      "title": "Numeric enums and reverse mapping",
+      "body": "An `enum` is one of the few TypeScript features that emits code. A numeric enum becomes an object with a **forward** mapping (`Dir.Up === 0`) and a **reverse** mapping (`Dir[0] === 'Up'`). Members count up from 0, or from the last explicit value: in `enum Dir { Up, Down = 5, Left }` `Left` is 6. Because of the reverse keys, `Object.keys` and `Object.values` return twice as many entries as members, mixing names and numbers. Numeric enums are also loosely checked: older compiler versions let any number be assigned to them, so they are weak as a validation boundary.",
+      "code": "enum Dir { Up, Down = 5, Left }\n// emits roughly:\n// var Dir; (function (Dir) {\n//   Dir[Dir[\"Up\"] = 0] = \"Up\";\n//   Dir[Dir[\"Down\"] = 5] = \"Down\";\n//   Dir[Dir[\"Left\"] = 6] = \"Left\";\n// })(Dir || (Dir = {}));\nconsole.log(Dir.Left, Dir[5]); // 6 Down",
+      "diagram": "enum-emit"
+    },
+    {
+      "title": "String enums and const enums",
+      "body": "String enum members need explicit values and get **no** reverse mapping, so `Object.keys` lists only member names. They are also nominal in one direction: the literal `'RED'` is not assignable to `Color` even though `Color.Red === 'RED'`, which forces callers to import the enum. A `const enum` is erased and its uses are replaced by literal values, which saves the object but needs type information from other files. Transpilers that see one file at a time (and `isolatedModules`) cannot inline a const enum from another file, and runtimes that strip types without transforming code cannot run any enum. The `erasableSyntaxOnly` flag reports enums, namespaces with values and constructor parameter properties for that reason.",
+      "code": "enum Color { Red = 'RED', Green = 'GREEN' }\nObject.keys(Color);          // ['Red', 'Green']\nconst c: Color = 'RED';      // error: string literal is not a Color\nconst ok: Color = Color.Red; // fine"
+    },
+    {
+      "title": "Literal unions and as const objects",
+      "body": "Most enums can be replaced with plain values. A **literal union** such as `type Level = 'debug' | 'info'` costs nothing at runtime and accepts the literal strings callers already have. When you also need a runtime list or named constants, use an object with `as const` and derive the type: `type Level = (typeof LogLevel)[keyof typeof LogLevel]`. `Object.values(LogLevel)` then gives exactly the values, which is handy for validating input. These are just objects and types, so they work with any transpiler.",
+      "code": "const LogLevel = { Debug: 'debug', Info: 'info', Warn: 'warn' } as const;\ntype Level = (typeof LogLevel)[keyof typeof LogLevel]; // 'debug' | 'info' | 'warn'\n\nfunction log(level: Level, msg: string) { console.log(`[${level}] ${msg}`); }\nlog(LogLevel.Info, 'ready'); // named constant\nlog('warn', 'disk 90%');     // literal works too",
+      "diagram": "enum-vs-const"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "How many keys does it have?",
+      "body": "A quick way to remember the runtime shapes is to count `Object.keys`. A numeric enum with two members has four keys (two names, two numbers). A string enum with two members has two. An `as const` object with two members has two. Code that iterates an enum to build a dropdown or validate input must skip the reverse keys of numeric enums, which is what the core exercise does.",
+      "diagram": "enum-key-count"
+    },
+    {
+      "title": "Making a switch exhaustive",
+      "body": "Switch on the discriminant of a union and end with `default: return assertNever(value)`, where `assertNever(value: never): never` throws. When every member is handled the value is narrowed to `never` and the call compiles. Add a new member to the union and the call becomes an error at every switch that forgot it, which is how you find all the places to update. The same pattern works for literal unions and for enums."
+    }
+  ],
+  "example": "const Status = { Active: 'active', Paused: 'paused', Closed: 'closed' } as const;\ntype Status = (typeof Status)[keyof typeof Status];\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unhandled: ${String(value)}`);\n}\n\nfunction label(status: Status): string {\n  switch (status) {\n    case Status.Active: return 'Running';\n    case Status.Paused: return 'On hold';\n    case Status.Closed: return 'Done';\n    default: return assertNever(status);\n  }\n}",
+  "task": "Write `memberNames(enumObject)` that takes the runtime object of a compiled enum and returns its member names in declaration order. Numeric enums carry reverse-mapping keys (`\"0\": \"Up\"`) that must be skipped; string enums have none. A key is a reverse mapping only when its value is a string that maps back to that same number.",
+  "starter": "// TODO: skip the reverse-mapping keys that numeric enums add.\nfunction memberNames(enumObject: Record<string, string | number>): string[] {\n  return Object.keys(enumObject);\n}\n",
+  "hints": [
+    "Reverse keys have string values; forward keys of numeric members have number values. Check that `enumObject[value]` equals `Number(key)` before treating a key as a reverse mapping.",
+    "Object key order already puts names in declaration order once the integer keys are removed."
+  ],
+  "solution": "function memberNames(enumObject: Record<string, string | number>): string[] {\n  return Object.keys(enumObject).filter(key => {\n    const value = enumObject[key];\n    // A reverse mapping is a numeric key whose string value maps back to that number.\n    const isReverse = typeof value === 'string' && enumObject[value] === Number(key);\n    return !isReverse;\n  });\n}\n",
+  "checklist": [
+    "Numeric enum names are returned without the numeric keys.",
+    "String enum names are all kept, even when a value looks like another name.",
+    "Mixed enums work.",
+    "An empty object gives an empty list."
+  ],
+  "pitfalls": [
+    "Iterating `Object.values` of a numeric enum and getting names and numbers mixed.",
+    "Using a numeric enum as an input validator; check against the actual list of values.",
+    "Using const enums in a library or with a per-file transpiler.",
+    "Forgetting the default branch with assertNever, so a new member silently falls through."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Parse a level from user input",
+      "prompt": "Using the `LogLevel` `as const` object, write `parseLevel(input)` that trims and lower-cases the input and returns the matching value, or `null` when it is not one of the values. Write a type guard so the result is typed as the level union without a cast.",
+      "hints": [
+        "`Object.values(LogLevel)` lists exactly the allowed values.",
+        "A function returning `value is Level` narrows the string."
+      ],
+      "solution": "const LogLevel = { Debug: 'debug', Info: 'info', Warn: 'warn', Error: 'error' } as const;\ntype Level = (typeof LogLevel)[keyof typeof LogLevel];\n\nconst LEVELS: readonly string[] = Object.values(LogLevel);\n\nfunction isLevel(value: string): value is Level {\n  return LEVELS.includes(value);\n}\n\nfunction parseLevel(input: string): Level | null {\n  const value = input.trim().toLowerCase();\n  return isLevel(value) ? value : null;\n}\n",
+      "checklist": [
+        "Case and surrounding spaces are ignored.",
+        "Unknown input returns null.",
+        "No `as` cast on the result."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "An exhaustive area function",
+      "prompt": "Given the `Shape` union of circle, square and rect, write `area(shape)`: circle area rounded to 2 decimals, square side squared and rect width times height. End the switch with `assertNever` so adding a new shape kind fails to compile.",
+      "hints": [
+        "`Math.round(x * 100) / 100` rounds to 2 decimals.",
+        "In the default branch the shape is narrowed to never."
+      ],
+      "solution": "type Shape =\n  | { kind: 'circle'; r: number }\n  | { kind: 'square'; side: number }\n  | { kind: 'rect'; w: number; h: number };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unexpected shape: ${JSON.stringify(value)}`);\n}\n\nfunction area(shape: Shape): number {\n  switch (shape.kind) {\n    case 'circle': return Math.round(Math.PI * shape.r ** 2 * 100) / 100;\n    case 'square': return shape.side ** 2;\n    case 'rect': return shape.w * shape.h;\n    default: return assertNever(shape);\n  }\n}\n",
+      "checklist": [
+        "All three kinds are handled.",
+        "The default branch calls assertNever.",
+        "Circle areas are rounded to 2 decimals."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "When would you still choose an enum over an as const object?",
+      "answer": "When a codebase already uses them consistently, when you want the nominal check that forces callers to use the named member, or for numeric bit flags where the reverse mapping helps debugging. For new code that may run through per-file transpilers or type stripping, an as const object is the safer default."
+    },
+    {
+      "question": "Why is a const enum risky in a published library?",
+      "answer": "Consumers compile against the declaration file, and their tools may not inline the values, especially with isolatedModules or a per-file transpiler. If the library changes a value, already-compiled consumers keep the old inlined number. A regular enum or an as const object keeps one source of truth at runtime."
+    },
+    {
+      "question": "How does assertNever give you a compile error when a union grows?",
+      "answer": "After all handled cases, the switch variable is narrowed to the remaining members. If none remain it is never and `assertNever(value)` type-checks. A new member leaves a non-never type, which is not assignable to the never parameter, so the call fails to compile."
+    }
+  ],
+  "takeaways": [
+    "Enums emit runtime objects; numeric ones also get reverse mappings.",
+    "String enums have no reverse mapping and do not accept plain string literals.",
+    "const enums and other non-erasable syntax do not fit per-file transpilers or type stripping.",
+    "A literal union or an as const object with a derived type covers most enum uses with plain JavaScript.",
+    "assertNever in the default branch turns a forgotten case into a compile error."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "enum-emit",
+        "type": "flow",
+        "title": "What a numeric enum compiles to",
+        "alt": "A flow from an enum declaration with members Up, Down equal to 5 and Left, through the compiler, to a runtime object holding forward keys from names to numbers and reverse keys from numbers to names.",
+        "caption": "Each numeric member adds two keys: name to number and number to name.",
+        "nodes": [
+          {
+            "id": "decl",
+            "label": "enum Dir",
+            "kind": "client",
+            "col": 0,
+            "row": 1,
+            "sub": "Up, Down = 5, Left"
+          },
+          {
+            "id": "tsc",
+            "label": "compiler",
+            "kind": "worker",
+            "col": 1,
+            "row": 1
+          },
+          {
+            "id": "fwd",
+            "label": "Up: 0, Left: 6",
+            "kind": "state",
+            "col": 2,
+            "row": 0,
+            "sub": "forward keys"
+          },
+          {
+            "id": "rev",
+            "label": "\"6\": \"Left\"",
+            "kind": "state",
+            "col": 2,
+            "row": 2,
+            "sub": "reverse keys"
+          }
+        ],
+        "edges": [
+          {
+            "from": "decl",
+            "to": "tsc"
+          },
+          {
+            "from": "tsc",
+            "to": "fwd",
+            "label": "name → number"
+          },
+          {
+            "from": "tsc",
+            "to": "rev",
+            "label": "number → name"
+          }
+        ]
+      },
+      {
+        "id": "enum-vs-const",
+        "type": "compare",
+        "title": "String enum versus as const object",
+        "alt": "Two panels. A string enum rejects the plain literal string and needs a transform to run; an as const object with a derived union type accepts both the named constant and the plain literal and is ordinary JavaScript.",
+        "caption": "The as const object gives names, a runtime list and a union type.",
+        "before": {
+          "label": "String enum",
+          "nodes": [
+            {
+              "id": "e1",
+              "label": "'warn'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "e2",
+              "label": "Level.Warn only",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "literal rejected"
+            }
+          ],
+          "edges": [
+            {
+              "from": "e1",
+              "to": "e2",
+              "label": "not assignable"
+            }
+          ]
+        },
+        "after": {
+          "label": "as const object",
+          "nodes": [
+            {
+              "id": "c1",
+              "label": "'warn'",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "c2",
+              "label": "Level union",
+              "kind": "good",
+              "col": 1,
+              "row": 0,
+              "sub": "literal accepted"
+            }
+          ],
+          "edges": [
+            {
+              "from": "c1",
+              "to": "c2",
+              "label": "assignable"
+            }
+          ]
+        }
+      },
+      {
+        "id": "enum-key-count",
+        "type": "bars",
+        "title": "Object.keys for two members",
+        "alt": "Bar chart of how many keys Object.keys returns for a two-member construct: four for a numeric enum because of reverse mappings, two for a string enum and two for an as const object.",
+        "caption": "Only numeric enums double up.",
+        "unit": "keys",
+        "bars": [
+          {
+            "label": "Numeric enum",
+            "value": 4,
+            "highlight": true
+          },
+          {
+            "label": "String enum",
+            "value": 2
+          },
+          {
+            "label": "as const object",
+            "value": 2
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "memberNames",
+        "starter": "// TODO: skip the reverse-mapping keys that numeric enums add.\nfunction memberNames(enumObject: Record<string, string | number>): string[] {\n  return Object.keys(enumObject);\n}\n",
+        "solution": "function memberNames(enumObject: Record<string, string | number>): string[] {\n  return Object.keys(enumObject).filter(key => {\n    const value = enumObject[key];\n    // A reverse mapping is a numeric key whose string value maps back to that number.\n    const isReverse = typeof value === 'string' && enumObject[value] === Number(key);\n    return !isReverse;\n  });\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "0": "Up",
+                "1": "Down",
+                "Up": 0,
+                "Down": 1
+              }
+            ],
+            "expected": [
+              "Up",
+              "Down"
+            ]
+          },
+          {
+            "args": [
+              {
+                "Red": "RED",
+                "Green": "GREEN"
+              }
+            ],
+            "expected": [
+              "Red",
+              "Green"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {}
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "0": "No",
+                "No": 0,
+                "Yes": "YES"
+              }
+            ],
+            "expected": [
+              "No",
+              "Yes"
+            ]
+          },
+          {
+            "args": [
+              {
+                "10": "Ten",
+                "20": "Twenty",
+                "Ten": 10,
+                "Twenty": 20
+              }
+            ],
+            "expected": [
+              "Ten",
+              "Twenty"
+            ]
+          },
+          {
+            "args": [
+              {
+                "A": "B",
+                "B": "A"
+              }
+            ],
+            "expected": [
+              "A",
+              "B"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "parseLevel",
+        "starter": "const LogLevel = { Debug: 'debug', Info: 'info', Warn: 'warn', Error: 'error' } as const;\ntype Level = (typeof LogLevel)[keyof typeof LogLevel];\n\n// TODO: accept any case and surrounding spaces; return null for unknown input.\nfunction parseLevel(input: string): Level | null {\n  return input as Level;\n}\n",
+        "solution": "const LogLevel = { Debug: 'debug', Info: 'info', Warn: 'warn', Error: 'error' } as const;\ntype Level = (typeof LogLevel)[keyof typeof LogLevel];\n\nconst LEVELS: readonly string[] = Object.values(LogLevel);\n\nfunction isLevel(value: string): value is Level {\n  return LEVELS.includes(value);\n}\n\nfunction parseLevel(input: string): Level | null {\n  const value = input.trim().toLowerCase();\n  return isLevel(value) ? value : null;\n}\n",
+        "tests": [
+          {
+            "args": [
+              "WARN"
+            ],
+            "expected": "warn"
+          },
+          {
+            "args": [
+              "verbose"
+            ],
+            "expected": null
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              "  info "
+            ],
+            "expected": "info"
+          },
+          {
+            "args": [
+              "Error"
+            ],
+            "expected": "error"
+          },
+          {
+            "args": [
+              "toString"
+            ],
+            "expected": null
+          },
+          {
+            "args": [
+              ""
+            ],
+            "expected": null
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "area",
+        "starter": "type Shape =\n  | { kind: 'circle'; r: number }\n  | { kind: 'square'; side: number }\n  | { kind: 'rect'; w: number; h: number };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unexpected shape: ${JSON.stringify(value)}`);\n}\n\n// TODO: handle every kind and let assertNever prove the switch is exhaustive.\nfunction area(shape: Shape): number {\n  switch (shape.kind) {\n    case 'circle': return Math.round(Math.PI * shape.r ** 2 * 100) / 100;\n    case 'square': return shape.side ** 2;\n    default: return 0;\n  }\n}\n",
+        "solution": "type Shape =\n  | { kind: 'circle'; r: number }\n  | { kind: 'square'; side: number }\n  | { kind: 'rect'; w: number; h: number };\n\nfunction assertNever(value: never): never {\n  throw new Error(`Unexpected shape: ${JSON.stringify(value)}`);\n}\n\nfunction area(shape: Shape): number {\n  switch (shape.kind) {\n    case 'circle': return Math.round(Math.PI * shape.r ** 2 * 100) / 100;\n    case 'square': return shape.side ** 2;\n    case 'rect': return shape.w * shape.h;\n    default: return assertNever(shape);\n  }\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _k = Expect<Equal<Shape['kind'], 'circle' | 'square' | 'rect'>>\n// @ts-expect-error a triangle is not a Shape\narea({ kind: 'triangle', base: 1 })\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "r": 1
+              }
+            ],
+            "expected": 3.14
+          },
+          {
+            "args": [
+              {
+                "kind": "rect",
+                "w": 2,
+                "h": 3
+              }
+            ],
+            "expected": 6
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "kind": "square",
+                "side": 2
+              }
+            ],
+            "expected": 4
+          },
+          {
+            "args": [
+              {
+                "kind": "circle",
+                "r": 2
+              }
+            ],
+            "expected": 12.57
+          },
+          {
+            "args": [
+              {
+                "kind": "rect",
+                "w": 0.5,
+                "h": 0.5
+              }
+            ],
+            "expected": 0.25
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "enum Dir { Up, Down = 5, Left }\nconsole.log(Dir.Left, Dir[5]);",
+        "choices": [
+          "2 Down",
+          "6 Down",
+          "6 undefined",
+          "2 Left"
+        ],
+        "answer": 1,
+        "explain": "Members count up from the previous value, so `Left` is 6, and numeric enums map numbers back to names, so `Dir[5]` is `'Down'`."
+      },
+      {
+        "code": "enum Color { Red = 'RED', Green = 'GREEN' }\nconsole.log(Object.keys(Color).length, (Color as Record<string, string>)['RED']);",
+        "choices": [
+          "4 Red",
+          "2 undefined",
+          "2 Red",
+          "4 undefined"
+        ],
+        "answer": 1,
+        "explain": "String enums get no reverse mapping, so there are only the two name keys and looking up a value as a key finds nothing."
+      },
+      {
+        "code": "enum Flag { A, B }\nconsole.log(Object.values(Flag).length);",
+        "choices": [
+          "2",
+          "4",
+          "1",
+          "0"
+        ],
+        "answer": 1,
+        "explain": "The object holds `A: 0`, `B: 1`, `\"0\": \"A\"` and `\"1\": \"B\"`, so there are four values: two names and two numbers."
+      }
+    ],
+    "tip": "Default to a literal union or an as const object; reach for an enum only when its runtime object or nominal check is what you want.",
+    "links": {
+      "lessons": [
+        "ts-types-basics",
+        "ts-narrowing-unions",
+        "ts-variance-compat"
+      ]
+    }
+  }
+}

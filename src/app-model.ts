@@ -34,6 +34,8 @@ export interface AppModel {
   setRoadmapScope: Dispatch<SetStateAction<'path' | 'all'>>
   track: Track | 'all'
   setTrack: Dispatch<SetStateAction<Track | 'all'>>
+  /** The lesson a #tracks/<track>/<lesson> link points at, which the tracks screen scrolls to. */
+  trackLesson?: string
   navigate: (next: Route) => void
   start: (lesson: Lesson, mode?: Mode) => void
   browseAll: (track?: Track | 'all') => void
