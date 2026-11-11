@@ -1,0 +1,923 @@
+{
+  "id": "typescript",
+  "title": "TypeScript skill test",
+  "summary": "A timed practice assessment: multiple-choice questions on JavaScript runtime behaviour, the type system, generics, narrowing, variance, enums and tsconfig, plus two short coding tasks.",
+  "minutes": 40,
+  "pick": 30,
+  "topics": [
+    {
+      "id": "scope",
+      "title": "Scope and closures",
+      "review": "#tracks/typescript/ts-scope-closures"
+    },
+    {
+      "id": "this",
+      "title": "`this` and prototypes",
+      "review": "#tracks/typescript/ts-this-prototypes"
+    },
+    {
+      "id": "equality",
+      "title": "Equality and coercion",
+      "review": "#tracks/typescript/ts-equality-coercion"
+    },
+    {
+      "id": "loop",
+      "title": "The event loop",
+      "review": "#tracks/typescript/ts-event-loop"
+    },
+    {
+      "id": "async",
+      "title": "Promises and async/await",
+      "review": "#tracks/typescript/ts-promises-async"
+    },
+    {
+      "id": "collections",
+      "title": "Arrays, maps and sets",
+      "review": "#tracks/typescript/ts-arrays-maps-sets"
+    },
+    {
+      "id": "types",
+      "title": "Type basics",
+      "review": "#tracks/typescript/ts-types-basics"
+    },
+    {
+      "id": "generics",
+      "title": "Generics",
+      "review": "#tracks/typescript/ts-generics"
+    },
+    {
+      "id": "narrowing",
+      "title": "Narrowing and unions",
+      "review": "#tracks/typescript/ts-narrowing-unions"
+    },
+    {
+      "id": "mapped",
+      "title": "Mapped and conditional types",
+      "review": "#tracks/typescript/ts-mapped-conditional"
+    },
+    {
+      "id": "modules",
+      "title": "Modules and errors",
+      "review": "#tracks/typescript/ts-modules-errors"
+    },
+    {
+      "id": "classes",
+      "title": "Classes and patterns",
+      "review": "#tracks/typescript/ts-classes-patterns"
+    },
+    {
+      "id": "enums",
+      "title": "Enums and literal unions",
+      "review": "#tracks/typescript/ts-enums-literals"
+    },
+    {
+      "id": "variance",
+      "title": "Variance and compatibility",
+      "review": "#tracks/typescript/ts-variance-compat"
+    },
+    {
+      "id": "config",
+      "title": "Declarations and tsconfig",
+      "review": "#tracks/typescript/ts-declarations-config"
+    }
+  ],
+  "questions": [
+    {
+      "id": "scope-var-loop",
+      "topic": "scope",
+      "prompt": "What does this print?",
+      "code": "const fns: (() => number)[] = []\nfor (var i = 0; i < 3; i++) fns.push(() => i)\nconsole.log(fns.map(f => f()).join(' '))",
+      "choices": [
+        "`0 1 2`",
+        "`2 2 2`",
+        "`3 3 3`",
+        "`undefined undefined undefined`"
+      ],
+      "answer": 2,
+      "explain": "`var` is function-scoped, so all three closures share one `i`, which is 3 when they run. With `let`, each iteration gets a fresh binding and this prints `0 1 2`."
+    },
+    {
+      "id": "scope-tdz",
+      "topic": "scope",
+      "prompt": "A function reads a `let` variable on a line before that variable's declaration has run. What happens?",
+      "choices": [
+        "It reads `undefined`, as with `var`",
+        "It throws a `ReferenceError`: the binding is in its temporal dead zone",
+        "It reads an outer variable with the same name",
+        "It reads `null`"
+      ],
+      "answer": 1,
+      "explain": "`let`, `const` and `class` bindings are hoisted to the top of their block but stay uninitialised until the declaration runs. Any read before that throws a `ReferenceError`, and the inner binding still shadows an outer one with the same name."
+    },
+    {
+      "id": "scope-counter",
+      "topic": "scope",
+      "prompt": "What does this print?",
+      "code": "function counter() {\n  let n = 0\n  return { inc: () => ++n, get: () => n }\n}\nconst a = counter(), b = counter()\na.inc(); a.inc(); b.inc()\nconsole.log(a.get(), b.get())",
+      "choices": [
+        "`3 3`",
+        "`2 1`",
+        "`2 2`",
+        "`1 1`"
+      ],
+      "answer": 1,
+      "explain": "Each call to `counter` creates a new `n`, and the returned functions close over that call's variable. `a` and `b` therefore keep separate counts."
+    },
+    {
+      "id": "scope-hoisting",
+      "topic": "scope",
+      "prompt": "What does this print?",
+      "code": "console.log(greet())\nfunction greet() { return 'hi' }",
+      "choices": [
+        "`hi`",
+        "`undefined`",
+        "It throws a `ReferenceError`",
+        "It throws a `TypeError`"
+      ],
+      "answer": 0,
+      "explain": "Function declarations are hoisted with their body, so they can be called before the line that declares them. A function expression assigned to `const` would throw, because the binding is still in its temporal dead zone."
+    },
+    {
+      "id": "this-detached",
+      "topic": "this",
+      "prompt": "This compiles. What happens when the last line runs? (Class bodies are always strict mode.)",
+      "code": "class Timer {\n  ticks = 0\n  tick() { this.ticks++ }\n}\nconst t = new Timer()\nconst fn = t.tick\nfn()",
+      "choices": [
+        "`t.ticks` becomes 1",
+        "A global `ticks` property is created",
+        "Nothing happens",
+        "It throws a `TypeError`, because `this` is `undefined`"
+      ],
+      "answer": 3,
+      "explain": "`this` is set by how a function is called, not where it is defined. A plain call `fn()` passes `undefined` in strict code, so `this.ticks` throws. Use `t.tick.bind(t)`, an arrow-function field, or call it as `t.tick()`."
+    },
+    {
+      "id": "this-arrow-field",
+      "topic": "this",
+      "prompt": "What does this print?",
+      "code": "class Btn {\n  label = 'ok'\n  onClick = () => this.label\n}\nconst { onClick } = new Btn()\nconsole.log(onClick())",
+      "choices": [
+        "`undefined`",
+        "It throws a `TypeError`",
+        "`[object Object]`",
+        "`ok`"
+      ],
+      "answer": 3,
+      "explain": "An arrow function has no `this` of its own; it uses the `this` of the constructor that created it. That keeps it bound when detached, at the cost of one function per instance instead of one shared prototype method."
+    },
+    {
+      "id": "this-bind-call",
+      "topic": "this",
+      "prompt": "What does this print?",
+      "code": "function who(this: { name: string }) { return this.name }\nconst bound = who.bind({ name: 'a' })\nconsole.log(bound.call({ name: 'b' }))",
+      "choices": [
+        "`a`",
+        "`b`",
+        "`undefined`",
+        "It throws a `TypeError`"
+      ],
+      "answer": 0,
+      "explain": "A bound function ignores any later `this` passed through `call`, `apply` or another `bind`. Only `new` can override a bound `this`."
+    },
+    {
+      "id": "this-prototype-chain",
+      "topic": "this",
+      "prompt": "What does this print?",
+      "code": "class A { hi() { return 'A' } }\nclass B extends A { hi() { return 'B' + super.hi() } }\nconst b = new B()\nconsole.log(Object.getPrototypeOf(Object.getPrototypeOf(b)) === A.prototype, b.hi())",
+      "choices": [
+        "`false BA`",
+        "`true B`",
+        "`false AB`",
+        "`true BA`"
+      ],
+      "answer": 3,
+      "explain": "The instance's prototype is `B.prototype`, whose prototype is `A.prototype`. `super.hi()` looks the method up on the parent prototype and calls it with the same `this`."
+    },
+    {
+      "id": "eq-nan",
+      "topic": "equality",
+      "prompt": "What does this print?",
+      "code": "const n = Number('abc')\nconsole.log(n === n, Object.is(n, n), [n].includes(n), [n].indexOf(n))",
+      "choices": [
+        "`false true true -1`",
+        "`false true false -1`",
+        "`true true true 0`",
+        "`false false true -1`"
+      ],
+      "answer": 0,
+      "explain": "`NaN` is the only value not equal to itself under `===`, and `indexOf` uses `===`. `Object.is` and `includes` use SameValueZero-style rules that treat `NaN` as equal to itself. Use `Number.isNaN` to test for it."
+    },
+    {
+      "id": "eq-loose-null",
+      "topic": "equality",
+      "prompt": "Which of these comparisons is `true` in JavaScript?",
+      "choices": [
+        "`null == 0`",
+        "`'' == null`",
+        "`undefined == 0`",
+        "`null == undefined`"
+      ],
+      "answer": 3,
+      "explain": "`null` and `undefined` are loosely equal to each other and to nothing else, which is why `x == null` is a common shorthand for \"null or undefined\". `null == 0` is `false` even though `null >= 0` is `true`."
+    },
+    {
+      "id": "eq-negative-zero",
+      "topic": "equality",
+      "prompt": "Which comparison tells `0` and `-0` apart?",
+      "choices": [
+        "`Object.is`",
+        "`===`",
+        "`==`",
+        "`Array.prototype.includes`"
+      ],
+      "answer": 0,
+      "explain": "`===`, `==` and `includes` all treat `0` and `-0` as equal. `Object.is(0, -0)` is `false`, and `Object.is(NaN, NaN)` is `true`."
+    },
+    {
+      "id": "eq-plus-minus",
+      "topic": "equality",
+      "prompt": "What does this print?",
+      "code": "const parts = ['5', '2']\nconsole.log(parts[0] + 1, Number(parts[1]) + 1, +parts[0] - +parts[1])",
+      "choices": [
+        "`6 3 3`",
+        "`51 3 3`",
+        "`51 21 3`",
+        "`6 3 NaN`"
+      ],
+      "answer": 1,
+      "explain": "`+` with a string operand concatenates, and TypeScript allows `string + number`. Unary `+` and `Number()` convert explicitly. TypeScript would reject `parts[0] - 1`, because arithmetic needs number operands."
+    },
+    {
+      "id": "loop-order",
+      "topic": "loop",
+      "prompt": "What does this print?",
+      "code": "console.log('A')\nsetTimeout(() => console.log('B'), 0)\nqueueMicrotask(() => console.log('C'))\nPromise.resolve().then(() => console.log('D'))\nconsole.log('E')",
+      "choices": [
+        "`A E B C D`",
+        "`A C D E B`",
+        "`A E D C B`",
+        "`A E C D B`"
+      ],
+      "answer": 3,
+      "explain": "Synchronous code runs first (A, E). Then the microtask queue drains in order of queuing (C, D). Timers are tasks, so B runs after every microtask."
+    },
+    {
+      "id": "loop-await",
+      "topic": "loop",
+      "prompt": "What does this print?",
+      "code": "async function f() {\n  console.log('1')\n  await null\n  console.log('2')\n}\nf()\nconsole.log('3')",
+      "choices": [
+        "`1 2 3`",
+        "`1 3 2`",
+        "`3 1 2`",
+        "`2 1 3`"
+      ],
+      "answer": 1,
+      "explain": "An async function runs synchronously until its first `await`. The rest of the body is queued as a microtask, even when the awaited value is not a promise."
+    },
+    {
+      "id": "loop-starvation",
+      "topic": "loop",
+      "prompt": "Code queues a `setTimeout(fn, 0)`, then starts a microtask that re-queues itself with `queueMicrotask` forever. What happens to `fn`?",
+      "choices": [
+        "It runs after the next microtask",
+        "It never runs: the microtask queue never empties, so the loop never reaches the timer",
+        "It runs after about 4 ms regardless",
+        "It alternates with the microtasks"
+      ],
+      "answer": 1,
+      "explain": "The event loop drains the whole microtask queue before taking the next task. A microtask that keeps queuing microtasks starves timers, I/O and rendering. Recursive `setTimeout` yields between steps instead."
+    },
+    {
+      "id": "loop-nested",
+      "topic": "loop",
+      "prompt": "What does this print?",
+      "code": "setTimeout(() => console.log('t1'), 0)\nPromise.resolve().then(() => {\n  console.log('p1')\n  setTimeout(() => console.log('t2'), 0)\n  Promise.resolve().then(() => console.log('p2'))\n})",
+      "choices": [
+        "`p1 t1 p2 t2`",
+        "`t1 p1 p2 t2`",
+        "`p1 p2 t1 t2`",
+        "`p1 t1 t2 p2`"
+      ],
+      "answer": 2,
+      "explain": "Microtasks queued while draining the queue (p2) run in the same drain, before any timer. `t1` was queued before `t2`, so it runs first."
+    },
+    {
+      "id": "async-all-reject",
+      "topic": "async",
+      "prompt": "`Promise.all([a, b, c])` is awaited. `b` rejects while `a` and `c` are still pending. What happens?",
+      "choices": [
+        "The returned promise rejects with `b`'s reason at once; `a` and `c` keep running",
+        "It waits for all three, then rejects with an array of results",
+        "`a` and `c` are cancelled",
+        "It resolves with `undefined` in `b`'s slot"
+      ],
+      "answer": 0,
+      "explain": "`Promise.all` rejects as soon as any input rejects. Promises cannot be cancelled, so the other work continues and its results are dropped. Use `Promise.allSettled` to wait for every outcome, or an `AbortSignal` to stop work."
+    },
+    {
+      "id": "async-allsettled",
+      "topic": "async",
+      "prompt": "What does this print?",
+      "code": "async function main() {\n  const r = await Promise.allSettled([Promise.resolve(1), Promise.reject(new Error('x'))])\n  console.log(r.map(s => s.status).join(' '))\n}\nmain()",
+      "choices": [
+        "`resolved rejected`",
+        "`fulfilled fulfilled`",
+        "`fulfilled rejected`",
+        "It throws `Error: x`"
+      ],
+      "answer": 2,
+      "explain": "`allSettled` never rejects. Each entry is `{ status: 'fulfilled', value }` or `{ status: 'rejected', reason }`, and TypeScript narrows on `status`."
+    },
+    {
+      "id": "async-foreach",
+      "topic": "async",
+      "prompt": "This compiles. What is wrong with it?",
+      "code": "async function saveAll(ids: string[], save: (id: string) => Promise<void>) {\n  ids.forEach(async id => { await save(id) })\n  console.log('done')\n}",
+      "choices": [
+        "`forEach` awaits each callback, so the saves run one at a time",
+        "Nothing: `await` inside the callback makes `forEach` wait",
+        "`forEach` ignores the returned promises, so `done` logs before the saves finish and failures go unhandled",
+        "The saves never start"
+      ],
+      "answer": 2,
+      "explain": "`forEach` calls the callback and discards its return value. Use `for...of` with `await` for sequential work, or `await Promise.all(ids.map(save))` for parallel work."
+    },
+    {
+      "id": "async-return-await",
+      "topic": "async",
+      "prompt": "`fetchText()` returns a promise that rejects. What does `load()` do?",
+      "code": "declare function fetchText(): Promise<string>\nasync function load(): Promise<string> {\n  try {\n    return fetchText()\n  } catch {\n    return 'fallback'\n  }\n}",
+      "choices": [
+        "It resolves to `'fallback'`",
+        "It resolves to `undefined`",
+        "It resolves to a pending promise",
+        "It rejects with the same error: the `catch` never runs"
+      ],
+      "answer": 3,
+      "explain": "Returning a promise without `await` leaves the `try` block before the promise settles, so its rejection skips the `catch`. Write `return await fetchText()` inside `try`/`catch`."
+    },
+    {
+      "id": "coll-sort",
+      "topic": "collections",
+      "prompt": "What does this print?",
+      "code": "console.log([10, 9, 1, 2].sort().join(' '))",
+      "choices": [
+        "`1 10 2 9`",
+        "`1 2 9 10`",
+        "`10 9 2 1`",
+        "`9 10 1 2`"
+      ],
+      "answer": 0,
+      "explain": "Without a comparator, `sort` converts elements to strings and compares UTF-16 code units, so `\"10\"` sorts before `\"2\"`. Pass `(a, b) => a - b` for numbers."
+    },
+    {
+      "id": "coll-map-set-keys",
+      "topic": "collections",
+      "prompt": "What does this print?",
+      "code": "const m = new Map<object, number>()\nm.set({ id: 1 }, 1)\nm.set({ id: 1 }, 2)\nconst s = new Set([1, '1', 1])\nconsole.log(m.size, s.size)",
+      "choices": [
+        "`1 2`",
+        "`1 1`",
+        "`2 2`",
+        "`2 3`"
+      ],
+      "answer": 2,
+      "explain": "Maps and sets compare keys by identity (SameValueZero), not by structure. Two object literals are different keys; `1` and `'1'` are different values, and the repeated `1` is dropped."
+    },
+    {
+      "id": "coll-holes",
+      "topic": "collections",
+      "prompt": "What does `new Array(3).map((_, i) => i)` return?",
+      "choices": [
+        "An array of three empty slots: `map` skips holes",
+        "`[0, 1, 2]`",
+        "`[undefined, undefined, undefined]`",
+        "`[]`"
+      ],
+      "answer": 0,
+      "explain": "`new Array(3)` has length 3 but no elements, and `map`, `forEach` and `filter` skip missing indexes. `Array.from({ length: 3 }, (_, i) => i)` builds `[0, 1, 2]`."
+    },
+    {
+      "id": "coll-tosorted",
+      "topic": "collections",
+      "prompt": "Which array method returns a sorted copy and leaves the original unchanged?",
+      "choices": [
+        "`sort`",
+        "`toSorted`",
+        "`reverse`",
+        "`splice`"
+      ],
+      "answer": 1,
+      "explain": "`sort`, `reverse` and `splice` mutate in place. ES2023 added copying versions: `toSorted`, `toReversed`, `toSpliced` and `with`."
+    },
+    {
+      "id": "types-unknown",
+      "topic": "types",
+      "prompt": "Which statement about `unknown` is correct?",
+      "choices": [
+        "Any value can be assigned to it, but you must narrow it before using it as a specific type",
+        "It behaves exactly like `any`",
+        "Nothing can be assigned to it",
+        "It is only allowed in `catch` clauses"
+      ],
+      "answer": 0,
+      "explain": "`unknown` is the safe top type: everything is assignable to it, but you cannot call it, index it or pass it on as a narrower type until a check such as `typeof` or a type guard narrows it. `any` switches checking off in both directions."
+    },
+    {
+      "id": "types-excess",
+      "topic": "types",
+      "prompt": "Does this compile under `strict`?",
+      "code": "interface Point { x: number; y: number }\nconst p: Point = { x: 1, y: 2, z: 3 }",
+      "choices": [
+        "No: a fresh object literal gets an excess property check, so `z` is an error",
+        "Yes: extra properties are fine structurally",
+        "No: `z` must be declared optional first",
+        "Yes, and `z` is removed at runtime"
+      ],
+      "answer": 0,
+      "explain": "Structural typing allows extra properties in general, but an object literal assigned directly to a typed target is checked for unknown keys because they are usually typos. Assigning the same object through a variable compiles."
+    },
+    {
+      "id": "types-widening",
+      "topic": "types",
+      "prompt": "What is `T`?",
+      "code": "let a = 'x'\nconst b = 'x'\nconst c = { kind: 'x' }\ntype T = [typeof a, typeof b, typeof c.kind]",
+      "choices": [
+        "`[\"x\", \"x\", \"x\"]`",
+        "`[string, \"x\", \"x\"]`",
+        "`[string, string, string]`",
+        "`[string, \"x\", string]`"
+      ],
+      "answer": 3,
+      "explain": "A `const` primitive keeps its literal type because it cannot change. `let` widens to `string`, and object properties widen too because they are mutable. `as const` on the object would keep `\"x\"`."
+    },
+    {
+      "id": "types-never",
+      "topic": "types",
+      "prompt": "What is `T`?",
+      "code": "type T = string & number",
+      "choices": [
+        "`never`",
+        "`unknown`",
+        "`string | number`",
+        "A compile error"
+      ],
+      "answer": 0,
+      "explain": "No value is both a string and a number, so the intersection is empty: `never`. It is also the type left after narrowing removes every member of a union, which is what exhaustiveness checks rely on."
+    },
+    {
+      "id": "gen-infer-union",
+      "topic": "generics",
+      "prompt": "What is `V`?",
+      "code": "function first<T>(items: T[]): T | undefined { return items[0] }\nconst v = first([1, 'a'])\ntype V = typeof v",
+      "choices": [
+        "`number | undefined`",
+        "`unknown`",
+        "`(string | number)[]`",
+        "`string | number | undefined`"
+      ],
+      "answer": 3,
+      "explain": "The array literal `[1, 'a']` has type `(string | number)[]`, so `T` is `string | number` and the return type adds `undefined`."
+    },
+    {
+      "id": "gen-constraint",
+      "topic": "generics",
+      "prompt": "Does this compile under `strict`?",
+      "code": "function longest<T extends { length: number }>(a: T, b: T): T {\n  return a.length >= b.length ? a : b\n}\nlongest([1, 2], 'abc')",
+      "choices": [
+        "Yes: `T` becomes `number[] | string`",
+        "No: `T` is inferred from the first argument as `number[]`, so `'abc'` is rejected",
+        "Yes: `T` becomes `{ length: number }`",
+        "No: strings have no `length` property"
+      ],
+      "answer": 1,
+      "explain": "When candidates for one type parameter share no common supertype, TypeScript does not invent a union; it picks one and reports the other argument. Use two type parameters, or pass `<number[] | string>` explicitly."
+    },
+    {
+      "id": "gen-keyof",
+      "topic": "generics",
+      "prompt": "What is `R`?",
+      "code": "function get<T, K extends keyof T>(obj: T, key: K): T[K] { return obj[key] }\nconst r = get({ id: 1, name: 'a' }, 'name')\ntype R = typeof r",
+      "choices": [
+        "`string | number`",
+        "`string`",
+        "`\"a\"`",
+        "`unknown`"
+      ],
+      "answer": 1,
+      "explain": "`K` is inferred as the literal `\"name\"`, so the indexed access `T[K]` picks that property's type. The object's properties widened to `number` and `string` when `T` was inferred."
+    },
+    {
+      "id": "gen-const-param",
+      "topic": "generics",
+      "prompt": "What is `R`?",
+      "code": "function keys<const T extends readonly string[]>(xs: T): T { return xs }\nconst k = keys(['a', 'b'])\ntype R = typeof k",
+      "choices": [
+        "`string[]`",
+        "`readonly [\"a\", \"b\"]`",
+        "`(\"a\" | \"b\")[]`",
+        "`readonly string[]`"
+      ],
+      "answer": 1,
+      "explain": "A `const` type parameter infers as if the argument were written `as const`, so the array becomes a readonly tuple of literals. The `readonly` constraint lets that inferred type satisfy it."
+    },
+    {
+      "id": "narrow-exhaustive",
+      "topic": "narrowing",
+      "prompt": "Does this compile under `strict`?",
+      "code": "type Shape = { kind: 'circle'; r: number } | { kind: 'square'; size: number }\nfunction area(s: Shape): number {\n  switch (s.kind) {\n    case 'circle': return Math.PI * s.r ** 2\n    case 'square': return s.size ** 2\n  }\n}",
+      "choices": [
+        "No: the function lacks an ending return statement",
+        "Yes: the switch covers every `kind`, so the end of the function is unreachable",
+        "No: `s.r` is not accessible on `Shape`",
+        "Yes, but only with `noImplicitReturns` off"
+      ],
+      "answer": 1,
+      "explain": "Checking the discriminant narrows each case to one member, and TypeScript knows an exhaustive switch cannot fall through. Add a member to `Shape` and the function stops compiling, which is the point."
+    },
+    {
+      "id": "narrow-typeof-null",
+      "topic": "narrowing",
+      "prompt": "Does this compile under `strict`?",
+      "code": "function len(x: string[] | null) {\n  if (typeof x === 'object') return x.length\n  return 0\n}",
+      "choices": [
+        "Yes: the check narrows `x` to `string[]`",
+        "No: `typeof null` is `'object'`, so `x` may still be `null`",
+        "No: `typeof` cannot narrow arrays",
+        "Yes, and it returns 0 for arrays"
+      ],
+      "answer": 1,
+      "explain": "TypeScript models the old JavaScript quirk: `typeof x === 'object'` keeps `null` in the union. Check `x !== null` or `Array.isArray(x)` instead."
+    },
+    {
+      "id": "narrow-filter",
+      "topic": "narrowing",
+      "prompt": "With TypeScript 5.5 or later, what is `R`?",
+      "code": "const xs = [1, null, 2].filter(x => x !== null)\ntype R = typeof xs",
+      "choices": [
+        "`(number | null)[]`",
+        "`number[]`",
+        "`number | null`",
+        "`unknown[]`"
+      ],
+      "answer": 1,
+      "explain": "Since 5.5, TypeScript infers a type predicate (`x is number`) from a simple arrow function like this one, and `filter` has an overload that uses it. Older versions needed an explicit `(x): x is number =>` guard."
+    },
+    {
+      "id": "narrow-in",
+      "topic": "narrowing",
+      "prompt": "`Cat` and `Dog` are interfaces, and only `Dog` has a `bark` method. Which check narrows `pet: Cat | Dog` to `Dog`?",
+      "choices": [
+        "`pet instanceof Dog`",
+        "`typeof pet === 'Dog'`",
+        "`pet.constructor === Dog`",
+        "`'bark' in pet`"
+      ],
+      "answer": 3,
+      "explain": "The `in` operator narrows to the union members that declare the property. Interfaces do not exist at runtime, so `instanceof Dog` and `constructor === Dog` are errors, and `typeof` only returns built-in tags."
+    },
+    {
+      "id": "mapped-optional",
+      "topic": "mapped",
+      "prompt": "What is `R`?",
+      "code": "type Opt<T> = { [K in keyof T]?: T[K] }\ntype R = Opt<{ a: number; b: string }>['a']",
+      "choices": [
+        "`number`",
+        "`undefined`",
+        "`number | undefined`",
+        "`unknown`"
+      ],
+      "answer": 2,
+      "explain": "The `?` modifier makes each property optional, and reading an optional property includes `undefined`. This is how the built-in `Partial<T>` is defined."
+    },
+    {
+      "id": "cond-distributive",
+      "topic": "mapped",
+      "prompt": "What is `R`?",
+      "code": "type ToArray<T> = T extends unknown ? T[] : never\ntype R = ToArray<string | number>",
+      "choices": [
+        "`(string | number)[]`",
+        "`never`",
+        "`string[]`",
+        "`string[] | number[]`"
+      ],
+      "answer": 3,
+      "explain": "A conditional type over a naked type parameter distributes over a union, applying to each member separately. Wrap both sides, `[T] extends [unknown]`, to get `(string | number)[]` instead."
+    },
+    {
+      "id": "cond-infer",
+      "topic": "mapped",
+      "prompt": "What is `R`?",
+      "code": "type Ret<F> = F extends (...args: never[]) => infer X ? X : never\ntype R = Ret<() => Promise<number>>",
+      "choices": [
+        "`number`",
+        "`Promise<number>`",
+        "`never`",
+        "`unknown`"
+      ],
+      "answer": 1,
+      "explain": "`infer X` captures the return type as written, which is the promise itself. Unwrapping it needs `Awaited<...>`, which is how `Awaited<ReturnType<F>>` is usually combined."
+    },
+    {
+      "id": "mapped-remap",
+      "topic": "mapped",
+      "prompt": "What is `R`?",
+      "code": "type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] }\ntype R = keyof Getters<{ name: string; age: number }>",
+      "choices": [
+        "`\"name\" | \"age\"`",
+        "`string`",
+        "`\"getName\" | \"getAge\"`",
+        "`never`"
+      ],
+      "answer": 2,
+      "explain": "The `as` clause remaps each key through a template literal type. `string & K` keeps only string keys, because `Capitalize` cannot take numbers or symbols."
+    },
+    {
+      "id": "mod-catch-unknown",
+      "topic": "modules",
+      "prompt": "Does this compile under `strict`?",
+      "code": "try {\n  JSON.parse('{')\n} catch (err) {\n  console.log(err.message)\n}",
+      "choices": [
+        "Yes: `err` is `any`",
+        "Yes: `err` is `Error`",
+        "No: under `strict`, `err` is `unknown` and must be narrowed first",
+        "No: a catch variable needs a type annotation"
+      ],
+      "answer": 2,
+      "explain": "`strict` includes `useUnknownInCatchVariables`, because anything can be thrown. Narrow with `err instanceof Error` before reading `message`."
+    },
+    {
+      "id": "mod-live-binding",
+      "topic": "modules",
+      "prompt": "Module `a` exports `let count = 0` and a function that increments it. Module `b` imports both, calls the function, then reads `count`. What does it see?",
+      "choices": [
+        "`0`: imports are copies made at import time",
+        "`1`: ES module imports are live, read-only bindings",
+        "A `TypeError`",
+        "`undefined`"
+      ],
+      "answer": 1,
+      "explain": "An ES module import is a live view of the exporter's variable, so updates made inside `a` are visible in `b`. `b` cannot assign to `count` itself. CommonJS `require` copies the value instead."
+    },
+    {
+      "id": "mod-error-cause",
+      "topic": "modules",
+      "prompt": "What does this print?",
+      "code": "try {\n  try { throw new Error('disk') } catch (e) { throw new Error('save failed', { cause: e }) }\n} catch (e) {\n  if (e instanceof Error && e.cause instanceof Error) console.log(e.message, e.cause.message)\n}",
+      "choices": [
+        "`disk save failed`",
+        "`save failed disk`",
+        "`save failed undefined`",
+        "`disk`"
+      ],
+      "answer": 1,
+      "explain": "The `cause` option (ES2022) wraps a low-level error in a higher-level one without losing the original. `cause` is typed `unknown`, so it needs its own narrowing."
+    },
+    {
+      "id": "mod-type-only",
+      "topic": "modules",
+      "prompt": "With `verbatimModuleSyntax` on, why must `import { User } from './types'` become `import type { User }` when `User` is only an interface?",
+      "choices": [
+        "Type imports make the checker faster",
+        "Without it, `User` would be checked as `any`",
+        "Interfaces can only be imported from `.d.ts` files",
+        "Imports are emitted as written, and at runtime `./types` has no `User` export"
+      ],
+      "answer": 3,
+      "explain": "Under `verbatimModuleSyntax` the compiler never drops imports on its own. A value import of a type would remain in the JavaScript and fail or pull in a module for nothing, so type-only imports must say so."
+    },
+    {
+      "id": "class-private",
+      "topic": "classes",
+      "prompt": "What is the difference between a `private x` field and a `#x` field?",
+      "choices": [
+        "`private` is checked only by the compiler; `#x` is enforced by the JavaScript runtime",
+        "Both are enforced at runtime",
+        "`#x` is a compile-time check only",
+        "There is no difference"
+      ],
+      "answer": 0,
+      "explain": "`private` disappears when compiled, so the property is still reachable with a cast or from JavaScript. `#x` is a real private name: outside the class body it is a syntax error, and it also makes the class nominal for type compatibility."
+    },
+    {
+      "id": "class-param-props",
+      "topic": "classes",
+      "prompt": "What does this print?",
+      "code": "class User {\n  constructor(public name: string, private age: number) {}\n}\nconsole.log(Object.keys(new User('a', 3)).join(' '))",
+      "choices": [
+        "`name age`",
+        "`name`",
+        "`age`",
+        "Nothing: parameter properties exist only in types"
+      ],
+      "answer": 0,
+      "explain": "Parameter properties compile to assignments in the constructor, whatever their modifier. `private` only affects type checking, so `age` is an ordinary enumerable property at runtime."
+    },
+    {
+      "id": "class-abstract",
+      "topic": "classes",
+      "prompt": "Does this compile under `strict`?",
+      "code": "abstract class Shape { abstract area(): number }\nclass Square extends Shape {}",
+      "choices": [
+        "Yes: `area` is inherited",
+        "No: `Square` must implement `area` or be declared abstract",
+        "No: abstract classes cannot be extended",
+        "Yes, and `area()` returns `undefined`"
+      ],
+      "answer": 1,
+      "explain": "An abstract member has no implementation, so every concrete subclass has to provide one. The error appears at the class declaration rather than when `area` is called."
+    },
+    {
+      "id": "class-structural",
+      "topic": "classes",
+      "prompt": "Does this compile under `strict`?",
+      "code": "class Cat { name = '' }\nclass Dog { name = '' }\nconst pet: Cat = new Dog()",
+      "choices": [
+        "No: class types are nominal",
+        "Yes: classes are compared by structure, and both have the same shape",
+        "Only with an `as Cat` assertion",
+        "No, unless `Dog` extends `Cat`"
+      ],
+      "answer": 1,
+      "explain": "TypeScript compares class instance types structurally, like interfaces. A `private`, `protected` or `#private` member makes the comparison nominal, because such a member only matches its own declaration."
+    },
+    {
+      "id": "enum-reverse",
+      "topic": "enums",
+      "prompt": "What does this print?",
+      "code": "enum Color { Red, Green }\nconsole.log(Object.keys(Color).length)",
+      "choices": [
+        "`2`",
+        "`0`",
+        "`3`",
+        "`4`"
+      ],
+      "answer": 3,
+      "explain": "A numeric enum compiles to an object with both directions: `Red: 0`, `Green: 1`, `\"0\": \"Red\"` and `\"1\": \"Green\"`. String enum members get no reverse mapping."
+    },
+    {
+      "id": "enum-string-assign",
+      "topic": "enums",
+      "prompt": "Does this compile under `strict`?",
+      "code": "enum Mode { On = 'ON', Off = 'OFF' }\nconst m: Mode = 'ON'",
+      "choices": [
+        "No: string enum members are nominal, so a plain string is not assignable",
+        "Yes: `'ON'` is the value of `Mode.On`",
+        "Yes: enums accept any string",
+        "No: string enums must be `const`"
+      ],
+      "answer": 0,
+      "explain": "String enums are deliberately opaque: you must write `Mode.On`. A union of string literals or an `as const` object accepts the plain string instead."
+    },
+    {
+      "id": "enum-as-const",
+      "topic": "enums",
+      "prompt": "What is `R`?",
+      "code": "const Mode = { On: 'on', Off: 'off' } as const\ntype Mode = (typeof Mode)[keyof typeof Mode]\ntype R = Mode",
+      "choices": [
+        "`string`",
+        "`\"on\" | \"off\"`",
+        "`\"On\" | \"Off\"`",
+        "`{ On: \"on\"; Off: \"off\" }`"
+      ],
+      "answer": 1,
+      "explain": "`as const` keeps the literal values, and indexing by `keyof typeof Mode` collects them into a union. Declaring a type and a value with the same name gives an enum-like API with plain JavaScript output."
+    },
+    {
+      "id": "enum-const-isolated",
+      "topic": "enums",
+      "prompt": "Why is a `const enum` exported from a library risky for code built by a per-file transpiler (with `isolatedModules`)?",
+      "choices": [
+        "Const enums run more slowly",
+        "Uses are inlined from the enum declaration, which a transpiler seeing one file at a time cannot read",
+        "Const enums cannot hold string values",
+        "Const enums always emit reverse mappings"
+      ],
+      "answer": 1,
+      "explain": "A `const enum` has no runtime object; the compiler replaces each use with its value by reading the declaration. Single-file tools cannot do that across files, and inlined values go stale when the library changes."
+    },
+    {
+      "id": "var-function-param",
+      "topic": "variance",
+      "prompt": "Does this compile under `strict`?",
+      "code": "interface Animal { name: string }\ninterface Dog extends Animal { bark(): void }\ntype Handler = (a: Animal) => void\nconst h: Handler = (d: Dog) => d.bark()",
+      "choices": [
+        "Yes: a `Dog` is an `Animal`",
+        "Yes: parameters are always bivariant",
+        "No: arrow functions cannot be assigned to a type alias",
+        "No: under `strictFunctionTypes`, function-type parameters are checked contravariantly"
+      ],
+      "answer": 3,
+      "explain": "A `Handler` may be called with any `Animal`, and this function would call `bark` on a cat. A function is only safe to substitute when it accepts at least the parameter types of the target."
+    },
+    {
+      "id": "var-method-bivariant",
+      "topic": "variance",
+      "prompt": "Does this compile under `strict`?",
+      "code": "interface Animal { name: string }\ninterface Dog extends Animal { bark(): void }\ninterface Handler { handle(a: Animal): void }\nconst h: Handler = { handle(d: Dog) { d.bark() } }",
+      "choices": [
+        "No: it is the same as a function-typed property",
+        "No: the object literal has an excess property",
+        "Yes: parameters of method-syntax members stay bivariant even under `strictFunctionTypes`",
+        "Yes, because `bark` is optional"
+      ],
+      "answer": 2,
+      "explain": "`strictFunctionTypes` only applies to function types, not to methods declared with method syntax, so this unsound assignment compiles. Writing `handle: (a: Animal) => void` makes it an error."
+    },
+    {
+      "id": "var-array-covariant",
+      "topic": "variance",
+      "prompt": "Does this compile under `strict`?",
+      "code": "interface Animal { name: string }\ninterface Dog extends Animal { bark(): void }\nconst dogs: Dog[] = []\nconst animals: Animal[] = dogs\nanimals.push({ name: 'cat' })",
+      "choices": [
+        "Yes: arrays are treated covariantly, so this unsound push type-checks",
+        "No: the `push` is rejected",
+        "No: `Dog[]` is not assignable to `Animal[]`",
+        "Yes, because `push` takes `any`"
+      ],
+      "answer": 0,
+      "explain": "Mutable arrays should be invariant, but TypeScript treats them covariantly for convenience. `dogs` now holds a value without `bark`. Taking `readonly Animal[]` in APIs makes the covariance safe."
+    },
+    {
+      "id": "var-in-out",
+      "topic": "variance",
+      "prompt": "What do the `in` and `out` modifiers do in `interface Box<in out T>`?",
+      "choices": [
+        "They make `T` checked at runtime",
+        "They declare the type parameter's variance, which TypeScript checks and then uses instead of measuring it",
+        "They make `T` optional",
+        "They restrict `T` to primitive types"
+      ],
+      "answer": 1,
+      "explain": "`out` means covariant, `in` contravariant, and both together invariant. The compiler verifies the annotation against the type's structure, and it can speed up checking of deep recursive types."
+    },
+    {
+      "id": "cfg-lib-target",
+      "topic": "config",
+      "prompt": "A project sets `\"target\": \"ES2017\"` and `\"lib\": [\"ES2023\"]`, then calls `items.findLast(...)`. What happens?",
+      "choices": [
+        "TypeScript rewrites `findLast` into ES2017 code",
+        "It type-checks, but throws at runtime on engines without `findLast`: `lib` adds types, not polyfills",
+        "It fails to compile, because the target is too old",
+        "The call is removed from the output"
+      ],
+      "answer": 1,
+      "explain": "`target` controls which syntax is downlevelled; `lib` only tells the checker which built-in APIs exist. Missing runtime APIs need a polyfill or a newer runtime."
+    },
+    {
+      "id": "cfg-declare-module",
+      "topic": "config",
+      "prompt": "What does `declare module 'legacy-lib' { export function run(): void }` in a `.d.ts` file do?",
+      "choices": [
+        "It creates a module named `legacy-lib` at runtime",
+        "It installs the package's published types",
+        "It replaces the package's implementation",
+        "It describes the types of an untyped package, without emitting any code"
+      ],
+      "answer": 3,
+      "explain": "An ambient module declaration tells the checker what an import of that name provides. Nothing is emitted, so it is only a promise about the real package, and a wrong declaration fails at runtime."
+    },
+    {
+      "id": "cfg-skiplib",
+      "topic": "config",
+      "prompt": "What does `\"skipLibCheck\": true` skip?",
+      "choices": [
+        "Type-checking of your `.ts` files",
+        "Resolving packages in `node_modules`",
+        "Emitting `.d.ts` files",
+        "Type-checking inside declaration (`.d.ts`) files"
+      ],
+      "answer": 3,
+      "explain": "It skips checking every `.d.ts` file, which speeds builds and silences conflicts between dependencies' typings. Your `.ts` code is still checked against those declarations."
+    },
+    {
+      "id": "cfg-index-access",
+      "topic": "config",
+      "prompt": "With `strict` on but `noUncheckedIndexedAccess` off (it is not part of `strict`), what is `R`?",
+      "code": "const arr: string[] = []\nconst x = arr[0]\ntype R = typeof x",
+      "choices": [
+        "`string`",
+        "`string | undefined`",
+        "`undefined`",
+        "`never`"
+      ],
+      "answer": 0,
+      "explain": "By default, indexing an array or record is assumed to hit. `noUncheckedIndexedAccess` adds `| undefined` to such reads, which catches out-of-range bugs at the cost of more narrowing."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-typed-emitter",
+      "title": "Coding task: type a tiny event emitter",
+      "module": "typescript",
+      "exercise": "typed-emitter"
+    },
+    {
+      "id": "task-parse-config",
+      "title": "Coding task: parse untrusted config without any",
+      "module": "typescript",
+      "exercise": "parse-config"
+    }
+  ]
+}

@@ -1,0 +1,664 @@
+{
+  "id": "ts-variance-compat",
+  "track": "typescript",
+  "title": "Structural typing, assignability and variance",
+  "minutes": 45,
+  "level": "sse",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "Why TypeScript accepts some assignments and rejects others: structural compatibility, excess property checks on fresh object literals, covariant arrays, contravariant function parameters under strictFunctionTypes, method bivariance and the in/out variance annotations.",
+  "prerequisites": [
+    "ts-generics",
+    "ts-narrowing-unions"
+  ],
+  "prerequisiteNotes": "ts-generics: type parameters and constraints, which variance talks about. ts-narrowing-unions: union types and the idea of one type being narrower than another.",
+  "objectives": [
+    "Explain structural typing and predict whether one object type is assignable to another.",
+    "Say when excess property checks fire and why they disappear once a literal is stored in a variable.",
+    "Describe covariance and contravariance with arrays and function parameters, including the hole that mutable arrays leave open.",
+    "Explain why method shorthand parameters stay bivariant under strictFunctionTypes and when to prefer function properties.",
+    "Read and write the in and out variance annotations on generic type parameters."
+  ],
+  "concepts": [
+    {
+      "title": "Structural typing and excess property checks",
+      "body": "TypeScript compares types by their **shape**, not their name. A value is assignable to `Point` when it has at least the members `Point` needs with compatible types; extra members are fine, so a `{ x, y, z }` object can be passed where `{ x, y }` is expected. The one exception is a **fresh object literal** written straight into a typed position: there, an unknown key is almost always a typo, so the compiler reports an excess property error. Store the literal in a variable first and the freshness is gone, the extra key is accepted and it still exists at runtime, which matters if you serialize the value.",
+      "code": "interface Point { x: number; y: number }\n\nconst a: Point = { x: 1, y: 2, z: 3 }; // error: 'z' does not exist in type 'Point'\nconst raw = { x: 1, y: 2, z: 3 };\nconst b: Point = raw;                  // ok: not a fresh literal\nconsole.log(JSON.stringify(b));        // {\"x\":1,\"y\":2,\"z\":3}",
+      "diagram": "variance-excess"
+    },
+    {
+      "title": "Covariance: arrays and return types",
+      "body": "A type constructor is **covariant** when it keeps the direction of subtyping: if `Dog` is assignable to `Animal`, then `Dog[]` is assignable to `Animal[]` and `() => Dog` to `() => Animal`. That is sound for things you only read. Mutable arrays are both read and written, so covariance is a known hole: after `const animals: Animal[] = dogs`, `animals.push(cat)` compiles and puts a cat in the dog array. Prefer `readonly Dog[]` (or `ReadonlyArray<Dog>`) for inputs you do not mutate; a readonly array has no `push`, so the hole cannot be used.",
+      "code": "type Animal = { name: string };\ntype Dog = Animal & { bark(): string };\n\nconst dogs: Dog[] = [{ name: 'Rex', bark: () => 'woof' }];\nconst animals: Animal[] = dogs; // allowed: arrays are covariant\nanimals.push({ name: 'Tom' });  // compiles, but dogs now holds a non-dog\ndogs[1].bark();                 // TypeError at runtime",
+      "diagram": "variance-arrays"
+    },
+    {
+      "title": "Contravariance: function parameters and strictFunctionTypes",
+      "body": "Parameters flip the direction. A handler that accepts any `Animal` can safely stand in for one that will only ever be called with a `Dog`, but not the other way round: a `Dog` handler might call `bark()` on a cat. With `strictFunctionTypes` (part of `strict`), parameters of **function types** are checked **contravariantly**. Parameters of **method shorthand** (`accept(value: T): void` inside an interface or class) are still checked **bivariantly**, either direction is accepted, because many built-in types such as `Array` rely on it. Declare callbacks as properties (`accept: (value: T) => void`) when you want the strict check.",
+      "code": "interface Strict { accept: (value: string | number) => void }\ninterface Loose { accept(value: string | number): void }\n\nconst onlyStrings = (value: string) => console.log(value.toUpperCase());\nconst s: Strict = { accept: onlyStrings }; // error under strictFunctionTypes\nconst l: Loose = { accept: onlyStrings };  // allowed: method parameters are bivariant",
+      "diagram": "variance-params"
+    },
+    {
+      "title": "Variance annotations: in, out and invariance",
+      "body": "TypeScript works out the variance of each type parameter by measuring how it is used. Since TypeScript 4.7 you can state it with `out T` (covariant: T only appears in output positions), `in T` (contravariant: T only appears in inputs) or `in out T` (invariant: both). The compiler checks the annotation against the structure, so it documents intent, catches accidental changes and can speed up checking of large recursive types. A type that both reads and writes T, like a mutable box with `get` and `set` function properties, is invariant: neither `Box<Dog>` nor `Box<Animal>` is assignable to the other.",
+      "code": "interface Producer<out T> { get: () => T }\ninterface Consumer<in T> { put: (value: T) => void }\ninterface Cell<in out T> { get: () => T; set: (value: T) => void }\n\ndeclare const dogSource: Producer<Dog>;\nconst animalSource: Producer<Animal> = dogSource; // ok, covariant\ndeclare const animalSink: Consumer<Animal>;\nconst dogSink: Consumer<Dog> = animalSink;        // ok, contravariant"
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Reading an assignability error from the top",
+      "body": "When an assignment fails, the message nests from the outer type down to the first member that does not fit, for example \"Type `Handler<Dog>` is not assignable to `Handler<Animal>`… Types of parameters `value` and `value` are incompatible\". Read the last line first: it names the exact position. If it mentions parameters, ask which way data flows. If it mentions a property you never wrote, check whether it came from a fresh literal (an excess property) or an intersection."
+    },
+    {
+      "title": "Fixing the hole without casts",
+      "body": "Each unsound pattern has a type-level fix that avoids `as`. Accept `readonly T[]` when a function only reads a list. Write callbacks as function properties so `strictFunctionTypes` applies. When you must store an object that may carry extra keys, copy only the known keys before sending it anywhere that cares, which is what the warm-up exercise does. Reach for an explicit variance annotation on public generic types, so a later edit that changes variance fails at the declaration and not in some caller."
+    }
+  ],
+  "example": "type Animal = { name: string };\ntype Dog = Animal & { bark(): string };\n\nfunction names(list: readonly Animal[]): string[] {\n  return list.map(a => a.name);\n}\n\nconst dogs: Dog[] = [{ name: 'Rex', bark: () => 'woof' }];\nnames(dogs); // fine: readonly arrays are safely covariant\n\ntype Handler<in T> = (value: T) => void;\nconst logAnimal: Handler<Animal> = a => console.log(a.name);\nconst onDog: Handler<Dog> = logAnimal; // fine: contravariant parameter",
+  "task": "Write `matchesShape(shape, value, exact)`. `shape` maps keys to the `typeof` result each must have, such as `{ id: 'number', name: 'string' }`. Return true when `value` is a non-null, non-array object that has every key with the right `typeof`. Extra keys are allowed (structural typing) unless `exact` is true, in which case any key the shape does not list makes it fail, like an excess property check.",
+  "starter": "type Shape = Record<string, string>;\n\n// TODO: check every shape key exists with the right typeof,\n// and when exact is true reject keys the shape does not list.\nfunction matchesShape(shape: Shape, value: unknown, exact: boolean): boolean {\n  return typeof value === 'object' && value !== null;\n}\n",
+  "hints": [
+    "Reject `null`, arrays and primitives first (`typeof null` is `'object'`), then use an own-property check so a key like `toString` is not found on the prototype.",
+    "Only do the extra-keys pass when `exact` is true."
+  ],
+  "solution": "type Shape = Record<string, string>;\n\nfunction matchesShape(shape: Shape, value: unknown, exact: boolean): boolean {\n  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;\n  const record = value as Record<string, unknown>;\n  for (const [key, kind] of Object.entries(shape)) {\n    if (!Object.prototype.hasOwnProperty.call(record, key)) return false;\n    if (typeof record[key] !== kind) return false;\n  }\n  // Structural typing allows extra keys; an exact check is like an excess property check.\n  return !exact || Object.keys(record).every(key => Object.prototype.hasOwnProperty.call(shape, key));\n}\n",
+  "checklist": [
+    "Null, arrays and primitives return false.",
+    "A missing key or a wrong typeof returns false.",
+    "Extra keys pass when exact is false and fail when it is true."
+  ],
+  "pitfalls": [
+    "Assuming an extra key disappears because the type does not mention it; it stays on the object at runtime.",
+    "Passing a mutable `Dog[]` into code typed `Animal[]` that pushes into it.",
+    "Declaring callbacks with method shorthand and expecting `strictFunctionTypes` to check them.",
+    "Using `as` to silence a variance error instead of fixing the direction of the type."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Strip the extra keys",
+      "prompt": "Write `pickKnown(obj, keys)` that returns a new object with only the listed keys that `obj` actually owns. Keys that are missing from `obj` are left out, not set to undefined.",
+      "hints": [
+        "Start from an empty object and copy key by key.",
+        "Use an own-property check, not `in`, so prototype keys are ignored."
+      ],
+      "solution": "function pickKnown(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {\n  const out: Record<string, unknown> = {};\n  for (const key of keys) {\n    if (Object.prototype.hasOwnProperty.call(obj, key)) out[key] = obj[key];\n  }\n  return out;\n}\n",
+      "checklist": [
+        "Returns a new object.",
+        "Missing keys are not added.",
+        "Prototype keys such as toString are ignored."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Model function assignability",
+      "prompt": "Types form a small hierarchy: `never` is below everything, `Dog` and `Cat` are below `Animal`, and `Animal` is below `unknown`. A function type is `{ param, ret }`. Write `canAssign(target, source, method)` that says whether `source` can be assigned to `target`: returns are covariant, parameters are contravariant, and when `method` is true parameters are bivariant (either direction is enough).",
+      "hints": [
+        "The helper `isSub(a, b)` already walks the hierarchy; for parameters, ask whether the target's parameter fits into the source's.",
+        "Bivariance means `isSub` in either direction, which still rejects unrelated siblings such as Dog and Cat."
+      ],
+      "solution": "type Name = 'never' | 'Dog' | 'Cat' | 'Animal' | 'unknown';\ntype Fn = { param: Name; ret: Name };\n\nconst parent: Partial<Record<Name, Name>> = { Dog: 'Animal', Cat: 'Animal', Animal: 'unknown' };\n\nfunction isSub(a: Name, b: Name): boolean {\n  if (a === b || a === 'never' || b === 'unknown') return true;\n  const up = parent[a];\n  return up !== undefined && isSub(up, b);\n}\n\nfunction canAssign(target: Fn, source: Fn, method: boolean): boolean {\n  const returns = isSub(source.ret, target.ret);\n  const params = method\n    ? isSub(target.param, source.param) || isSub(source.param, target.param)\n    : isSub(target.param, source.param);\n  return returns && params;\n}\n",
+      "checklist": [
+        "Returns are always checked covariantly.",
+        "Parameters are contravariant unless method is true.",
+        "Unrelated parameter types fail even when bivariant."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "Why does TypeScript keep method parameters bivariant even in strict mode?",
+      "answer": "Because many widely used types, including `Array<T>`, declare methods whose parameters mention T. Checking them contravariantly would make `Dog[]` not assignable to `Animal[]`, breaking a huge amount of reasonable code. Bivariant methods keep that working; function-typed properties get the strict check."
+    },
+    {
+      "question": "Why does an excess property error vanish when you assign through a variable?",
+      "answer": "Excess property checks only apply to fresh object literals, where an unknown key is almost certainly a typo. Once the literal is in a variable it may legitimately be used elsewhere with all its keys, so ordinary structural assignability applies and extra keys are allowed."
+    },
+    {
+      "question": "What makes a generic type invariant, and how would you show it?",
+      "answer": "T is used in both input and output positions, for example a box with a `get: () => T` and a `set: (value: T) => void`. Neither `Box<Dog>` nor `Box<Animal>` can replace the other safely. You can declare it with `in out T`, and the compiler will reject an assignment in either direction."
+    }
+  ],
+  "takeaways": [
+    "Compatibility is structural: extra members are fine except on fresh object literals.",
+    "Read-only positions are covariant, write-only positions are contravariant, and read-write positions are invariant.",
+    "Mutable arrays are covariant for convenience, which is unsound; use readonly arrays for inputs.",
+    "strictFunctionTypes checks function-type parameters contravariantly but leaves method shorthand bivariant.",
+    "The in and out annotations state variance and are checked against the type's structure."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "variance-excess",
+        "type": "compare",
+        "title": "Fresh literal versus stored object",
+        "alt": "Two panels. A fresh object literal with an extra key is rejected by the excess property check; the same object stored in a variable first is accepted and keeps the extra key at runtime.",
+        "caption": "Freshness, not the type, decides whether extra keys are reported.",
+        "before": {
+          "label": "Fresh literal",
+          "nodes": [
+            {
+              "id": "lit",
+              "label": "{ x, y, z }",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "written inline"
+            },
+            {
+              "id": "err",
+              "label": "Excess property",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "'z' is unknown"
+            }
+          ],
+          "edges": [
+            {
+              "from": "lit",
+              "to": "err",
+              "label": "as Point"
+            }
+          ]
+        },
+        "after": {
+          "label": "Stored first",
+          "nodes": [
+            {
+              "id": "raw",
+              "label": "const raw",
+              "kind": "state",
+              "col": 0,
+              "row": 0,
+              "sub": "{ x, y, z }"
+            },
+            {
+              "id": "ok",
+              "label": "p: Point",
+              "kind": "good",
+              "col": 1,
+              "row": 0,
+              "sub": "z still there"
+            }
+          ],
+          "edges": [
+            {
+              "from": "raw",
+              "to": "ok",
+              "label": "assignable"
+            }
+          ]
+        }
+      },
+      {
+        "id": "variance-arrays",
+        "type": "flow",
+        "title": "How a covariant array lets a cat in",
+        "alt": "A flow from a Dog array aliased as an Animal array, through a push of a cat-like animal, to a runtime TypeError when the original Dog array calls bark on it.",
+        "caption": "Both names point at one array; only the type of the alias changed.",
+        "nodes": [
+          {
+            "id": "dogs",
+            "label": "dogs: Dog[]",
+            "kind": "state",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "alias",
+            "label": "animals: Animal[]",
+            "kind": "state",
+            "col": 1,
+            "row": 0,
+            "sub": "same array"
+          },
+          {
+            "id": "push",
+            "label": "push({ name })",
+            "kind": "client",
+            "col": 2,
+            "row": 0,
+            "sub": "compiles"
+          },
+          {
+            "id": "crash",
+            "label": "dogs[1].bark()",
+            "kind": "bad",
+            "col": 3,
+            "row": 0,
+            "sub": "TypeError"
+          }
+        ],
+        "edges": [
+          {
+            "from": "dogs",
+            "to": "alias",
+            "label": "covariant"
+          },
+          {
+            "from": "alias",
+            "to": "push"
+          },
+          {
+            "from": "push",
+            "to": "crash",
+            "label": "read as Dog"
+          }
+        ]
+      },
+      {
+        "id": "variance-params",
+        "type": "compare",
+        "title": "Function property versus method shorthand",
+        "alt": "Two panels. A string-only handler assigned to a function property that accepts string or number is rejected under strictFunctionTypes; the same handler assigned to a method shorthand is accepted because method parameters stay bivariant.",
+        "caption": "Write callbacks as properties to get the contravariant check.",
+        "before": {
+          "label": "Property: strict",
+          "nodes": [
+            {
+              "id": "h1",
+              "label": "(v: string)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "p1",
+              "label": "accept: (v: S|N)",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "rejected"
+            }
+          ],
+          "edges": [
+            {
+              "from": "h1",
+              "to": "p1",
+              "label": "contravariant"
+            }
+          ]
+        },
+        "after": {
+          "label": "Method: bivariant",
+          "nodes": [
+            {
+              "id": "h2",
+              "label": "(v: string)",
+              "kind": "client",
+              "col": 0,
+              "row": 0
+            },
+            {
+              "id": "p2",
+              "label": "accept(v: S|N)",
+              "kind": "good",
+              "col": 1,
+              "row": 0,
+              "sub": "accepted"
+            }
+          ],
+          "edges": [
+            {
+              "from": "h2",
+              "to": "p2",
+              "label": "bivariant"
+            }
+          ]
+        }
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "matchesShape",
+        "starter": "type Shape = Record<string, string>;\n\n// TODO: check every shape key exists with the right typeof,\n// and when exact is true reject keys the shape does not list.\nfunction matchesShape(shape: Shape, value: unknown, exact: boolean): boolean {\n  return typeof value === 'object' && value !== null;\n}\n",
+        "solution": "type Shape = Record<string, string>;\n\nfunction matchesShape(shape: Shape, value: unknown, exact: boolean): boolean {\n  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;\n  const record = value as Record<string, unknown>;\n  for (const [key, kind] of Object.entries(shape)) {\n    if (!Object.prototype.hasOwnProperty.call(record, key)) return false;\n    if (typeof record[key] !== kind) return false;\n  }\n  // Structural typing allows extra keys; an exact check is like an excess property check.\n  return !exact || Object.keys(record).every(key => Object.prototype.hasOwnProperty.call(shape, key));\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "id": "number",
+                "name": "string"
+              },
+              {
+                "id": 1,
+                "name": "a",
+                "extra": true
+              },
+              false
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              {
+                "id": "number",
+                "name": "string"
+              },
+              {
+                "id": 1,
+                "name": "a",
+                "extra": true
+              },
+              true
+            ],
+            "expected": false
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "id": "number"
+              },
+              {
+                "name": "a"
+              },
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "id": "number"
+              },
+              {
+                "id": "1"
+              },
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "id": "number"
+              },
+              null,
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "id": "number"
+              },
+              [
+                1
+              ],
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "id": "number",
+                "name": "string"
+              },
+              {
+                "id": 2,
+                "name": "b"
+              },
+              true
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              {
+                "toString": "function"
+              },
+              {},
+              false
+            ],
+            "expected": false
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "pickKnown",
+        "starter": "// TODO: copy only the listed keys that the object actually has.\nfunction pickKnown(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {\n  return obj;\n}\n",
+        "solution": "function pickKnown(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {\n  const out: Record<string, unknown> = {};\n  for (const key of keys) {\n    if (Object.prototype.hasOwnProperty.call(obj, key)) out[key] = obj[key];\n  }\n  return out;\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "x": 1,
+                "y": 2,
+                "z": 3
+              },
+              [
+                "x",
+                "y"
+              ]
+            ],
+            "expected": {
+              "x": 1,
+              "y": 2
+            }
+          },
+          {
+            "args": [
+              {
+                "x": 1
+              },
+              [
+                "x",
+                "y"
+              ]
+            ],
+            "expected": {
+              "x": 1
+            }
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {},
+              [
+                "a"
+              ]
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              {
+                "a": null
+              },
+              [
+                "a"
+              ]
+            ],
+            "expected": {
+              "a": null
+            }
+          },
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              [
+                "toString"
+              ]
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              {
+                "a": 1,
+                "b": 2
+              },
+              []
+            ],
+            "expected": {}
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "canAssign",
+        "starter": "type Name = 'never' | 'Dog' | 'Cat' | 'Animal' | 'unknown';\ntype Fn = { param: Name; ret: Name };\n\nconst parent: Partial<Record<Name, Name>> = { Dog: 'Animal', Cat: 'Animal', Animal: 'unknown' };\n\nfunction isSub(a: Name, b: Name): boolean {\n  if (a === b || a === 'never' || b === 'unknown') return true;\n  const up = parent[a];\n  return up !== undefined && isSub(up, b);\n}\n\n// TODO: parameters are checked the wrong way round here.\nfunction canAssign(target: Fn, source: Fn, method: boolean): boolean {\n  return isSub(source.param, target.param) && isSub(source.ret, target.ret);\n}\n",
+        "solution": "type Name = 'never' | 'Dog' | 'Cat' | 'Animal' | 'unknown';\ntype Fn = { param: Name; ret: Name };\n\nconst parent: Partial<Record<Name, Name>> = { Dog: 'Animal', Cat: 'Animal', Animal: 'unknown' };\n\nfunction isSub(a: Name, b: Name): boolean {\n  if (a === b || a === 'never' || b === 'unknown') return true;\n  const up = parent[a];\n  return up !== undefined && isSub(up, b);\n}\n\nfunction canAssign(target: Fn, source: Fn, method: boolean): boolean {\n  const returns = isSub(source.ret, target.ret);\n  const params = method\n    ? isSub(target.param, source.param) || isSub(source.param, target.param)\n    : isSub(target.param, source.param);\n  return returns && params;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _fn = Expect<Equal<Parameters<typeof canAssign>, [target: Fn, source: Fn, method: boolean]>>\n// @ts-expect-error Fish is not a Name\ncanAssign({ param: 'Fish', ret: 'Dog' }, { param: 'Dog', ret: 'Dog' }, false)\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              {
+                "param": "Animal",
+                "ret": "Dog"
+              },
+              false
+            ],
+            "expected": true
+          },
+          {
+            "args": [
+              {
+                "param": "Animal",
+                "ret": "Animal"
+              },
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "param": "Animal",
+                "ret": "Animal"
+              },
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              true
+            ],
+            "expected": true
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "param": "Dog",
+                "ret": "Dog"
+              },
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              false
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "param": "Dog",
+                "ret": "Dog"
+              },
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              true
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "param": "Cat",
+                "ret": "unknown"
+              },
+              {
+                "param": "Dog",
+                "ret": "Dog"
+              },
+              true
+            ],
+            "expected": false
+          },
+          {
+            "args": [
+              {
+                "param": "Dog",
+                "ret": "Animal"
+              },
+              {
+                "param": "unknown",
+                "ret": "never"
+              },
+              false
+            ],
+            "expected": true
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "type Animal = { name: string };\ntype Dog = Animal & { bark(): string };\nconst dogs: Dog[] = [{ name: 'Rex', bark: () => 'woof' }];\nconst animals: Animal[] = dogs;\nanimals.push({ name: 'Tom' });\nconsole.log(dogs.map(d => typeof d.bark).join(','));",
+        "choices": [
+          "function,function",
+          "function,undefined",
+          "function",
+          "undefined,undefined"
+        ],
+        "answer": 1,
+        "explain": "`animals` and `dogs` are the same array. Covariant arrays let the push compile, so `dogs` now holds an object without `bark`."
+      },
+      {
+        "code": "interface Point { x: number; y: number }\nconst raw = { x: 1, y: 2, z: 3 };\nconst p: Point = raw;\nconsole.log(JSON.stringify(p));",
+        "choices": [
+          "{\"x\":1,\"y\":2}",
+          "{\"x\":1,\"y\":2,\"z\":3}",
+          "undefined",
+          "{}"
+        ],
+        "answer": 1,
+        "explain": "Assigning through a variable skips the excess property check, and types never remove keys at runtime, so `z` is serialized too."
+      },
+      {
+        "code": "interface Box { accept(value: string | number): string }\nconst onlyStrings = { accept(value: string) { return value.toUpperCase(); } };\nconst box: Box = onlyStrings;\ntry { console.log(box.accept(42)); } catch (e) { console.log((e as Error).constructor.name); }",
+        "choices": [
+          "42",
+          "TypeError",
+          "RangeError",
+          "undefined"
+        ],
+        "answer": 1,
+        "explain": "Method shorthand parameters are bivariant, so the assignment compiles. At runtime `(42).toUpperCase` is undefined and calling it throws a TypeError."
+      }
+    ],
+    "tip": "When a variance error confuses you, ask which way the data flows through the type parameter: out of the value (covariant), into it (contravariant) or both (invariant).",
+    "links": {
+      "lessons": [
+        "ts-generics",
+        "ts-narrowing-unions",
+        "ts-classes-patterns"
+      ]
+    }
+  }
+}

@@ -52,7 +52,7 @@ export const PAGES: readonly PaletteEntry[] = [
   ['company', 'Company prep', '#company', 'employers companies'],
   ['mock', 'Mock interviews', '#mock', 'practice interview timer loop'],
   ['codebase', 'Codebase interviews', '#codebase', 'codebase interview existing code repo debugging bug fix feature change multi-file pair programming fde forward deployed'],
-  ['skilltest', 'Skill tests', '#skilltest', 'skill test assessment timed quiz exam react node nodejs react native mobile certification score'],
+  ['skilltest', 'Skill tests', '#skilltest', 'skill test assessment timed quiz exam react node nodejs react native mobile typescript ts certification score'],
   ['stories', 'Story bank', '#stories', 'behavioural behavioral star stories'],
 ].map(([id, title, href, keywords]) => ({ id: `page:${id}`, kind: 'page' as const, title, href, keywords }))
 

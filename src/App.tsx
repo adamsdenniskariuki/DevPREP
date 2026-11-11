@@ -80,7 +80,7 @@ const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
 const Recovery = lazy(() => backupFlow().then(flow => ({ default: flow.Recovery })))
 
-const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds), codebase: new Set(codebaseIds), react: new Set([...reactIds.lessons, ...reactIds.exercises]), node: new Set([...nodeIds.lessons, ...nodeIds.exercises]), reactNative: new Set([...reactNativeIds.lessons, ...reactNativeIds.exercises]), skillTests: new Set(skillTestIds.map(test => test.id)) }
+const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds), codebase: new Set(codebaseIds), react: new Set([...reactIds.lessons, ...reactIds.exercises]), node: new Set([...nodeIds.lessons, ...nodeIds.exercises]), reactNative: new Set([...reactNativeIds.lessons, ...reactNativeIds.exercises]), skillTests: new Set(skillTestIds.map(test => test.id)), lessons: new Map(lessons.map(lesson => [lesson.id, lesson.track])) }
 const parseHash = () => parseRoute(window.location.hash, routeIds)
 
 function tourSeen() {
@@ -392,14 +392,14 @@ export default function App() {
   </div>
   const accentProblem = <div className="accent-problem"><strong>Accent preference needs attention.</strong><p>{accent.error} Study progress is separate and has not been changed by the accent preference.</p><button onClick={accent.retry}>Save current accent</button></div>
 
+  const parsed = parseRoute(hash, routeIds)
   const app: AppModel = {
     progress, due, completed, selectedPath, selectedStatus, nextLesson, todayActivity, learnedToday, reviewedToday,
     activeLesson, percent, outsidePath, clock, today, game, weak: weakAreas(progress), daysLeft: daysUntil(progress.profile?.interviewDate, clock),
-    heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack,
+    heading, backupControls, roadmapScope, setRoadmapScope, track, setTrack, trackLesson: parsed.lessonId,
     navigate, start, browseAll, changePath, changeProfile, solveProblem, solveSqlProblem, scoreDesign, readGuide, passPatternExercise, scorePatternQuiz, finishPicker, createdBoard, placeTrack, gradeCard, finishMock, finishCompanyRun, finishCompanyMock, saveStory, deleteStory, tourOpen, closeTour,
     replayTour: () => { setTour('replay'); navigate('home') },
   }
-  const parsed = parseRoute(hash, routeIds)
   const tree = useMemo(() => buildNavTree(navData?.deepSections(progress, navData.index), due.length), [progress, navData, due.length])
   const branch = expandedFor(tree, parsed)
   const pathIds = new Set(branch)

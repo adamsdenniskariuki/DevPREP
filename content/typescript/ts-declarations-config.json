@@ -1,0 +1,697 @@
+{
+  "id": "ts-declarations-config",
+  "track": "typescript",
+  "title": "Declaration files, ambient modules and tsconfig strictness",
+  "minutes": 45,
+  "level": "sse",
+  "paths": [
+    "swe",
+    "senior"
+  ],
+  "summary": "How types reach code you did not write and how the compiler is configured: .d.ts files, declare, declare module and wildcard modules, global and module augmentation with declaration merging, the strict flag family, the extra safety flags worth turning on and the module settings that decide what gets emitted.",
+  "prerequisites": [
+    "ts-modules-errors",
+    "ts-types-basics"
+  ],
+  "prerequisiteNotes": "ts-modules-errors: ES modules, imports and exports, which declaration files describe. ts-types-basics: interfaces, optional properties and strictNullChecks, which the config section builds on.",
+  "objectives": [
+    "Explain what a .d.ts file contains, how it is produced and how a package points consumers at it.",
+    "Use declare, declare module and a wildcard module declaration to type untyped code and assets.",
+    "Augment a global or an existing module with declaration merging, and know why the file must be a module.",
+    "List what strict turns on and how an individual flag overrides it.",
+    "Choose extra flags such as noUncheckedIndexedAccess, exactOptionalPropertyTypes, noImplicitOverride and verbatimModuleSyntax, and explain what each catches."
+  ],
+  "concepts": [
+    {
+      "title": "Declaration files describe JavaScript that already exists",
+      "body": "A `.d.ts` file holds only types: no function bodies and no values, so it emits nothing. The compiler writes one next to each output file when `declaration` is on, and a library points consumers at it with the `types` (or `exports` → `types`) field in its package manifest. Libraries written in plain JavaScript are typed by separate community `@types/...` packages. Inside any file, `declare` says \"this exists at runtime, trust me\": `declare const VERSION: string` tells the checker about a global injected by a bundler or a script tag, but it produces no code, so if nothing defines it the value is simply missing.",
+      "code": "// math.d.ts — what consumers of math.js see\nexport declare function clamp(value: number, low: number, high: number): number;\nexport declare const PI2: number;\n\n// globals.d.ts — a value injected at build time\ndeclare const VERSION: string;",
+      "diagram": "decl-pipeline"
+    },
+    {
+      "title": "Ambient modules and augmentation",
+      "body": "`declare module 'legacy-lib' { ... }` types an import that ships no types; a bare `declare module 'legacy-lib';` makes every import from it `any`, which is a quick escape hatch but no safety. Wildcards type asset imports: `declare module '*.svg' { const url: string; export default url }`. Interfaces with the same name **merge**, so you can add members to an existing type. To add to a global such as `Window`, write `declare global { interface Window { ... } }` inside a file that is a module (it has an import or `export {}`); in a script file the declarations are already global. To add to another module's types, write `declare module './store' { interface Store { ... } }` in a module file. Merged members must agree: the same property declared twice with different types is an error.",
+      "code": "// env.d.ts\nexport {};\ndeclare global {\n  interface Window { appConfig: { apiBase: string } }\n}\ndeclare module '*.svg' {\n  const url: string;\n  export default url;\n}"
+    },
+    {
+      "title": "The strict family and how flags combine",
+      "body": "`strict: true` is a shorthand that turns on a family of checks: `alwaysStrict`, `noImplicitAny`, `noImplicitThis`, `strictBindCallApply`, `strictBuiltinIteratorReturn`, `strictFunctionTypes`, `strictNullChecks`, `strictPropertyInitialization` and `useUnknownInCatchVariables`. New members join the family in later compiler versions, so upgrading can surface new errors. An individual flag always wins: `strict: true` with `strictPropertyInitialization: false` keeps everything else. Flags outside the family stay off until you set them, including `noUncheckedIndexedAccess` (index reads become `T | undefined`), `exactOptionalPropertyTypes` (an optional property may be absent but not explicitly `undefined`), `noImplicitOverride` (overriding members need the `override` keyword), `noImplicitReturns` and `noFallthroughCasesInSwitch`.",
+      "code": "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"exactOptionalPropertyTypes\": true,\n    \"noImplicitOverride\": true,\n    \"verbatimModuleSyntax\": true,\n    \"skipLibCheck\": true\n  }\n}",
+      "diagram": "decl-index-access"
+    },
+    {
+      "title": "Module and emit settings",
+      "body": "`target` picks the JavaScript syntax that is emitted, while `lib` picks which built-in APIs the checker knows about; raising `lib` does not polyfill anything. `module` and `moduleResolution` should match the runtime: `nodenext` for code run directly by Node, `bundler` for code a bundler resolves. `verbatimModuleSyntax` makes imports emit exactly as written, so type-only imports must say `import type`; together with `isolatedModules` it keeps each file compilable on its own, which is what single-file transpilers and type-stripping runtimes need. `skipLibCheck` skips checking `.d.ts` files, which speeds builds and hides conflicts between dependency typings, not errors in your own code."
+    }
+  ],
+  "walkthrough": [
+    {
+      "title": "Typing an untyped dependency step by step",
+      "body": "First check whether the package ships types or has an `@types` package. If not, start with a local `types/legacy-lib.d.ts` containing `declare module 'legacy-lib'` and only the functions you call, typed as narrowly as you can verify. Make sure the folder is included by `include` or `typeRoots`. Add a small test that exercises those calls so a wrong declaration shows up at runtime. Declarations are promises the compiler cannot check, so keep them small and close to the code that uses them.",
+      "diagram": "decl-adopt"
+    },
+    {
+      "title": "Turning on stricter flags in an existing codebase",
+      "body": "Enable one flag at a time and count the errors. `strictNullChecks` usually finds the most real bugs, so do it early. For `noUncheckedIndexedAccess`, prefer narrowing (`const item = list[i]; if (item === undefined) return`) over sprinkling `!`. A short-lived suppression comment per file with a tracking note is better than leaving the flag off for everyone. Once clean, the flag protects new code for free."
+    }
+  ],
+  "example": "// types/feature-flags.d.ts\ndeclare module 'feature-flags' {\n  export interface Flags { darkMode: boolean; beta?: boolean }\n  export function load(url: string): Promise<Flags>;\n}\n\n// app.ts\nimport { load, type Flags } from 'feature-flags';\n\nasync function isDark(url: string): Promise<boolean> {\n  const flags: Flags = await load(url);\n  return flags.darkMode;\n}",
+  "task": "Write `strictFlags(options)`. Given a `compilerOptions` object of boolean flags, return the sorted names of the strict-family flags that end up enabled. `strict: true` turns on every family member, but a family flag set explicitly to `true` or `false` wins over `strict`. Flags outside the family, such as `noUncheckedIndexedAccess`, are never in the result.",
+  "starter": "const STRICT_FAMILY = [\n  'alwaysStrict', 'noImplicitAny', 'noImplicitThis', 'strictBindCallApply',\n  'strictBuiltinIteratorReturn', 'strictFunctionTypes', 'strictNullChecks',\n  'strictPropertyInitialization', 'useUnknownInCatchVariables',\n];\n\n// TODO: an individual flag set to true or false wins over \"strict\".\nfunction strictFlags(options: Record<string, boolean>): string[] {\n  return options.strict ? [...STRICT_FAMILY] : [];\n}\n",
+  "hints": [
+    "For each family flag, use its own value when present, otherwise the value of `strict`, treating a missing `strict` as false.",
+    "Return the names sorted so the result is stable."
+  ],
+  "solution": "const STRICT_FAMILY = [\n  'alwaysStrict', 'noImplicitAny', 'noImplicitThis', 'strictBindCallApply',\n  'strictBuiltinIteratorReturn', 'strictFunctionTypes', 'strictNullChecks',\n  'strictPropertyInitialization', 'useUnknownInCatchVariables',\n];\n\nfunction strictFlags(options: Record<string, boolean>): string[] {\n  const base = options.strict === true;\n  return STRICT_FAMILY.filter(flag => {\n    const own = Object.prototype.hasOwnProperty.call(options, flag) ? options[flag] : undefined;\n    return own ?? base;\n  }).sort();\n}\n",
+  "checklist": [
+    "strict alone enables all nine family flags.",
+    "An explicit false removes one flag while strict is on.",
+    "An explicit true enables one flag while strict is off.",
+    "Non-family flags never appear."
+  ],
+  "pitfalls": [
+    "Writing `declare global` in a file with no import or export, which is a script, so the block is an error.",
+    "Using a bare `declare module 'x';` and forgetting that every import from it is now `any`.",
+    "Raising `lib` to use a newer API and assuming it is polyfilled for older runtimes.",
+    "Treating `skipLibCheck` as a fix for errors in your own `.d.ts` files.",
+    "Assuming `strict` never changes; new compiler versions add members to the family."
+  ],
+  "extraPractice": [
+    {
+      "id": "warmup",
+      "title": "Index access that respects missing keys",
+      "prompt": "Write `lookup(record, key, fallback)` the way `noUncheckedIndexedAccess` wants you to think: return the record's own value for `key`, keep falsy values such as 0, and return `fallback` when the key is not an own property (including inherited names such as `toString`).",
+      "hints": [
+        "`||` replaces 0 with the fallback; `??` does not.",
+        "Check own properties so inherited keys are treated as missing."
+      ],
+      "solution": "function lookup(record: Record<string, number>, key: string, fallback: number): number {\n  if (!Object.prototype.hasOwnProperty.call(record, key)) return fallback;\n  const value: number | undefined = record[key];\n  return value ?? fallback;\n}\n",
+      "checklist": [
+        "0 is returned, not the fallback.",
+        "Missing keys use the fallback.",
+        "Inherited keys use the fallback."
+      ]
+    },
+    {
+      "id": "stretch",
+      "title": "Simulate interface merging",
+      "prompt": "Each declaration is `{ name, members }` where `members` maps property names to type strings. Write `mergeInterfaces(decls)` that merges declarations with the same name in order. When a property is declared again with a different type, return the string `Subsequent property declarations must have the same type: <Name>.<member>` for the first conflict. Repeating the same type is fine.",
+      "hints": [
+        "Keep one merged member map per interface name.",
+        "Compare against the type already recorded before writing."
+      ],
+      "solution": "type Decl = { name: string; members: Record<string, string> };\n\nfunction mergeInterfaces(decls: Decl[]): Record<string, Record<string, string>> | string {\n  const out: Record<string, Record<string, string>> = {};\n  for (const { name, members } of decls) {\n    const merged = out[name] ?? (out[name] = {});\n    for (const [member, type] of Object.entries(members)) {\n      const existing = merged[member];\n      if (existing !== undefined && existing !== type) {\n        return `Subsequent property declarations must have the same type: ${name}.${member}`;\n      }\n      merged[member] = type;\n    }\n  }\n  return out;\n}\n",
+      "checklist": [
+        "Different names stay separate.",
+        "Same-type redeclarations are accepted.",
+        "The first conflict is reported with Name.member."
+      ]
+    }
+  ],
+  "followUps": [
+    {
+      "question": "What is the difference between `declare module 'x'` and `declare module './x'` augmentation?",
+      "answer": "A top-level `declare module 'x'` in a script-style `.d.ts` declares the whole module for an import that has no types. Inside a module file, `declare module './x'` augments an existing module: its interfaces merge with the real ones, but you cannot add new top-level values that do not exist at runtime."
+    },
+    {
+      "question": "Why can turning on noUncheckedIndexedAccess be worth the noise?",
+      "answer": "Out-of-range array reads and missing record keys return undefined at runtime, but without the flag they are typed as the element type. The flag makes every index read `T | undefined`, forcing a check where a crash would otherwise happen. Iterating with for...of or array methods is unaffected, so most of the noise is in code that really can miss."
+    },
+    {
+      "question": "What does exactOptionalPropertyTypes change?",
+      "answer": "Without it, `retries?: number` accepts `{ retries: undefined }`. With it, the property may be absent but not present with `undefined` unless the type says `number | undefined`. That matters because `'retries' in obj` and `Object.keys` treat a present undefined key differently from a missing one."
+    }
+  ],
+  "takeaways": [
+    "A .d.ts file is a promise about runtime code; the compiler cannot verify it.",
+    "declare emits nothing, so the value must really exist at runtime.",
+    "Interfaces merge, which is how globals and other modules are augmented, and merged members must agree.",
+    "strict is a family of flags, an individual flag overrides it and useful extras such as noUncheckedIndexedAccess are separate.",
+    "Match module settings to the runtime and use verbatimModuleSyntax with import type for per-file compilation."
+  ],
+  "lab": {
+    "lang": "ts",
+    "diagrams": [
+      {
+        "id": "decl-pipeline",
+        "type": "flow",
+        "title": "Where declaration files come from",
+        "alt": "A flow from a TypeScript source file through the compiler into a JavaScript file and a matching declaration file; the package manifest points at the declaration file, which the consuming project reads for types while the runtime loads the JavaScript.",
+        "caption": "Runtime loads the .js; the checker reads the .d.ts.",
+        "nodes": [
+          {
+            "id": "src",
+            "label": "index.ts",
+            "kind": "client",
+            "col": 0,
+            "row": 1
+          },
+          {
+            "id": "tsc",
+            "label": "compiler",
+            "kind": "worker",
+            "col": 1,
+            "row": 1,
+            "sub": "declaration: true"
+          },
+          {
+            "id": "js",
+            "label": "index.js",
+            "kind": "storage",
+            "col": 2,
+            "row": 0
+          },
+          {
+            "id": "dts",
+            "label": "index.d.ts",
+            "kind": "storage",
+            "col": 2,
+            "row": 2
+          },
+          {
+            "id": "pkg",
+            "label": "manifest",
+            "kind": "note",
+            "col": 3,
+            "row": 2,
+            "sub": "\"types\" field"
+          },
+          {
+            "id": "app",
+            "label": "consumer",
+            "kind": "client",
+            "col": 4,
+            "row": 1
+          }
+        ],
+        "edges": [
+          {
+            "from": "src",
+            "to": "tsc"
+          },
+          {
+            "from": "tsc",
+            "to": "js",
+            "label": "emit"
+          },
+          {
+            "from": "tsc",
+            "to": "dts",
+            "label": "emit types"
+          },
+          {
+            "from": "dts",
+            "to": "pkg"
+          },
+          {
+            "from": "pkg",
+            "to": "app",
+            "label": "types"
+          },
+          {
+            "from": "js",
+            "to": "app",
+            "label": "runtime"
+          }
+        ]
+      },
+      {
+        "id": "decl-index-access",
+        "type": "compare",
+        "title": "Index reads with and without the flag",
+        "alt": "Two panels. Without noUncheckedIndexedAccess an array read is typed as the element type and crashes at runtime when out of range; with the flag the read is typed as the element or undefined and must be checked first.",
+        "caption": "The flag makes the type match what the runtime can return.",
+        "before": {
+          "label": "Flag off",
+          "nodes": [
+            {
+              "id": "r1",
+              "label": "list[9]",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "typed string"
+            },
+            {
+              "id": "x1",
+              "label": ".length crash",
+              "kind": "bad",
+              "col": 1,
+              "row": 0,
+              "sub": "undefined"
+            }
+          ],
+          "edges": [
+            {
+              "from": "r1",
+              "to": "x1"
+            }
+          ]
+        },
+        "after": {
+          "label": "Flag on",
+          "nodes": [
+            {
+              "id": "r2",
+              "label": "list[9]",
+              "kind": "client",
+              "col": 0,
+              "row": 0,
+              "sub": "string | undefined"
+            },
+            {
+              "id": "x2",
+              "label": "checked first",
+              "kind": "good",
+              "col": 1,
+              "row": 0,
+              "sub": "narrowed"
+            }
+          ],
+          "edges": [
+            {
+              "from": "r2",
+              "to": "x2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "decl-adopt",
+        "type": "flow",
+        "title": "Typing an untyped dependency",
+        "alt": "A decision flow: check whether the package ships types, then whether a community types package exists, and otherwise write a small local ambient module declaration and a test that exercises it.",
+        "caption": "Prefer shipped or community types; write the smallest local declaration you can verify.",
+        "nodes": [
+          {
+            "id": "q1",
+            "label": "Ships types?",
+            "kind": "decision",
+            "col": 0,
+            "row": 0
+          },
+          {
+            "id": "q2",
+            "label": "@types package?",
+            "kind": "decision",
+            "col": 1,
+            "row": 0
+          },
+          {
+            "id": "local",
+            "label": "declare module",
+            "kind": "worker",
+            "col": 2,
+            "row": 0,
+            "sub": "only what you use"
+          },
+          {
+            "id": "test",
+            "label": "runtime test",
+            "kind": "good",
+            "col": 3,
+            "row": 0
+          },
+          {
+            "id": "done",
+            "label": "use it",
+            "kind": "good",
+            "col": 1,
+            "row": 1
+          }
+        ],
+        "edges": [
+          {
+            "from": "q1",
+            "to": "q2",
+            "label": "no"
+          },
+          {
+            "from": "q2",
+            "to": "local",
+            "label": "no"
+          },
+          {
+            "from": "local",
+            "to": "test"
+          },
+          {
+            "from": "q1",
+            "to": "done",
+            "label": "yes"
+          },
+          {
+            "from": "q2",
+            "to": "done",
+            "label": "yes"
+          }
+        ]
+      }
+    ],
+    "exercises": [
+      {
+        "id": "core",
+        "function": "strictFlags",
+        "starter": "const STRICT_FAMILY = [\n  'alwaysStrict', 'noImplicitAny', 'noImplicitThis', 'strictBindCallApply',\n  'strictBuiltinIteratorReturn', 'strictFunctionTypes', 'strictNullChecks',\n  'strictPropertyInitialization', 'useUnknownInCatchVariables',\n];\n\n// TODO: an individual flag set to true or false wins over \"strict\".\nfunction strictFlags(options: Record<string, boolean>): string[] {\n  return options.strict ? [...STRICT_FAMILY] : [];\n}\n",
+        "solution": "const STRICT_FAMILY = [\n  'alwaysStrict', 'noImplicitAny', 'noImplicitThis', 'strictBindCallApply',\n  'strictBuiltinIteratorReturn', 'strictFunctionTypes', 'strictNullChecks',\n  'strictPropertyInitialization', 'useUnknownInCatchVariables',\n];\n\nfunction strictFlags(options: Record<string, boolean>): string[] {\n  const base = options.strict === true;\n  return STRICT_FAMILY.filter(flag => {\n    const own = Object.prototype.hasOwnProperty.call(options, flag) ? options[flag] : undefined;\n    return own ?? base;\n  }).sort();\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "strict": true
+              }
+            ],
+            "expected": [
+              "alwaysStrict",
+              "noImplicitAny",
+              "noImplicitThis",
+              "strictBindCallApply",
+              "strictBuiltinIteratorReturn",
+              "strictFunctionTypes",
+              "strictNullChecks",
+              "strictPropertyInitialization",
+              "useUnknownInCatchVariables"
+            ]
+          },
+          {
+            "args": [
+              {
+                "strict": true,
+                "strictPropertyInitialization": false
+              }
+            ],
+            "expected": [
+              "alwaysStrict",
+              "noImplicitAny",
+              "noImplicitThis",
+              "strictBindCallApply",
+              "strictBuiltinIteratorReturn",
+              "strictFunctionTypes",
+              "strictNullChecks",
+              "useUnknownInCatchVariables"
+            ]
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {}
+            ],
+            "expected": []
+          },
+          {
+            "args": [
+              {
+                "strictNullChecks": true
+              }
+            ],
+            "expected": [
+              "strictNullChecks"
+            ]
+          },
+          {
+            "args": [
+              {
+                "strict": false,
+                "noImplicitAny": true
+              }
+            ],
+            "expected": [
+              "noImplicitAny"
+            ]
+          },
+          {
+            "args": [
+              {
+                "strict": true,
+                "noUncheckedIndexedAccess": true
+              }
+            ],
+            "expected": [
+              "alwaysStrict",
+              "noImplicitAny",
+              "noImplicitThis",
+              "strictBindCallApply",
+              "strictBuiltinIteratorReturn",
+              "strictFunctionTypes",
+              "strictNullChecks",
+              "strictPropertyInitialization",
+              "useUnknownInCatchVariables"
+            ]
+          },
+          {
+            "args": [
+              {
+                "strict": true,
+                "noImplicitAny": false,
+                "useUnknownInCatchVariables": false
+              }
+            ],
+            "expected": [
+              "alwaysStrict",
+              "noImplicitThis",
+              "strictBindCallApply",
+              "strictBuiltinIteratorReturn",
+              "strictFunctionTypes",
+              "strictNullChecks",
+              "strictPropertyInitialization"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "warmup",
+        "function": "lookup",
+        "starter": "// TODO: keep falsy values such as 0 and ignore inherited keys like \"toString\".\nfunction lookup(record: Record<string, number>, key: string, fallback: number): number {\n  return record[key] || fallback;\n}\n",
+        "solution": "function lookup(record: Record<string, number>, key: string, fallback: number): number {\n  if (!Object.prototype.hasOwnProperty.call(record, key)) return fallback;\n  const value: number | undefined = record[key];\n  return value ?? fallback;\n}\n",
+        "tests": [
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              "a",
+              0
+            ],
+            "expected": 1
+          },
+          {
+            "args": [
+              {
+                "a": 0
+              },
+              "a",
+              5
+            ],
+            "expected": 0
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              "b",
+              7
+            ],
+            "expected": 7
+          },
+          {
+            "args": [
+              {
+                "a": 1
+              },
+              "toString",
+              0
+            ],
+            "expected": 0
+          },
+          {
+            "args": [
+              {},
+              "constructor",
+              -1
+            ],
+            "expected": -1
+          }
+        ]
+      },
+      {
+        "id": "stretch",
+        "function": "mergeInterfaces",
+        "starter": "type Decl = { name: string; members: Record<string, string> };\n\n// TODO: report a member declared twice with different types.\nfunction mergeInterfaces(decls: Decl[]): Record<string, Record<string, string>> | string {\n  const out: Record<string, Record<string, string>> = {};\n  for (const d of decls) out[d.name] = Object.assign(out[d.name] ?? {}, d.members);\n  return out;\n}\n",
+        "solution": "type Decl = { name: string; members: Record<string, string> };\n\nfunction mergeInterfaces(decls: Decl[]): Record<string, Record<string, string>> | string {\n  const out: Record<string, Record<string, string>> = {};\n  for (const { name, members } of decls) {\n    const merged = out[name] ?? (out[name] = {});\n    for (const [member, type] of Object.entries(members)) {\n      const existing = merged[member];\n      if (existing !== undefined && existing !== type) {\n        return `Subsequent property declarations must have the same type: ${name}.${member}`;\n      }\n      merged[member] = type;\n    }\n  }\n  return out;\n}\n",
+        "typeChecks": "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false\ntype Expect<T extends true> = T\ntype _r = Expect<Equal<ReturnType<typeof mergeInterfaces>, Record<string, Record<string, string>> | string>>\n// @ts-expect-error members must map names to type strings\nmergeInterfaces([{ name: 'A', members: { x: 1 } }])\n",
+        "tests": [
+          {
+            "args": [
+              [
+                {
+                  "name": "Window",
+                  "members": {
+                    "a": "number"
+                  }
+                },
+                {
+                  "name": "Window",
+                  "members": {
+                    "b": "string"
+                  }
+                }
+              ]
+            ],
+            "expected": {
+              "Window": {
+                "a": "number",
+                "b": "string"
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "number"
+                  }
+                },
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "string"
+                  }
+                }
+              ]
+            ],
+            "expected": "Subsequent property declarations must have the same type: A.x"
+          }
+        ],
+        "hiddenTests": [
+          {
+            "args": [
+              []
+            ],
+            "expected": {}
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "number"
+                  }
+                },
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "number",
+                    "y": "boolean"
+                  }
+                }
+              ]
+            ],
+            "expected": {
+              "A": {
+                "x": "number",
+                "y": "boolean"
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "number"
+                  }
+                },
+                {
+                  "name": "B",
+                  "members": {
+                    "x": "string"
+                  }
+                }
+              ]
+            ],
+            "expected": {
+              "A": {
+                "x": "number"
+              },
+              "B": {
+                "x": "string"
+              }
+            }
+          },
+          {
+            "args": [
+              [
+                {
+                  "name": "A",
+                  "members": {
+                    "x": "number",
+                    "y": "string"
+                  }
+                },
+                {
+                  "name": "A",
+                  "members": {
+                    "y": "number",
+                    "x": "string"
+                  }
+                }
+              ]
+            ],
+            "expected": "Subsequent property declarations must have the same type: A.y"
+          }
+        ]
+      }
+    ],
+    "predict": [
+      {
+        "code": "declare const VERSION: string;\nconsole.log(typeof VERSION === 'undefined' ? 'no value' : VERSION);",
+        "choices": [
+          "no value",
+          "undefined",
+          "ReferenceError",
+          "VERSION"
+        ],
+        "answer": 0,
+        "explain": "`declare` emits no code, so nothing defines `VERSION`. `typeof` on an undeclared global returns `'undefined'` instead of throwing."
+      },
+      {
+        "code": "type Opts = { retries?: number };\nconst a: Opts = {};\nconst b: Opts = { retries: undefined };\nconsole.log('retries' in a, 'retries' in b, Object.keys(b).length);",
+        "choices": [
+          "false false 0",
+          "false true 1",
+          "true true 1",
+          "false true 0"
+        ],
+        "answer": 1,
+        "explain": "A present key holding `undefined` is not the same as a missing key. `exactOptionalPropertyTypes` would reject `b` for exactly this reason."
+      },
+      {
+        "code": "try { throw 'boom'; } catch (err) { console.log(err instanceof Error ? err.message : typeof err); }",
+        "choices": [
+          "boom",
+          "string",
+          "object",
+          "undefined"
+        ],
+        "answer": 1,
+        "explain": "Anything can be thrown. Under `useUnknownInCatchVariables` the catch variable is `unknown`, which forces this kind of check before using `.message`."
+      }
+    ],
+    "tip": "Keep hand-written declarations small, close to the code that uses them and covered by a runtime test; the compiler trusts them completely.",
+    "links": {
+      "lessons": [
+        "ts-modules-errors",
+        "ts-types-basics",
+        "ts-narrowing-unions"
+      ]
+    }
+  }
+}

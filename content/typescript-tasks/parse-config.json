@@ -1,0 +1,13 @@
+{
+  "id": "parse-config",
+  "title": "Parse untrusted config without any",
+  "lesson": "ts-narrowing-unions",
+  "summary": "Turn an unknown value into a typed config or a list of errors, using a discriminated Result and narrowing only.",
+  "prompt": "`parseConfig(input: unknown)` returns `Result<Config, string[]>`. Make `Result` a discriminated union, `{ ok: true; value: T } | { ok: false; error: E }`, so callers must check `ok` before reading `value` or `error`.\n\nRules:\n- Anything that isn't a plain object (including `null` and arrays) gives the single error `config must be an object`.\n- Otherwise check every field and collect errors in this order: `port must be an integer from 1 to 65535`, `host must be a non-empty string`, `tags must be an array of strings`, `mode must be \"dev\" or \"prod\"`.\n- `tags` defaults to `[]` and `mode` to `\"dev\"` when missing. Unknown keys are ignored.\n\nNarrow with `typeof`, `Array.isArray` and type guards. Don't use `any` or `as`; a type error fails the task.",
+  "hints": [
+    "A guard like `const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)` handles the first rule.",
+    "Destructure with defaults: `const { port, host, tags = [], mode = 'dev' } = input`. Each is still `unknown`.",
+    "Push errors as you go, then return the success value from one final `if` that re-checks every field, so TypeScript can narrow all of them together."
+  ],
+  "minutes": 15
+}

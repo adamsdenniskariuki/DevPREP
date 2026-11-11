@@ -243,7 +243,7 @@ function PlanView({ app, plan, entry, save }: { app: AppModel; plan: StudyPlan; 
       <ul>{plan.rules.map(rule => <li key={rule}>{rule}</li>)}</ul>
       <h3 id="plans-idioms">{languageLabel(lang)} idioms</h3>
       <ul aria-labelledby="plans-idioms">{(forLanguage(plan.tips, lang) ?? []).map(tip => <li key={tip}>{tip}</li>)}</ul>
-      {forLanguage(plan.refresher, lang) && <p><a href={forLanguage(plan.refresher, lang)}>Brush up on {languageLabel(lang)} in its track</a></p>}
+      {forLanguage(plan.refresher, lang) && <p><a href={forLanguage(plan.refresher, lang)}>Brush up on {languageLabel(lang)} in its track</a>{lang === 'typescript' && <>, then check yourself with the <a href="#skilltest/typescript">timed TypeScript skill test</a></>}</p>}
     </section>
 
     {plan.phases.map((phase, index) => {

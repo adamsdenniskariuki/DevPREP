@@ -14,6 +14,8 @@ const CODE_LANGS = ['js', 'py', 'ts']
 export interface ParsedRoute {
   route: Route | 'unknown'
   track?: Track
+  /** A lesson inside a track (#tracks/<track>/<lesson>); the tracks screen scrolls to it. */
+  lessonId?: string
   problemId?: string
   /** Opens the problem in this language; the canonical href leaves it out. */
   codeLang?: 'js' | 'py' | 'ts'
@@ -60,13 +62,15 @@ export interface RouteIds {
   reactNative?: ReadonlySet<string>
   /** Skill test ids, with the same fallback. */
   skillTests?: ReadonlySet<string>
+  /** Curriculum lesson id to its track. Without it, lesson links inside a track (#tracks/<track>/<lesson>) stay unknown. */
+  lessons?: ReadonlyMap<string, string>
 }
 
 /** Parses a location hash (with or without the leading '#') into a route and its sub-id. */
 export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   const [head, sub, ...rest] = hash.replace(/^#/, '').split('/')
   const route = ALIASES[head || 'home'] ?? (ROUTES as string[]).find(item => item === (head || 'home')) as Route | undefined
-  if (!route || rest.length > (route === 'code' || route === 'plans' || route === 'codebase' ? 1 : 0)) return { route: 'unknown' }
+  if (!route || rest.length > (route === 'code' || route === 'plans' || route === 'codebase' || route === 'tracks' ? 1 : 0)) return { route: 'unknown' }
   if (sub === undefined) return { route }
   if (route === 'code') return ids.problems.has(sub) && (!rest.length || CODE_LANGS.includes(rest[0])) ? { route, problemId: sub, codeLang: rest[0] as ParsedRoute['codeLang'] } : { route: 'unknown' }
   if (route === 'sql') return ids.sql.has(sub) ? { route, sqlId: sub } : { route: 'unknown' }
@@ -86,12 +90,14 @@ export function parseHash(hash: string, ids: RouteIds): ParsedRoute {
   if (route === 'guide') return ids.guides.has(sub) ? { route, guideId: sub } : { route: 'unknown' }
   if (route === 'patterns') return ids.patterns.has(sub) || PATTERN_VIEWS.has(sub) ? { route, patternView: sub } : { route: 'unknown' }
   const track = ids.tracks.find(item => item === sub) as Track | undefined
-  return route === 'tracks' && track ? { route, track } : { route: 'unknown' }
+  if (route !== 'tracks' || !track) return { route: 'unknown' }
+  if (!rest.length) return { route, track }
+  return ids.lessons?.get(rest[0]) === track ? { route, track, lessonId: rest[0] } : { route: 'unknown' }
 }
 
 /** The canonical hash for a parsed route: aliases resolve to their target, sub-ids are kept. */
 export function hrefFor(parsed: ParsedRoute): string {
   if (parsed.route === 'unknown') return ''
   const sub = parsed.track ?? parsed.problemId ?? parsed.sqlId ?? parsed.caseId ?? parsed.companyId ?? parsed.boardId ?? parsed.snippetId ?? parsed.planId ?? parsed.guideId ?? parsed.patternView ?? parsed.codebaseTask ?? parsed.reactId ?? parsed.nodeId ?? parsed.reactNativeId ?? parsed.skillTestId
-  return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}`
+  return `#${parsed.route}${sub ? `/${sub}` : ''}${parsed.planId && parsed.labId ? `/${parsed.labId}` : ''}${parsed.track && parsed.lessonId ? `/${parsed.lessonId}` : ''}`
 }

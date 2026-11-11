@@ -1,0 +1,13 @@
+{
+  "id": "typed-emitter",
+  "title": "Type a tiny event emitter",
+  "lesson": "ts-generics",
+  "summary": "Make an event emitter whose event names and payloads are checked by the compiler, then make it work.",
+  "prompt": "`createEmitter<Events>()` takes a map of event name to payload type, such as `{ login: { user: string }; tick: number }`, and returns `on`, `emit` and `listenerCount`.\n\n- `on(event, listener)` adds a listener and returns a function that removes **that** listener.\n- `emit(event, payload)` calls the current listeners for that event in the order they were added and returns how many it called.\n- `listenerCount(event)` returns how many listeners the event has.\n\nThe types are part of the answer: `on` and `emit` must only accept known event names, the payload must match the event, and listeners must receive the right payload type. A type error fails the task, so the starter's `string` and `any` must go. Don't use `any` or `as`.",
+  "hints": [
+    "Make the methods generic over the event name: `on<K extends keyof Events>(event: K, listener: (payload: Events[K]) => void)`.",
+    "Store listeners in a mapped type, `{ [K in keyof Events]?: Array<(payload: Events[K]) => void> }`, so each list keeps its payload type.",
+    "Copy the list before calling listeners, and remove with `indexOf` plus `splice` so only one registration goes."
+  ],
+  "minutes": 15
+}

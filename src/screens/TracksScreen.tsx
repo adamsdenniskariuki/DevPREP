@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { interviewTracks, languageTracks, lessons, tracks } from '../curriculum'
 import type { TrackInfo } from '../curriculum'
 import LessonList from '../components/LessonList'
@@ -14,15 +14,27 @@ function TrackSection({ app, item }: { app: AppModel; item: TrackInfo }) {
   const placed = progress.placements?.[item.id]
   return <section className="roadmap-track">
     <div className="section-heading"><div><h2>{item.title}</h2><p>{item.description}</p></div><span className="pill">{subset.filter(lesson => progress.records[lesson.id]).length} / {subset.length} complete</span></div>
+    {item.id === 'typescript' && <p className="track-skill-test">Preparing for a timed test? Follow the <a href="#plans/typescript-skill-test-1wk">one-week TypeScript plan</a>, then sit the <a href="#skilltest/typescript">timed TypeScript skill test</a> under exam conditions.</p>}
     {item.placement && !placing && <p className="placement-row"><button type="button" onClick={() => setPlacing(true)}>{placed ? 'Retake placement check' : 'Take placement check'}</button>{placed && <span className="muted"> Last score {placed.percent}% · {placed.known.length} Known</span>}</p>}
     {placing && <Suspense fallback={<p role="status" className="muted">Loading…</p>}><PlacementCheck track={item} place={answers => app.placeTrack(item.id, answers)} done={() => setPlacing(false)} /></Suspense>}
-    <LessonList items={subset} progress={progress} start={start} />
+    <LessonList items={subset} progress={progress} start={start} anchors />
   </section>
 }
 
 export default function TracksScreen({ app }: { app: AppModel }) {
   const { progress, selectedPath, roadmapScope, setRoadmapScope, track, setTrack, start, browseAll, heading } = app
   const shown = (list: TrackInfo[]) => list.filter(item => track === 'all' || item.id === track)
+  const { trackLesson } = app
+  useEffect(() => {
+    if (!trackLesson) return
+    // After the app focuses the page heading, bring the linked lesson into view and onto its button.
+    const timer = window.setTimeout(() => {
+      const row = document.getElementById(`lesson-${trackLesson}`)
+      row?.scrollIntoView({ block: 'center' })
+      row?.querySelector('button')?.focus({ preventScroll: true })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [trackLesson, track])
   return <>
 <div className="page-heading"><div><div className="eyebrow">CURRICULUM</div><h1 ref={heading} tabIndex={-1}>Tracks</h1><p>Every lesson is open. Follow the order or jump to what you need.</p></div></div>
 {selectedPath && <div className="filter-row" aria-label="Roadmap scope"><button aria-pressed={roadmapScope === 'path'} onClick={() => setRoadmapScope('path')}>Selected path</button><button aria-pressed={roadmapScope === 'all'} onClick={() => setRoadmapScope('all')}>All curriculum</button></div>}
