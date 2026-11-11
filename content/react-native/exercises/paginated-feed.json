@@ -1,0 +1,12 @@
+{
+  "id": "paginated-feed",
+  "lesson": "rn-state-data",
+  "title": "Paginated feed reducer",
+  "minutes": 20,
+  "summary": "Cursor pagination with refresh, guarded load-more and stale response handling.",
+  "prompt": "Write `feedReducer(state, action)` for an infinite list. State: `{ items, cursor, status, generation, hasMore }` where `status` is `'idle' | 'loading' | 'loadingMore' | 'refreshing' | 'error'`.\n\n- `refresh`: status `refreshing`, increment `generation`.\n- `loadMore`: only when status is `idle`, `hasMore` is true and `cursor` is not null; set `loadingMore`. Otherwise return the same state object.\n- `loaded { generation, items, nextCursor, replace }`: ignore it (same state) if `generation` differs from state's. Otherwise replace or append items (dropping items whose `id` is already present), set `cursor` to `nextCursor`, `hasMore` to `nextCursor !== null` and status `idle`.\n- `failed { generation }`: if current, set status `error`.\n\n`initialFeed` has `cursor: null` and `hasMore: true`; the first page is loaded with `refresh`. There is no React Native runtime here, so this is modelled as plain TypeScript.",
+  "hints": [
+    "Keep `generation` in the action so a slow page cannot overwrite a newer refresh.",
+    "Dedupe with a `Set` of existing ids."
+  ]
+}

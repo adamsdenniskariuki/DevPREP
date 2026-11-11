@@ -1,0 +1,45 @@
+{
+  "id": "rn-state-data",
+  "title": "State and data",
+  "minutes": 30,
+  "summary": "Local state, reducers, context and stores, and why server data belongs in a cache with loading, error and pagination states.",
+  "sections": [
+    {
+      "title": "Same React, same rules",
+      "body": "State works exactly as in React web: `useState` for local values, `useReducer` for state with several related transitions, context to pass values down without prop drilling, and an external store when many screens share state. Keep state as close as possible to where it is used, and derive values rather than storing them twice."
+    },
+    {
+      "title": "Reducers for screens",
+      "body": "A form or a feed has several fields that change together. A reducer keeps every transition in one pure function that you can unit test without rendering, which is valuable on mobile where UI tests are slow.",
+      "code": "type Action = { type: 'change'; field: 'email' | 'password'; value: string } | { type: 'blur'; field: 'email' | 'password' } | { type: 'submit' }\n\nfunction reducer(state: FormState, action: Action): FormState {\n  switch (action.type) {\n    case 'change': return { ...state, values: { ...state.values, [action.field]: action.value } }\n    case 'blur': return { ...state, touched: { ...state.touched, [action.field]: true } }\n    case 'submit': return { ...state, submitted: true }\n  }\n}"
+    },
+    {
+      "title": "Server state is different",
+      "body": "Data from an API is a cache of something you do not own. It needs loading and error states, refetching on focus or reconnect, deduplication and pagination. Data-fetching libraries handle this; if you write it yourself, model it explicitly: status, items, the next cursor, and flags for refreshing and loading more. Ignore results from stale requests so a slow response cannot overwrite newer data."
+    },
+    {
+      "title": "Practising it here",
+      "body": "Exercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercises write a form reducer with validation and a paginated feed reducer that guards against duplicate page loads."
+    }
+  ],
+  "pitfalls": [
+    "Storing derived values (like `isValid`) in state and letting them drift.",
+    "Putting all app state in one context, so every change re-renders every consumer.",
+    "Appending a page twice when `onEndReached` fires twice.",
+    "Mutating state objects in a reducer."
+  ],
+  "gotchas": [
+    {
+      "question": "A screen holds `items` and `count` in state. What is wrong?",
+      "answer": "`count` is derived from `items.length`. Storing it separately lets them disagree; compute it during render."
+    },
+    {
+      "question": "Why test a reducer instead of the screen?",
+      "answer": "A reducer is a pure function: given a state and an action it returns a new state. You can test every transition quickly without rendering or a device."
+    },
+    {
+      "question": "Page 2 arrives after the user pulled to refresh. What should happen?",
+      "answer": "Ignore it. The refresh started a new sequence, so results from the older request are stale. Track a request id or generation number."
+    }
+  ]
+}

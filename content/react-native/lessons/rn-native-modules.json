@@ -1,0 +1,45 @@
+{
+  "id": "rn-native-modules",
+  "title": "Native modules and events",
+  "minutes": 30,
+  "summary": "When to drop to native code, how a TurboModule spec looks, threading rules, and how native code sends events back to JavaScript.",
+  "sections": [
+    {
+      "title": "When to go native",
+      "body": "Write native code when JavaScript cannot reach a platform API (a new sensor, a system SDK feature), when work is too heavy for the JS thread (image processing, crypto), or when you need an existing native library. First check whether a maintained community module exists."
+    },
+    {
+      "title": "A typed spec",
+      "body": "A TurboModule starts with a TypeScript spec. Codegen turns it into native interfaces that you implement in Swift/Objective-C++ and Kotlin/Java. Methods returning `Promise` are async; plain return types are synchronous and block the JS thread while they run, so keep them tiny.",
+      "code": "import type { TurboModule } from 'react-native'\nimport { TurboModuleRegistry } from 'react-native'\n\nexport interface Spec extends TurboModule {\n  getBatteryLevel(): Promise<number>\n  isLowPowerMode(): boolean // synchronous: must be cheap\n  addListener(eventName: string): void\n  removeListeners(count: number): void\n}\n\nexport default TurboModuleRegistry.getEnforcing<Spec>('Battery')"
+    },
+    {
+      "title": "Events from native",
+      "body": "Native code pushes events to JS through an event emitter. JS subscribes with `emitter.addListener(name, fn)`, which returns a subscription; call `subscription.remove()` in your effect cleanup. Native modules usually start observing the OS (for example, battery notifications) when the first listener is added and stop when the count drops to zero. That is what the `addListener` and `removeListeners(count)` methods on the module are for.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise builds the JS side of an emitter that tells the native side when to start and stop observing."
+    },
+    {
+      "title": "Threading",
+      "body": "Native module methods run on a background queue by default. Anything that touches UI must hop to the main thread. Never block the main thread with network or disk work, and never call back into JS from a thread you do not own without using the provided invoker."
+    }
+  ],
+  "pitfalls": [
+    "Making expensive native methods synchronous, which freezes the JS thread.",
+    "Not removing event subscriptions on unmount, which leaks listeners and keeps the OS observer running.",
+    "Touching UI from a background thread in native code.",
+    "Passing large data across repeatedly instead of keeping it native and passing handles."
+  ],
+  "gotchas": [
+    {
+      "question": "A component subscribes to a native event in `useEffect` but never cleans up. What goes wrong?",
+      "answer": "Each mount adds another listener. Old listeners keep calling `setState` on unmounted components and the native side never stops observing. Return `() => subscription.remove()`."
+    },
+    {
+      "question": "When is a synchronous native method acceptable?",
+      "answer": "When it returns cached or trivial data in well under a millisecond, like a constant or a flag. Anything that does I/O should return a promise."
+    },
+    {
+      "question": "Why do native emitters track a listener count?",
+      "answer": "So the native side only observes the OS while JS is listening: start on the first listener, stop when the last is removed, saving battery and work."
+    }
+  ]
+}

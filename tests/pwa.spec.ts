@@ -876,6 +876,29 @@ test('a Node.js exercise and the Node.js skill test open offline, and the exerci
   await expect(offline.getByRole('button', { name: 'Start the test' })).toBeVisible()
 })
 
+test('a React Native exercise and the React Native skill test open offline, and the exercise runs offline after one online run', async ({ page, context }) => {
+  test.setTimeout(180_000)
+  const solution = await readFile('content/react-native/exercises/offline-queue.solution.ts', 'utf8')
+  const passed = /^All \d+ tests passed\.$/
+  await page.goto('/DevPREP/')
+  await ready(page)
+  await page.evaluate(code => localStorage.setItem('devprep.react-native.drafts.v1', JSON.stringify({ 'offline-queue': code })), solution)
+  await page.goto('/DevPREP/#react-native/offline-queue')
+  await page.getByRole('button', { name: 'Run tests' }).click()
+  await expect(page.locator('.run-summary')).toHaveText(passed, { timeout: 120_000 })
+
+  await context.setOffline(true)
+  await page.close()
+  const offline = await context.newPage()
+  await offline.goto('/DevPREP/#react-native')
+  await expect(offline.getByRole('heading', { level: 1 })).toHaveText('React Native')
+  await offline.goto('/DevPREP/#react-native/offline-queue')
+  await offline.getByRole('button', { name: 'Run tests' }).click()
+  await expect(offline.locator('.run-summary')).toHaveText(passed, { timeout: 60_000 })
+  await offline.goto('/DevPREP/#skilltest/react-native')
+  await expect(offline.getByRole('button', { name: 'Start the test' })).toBeVisible()
+})
+
 test('SQL labs run offline after Postgres\'s first online load', async ({ page, context }) => {
   test.setTimeout(240_000)
   const track = JSON.parse(await readFile('content/sql/track.json', 'utf8'))

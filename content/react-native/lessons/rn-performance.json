@@ -1,0 +1,45 @@
+{
+  "id": "rn-performance",
+  "title": "Performance",
+  "minutes": 35,
+  "summary": "Finding jank on the JS and UI threads, avoiding wasted renders with memo and stable props, list tuning, startup time and profiling.",
+  "sections": [
+    {
+      "title": "Measure first",
+      "body": "Turn on the performance monitor to see JS and UI frame rates. A drop in JS FPS means your React code or logic is busy; a drop in UI FPS means native rendering or layout is heavy. Profile in a release build: development builds run extra checks and are much slower. Use the React profiler to see which components render and why."
+    },
+    {
+      "title": "Wasted renders",
+      "body": "Each render of a list row costs JS time. `React.memo` skips a render when props are shallowly equal, but only if the props really are equal: a new inline object, array or arrow function on every parent render defeats it. Keep callbacks stable with `useCallback`, derived data stable with `useMemo`, and pass primitives where you can. With the React Compiler enabled, much of this memoisation is automatic.",
+      "code": "const Row = memo(function Row({ item, onPress }: RowProps) {\n  return <Pressable onPress={() => onPress(item.id)}><Text>{item.title}</Text></Pressable>\n})\n\nconst onPress = useCallback((id: string) => select(id), [select])\nconst renderItem = useCallback(({ item }: { item: Item }) => <Row item={item} onPress={onPress} />, [onPress])"
+    },
+    {
+      "title": "Lists, images and startup",
+      "body": "- Give `FlatList` a stable `renderItem`, `keyExtractor` and `getItemLayout` when heights are fixed.\n- Keep rows light; avoid heavy work in `renderItem`.\n- Resize images to their display size and cache them.\n- Use Hermes, lazy-load screens and defer non-critical work until after the first frame (`InteractionManager.runAfterInteractions` or a timeout).\n- Remove `console.log` in release builds: logging crosses to native code and is slow."
+    },
+    {
+      "title": "Practising it here",
+      "body": "Exercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise implements the shallow comparison `React.memo` uses and a memoised selector."
+    }
+  ],
+  "pitfalls": [
+    "Profiling in a development build.",
+    "Wrapping everything in `memo` while still passing new inline objects as props.",
+    "Doing heavy synchronous work in a press handler before giving feedback.",
+    "Shipping large, unresized images."
+  ],
+  "gotchas": [
+    {
+      "question": "A memoised row still re-renders every time. The parent passes `style={{ margin: 4 }}`. Why?",
+      "answer": "The inline object is new on every render, so the shallow comparison sees a changed prop. Hoist it into `StyleSheet.create` or a constant."
+    },
+    {
+      "question": "JS FPS is 60 but UI FPS drops during a scroll. Where do you look?",
+      "answer": "Native rendering: overdraw, large images, complex shadows or too many views. The JS thread is not the bottleneck."
+    },
+    {
+      "question": "Is `shallowEqual({ a: [1] }, { a: [1] })` true?",
+      "answer": "No. The arrays are different objects, so the values compare unequal by reference, even with the same contents."
+    }
+  ]
+}

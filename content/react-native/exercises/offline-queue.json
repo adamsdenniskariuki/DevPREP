@@ -1,0 +1,13 @@
+{
+  "id": "offline-queue",
+  "lesson": "rn-networking-offline",
+  "title": "Offline mutation queue",
+  "minutes": 25,
+  "summary": "Queue writes while offline and flush them in order with retry backoff.",
+  "prompt": "Write `createOfflineQueue({ send, maxAttempts, baseDelay })`. `enqueue(mutation)` adds `{ id, ...}` mutations (each has a unique `id`) and ignores an id already queued. `flush(now)` is async: it sends queued mutations **one at a time, in order**, with `await send(mutation)`. A successful send removes the item. On failure, increment its `attempts`, set `nextAttemptAt = now + baseDelay * 2 ** (attempts - 1)` and stop the flush (later items wait). If attempts reach `maxAttempts`, move it to `failed` instead and continue with the next item. Skip the flush entirely (send nothing) if the head's `nextAttemptAt` is after `now`, or if `online` is false. A flush started while another is running returns the running flush's promise. Expose `setOnline(value)`, `pending()` (ids in order), `failed()` (ids) and `attempts(id)`. There is no React Native runtime here, so this is modelled as plain TypeScript.",
+  "hints": [
+    "Keep an array of `{ mutation, attempts, nextAttemptAt }` entries.",
+    "Store the in-flight flush promise and clear it in `finally`.",
+    "Use a `while` loop over the head of the queue."
+  ]
+}

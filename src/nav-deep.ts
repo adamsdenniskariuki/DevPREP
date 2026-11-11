@@ -6,6 +6,7 @@ import { readPlans, type PlansState } from './study-plans'
 import { readCodebaseProgress, type CodebaseProgress } from './codebase'
 import { readReactProgress, type ReactProgress } from './react-module'
 import { readNodeProgress, type NodeProgress } from './node-module'
+import { readReactNativeProgress, type ReactNativeProgress } from './react-native-module'
 import { readSkillTests, type SkillTestsState } from './skill-tests'
 
 /* Loaded with the nav index so the deep levels of the tree stay out of the main chunk. */
@@ -26,7 +27,7 @@ const leaf = (route: string, done: (id: string) => boolean) => ([id, title]: rea
   ({ id: `${route}/${id}`, label: title, href: `#${route}/${id}`, done: done(id) })
 
 /** The children and counts of every section whose items come from the nav index, keyed by section id. */
-export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans(), codebaseState: CodebaseProgress = readCodebaseProgress(), reactState: ReactProgress = readReactProgress(), skillState: SkillTestsState = readSkillTests(), nodeState: NodeProgress = readNodeProgress()): DeepSections {
+export function deepSections(progress: NavProgress, nav: NavIndex, planState: PlansState = readPlans(), codebaseState: CodebaseProgress = readCodebaseProgress(), reactState: ReactProgress = readReactProgress(), skillState: SkillTestsState = readSkillTests(), nodeState: NodeProgress = readNodeProgress(), reactNativeState: ReactNativeProgress = readReactNativeProgress()): DeepSections {
   const tracks = nav.tracks.map(([id, title, lessonIds]): NavNode => {
     const done = lessonIds.filter(lesson => progress.records[lesson]).length
     return { id: `tracks/${id}`, label: title, href: `#tracks/${id}`, count: { done, total: lessonIds.length }, done: lessonIds.length > 0 && done === lessonIds.length }
@@ -80,6 +81,12 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
     { id: 'node:lessons', label: 'Lessons', children: nodeLessons },
     { id: 'node:exercises', label: 'Exercises', count: tally(nodeExercises), children: nodeExercises },
   ]
+  const reactNativeLessons = (nav.reactNative ?? []).filter(([, , kind]) => kind === 'lesson').map(leaf('react-native', () => false)).map(({ done: _, ...node }) => node)
+  const reactNativeExercises = (nav.reactNative ?? []).filter(([, , kind]) => kind === 'exercise').map(leaf('react-native', id => !!reactNativeState[id]?.completed))
+  const reactNative: NavNode[] = [
+    { id: 'react-native:lessons', label: 'Lessons', children: reactNativeLessons },
+    { id: 'react-native:exercises', label: 'Exercises', count: tally(reactNativeExercises), children: reactNativeExercises },
+  ]
   const skillTests = (nav.skillTests ?? []).map(leaf('skilltest', id => !!skillState[id]?.length))
 
   return {
@@ -94,6 +101,7 @@ export function deepSections(progress: NavProgress, nav: NavIndex, planState: Pl
     codebase: { children: codebaseTasks, count: tally(codebaseTasks) },
     react: { children: react, count: tally(reactExercises) },
     node: { children: node, count: tally(nodeExercises) },
+    'react-native': { children: reactNative, count: tally(reactNativeExercises) },
     skilltest: { children: skillTests, count: tally(skillTests) },
     plans: { children: plans, count: plans.reduce((sum, plan) => ({ done: sum.done + plan.count!.done, total: sum.total + plan.count!.total }), { done: 0, total: 0 }) },
   }

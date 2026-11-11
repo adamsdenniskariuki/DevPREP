@@ -196,7 +196,7 @@ export const FLASHCARDS_OUTPUT = 'src/generated/flashcards.json'
 export const FLASHCARD_INDEX_OUTPUT = 'src/generated/flashcard-index.json'
 
 /** Decks that are not curriculum tracks, shown after the track decks. Same as EXTRA_DECK_IDS in src/content-schema.ts. */
-export const EXTRA_DECKS = ['react', 'node']
+export const EXTRA_DECKS = ['react', 'node', 'react-native']
 
 export function buildFlashcards(root = 'content') {
   const dir = join(root, 'flashcards')
@@ -239,6 +239,7 @@ export function buildNavIndex(root = 'content') {
     codebase: buildCodebase(root).repos.map(repo => [repo.id, repo.title, repo.lang, repo.tasks.map(task => [task.id, task.title, task.kind])]),
     react: Object.entries(buildReact(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
     node: Object.entries(buildNode(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
+    reactNative: Object.entries(buildReactNative(root)).flatMap(([kind, items]) => items.map(item => [item.id, item.title, kind === 'lessons' ? 'lesson' : 'exercise'])),
     skillTests: buildSkillTests(root).map(test => [test.id, test.title]),
     decks: decks.map(deck => [deck.track, deck.title, deck.cards.length]),
     antipatterns: guides.guides.flatMap(entry => (entry.antipatterns ?? []).map(item => [entry.id, item.title])),
@@ -251,7 +252,7 @@ export const PLAN_IDS_OUTPUT = 'src/generated/plan-ids.json'
 /** Interview languages a plan may offer. Must match PLAN_LANGUAGES in src/study-plans.ts (checked by a test). */
 export const PLAN_LANGUAGES = ['python', 'typescript']
 /** Section pages a plan item may link to without an id. Every href is also checked against the router in a test. */
-export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase', '#react', '#node', '#skilltest']
+export const PLAN_PAGES = ['#plans', '#mock', '#stories', '#playground', '#cards', '#board', '#code', '#sql', '#design', '#guide', '#patterns', '#tracks', '#practice', '#progress', '#plan', '#codebase', '#react', '#node', '#react-native', '#skilltest']
 
 /**
  * Study plans, in hub order. Every link must point at content that exists, so the build fails on a broken link.
@@ -275,6 +276,7 @@ export function buildPlans(root = 'content') {
     codebase: new Set(buildCodebase(root).repos.flatMap(repo => [repo.id, ...repo.tasks.map(task => `${repo.id}/${task.id}`)])),
         react: new Set(Object.values(buildReact(root)).flat().map(item => item.id)),
         node: new Set(Object.values(buildNode(root)).flat().map(item => item.id)),
+        'react-native': new Set(Object.values(buildReactNative(root)).flat().map(item => item.id)),
         skilltest: new Set(buildSkillTests(root).map(test => test.id)),
   }
   const lessons = new Set(buildCurriculum(root).lessons.map(lesson => lesson.id))
@@ -585,7 +587,7 @@ export function validateChangelog({ releases } = {}) {
     for (const item of release.highlights) {
       if (Object.keys(item ?? {}).sort().join(',') !== 'route,text') fail(`${at} highlights need exactly text and route`)
       if (typeof item.text !== 'string' || !item.text.trim() || item.text.length > 200) fail(`${at} highlight text must be 1–200 characters`)
-      if (typeof item.route !== 'string' || !/^#[a-z]+(\/[a-z0-9-]+)?$/.test(item.route)) fail(`${at} highlight route must be an app hash such as #playground`)
+      if (typeof item.route !== 'string' || !/^#[a-z]+(-[a-z]+)*(\/[a-z0-9-]+)?$/.test(item.route)) fail(`${at} highlight route must be an app hash such as #playground`)
     }
     if (!Array.isArray(release.notes) || release.notes.some(note => typeof note !== 'string' || !note.trim())) fail(`${at} notes must be an array of non-empty strings`)
     const next = releases[index + 1]
@@ -621,6 +623,22 @@ export const NODE_IDS_OUTPUT = 'src/generated/node-ids.json'
  */
 export function buildNode(root = 'content') {
   return buildLearnModule(root, 'node', 'ts', (starter, solution, fail, tests) => {
+    if (!/\bexport\b/.test(starter) || !/\bexport\b/.test(solution)) fail('starter and solution must export what the tests import')
+    if (!/export (async )?function test/.test(tests)) fail('tests must export at least one test function')
+  })
+}
+
+export const REACT_NATIVE_OUTPUT = 'src/generated/react-native.json'
+/** Lesson and exercise ids, so routes, plans and backups can check them without loading the module. */
+export const REACT_NATIVE_IDS_OUTPUT = 'src/generated/react-native-ids.json'
+
+/**
+ * The React Native module for #react-native: lessons in the same shape as React's and runnable TypeScript exercises
+ * that model app logic (navigation, lists, storage, offline sync) as plain functions and reducers, because there is
+ * no React Native runtime in the browser. Checked in src/react-native-exercises.test.ts.
+ */
+export function buildReactNative(root = 'content') {
+  return buildLearnModule(root, 'react-native', 'ts', (starter, solution, fail, tests) => {
     if (!/\bexport\b/.test(starter) || !/\bexport\b/.test(solution)) fail('starter and solution must export what the tests import')
     if (!/export (async )?function test/.test(tests)) fail('tests must export at least one test function')
   })
@@ -694,9 +712,11 @@ const SKILL_TEST_KEYS = 'id,minutes,pick,questions,summary,tasks,title,topics'
 const skillTestModules = root => {
   const react = buildReact(root)
   const node = buildNode(root)
+  const reactNative = buildReactNative(root)
   return {
     react: { exercises: new Set(react.exercises.map(item => item.id)), reviews: new Set(react.lessons.map(item => `#react/${item.id}`)) },
     node: { exercises: new Set(node.exercises.map(item => item.id)), reviews: new Set(node.lessons.map(item => `#node/${item.id}`)) },
+    'react-native': { exercises: new Set(reactNative.exercises.map(item => item.id)), reviews: new Set(reactNative.lessons.map(item => `#react-native/${item.id}`)) },
   }
 }
 
@@ -802,6 +822,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const node = buildNode()
   writeIfChanged(NODE_OUTPUT, node)
   writeIfChanged(NODE_IDS_OUTPUT, { lessons: node.lessons.map(item => item.id), exercises: node.exercises.map(item => item.id) })
+  const reactNative = buildReactNative()
+  writeIfChanged(REACT_NATIVE_OUTPUT, reactNative)
+  writeIfChanged(REACT_NATIVE_IDS_OUTPUT, { lessons: reactNative.lessons.map(item => item.id), exercises: reactNative.exercises.map(item => item.id) })
   const skillTests = buildSkillTests()
   writeIfChanged(SKILL_TESTS_OUTPUT, skillTests)
   writeIfChanged(SKILL_TEST_IDS_OUTPUT, skillTests.map(test => ({ id: test.id, title: test.title, questions: test.questions.map(item => item.id), tasks: test.tasks.map(item => item.id) })))

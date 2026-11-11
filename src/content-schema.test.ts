@@ -13,7 +13,7 @@ const BUILD_TIMEOUT_MS = 30_000
 describe('content schema', () => {
   it('has a directory for every track and no stray directories', () => {
     const dirs = readdirSync(root, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
-    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase', 'react', 'skill-tests', 'node'].sort())
+    expect(dirs).toEqual([...TRACK_IDS, 'problems', 'cases', 'flashcards', 'field-guide', 'sql-problems', 'patterns', 'companies', 'plans', 'math', 'codebase', 'react', 'skill-tests', 'node', 'react-native'].sort())
   })
 
   for (const track of TRACK_IDS) {

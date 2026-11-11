@@ -34,6 +34,7 @@ import planIds from './generated/plan-ids.json' with { type: 'json' }
 import codebaseIds from './generated/codebase-ids.json' with { type: 'json' }
 import reactIds from './generated/react-ids.json' with { type: 'json' }
 import nodeIds from './generated/node-ids.json' with { type: 'json' }
+import reactNativeIds from './generated/react-native-ids.json' with { type: 'json' }
 import skillTestIds from './generated/skill-test-ids.json' with { type: 'json' }
 import type { FullBackup } from './board-backup'
 import type { AppModel, Route } from './app-model'
@@ -70,6 +71,7 @@ const PlansScreen = lazy(() => import('./screens/PlansScreen'))
 const CodebaseScreen = lazy(() => import('./screens/CodebaseScreen'))
 const ReactScreen = lazy(() => import('./screens/ReactScreen'))
 const NodeScreen = lazy(() => import('./screens/NodeScreen'))
+const ReactNativeScreen = lazy(() => import('./screens/ReactNativeScreen'))
 const SkillTestScreen = lazy(() => import('./screens/SkillTestScreen'))
 const CommandPalette = lazy(() => import('./components/CommandPalette'))
 const MAC = /Mac|iP(hone|ad)/.test(navigator.platform)
@@ -78,7 +80,7 @@ const backupFlow = () => import('./backup-flow')
 const ImportDialog = lazy(backupFlow)
 const Recovery = lazy(() => backupFlow().then(flow => ({ default: flow.Recovery })))
 
-const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds), codebase: new Set(codebaseIds), react: new Set([...reactIds.lessons, ...reactIds.exercises]), node: new Set([...nodeIds.lessons, ...nodeIds.exercises]), skillTests: new Set(skillTestIds.map(test => test.id)) }
+const routeIds: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, plans: new Set(planIds), codebase: new Set(codebaseIds), react: new Set([...reactIds.lessons, ...reactIds.exercises]), node: new Set([...nodeIds.lessons, ...nodeIds.exercises]), reactNative: new Set([...reactNativeIds.lessons, ...reactNativeIds.exercises]), skillTests: new Set(skillTestIds.map(test => test.id)) }
 const parseHash = () => parseRoute(window.location.hash, routeIds)
 
 function tourSeen() {
@@ -107,6 +109,7 @@ export default function App() {
   const [codebaseTask, setCodebaseTask] = useState(() => parseHash().codebaseTask)
   const [reactId, setReactId] = useState(() => parseHash().reactId)
   const [nodeId, setNodeId] = useState(() => parseHash().nodeId)
+  const [reactNativeId, setReactNativeId] = useState(() => parseHash().reactNativeId)
   const [skillTestId, setSkillTestId] = useState(() => parseHash().skillTestId)
   const [includeBoards, setIncludeBoards] = useState(true)
   const [roadmapScope, setRoadmapScope] = useState<'path' | 'all'>(progress.selectedPath ? 'path' : 'all')
@@ -170,6 +173,7 @@ export default function App() {
       setCodebaseTask(parsed.codebaseTask)
       setReactId(parsed.reactId)
       setNodeId(parsed.nodeId)
+      setReactNativeId(parsed.reactNativeId)
       setSkillTestId(parsed.skillTestId)
       if (parsed.track) { setRoadmapScope('all'); setTrack(parsed.track) }
     }
@@ -178,7 +182,7 @@ export default function App() {
     window.addEventListener('hashchange', apply)
     return () => { window.removeEventListener('hashchange', apply); window.clearInterval(timer) }
   }, [])
-  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId, labId, codebaseTask, reactId, nodeId, skillTestId])
+  useEffect(() => { heading.current?.focus() }, [route, problemId, caseId, guideId, sqlId, patternView, boardId, companyId, snippetId, planId, labId, codebaseTask, reactId, nodeId, reactNativeId, skillTestId])
 
   const today = localDay(clock)
   const due = dueLessons(progress, clock)
@@ -211,6 +215,7 @@ export default function App() {
     setCodebaseTask(undefined)
     setReactId(undefined)
     setNodeId(undefined)
+    setReactNativeId(undefined)
     setSkillTestId(undefined)
   }
 
@@ -477,6 +482,7 @@ export default function App() {
             {route === 'codebase' && <Suspense fallback={<p role="status">Loading codebase practice…</p>}><CodebaseScreen app={app} taskKey={codebaseTask} /></Suspense>}
             {route === 'react' && <Suspense fallback={<p role="status">Loading the React module…</p>}><ReactScreen app={app} itemId={reactId} /></Suspense>}
             {route === 'node' && <Suspense fallback={<p role="status">Loading the Node.js module…</p>}><NodeScreen app={app} itemId={nodeId} /></Suspense>}
+            {route === 'react-native' && <Suspense fallback={<p role="status">Loading the React Native module…</p>}><ReactNativeScreen app={app} itemId={reactNativeId} /></Suspense>}
             {route === 'skilltest' && <Suspense fallback={<p role="status">Loading the skill tests…</p>}><SkillTestScreen app={app} testId={skillTestId} /></Suspense>}
       {route === 'map' && <Suspense fallback={<p role="status">Loading the site map…</p>}><MapScreen app={app} /></Suspense>}
             {route === 'changelog' && <Suspense fallback={<p role="status">Loading the changelog…</p>}><ChangelogScreen app={app} /></Suspense>}

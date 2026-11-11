@@ -1,0 +1,46 @@
+{
+  "id": "rn-lists",
+  "title": "Lists and virtualisation",
+  "minutes": 30,
+  "summary": "FlatList and SectionList: keys, windowed rendering, getItemLayout, pagination with onEndReached and the props that keep long lists smooth.",
+  "sections": [
+    {
+      "title": "Why not map in a ScrollView?",
+      "body": "`ScrollView` renders every child up front. For 1,000 rows that means 1,000 sets of native views, slow startup and high memory. `FlatList` virtualises: it renders the rows near the viewport, measures them and replaces far-off rows with blank space."
+    },
+    {
+      "title": "FlatList basics",
+      "body": "Pass `data`, `renderItem` and `keyExtractor`. Keys must be stable and unique, just like keys in `map`. If items have an `id`, return it as a string.",
+      "code": "<FlatList\n  data={orders}\n  keyExtractor={order => order.id}\n  renderItem={({ item }) => <OrderRow order={item} />}\n  onEndReached={loadMore}\n  onEndReachedThreshold={0.5}\n  ListEmptyComponent={<Text>No orders yet</Text>}\n  refreshing={refreshing}\n  onRefresh={refresh}\n/>"
+    },
+    {
+      "title": "The rendering window",
+      "body": "`initialNumToRender` sets the first batch. `windowSize` is measured in viewport heights: the default `21` keeps 10 screens above and 10 below the visible one. `maxToRenderPerBatch` limits work per frame. Smaller windows save memory but show blank areas on fast scrolls.\n\nIf every row has a known, fixed height, give `getItemLayout`. The list can then compute any row's offset as `index * height` without measuring, which makes `scrollToIndex` reliable and skips layout work.",
+      "code": "const ROW = 72\n<FlatList getItemLayout={(_, index) => ({ length: ROW, offset: ROW * index, index })} />"
+    },
+    {
+      "title": "Sections, pagination and re-rendering",
+      "body": "`SectionList` takes `sections: [{ title, data }]` and adds `renderSectionHeader` and sticky headers.\n\n`onEndReached` fires when the user scrolls within `onEndReachedThreshold` (in visible lengths) of the end. It can fire more than once, so guard against loading the same page twice.\n\n`FlatList` is a `PureComponent`: it only re-renders rows when `data` changes identity. If a row depends on other state, pass it in `extraData`.\n\nExercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store."
+    }
+  ],
+  "pitfalls": [
+    "Using the array index as the key when rows can be inserted or removed.",
+    "Calling `loadMore` from `onEndReached` without a loading guard, fetching a page twice.",
+    "Mutating the `data` array in place, so the list never re-renders.",
+    "Nesting a vertical `FlatList` inside a vertical `ScrollView`, which disables virtualisation."
+  ],
+  "gotchas": [
+    {
+      "question": "Rows are 50 dp tall and the list is scrolled to offset 1,000. With `getItemLayout`, which index is at the top of the viewport?",
+      "answer": "Index 20, because offset = index × 50."
+    },
+    {
+      "question": "A row shows a selected state from `selectedId` in the parent, but tapping does not update it. Why?",
+      "answer": "`FlatList` only re-renders when its props change shallowly. `data` did not change, so pass `extraData={selectedId}`."
+    },
+    {
+      "question": "What unit is `windowSize` in?",
+      "answer": "Viewport lengths, not items. `21` means the visible screen plus 10 above and 10 below."
+    }
+  ]
+}

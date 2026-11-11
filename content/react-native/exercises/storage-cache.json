@@ -1,0 +1,12 @@
+{
+  "id": "storage-cache",
+  "lesson": "rn-storage",
+  "title": "Versioned storage with a cache",
+  "minutes": 20,
+  "summary": "Read and write JSON settings through injected async storage with migrations and an in-memory cache.",
+  "prompt": "Write `createSettingsStore(storage, { key, version, defaults, migrations })`. `storage` has async `getItem(key)` (string or null) and `setItem(key, value)`. Data is stored as JSON `{ version, data }`.\n\n- `load()`: read once and cache; later calls return the cached value without calling storage. Missing or unparsable data gives `defaults`. If the stored version is lower, run `migrations[v]` for each `v` from the stored version up to `version - 1` in order (each turns version v data into v+1), then merge over `defaults` and save the migrated result. A stored version higher than `version` gives `defaults`.\n- `update(patch)`: load if needed, merge the patch, cache and save it, and return the new value.\n\nConcurrent `load()` calls must share one storage read. There is no React Native runtime here, so this is modelled as plain TypeScript.",
+  "hints": [
+    "Cache the promise, not just the value, so concurrent loads share a read.",
+    "`for (let v = stored; v < version; v++) data = migrations[v](data)`."
+  ]
+}

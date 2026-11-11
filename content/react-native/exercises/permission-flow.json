@@ -1,0 +1,12 @@
+{
+  "id": "permission-flow",
+  "lesson": "rn-app-lifecycle",
+  "title": "Runtime permission flow",
+  "minutes": 15,
+  "summary": "Decide the next step when a feature needs a runtime permission.",
+  "prompt": "Write `nextPermissionStep(input)` that returns one of `'proceed'`, `'request'`, `'showRationale'`, `'openSettings'` or `'unavailable'`. Input: `{ status, platform, canAskAgain, rationaleShown }` where `status` is `'granted' | 'limited' | 'denied' | 'blocked' | 'undetermined' | 'unavailable'`.\n\n- `granted` and `limited` proceed.\n- `unavailable` (no hardware or restricted by policy) gives `unavailable`.\n- `blocked`, or `denied` with `canAskAgain` false, gives `openSettings`.\n- `undetermined` gives `request`.\n- `denied` with `canAskAgain` true: on Android show a rationale first if it has not been shown (`showRationale`), then `request`; on iOS a denial is final, so `openSettings`.\n\nThen write `runPermissionFlow(api, platform)` that loops: read `await api.check()`, compute the step, call `api.request()`, `api.showRationale()` or `api.openSettings()` as needed (marking the rationale as shown), and return the final step name when it is `proceed`, `openSettings` or `unavailable`. Stop after at most 5 steps and return `openSettings`. There is no React Native runtime here, so this is modelled as plain TypeScript.",
+  "hints": [
+    "Handle the terminal states first, then the asking states.",
+    "In the loop, `check()` again after `request()` because the user may have answered."
+  ]
+}

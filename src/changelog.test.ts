@@ -48,6 +48,8 @@ describe('changelog content', () => {
     expect(() => validateChangelog({ releases: [{ ...release('1.0.0'), highlights: [{ text: 'a', route: 'home' }, { text: 'b', route: '#map' }] }] })).toThrow(/app hash/)
     expect(() => validateChangelog({ releases: [release('1.0.0'), release('1.1.0')] })).toThrow(/newest first/)
     expect(() => validateChangelog({ releases: [release('1.1.0', '2026-01-01'), release('1.0.0', '2026-02-01')] })).toThrow(/dated before/)
+    expect(() => validateChangelog({ releases: [{ ...release('1.0.0'), highlights: [{ text: 'a', route: '#react-' }, { text: 'b', route: '#map' }] }] })).toThrow(/app hash/)
+    expect(validateChangelog({ releases: [{ ...release('1.0.0'), highlights: [{ text: 'a', route: '#react-native' }, { text: 'b', route: '#skilltest/react-native' }] }] })).toHaveLength(1)
     expect(validateChangelog({ releases: [release('1.1.0'), release('1.0.0')] })).toHaveLength(2)
   })
 })

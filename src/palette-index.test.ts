@@ -14,6 +14,7 @@ import { caseIds } from './cases'
 import type { NavIndex } from './nav-model'
 import { reactItemIds } from './react-module'
 import { nodeItemIds } from './node-module'
+import { reactNativeItemIds } from './react-native-module'
 import { skillTestIdSet } from './skill-tests'
 import { buildPaletteIndex, KIND_LABELS, PAGES, scoreEntry, searchPalette, snippetEntries, SUGGESTED } from './palette-index'
 import { ROUTES, parseHash } from './routes'
@@ -21,11 +22,11 @@ import type { RouteIds } from './routes'
 
 const index = navIndex as unknown as NavIndex
 const entries = buildPaletteIndex(index, lessons)
-const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, react: reactItemIds, node: nodeItemIds, skillTests: skillTestIdSet }
+const ids: RouteIds = { tracks: tracks.map(item => item.id), problems: problemIds, sql: sqlProblemIds, cases: caseIds, guides: guideIds, patterns: patternIds, companies: companyIds, react: reactItemIds, node: nodeItemIds, reactNative: reactNativeItemIds, skillTests: skillTestIdSet }
 const ofKind = (kind: string) => entries.filter(entry => entry.kind === kind)
 
 describe('buildPaletteIndex', () => {
-  it('covers pages, tracks, lessons, patterns, guides, anti-patterns, problems, SQL, decks, cases, companies, React, Node.js and skill tests', () => {
+  it('covers pages, tracks, lessons, patterns, guides, anti-patterns, problems, SQL, decks, cases, companies, React, Node.js, React Native and skill tests', () => {
     expect(ofKind('track').map(entry => entry.href)).toEqual(tracks.map(track => `#tracks/${track.id}`))
     expect(ofKind('lesson')).toHaveLength(lessons.length)
     expect(ofKind('pattern').map(entry => entry.href)).toEqual(patternIndex.map(item => `#patterns/${item.id}`))
@@ -39,6 +40,7 @@ describe('buildPaletteIndex', () => {
     expect(ofKind('company').map(entry => entry.href)).toEqual(companyIds.flatMap(id => [`#company/${id}`, `#mock/${id}`]))
     expect(ofKind('react').map(entry => entry.href).sort()).toEqual([...reactItemIds].map(id => `#react/${id}`).sort())
     expect(ofKind('node').map(entry => entry.href).sort()).toEqual([...nodeItemIds].map(id => `#node/${id}`).sort())
+    expect(ofKind('react-native').map(entry => entry.href).sort()).toEqual([...reactNativeItemIds].map(id => `#react-native/${id}`).sort())
     expect(ofKind('skilltest').map(entry => entry.href)).toEqual([...skillTestIdSet].map(id => `#skilltest/${id}`))
     const sub = patternIndex.find(item => item.parent)!
     expect(entries.find(entry => entry.id === `pattern:${sub.id}`)!.detail).toBe(patternIndex.find(item => item.id === sub.parent)!.title)

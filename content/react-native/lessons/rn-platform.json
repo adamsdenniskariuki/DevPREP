@@ -1,0 +1,45 @@
+{
+  "id": "rn-platform",
+  "title": "Platform differences",
+  "minutes": 25,
+  "summary": "Platform.OS and Platform.select, platform-specific files, safe areas, the Android back button and the behaviours that differ between iOS and Android.",
+  "sections": [
+    {
+      "title": "Detecting the platform",
+      "body": "`Platform.OS` is `'ios'`, `'android'` (or `'web'` and others with out-of-tree platforms). `Platform.Version` is a number on Android (the API level) and a string on iOS. `Platform.select({ ios, android, native, default })` returns the value for the current platform: a specific key wins, then `native`, then `default`.",
+      "code": "const shadow = Platform.select({\n  ios: { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },\n  android: { elevation: 4 },\n  default: {},\n})"
+    },
+    {
+      "title": "Platform-specific files",
+      "body": "When code differs a lot, split the file. The bundler resolves `import Picker from './Picker'` to `Picker.ios.tsx` on iOS, `Picker.android.tsx` on Android, then `Picker.native.tsx`, then `Picker.tsx`. Keep the same exported API in every variant."
+    },
+    {
+      "title": "Real differences to plan for",
+      "body": "- Shadows: iOS uses `shadow*` props; Android uses `elevation`.\n- Safe areas: notches, rounded corners and home indicators need insets; use a safe area provider rather than hard-coded padding.\n- Back: Android has a system back button or gesture; handle it with a `BackHandler` listener when a screen needs to intercept it.\n- Keyboard: `KeyboardAvoidingView` usually needs `behavior=\"padding\"` on iOS and often nothing on Android, where the window resizes.\n- Permissions, notifications and file paths differ, so wrap them behind one module.\n- Fonts and default text rendering differ slightly, so test on both."
+    },
+    {
+      "title": "Practising it here",
+      "body": "Exercises here run as TypeScript in a browser sandbox with no React Native runtime, so they model this logic as plain functions and reducers. The same functions drop straight into a real app: call them from a component, a hook or a store. The exercise re-implements `Platform.select` and the bundler's file resolution order as pure functions."
+    }
+  ],
+  "pitfalls": [
+    "Assuming `Platform.Version` is the same type on both platforms.",
+    "Hard-coding status bar or notch heights instead of reading safe area insets.",
+    "Giving platform-specific files different exports, which only fails on one platform.",
+    "Testing on one platform only."
+  ],
+  "gotchas": [
+    {
+      "question": "On Android, what does `Platform.select({ ios: 1, native: 2, default: 3 })` return?",
+      "answer": "`2`. There is no `android` key, so `native` is next, before `default`."
+    },
+    {
+      "question": "You have `Button.native.tsx` and `Button.android.tsx`. Which does iOS use?",
+      "answer": "`Button.native.tsx`. iOS has no `.ios` file, so the resolver falls back to `.native` before the plain file."
+    },
+    {
+      "question": "Why does a shadow show on iOS but not Android?",
+      "answer": "Android ignores the `shadow*` style props (except on recent versions with limited support for `shadowColor`). Use `elevation` there."
+    }
+  ]
+}

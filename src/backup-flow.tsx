@@ -10,6 +10,7 @@ import { readSnippets, writeSnippets } from './playground'
 import { emptyProgress, serializeBackup, STORAGE_KEY } from './progress'
 import { readReactProgress, writeReactProgress } from './react-module'
 import { readNodeProgress, writeNodeProgress } from './node-module'
+import { readReactNativeProgress, writeReactNativeProgress } from './react-native-module'
 import { readSkillTests, writeSkillTests } from './skill-tests'
 import { readPlans, writePlans } from './study-plans'
 import type { Progress } from './progress'
@@ -17,7 +18,7 @@ import type { Progress } from './progress'
 const plural = (count: number) => `${count} ${count === 1 ? 'whiteboard' : 'whiteboards'}`
 const snippetPlural = (count: number) => `${count} Playground ${count === 1 ? 'snippet' : 'snippets'}`
 
-/** Loaded on demand so backups with whiteboards add nothing to the main bundle. Returns the file text and a notice. Playground snippets, study plan, codebase, React, Node.js and skill test progress always ride along. */
+/** Loaded on demand so backups with whiteboards add nothing to the main bundle. Returns the file text and a notice. Playground snippets, study plan, codebase, React, Node.js, React Native and skill test progress always ride along. */
 export async function backupText(progress: Progress, includeBoards: boolean): Promise<{ text: string; notice: string }> {
   const boards = includeBoards ? await listBoards() : []
   const snippets = readSnippets()
@@ -31,10 +32,12 @@ export async function backupText(progress: Progress, includeBoards: boolean): Pr
   const skillCount = Object.keys(skilltests).length
   const node = readNodeProgress()
   const nodeCount = Object.keys(node).length
-  // With no boards, snippets, plan, codebase, React, Node.js or skill test progress the file keeps the original format, so restoring it never wipes them on another device.
-  if (!boards.length && !snippets.length && !planCount && !codebaseCount && !reactCount && !skillCount && !nodeCount) return { text: serializeBackup(progress), notice: 'Backup downloaded. It includes your written answers.' }
-  const text = serializeFullBackup(progress, boards.length ? boards : undefined,   snippets, plans, codebase, { react, skilltests, node })
-  const extras = [...boards.length ? [plural(boards.length)] : [], ...snippets.length ? [snippetPlural(snippets.length)] : [], ...planCount ? ['study plan progress'] : [], ...codebaseCount ? ['codebase practice progress'] : [], ...reactCount ? ['React exercise progress'] : [], ...skillCount ? ['skill test results'] : [], ...nodeCount ? ['Node.js exercise progress'] : []].join(' and ')
+  const reactNative = readReactNativeProgress()
+  const reactNativeCount = Object.keys(reactNative).length
+  // With no boards, snippets, plan, codebase, React, Node.js, React Native or skill test progress the file keeps the original format, so restoring it never wipes them on another device.
+  if (!boards.length && !snippets.length && !planCount && !codebaseCount && !reactCount && !skillCount && !nodeCount && !reactNativeCount) return { text: serializeBackup(progress), notice: 'Backup downloaded. It includes your written answers.' }
+  const text = serializeFullBackup(progress, boards.length ? boards : undefined,   snippets, plans, codebase, { react, skilltests, node, reactNative })
+  const extras = [...boards.length ? [plural(boards.length)] : [], ...snippets.length ? [snippetPlural(snippets.length)] : [], ...planCount ? ['study plan progress'] : [], ...codebaseCount ? ['codebase practice progress'] : [], ...reactCount ? ['React exercise progress'] : [], ...skillCount ? ['skill test results'] : [], ...nodeCount ? ['Node.js exercise progress'] : [], ...reactNativeCount ? ['React Native exercise progress'] : []].join(' and ')
   return { text, notice: `Backup downloaded with ${extras} (${formatBytes(new TextEncoder().encode(text).length)}). It includes your written answers.` }
 }
 
@@ -72,7 +75,7 @@ export function recoveryExport(today: string) {
 }
 
 export async function readBackup(file: File): Promise<FullBackup> {
-  if (file.size > MAX_FULL_BACKUP_BYTES) throw new Error(`Backup must be ${formatBytes(MAX_FULL_BACKUP_BYTES)} or smaller (1 MB of progress, 20 MB of whiteboards, 2 MB of Playground snippets, 500 KB of study plan progress, 50 KB of codebase practice progress, 20 KB of React exercise progress, 20 KB of Node.js exercise progress and 50 KB of skill test results).`)
+  if (file.size > MAX_FULL_BACKUP_BYTES) throw new Error(`Backup must be ${formatBytes(MAX_FULL_BACKUP_BYTES)} or smaller (1 MB of progress, 20 MB of whiteboards, 2 MB of Playground snippets, 500 KB of study plan progress, 50 KB of codebase practice progress, 20 KB of React exercise progress, 20 KB of Node.js exercise progress, 20 KB of React Native exercise progress and 50 KB of skill test results).`)
   return parseFullBackup(await file.text())
 }
 
@@ -85,11 +88,11 @@ interface ImportDialogProps {
   fail: (error: string) => void
 }
 
-/** Confirms a backup import. A backup with whiteboards, snippets, plan, codebase, React, Node.js or skill test progress replaces this device's; one without leaves them alone. */
+/** Confirms a backup import. A backup with whiteboards, snippets, plan, codebase, React, Node.js, React Native or skill test progress replaces this device's; one without leaves them alone. */
 export default function ImportDialog({ backup, cancel, replace, restored, fail }: ImportDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => { dialog.current?.showModal() }, [])
-  const { progress, boards, playground, plans, codebase, react, skilltests, node } = backup
+  const { progress, boards, playground, plans, codebase, react, skilltests, node, reactNative } = backup
   function confirm() {
     if (!replace(progress)) return
     if (playground && !writeSnippets(playground)) return fail('Progress was restored, but the Playground snippets were not: this browser would not save them.')
@@ -97,6 +100,7 @@ export default function ImportDialog({ backup, cancel, replace, restored, fail }
     if (codebase && !writeCodebaseProgress(codebase)) return fail('Progress was restored, but the codebase practice progress was not: this browser would not save it.')
     if (react && !writeReactProgress(react)) return fail('Progress was restored, but the React exercise progress was not: this browser would not save it.')
     if (node && !writeNodeProgress(node)) return fail('Progress was restored, but the Node.js exercise progress was not: this browser would not save it.')
+    if (reactNative && !writeReactNativeProgress(reactNative)) return fail('Progress was restored, but the React Native exercise progress was not: this browser would not save it.')
     if (skilltests && !writeSkillTests(skilltests)) return fail('Progress was restored, but the skill test results were not: this browser would not save them.')
     if (!boards) return restored('Backup restored. Your lessons, reviews, and unfinished session are ready.')
     replaceBoards(boards).then(
@@ -113,6 +117,7 @@ export default function ImportDialog({ backup, cancel, replace, restored, fail }
     <p>{codebase ? 'It also has codebase practice progress. It replaces the codebase progress on this device.' : 'It has no codebase practice progress. Codebase progress on this device is kept.'}</p>
     <p>{react ? 'It also has React exercise progress. It replaces the React progress on this device.' : 'It has no React exercise progress. React progress on this device is kept.'}</p>
     <p>{node ? 'It also has Node.js exercise progress. It replaces the Node.js progress on this device.' : 'It has no Node.js exercise progress. Node.js progress on this device is kept.'}</p>
+    <p>{reactNative ? 'It also has React Native exercise progress. It replaces the React Native progress on this device.' : 'It has no React Native exercise progress. React Native progress on this device is kept.'}</p>
     <p>{skilltests ? 'It also has skill test results. They replace the results on this device.' : 'It has no skill test results. Results on this device are kept.'}</p>
     <p>Export your current progress first if you want to keep both versions.</p>
     <div className="button-row"><button autoFocus onClick={cancel}>Cancel import</button><button className="primary" onClick={confirm}>Replace progress</button></div>

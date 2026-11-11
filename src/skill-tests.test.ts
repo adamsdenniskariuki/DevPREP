@@ -10,6 +10,9 @@ import {
   NODE_EXERCISE_IDS, nodeCompletedCount, parseNodeProgress, readNodeDraft, readNodeProgress, recordNodeRun, writeNodeDraft, writeNodeProgress,
 } from './node-module'
 import {
+  parseReactNativeProgress, REACT_NATIVE_EXERCISE_IDS, reactNativeCompletedCount, readReactNativeDraft, readReactNativeProgress, recordReactNativeRun, writeReactNativeDraft, writeReactNativeProgress,
+} from './react-native-module'
+import {
   MAX_RESULTS, newAttempt, parseSkillTests, pickQuestions, readAttempt, readSkillTests, recordResult, scoreAttempt, writeAttempt, writeSkillTests,
   type SkillTest,
 } from './skill-tests'
@@ -163,5 +166,40 @@ describe('Node.js progress and backups', () => {
     expect(bad({ node: { nope: { attempts: 1 } } })).toThrow('Invalid backup: unknown Node.js exercise nope.')
     expect(bad({ node: { [id]: { attempts: 1, completed: 'soon' } } })).toThrow('invalid completion date')
     expect(() => parseNodeProgress([])).toThrow('Invalid backup: Node.js progress must be an object.')
+  })
+})
+
+describe('React Native progress and backups', () => {
+  const [id] = REACT_NATIVE_EXERCISE_IDS
+  const rnState = { [id]: { attempts: 2, completed: '2026-11-13' } }
+
+  it('tracks React Native exercise runs and drafts', () => {
+    memoryStorage()
+    const passed = recordReactNativeRun(recordReactNativeRun(undefined, false, '2026-11-12'), true, '2026-11-13')
+    expect(passed).toEqual(rnState[id])
+    expect(writeReactNativeProgress(rnState)).toBe(true)
+    expect(readReactNativeProgress()).toEqual(rnState)
+    expect(reactNativeCompletedCount(readReactNativeProgress())).toBe(1)
+    writeReactNativeDraft(id, 'code')
+    expect(readReactNativeDraft(id)).toBe('code')
+    writeReactNativeDraft(id, undefined)
+    expect(readReactNativeDraft(id)).toBeUndefined()
+  })
+
+  it('omits empty React Native progress and round-trips it alongside Node.js', () => {
+    const progress = emptyProgress()
+    expect(serializeFullBackup(progress, undefined, [], {}, {}, { reactNative: {} })).toBe(serializeBackup(progress))
+    const nodeState = { [NODE_EXERCISE_IDS[0]]: { attempts: 1 } }
+    const text = serializeFullBackup(progress, undefined, [], {}, {}, { node: nodeState, reactNative: rnState })
+    expect(parseFullBackup(text)).toMatchObject({ node: nodeState, reactNative: rnState })
+    expect(parseFullBackup(serializeFullBackup(progress, undefined, [], {}, {}, { reactNative: rnState }))).toEqual({ progress, reactNative: rnState })
+  })
+
+  it('rejects bad React Native entries', () => {
+    const base = JSON.parse(serializeBackup(emptyProgress()))
+    const bad = (extra: object) => () => parseFullBackup(JSON.stringify({ ...base, ...extra }))
+    expect(bad({ reactNative: { nope: { attempts: 1 } } })).toThrow('Invalid backup: unknown React Native exercise nope.')
+    expect(bad({ reactNative: { [id]: { attempts: 1, completed: 'soon' } } })).toThrow('invalid completion date')
+    expect(() => parseReactNativeProgress([])).toThrow('Invalid backup: React Native progress must be an object.')
   })
 })

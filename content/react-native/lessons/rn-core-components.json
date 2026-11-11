@@ -1,0 +1,46 @@
+{
+  "id": "rn-core-components",
+  "title": "Core components",
+  "minutes": 25,
+  "summary": "How React Native renders real native views: View, Text, Image, TextInput, Pressable and ScrollView, and how they differ from DOM elements.",
+  "sections": [
+    {
+      "title": "React, but not the DOM",
+      "body": "React Native uses the same React: components, props, state, hooks and reconciliation all work as on the web. What changes is the host. Instead of `div` and `span`, you render host components such as `View` and `Text`, and the renderer turns them into real platform views (a `UIView` on iOS, an `android.view.View` on Android).\n\nThere is no HTML, no CSS cascade and no `document`. Anything you know about React itself carries over; anything that relied on the browser does not."
+    },
+    {
+      "title": "The everyday components",
+      "body": "- `View`: a layout container, like a `div`. It cannot hold raw text.\n- `Text`: the only component that renders strings. Nested `Text` inherits font styles from its parent `Text`.\n- `Image`: local (`require('./logo.png')`) or remote (`{ uri }`) images. Remote images need an explicit width and height.\n- `TextInput`: a text field, usually controlled with `value` and `onChangeText`.\n- `Pressable`: the modern touch wrapper with `onPress`, `onLongPress` and a `pressed` state for styling.\n- `ScrollView`: scrolls all of its children, which are all rendered at once.",
+      "code": "import { Image, Pressable, Text, TextInput, View } from 'react-native'\n\nexport function Profile({ name, onSave }: { name: string; onSave: (name: string) => void }) {\n  const [draft, setDraft] = useState(name)\n  return (\n    <View style={{ padding: 16, gap: 8 }}>\n      <Image source={{ uri: 'https://example.com/me.png' }} style={{ width: 64, height: 64 }} />\n      <TextInput value={draft} onChangeText={setDraft} accessibilityLabel=\"Name\" />\n      <Pressable onPress={() => onSave(draft)} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}>\n        <Text>Save</Text>\n      </Pressable>\n    </View>\n  )\n}"
+    },
+    {
+      "title": "Text rules",
+      "body": "Every string must sit inside `<Text>`. Rendering `{count}` or `{'hi'}` directly inside a `View` is an error (\"Text strings must be rendered within a <Text> component\"). A common trap is `{items.length && <List />}`: when the length is `0`, React renders the number `0` as a string outside `Text` and the app crashes. Use `items.length > 0 &&` instead.\n\nStyles like `color` and `fontSize` only inherit inside a `Text` tree, never from a `View`."
+    },
+    {
+      "title": "Touch and input",
+      "body": "`onPress` replaces `onClick`. `TextInput` gives you `onChangeText(text)` with the new string rather than an event, plus `onSubmitEditing`, `keyboardType`, `secureTextEntry` and `autoCapitalize`. Wrap forms in `KeyboardAvoidingView` (or adjust insets) so the keyboard does not cover the focused field."
+    }
+  ],
+  "pitfalls": [
+    "Rendering a raw string or number inside a `View`.",
+    "Using `&&` with a number that can be `0`.",
+    "Forgetting width and height on a remote `Image`, so it renders at zero size.",
+    "Using `ScrollView` for long, dynamic lists instead of a virtualised list."
+  ],
+  "gotchas": [
+    {
+      "question": "What happens with this code when `unread` is `0`?",
+      "code": "<View>{unread && <Badge count={unread} />}</View>",
+      "answer": "React renders `0`, a string, directly inside a `View`, which throws \"Text strings must be rendered within a <Text> component\". Use `unread > 0 && ...` or a ternary."
+    },
+    {
+      "question": "Does `color: 'red'` on a `View` make the `Text` inside it red?",
+      "answer": "No. React Native has no style cascade. Only `Text` passes text styles to nested `Text` children."
+    },
+    {
+      "question": "What does `onChangeText` receive?",
+      "answer": "The new text as a string. `onChange` receives a native event whose `nativeEvent.text` holds the same string."
+    }
+  ]
+}

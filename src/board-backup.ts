@@ -5,6 +5,7 @@ import { parseCodebaseProgress, type CodebaseProgress } from './codebase'
 import { cleanBoard } from './design-drafts'
 import { parseReactProgress, type ReactProgress } from './react-module'
 import { parseNodeProgress, type NodeProgress } from './node-module'
+import { parseReactNativeProgress, type ReactNativeProgress } from './react-native-module'
 import { parseSkillTests, type SkillTestsState } from './skill-tests'
 import { parsePractice } from './practice'
 import { problemIds } from './problems'
@@ -37,6 +38,8 @@ export interface FullBackup {
   skilltests?: SkillTestsState
   /** Present only when the backup carries Node.js exercise progress. It then replaces that progress on this device. */
   node?: NodeProgress
+  /** Present only when the backup carries React Native exercise progress. It then replaces that progress on this device. */
+  reactNative?: ReactNativeProgress
 }
 
 /** Module progress added after codebase practice; each key is optional and left out when empty. */
@@ -44,6 +47,7 @@ export interface ModuleBackup {
   react?: ReactProgress
   skilltests?: SkillTestsState
   node?: NodeProgress
+  reactNative?: ReactNativeProgress
 }
 
 const isRec = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -114,8 +118,8 @@ export function parseFullBackup(text: string): FullBackup {
   if (encoder.encode(text).length > MAX_FULL_BACKUP_BYTES) invalid(`file is larger than ${formatBytes(MAX_FULL_BACKUP_BYTES)}.`)
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { progress: parseBackup(text) } }
-  if (!isRec(parsed) || (!Object.hasOwn(parsed, 'boards') && !Object.hasOwn(parsed, 'playground') && !Object.hasOwn(parsed, 'plans') && !Object.hasOwn(parsed, 'codebase') && !Object.hasOwn(parsed, 'react') && !Object.hasOwn(parsed, 'skilltests') && !Object.hasOwn(parsed, 'node'))) return { progress: parseBackup(text) }
-  const { boards, playground, plans, codebase, react, skilltests, node, ...rest } = parsed
+  if (!isRec(parsed) || (!Object.hasOwn(parsed, 'boards') && !Object.hasOwn(parsed, 'playground') && !Object.hasOwn(parsed, 'plans') && !Object.hasOwn(parsed, 'codebase') && !Object.hasOwn(parsed, 'react') && !Object.hasOwn(parsed, 'skilltests') && !Object.hasOwn(parsed, 'node') && !Object.hasOwn(parsed, 'reactNative'))) return { progress: parseBackup(text) }
+  const { boards, playground, plans, codebase, react, skilltests, node, reactNative, ...rest } = parsed
   const progress = parseBackup(JSON.stringify(rest))
   if (Object.hasOwn(parsed, 'playground') && jsonBytes(playground) > MAX_SNIPPETS_BYTES) invalid(`Playground snippets add up to more than ${formatBytes(MAX_SNIPPETS_BYTES)}.`)
   return {
@@ -127,6 +131,7 @@ export function parseFullBackup(text: string): FullBackup {
     ...Object.hasOwn(parsed, 'react') ? { react: parseReactProgress(react) } : {},
     ...Object.hasOwn(parsed, 'skilltests') ? { skilltests: parseSkillTests(skilltests) } : {},
     ...Object.hasOwn(parsed, 'node') ? { node: parseNodeProgress(node) } : {},
+    ...Object.hasOwn(parsed, 'reactNative') ? { reactNative: parseReactNativeProgress(reactNative) } : {},
   }
 }
 
@@ -145,9 +150,10 @@ export function serializeFullBackup(progress: Progress, boards?: BoardRecord[], 
   const reactState = modules.react && Object.keys(modules.react).length ? modules.react : undefined
   const skillState = modules.skilltests && Object.keys(modules.skilltests).length ? modules.skilltests : undefined
   const nodeState = modules.node && Object.keys(modules.node).length ? modules.node : undefined
+  const reactNativeState = modules.reactNative && Object.keys(modules.reactNative).length ? modules.reactNative : undefined
   const extra = {
     ...playground ? { playground } : {}, ...planState ? { plans: planState } : {}, ...codebaseState ? { codebase: codebaseState } : {},
-    ...reactState ? { react: reactState } : {}, ...skillState ? { skilltests: skillState } : {}, ...nodeState ? { node: nodeState } : {},
+    ...reactState ? { react: reactState } : {}, ...skillState ? { skilltests: skillState } : {}, ...nodeState ? { node: nodeState } : {}, ...reactNativeState ? { reactNative: reactNativeState } : {},
   }
   if (!boards && !Object.keys(extra).length) return base
   if (!boards) {
